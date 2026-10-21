@@ -49,6 +49,16 @@ PROGRAMS: tuple[ProgramSpec, ...] = (
         "구조 솔버. 인풋 파일(.inp)은 FreeCAD FEM 작성기가 만드는 것이 본선이다.",
     ),
     ProgramSpec(
+        "codeaster", "Code_Aster", "solver", "CAELAB_CODEASTER",
+        ("run_aster", "codeaster"),
+        "구조 솔버. Salome-Meca 배포에 포함되며, 입력은 MED 메시와 .comm 명령 파일이다.",
+    ),
+    ProgramSpec(
+        "opencourant", "OpenCourant", "solver", "CAELAB_OPENCOURANT",
+        ("starter_linux64_gf",),
+        "명시적 동해석 솔버 (OpenRadioss의 후계). Radioss 블록 형식과 LS-DYNA 키워드 입력을 읽는다.",
+    ),
+    ProgramSpec(
         "paraview", "ParaView", "postprocessor", "CAELAB_PARAVIEW",
         ("paraview",),
         "결과 후처리의 본선 프로그램.",

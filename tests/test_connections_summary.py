@@ -19,10 +19,13 @@ CCX = os.environ.get("CAELAB_CCX")
 
 def test_registry_covers_the_connected_programs():
     ids = {spec.id for spec in PROGRAMS}
-    assert {"freecad", "salome", "gmsh", "calculix", "paraview"} <= ids
+    assert {"freecad", "salome", "gmsh", "calculix", "paraview",
+            "codeaster", "opencourant"} <= ids
     roles = {spec.id: spec.role for spec in PROGRAMS}
     assert roles["freecad"] == "preprocessor"
     assert roles["paraview"] == "postprocessor"
+    solvers = {spec.id for spec in PROGRAMS if spec.role == "solver"}
+    assert solvers == {"calculix", "codeaster", "opencourant"}
 
 
 def test_env_override_wins_and_missing_program_is_not_an_error(tmp_path):
