@@ -9,6 +9,7 @@ from .main_window import MainWindow
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     window = MainWindow(Workbench())
     if len(sys.argv) > 1:
         window.set_model(window.workbench.open_project(sys.argv[1]), Path(sys.argv[1]))
