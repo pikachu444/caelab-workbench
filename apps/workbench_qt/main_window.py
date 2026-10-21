@@ -16,7 +16,6 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QDialog,
     QDockWidget,
     QDoubleSpinBox,
@@ -24,7 +23,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMenu,
     QPushButton,
@@ -221,7 +219,7 @@ class MainWindow(QMainWindow):
         centre_layout.addWidget(self.viewport, 1)
         self.setCentralWidget(centre)
 
-        # right dock: property editor
+        # right dock: property viewer (display only)
         self.props_panel = QWidget()
         self.props_panel.setObjectName("propsPanel")
         self.props_layout = QVBoxLayout(self.props_panel)
@@ -231,11 +229,23 @@ class MainWindow(QMainWindow):
         self.props_form_holder = QWidget()
         self.props_form = QFormLayout(self.props_form_holder)
         self.props_layout.addWidget(self.props_form_holder)
-        self.props_hint = QLabel("트리에서 항목을 고르면 여기서 고칠 수 있습니다.")
+        self.props_hint = QLabel("트리에서 항목을 고르면 여기서 값을 확인할 수 있습니다.")
         self.props_hint.setObjectName("panelHint")
         self.props_hint.setWordWrap(True)
         self.props_layout.addWidget(self.props_hint)
         self.props_layout.addStretch(1)
+        # This panel is a viewer, not an editor (DESIGN: the built-in
+        # screens stay at check/run/summary level; preprocessing edits
+        # belong to the native programs). The guide stays visible under
+        # the values so the way to change a value is never a dead end:
+        # edit in the native program, or apply an expert proposal.
+        self.props_guide = QLabel(
+            "값은 여기서 고치지 않습니다. 형상·재료·조건을 바꾸려면 "
+            "FreeCAD·Salome 같은 전용 프로그램에서 여세요. 이 화면의 값은 "
+            "전문가 토론에서 제안을 적용할 때만 바뀝니다.")
+        self.props_guide.setObjectName("panelHint")
+        self.props_guide.setWordWrap(True)
+        self.props_layout.addWidget(self.props_guide)
         props_dock = QDockWidget("속성")
         props_dock.setWidget(self.props_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
@@ -312,7 +322,7 @@ class MainWindow(QMainWindow):
         self.context_bar.clear()
         actions = {
             "모델": [("열기", self.open_project_dialog), ("저장", self.save_project)],
-            "재료": [("재료 추가 (다음 단계)", lambda: self._log("재료 추가 편집기는 다음 단계입니다."))],
+            "재료": [("재료 편집 안내", lambda: self._log("재료는 여기서 고치지 않습니다. FreeCAD 같은 전용 프로그램에서 고치거나, 전문가 토론의 제안을 적용하세요."))],
             "메시": [("메시 다시 표시", lambda: self.model and self.viewport.show_model(self.model))],
             "해석 단계": [],
             "하중·구속": [],
@@ -323,7 +333,7 @@ class MainWindow(QMainWindow):
         for label, fn in actions:
             self.context_bar.addAction(label, fn)
         if not actions:
-            self.context_bar.addWidget(QLabel(f" {self.module} 모듈 — 도구는 속성 패널에서 편집합니다."))
+            self.context_bar.addWidget(QLabel(f" {self.module} 모듈 — 값은 속성 패널에서 확인합니다."))
 
     def set_module(self, name: str) -> None:
         self.module = name
@@ -415,7 +425,7 @@ class MainWindow(QMainWindow):
         self.tree.setCurrentItem(item)
         return True
 
-    # -- property editor ---------------------------------------------------------
+    # -- property viewer (display only; edits live in the native programs) -------
     def _on_select(self) -> None:
         items = self.tree.selectedItems()
         if not items or self.model is None:
@@ -439,10 +449,7 @@ class MainWindow(QMainWindow):
         self.props_hint.setText("")
         if path == "model":
             self.props_title.setText("모델")
-            name_edit = QLineEdit(m.name)
-            name_edit.editingFinished.connect(
-                lambda: (setattr(m, "name", name_edit.text()), self._mark_dirty()))
-            lay.addRow("이름", name_edit)
+            lay.addRow("이름", QLabel(m.name))
             lay.addRow("단위계", QLabel("SI (m, kg, s, Pa)"))
             lay.addRow("형상 원본", QLabel(m.geometry_source or "-"))
             return
@@ -475,22 +482,10 @@ class MainWindow(QMainWindow):
             self.props_title.setText(f"재료 — {mat.name}")
             lay.addRow("이름", QLabel(mat.name))
             lay.addRow("법칙", QLabel(mat.law))
-            e_spin = QDoubleSpinBox()
-            e_spin.setRange(0.001, 5000.0)
-            e_spin.setDecimals(2)
-            e_spin.setSuffix(" GPa")
-            e_spin.setValue(mat.params.get("youngs_modulus", 0.0) / 1e9)
-            e_spin.valueChanged.connect(
-                lambda v: (mat.params.__setitem__("youngs_modulus", v * 1e9), self._mark_dirty()))
-            lay.addRow("탄성계수", e_spin)
-            nu_spin = QDoubleSpinBox()
-            nu_spin.setRange(0.0, 0.49)
-            nu_spin.setSingleStep(0.01)
-            nu_spin.setDecimals(3)
-            nu_spin.setValue(mat.params.get("poissons_ratio", 0.0))
-            nu_spin.valueChanged.connect(
-                lambda v: (mat.params.__setitem__("poissons_ratio", v), self._mark_dirty()))
-            lay.addRow("포아송비", nu_spin)
+            lay.addRow("탄성계수",
+                       QLabel(f"{mat.params.get('youngs_modulus', 0.0) / 1e9:.2f} GPa"))
+            lay.addRow("포아송비",
+                       QLabel(f"{mat.params.get('poissons_ratio', 0.0):.3f}"))
             if "density" in mat.params:
                 lay.addRow("밀도", QLabel(f"{mat.params['density']:,.0f} kg/m³"))
             return
@@ -501,25 +496,17 @@ class MainWindow(QMainWindow):
             lay.addRow("종류", QLabel(ld.kind))
             lay.addRow("대상 집합", QLabel(ld.target_set or "-"))
             for comp in ("fx", "fy", "fz"):
-                spin = QDoubleSpinBox()
-                spin.setRange(-1e12, 1e12)
-                spin.setDecimals(1)
-                spin.setSuffix(" N")
-                spin.setValue(ld.values.get(comp, 0.0))
-                spin.valueChanged.connect(
-                    lambda v, c=comp: (ld.values.__setitem__(c, v), self._mark_dirty()))
-                lay.addRow(f"힘 {comp.upper()}", spin)
+                lay.addRow(f"힘 {comp.upper()}",
+                           QLabel(fmt_force(ld.values.get(comp, 0.0))))
             return
         if kind == "bcs":
             bc = m.bcs[idx]
             self.props_title.setText(f"구속 — {bc.name}")
             lay.addRow("이름", QLabel(bc.name))
             lay.addRow("대상 집합", QLabel(bc.target_set))
-            for dof, label in ((1, "UX"), (2, "UY"), (3, "UZ")):
-                chk = QCheckBox(label)
-                chk.setChecked(dof in bc.fixed_dofs)
-                chk.toggled.connect(lambda on, d=dof: self._toggle_dof(bc, d, on))
-                lay.addRow("고정", chk)
+            dof_names = {1: "UX", 2: "UY", 3: "UZ"}
+            fixed = [dof_names[d] for d in sorted(bc.fixed_dofs) if d in dof_names]
+            lay.addRow("고정", QLabel(", ".join(fixed) if fixed else "없음"))
             return
         if kind == "steps":
             st = m.steps[idx]
@@ -533,13 +520,6 @@ class MainWindow(QMainWindow):
         self.props_title.setText(str(getattr(obj, "name", kind)))
         for key, value in vars(obj).items():
             lay.addRow(str(key), QLabel(str(value)))
-
-    def _toggle_dof(self, bc, dof: int, on: bool) -> None:
-        if on and dof not in bc.fixed_dofs:
-            bc.fixed_dofs.append(dof)
-        elif not on and dof in bc.fixed_dofs:
-            bc.fixed_dofs.remove(dof)
-        self._mark_dirty()
 
     # -- actions ------------------------------------------------------------------
     def _log(self, text: str) -> None:

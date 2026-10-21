@@ -58,6 +58,42 @@ def test_expert_panel_evidence_and_proposal_apply(app):
     assert model.loads[0].values["fy"] == -500.0
 
 
+def test_props_panel_is_display_only(app):
+    """The property panel shows values; it must not edit the model.
+
+    Editing belongs to the native programs (FreeCAD/Salome) and, in
+    this window, to applying an expert proposal — so no input widget
+    may appear in the panel for any selectable object, the values are
+    labels, and the native-program guide stays visible.
+    """
+    from PySide6.QtWidgets import (
+        QCheckBox, QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QSpinBox, QWidget,
+    )
+
+    window = MainWindow()
+    model = cantilever_model()
+    window.set_model(model)
+    edit_widgets = (QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox)
+    for path in ("model", "materials[0]", "loads[0]", "bcs[0]", "mesh", "steps[0]"):
+        assert window.select_path(path), path
+        found = [w for w in window.props_panel.findChildren(QWidget)
+                 if isinstance(w, edit_widgets)]
+        assert not found, f"{path}: editable widgets in props panel: {found}"
+    # values are shown as text, with units
+    assert window.select_path("materials[0]")
+    texts = [w.text() for w in window.props_panel.findChildren(QLabel)]
+    assert any("210.00 GPa" in t for t in texts), texts
+    assert any("0.300" in t for t in texts), texts
+    assert window.select_path("bcs[0]")
+    texts = [w.text() for w in window.props_panel.findChildren(QLabel)]
+    assert any("UX" in t and "UY" in t and "UZ" in t for t in texts), texts
+    # the guide to the native programs is present in the panel
+    assert "전용 프로그램" in window.props_guide.text()
+    # and the model is untouched by all this viewing
+    assert model.materials[0].params["youngs_modulus"] == 210e9
+    assert model.bcs[0].fixed_dofs == [1, 2, 3]
+
+
 def test_window_issue_navigation(app):
     model = cantilever_model()
     model.sections[0].material = "NOPE"
