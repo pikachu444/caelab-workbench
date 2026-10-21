@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 from caelab.model.schema import StructuralModel
 from caelab.workbench import Workbench
 
+from .icons import GROUP_ICONS, LEAF_ICONS, icon
 from .theme import THEME
 from .viewport import Viewport
 
@@ -126,11 +127,11 @@ class MainWindow(QMainWindow):
             if name == "모델":
                 btn.setChecked(True)
         module_bar.addSeparator()
-        module_bar.addAction(self._icon("SP_DialogOpenButton"), "열기", self.open_project_dialog)
-        module_bar.addAction(self._icon("SP_DialogSaveButton"), "저장", self.save_project)
+        module_bar.addAction(icon("folder"), "열기", self.open_project_dialog)
+        module_bar.addAction(icon("save"), "저장", self.save_project)
         module_bar.addSeparator()
-        module_bar.addAction(self._icon("SP_DialogApplyButton"), "검사", self.run_check)
-        run_action = module_bar.addAction(self._icon("SP_MediaPlay"), "실행", self.run_solve)
+        module_bar.addAction(icon("check"), "검사", self.run_check)
+        run_action = module_bar.addAction(icon("run"), "실행", self.run_solve)
         module_bar.widgetForAction(run_action).setObjectName("primary")
 
         # context toolbar: actions for the current module
@@ -290,14 +291,14 @@ class MainWindow(QMainWindow):
         self._group_items.clear()
         self.tree.clear()
         root = QTreeWidgetItem([model.name])
-        root.setIcon(0, self._icon("SP_ComputerIcon"))
+        root.setIcon(0, icon(LEAF_ICONS["model"]))
         root.setData(0, Qt.UserRole, "model")
         self.tree.addTopLevelItem(root)
         self._path_items["model"] = root
         groups: dict[str, QTreeWidgetItem] = {}
         for gname in TREE_GROUPS:
             item = QTreeWidgetItem([gname])
-            item.setIcon(0, self._icon("SP_DirClosedIcon"))
+            item.setIcon(0, icon(GROUP_ICONS.get(gname, "folder")))
             root.addChild(item)
             groups[gname] = item
             self._group_items[gname] = item
@@ -326,7 +327,8 @@ class MainWindow(QMainWindow):
 
     def _add(self, parent: QTreeWidgetItem, text: str, path: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([text])
-        item.setIcon(0, self._icon("SP_FileIcon"))
+        kind = path.partition("[")[0]
+        item.setIcon(0, icon(LEAF_ICONS.get(kind, "folder")))
         item.setData(0, Qt.UserRole, path)
         parent.addChild(item)
         self._path_items[path] = item

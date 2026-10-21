@@ -46,7 +46,11 @@ from caelab.model.schema import (
 )
 from caelab.workbench import Workbench
 
+from .icons import icon
 from .theme import THEME
+
+_KIND_ICONS = {"geometry": "geometry", "mesh": "mesh", "analysis": "solver",
+               "results": "result", "expert": "expert"}
 
 SYSTEM_KINDS = [
     ("geometry", "형상", "FreeCAD에서 열기"),
@@ -232,7 +236,7 @@ class ProjectWindow(QMainWindow):
         toolbar = QToolBar("프로젝트")
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-        run_btn = QPushButton("전체 실행")
+        run_btn = QPushButton(icon("run"), "전체 실행")
         run_btn.setObjectName("primary")
         run_btn.clicked.connect(self.run_chain)
         toolbar.addWidget(run_btn)
@@ -240,8 +244,11 @@ class ProjectWindow(QMainWindow):
 
         toolbox = QListWidget()
         toolbox.setObjectName("toolbox")
-        for _kind, title, sub in SYSTEM_KINDS:
-            toolbox.addItem(f"{title} — {sub}")
+        from PySide6.QtWidgets import QListWidgetItem
+
+        for kind, title, sub in SYSTEM_KINDS:
+            item = QListWidgetItem(icon(_KIND_ICONS[kind]), f"{title} — {sub}")
+            toolbox.addItem(item)
         toolbox.itemDoubleClicked.connect(
             lambda item: self.add_box(SYSTEM_KINDS[toolbox.row(item)][0]))
         dock = QDockWidget("도구상자 (더블클릭으로 추가)")
