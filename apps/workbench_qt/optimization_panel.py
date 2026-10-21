@@ -18,8 +18,13 @@ row is highlighted.
 Single objective only (first scope). The panel is a standalone
 widget: the host supplies the evaluator — directly, or via
 ``configure_with_model`` with common-model variable/response specs
-and a run function. Main-window docking is a merge-request item for
-the integration chat; this file does not touch the main window.
+and a run function. In model mode the step-1 table carries a 모델
+경로 (model path) column per variable and a response model path for
+the objective; applying the setup rebuilds the evaluator through
+``caelab.numerical.ModelEvaluator`` from exactly the paths shown, so
+what the user picked in the table is what runs. Main-window docking
+is a merge-request item for the integration chat; this file does
+not touch the main window.
 
 GUI completion is judged on a real Windows screen only; on Linux this
 panel is verified offscreen by tests/test_optimization_panel.py.
@@ -42,8 +47,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from caelab.numerical import (ModelEvaluator, fit_surrogate, normalize_variables,
-                              optimize, run_doe, scalar_value)
+from caelab.numerical import (ModelEvaluator, fit_surrogate, get_path,
+                              normalize_variables, optimize, run_doe, scalar_value)
 
 _BEST_BG = QColor("#d9f2d9")
 _SOURCES = {"doe": "DOE", "test": "테스트 DOE", "opt_surrogate": "최적화(근사 예측)",
@@ -64,6 +69,12 @@ class OptimizationPanel(QWidget):
         self._history: list[dict] = []  # {source, values, objective, status}
         self.best_history_index: int | None = None
         self._opt_best_key: tuple | None = None  # (source, candidate_id) of step-4 best
+        # Model mode: the common model + run function behind ModelEvaluator,
+        # and the paths the user picked in the step-1 table.
+        self._model = None
+        self._run_fn = None
+        self._variable_paths: dict[str, str] = {}
+        self._response_path: str = ""
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("최적화 (5단계: 설정 → DOE → 근사모델 → 최적화 → 재실행 검증)"))
@@ -71,13 +82,18 @@ class OptimizationPanel(QWidget):
         # -- step 1: setup ------------------------------------------------
         setup_box = QGroupBox("1단계 · 설정 (변수와 목적, 단일 목적만)")
         setup_layout = QVBoxLayout(setup_box)
-        self.variable_table = QTableWidget(0, 5)
-        self.variable_table.setHorizontalHeaderLabels(["변수", "단위", "하한", "상한", "시작값"])
+        self.variable_table = QTableWidget(0, 6)
+        self.variable_table.setHorizontalHeaderLabels(
+            ["변수", "단위", "모델 경로", "하한", "상한", "시작값"])
         setup_layout.addWidget(self.variable_table)
         obj_row = QHBoxLayout()
         obj_row.addWidget(QLabel("목적 응답"))
         self.response_edit = QLineEdit()
         obj_row.addWidget(self.response_edit)
+        obj_row.addWidget(QLabel("응답 모델 경로"))
+        self.response_path_edit = QLineEdit()
+        self.response_path_edit.setPlaceholderText("예: max_displacement")
+        obj_row.addWidget(self.response_path_edit)
         obj_row.addWidget(QLabel("단위"))
         self.unit_edit = QLineEdit("1")
         self.unit_edit.setMaximumWidth(60)
@@ -162,10 +178,14 @@ class OptimizationPanel(QWidget):
             self.set_study(evaluator, variables, objective)
 
     # -- study setup -------------------------------------------------------
-    def set_study(self, evaluator, variables, objective=None) -> None:
+    def set_study(self, evaluator, variables, objective=None, *, _keep_model=False) -> None:
         """Connect an evaluator and show its variables/objective in step 1."""
         self.evaluator = evaluator
         self.variables = normalize_variables(variables)
+        if not _keep_model:
+            self._model = self._run_fn = None
+            self._variable_paths = {}
+            self._response_path = ""
         if objective:
             self.objective = {"response": objective.get("response", ""),
                               "unit": objective.get("unit", "1"),
@@ -178,33 +198,56 @@ class OptimizationPanel(QWidget):
         """Connect through the common model: variable paths -> variables,
         result paths -> the (single) objective response."""
         evaluator = ModelEvaluator(model, variable_specs, run_fn, response_specs)
+        self._model, self._run_fn = model, run_fn
+        self._variable_paths = {
+            spec.get("id", spec.get("parameter_id")): spec["path"]
+            for spec in variable_specs}
         first = response_specs[0]
+        self._response_path = first.get("path", "")
         self.set_study(evaluator, evaluator.variables,
                        {"response": first["response"], "unit": first.get("unit", "1"),
-                        "direction": first.get("direction", "minimize")})
+                        "direction": first.get("direction", "minimize")},
+                       _keep_model=True)
+
+    def current_variable_specs(self) -> list[dict]:
+        """The applied variable declarations, with model paths if in
+        model mode — exactly what a host needs to rebuild this study."""
+        return [{**var, "path": self._variable_paths[var["id"]]}
+                if var["id"] in self._variable_paths else dict(var)
+                for var in self.variables]
 
     def _fill_setup_widgets(self) -> None:
         self.variable_table.setRowCount(len(self.variables))
         for row, var in enumerate(self.variables):
-            for col, key in enumerate(("id", "unit", "lower", "upper", "value")):
-                self.variable_table.setItem(row, col, QTableWidgetItem(str(var[key])))
+            cells = [var["id"], var["unit"], self._variable_paths.get(var["id"], ""),
+                     var["lower"], var["upper"], var["value"]]
+            for col, value in enumerate(cells):
+                self.variable_table.setItem(row, col, QTableWidgetItem(str(value)))
         self.response_edit.setText(self.objective.get("response", ""))
+        self.response_path_edit.setText(self._response_path)
         self.unit_edit.setText(self.objective.get("unit", "1"))
         index = self.direction_combo.findData(self.objective.get("direction", "minimize"))
         if index >= 0:
             self.direction_combo.setCurrentIndex(index)
 
     def apply_setup(self) -> bool:
-        """Parse the setup table into engine declarations (step 1 action)."""
-        declarations = []
+        """Parse the setup table into engine declarations (step 1 action).
+
+        When every variable row carries a model path, the evaluator is
+        rebuilt through ModelEvaluator from the table's paths and the
+        response model path — the paths shown are the paths that run.
+        Mixing path and no-path variables is refused in one line.
+        """
+        declarations, paths = [], []
         try:
             for row in range(self.variable_table.rowCount()):
                 cells = [(self.variable_table.item(row, col).text().strip()
                           if self.variable_table.item(row, col) else "")
-                         for col in range(5)]
+                         for col in range(6)]
                 declarations.append({"id": cells[0], "unit": cells[1],
-                                     "lower": float(cells[2]), "upper": float(cells[3]),
-                                     "value": float(cells[4])})
+                                     "lower": float(cells[3]), "upper": float(cells[4]),
+                                     "value": float(cells[5])})
+                paths.append(cells[2])
             variables = normalize_variables(declarations)
             response = self.response_edit.text().strip()
             if not response:
@@ -212,7 +255,30 @@ class OptimizationPanel(QWidget):
             objective = {"response": response,
                          "unit": self.unit_edit.text().strip() or "1",
                          "direction": self.direction_combo.currentData()}
-        except (ValueError, TypeError) as error:
+            response_path = self.response_path_edit.text().strip()
+            if any(paths) and not all(paths):
+                raise ValueError("모델 경로는 모든 변수에 입력하거나 모두 비우세요")
+            if all(paths) and paths:
+                if self._model is None or self._run_fn is None:
+                    raise ValueError("모델이 연결되지 않았습니다. 모델 연결 후 경로를 쓸 수 있습니다")
+                if not response_path:
+                    raise ValueError("응답 모델 경로를 입력하세요 (예: max_displacement)")
+                for declaration, path in zip(declarations, paths):
+                    current = get_path(self._model, path)  # path must exist now
+                    if isinstance(current, bool) or not isinstance(current, (int, float)):
+                        raise ValueError(f"모델 경로 {path}에 숫자가 없습니다")
+                specs = [{**decl, "path": path}
+                         for decl, path in zip(declarations, paths)]
+                evaluator = ModelEvaluator(
+                    self._model, specs, self._run_fn,
+                    [{"response": response, "unit": objective["unit"],
+                      "path": response_path, "direction": objective["direction"]}])
+                variables = evaluator.variables
+                self.evaluator = evaluator
+                self._variable_paths = {decl["id"]: path
+                                        for decl, path in zip(declarations, paths)}
+                self._response_path = response_path
+        except (ValueError, TypeError, KeyError) as error:
             self.setup_status.setText(f"설정 오류: {error}")
             return False
         self.variables, self.objective = variables, objective
@@ -224,8 +290,9 @@ class OptimizationPanel(QWidget):
         self._opt_best_key = None
         self._history = []
         self._refresh_history()
-        self.setup_status.setText(f"설정 적용됨: 변수 {len(variables)}개, 목적 {response} "
-                                  f"({objective['direction']}).")
+        mode = "모델 경로 연결" if self._variable_paths else "직접 평가 함수"
+        self.setup_status.setText(f"설정 적용됨: 변수 {len(variables)}개 ({mode}), "
+                                  f"목적 {response} ({objective['direction']}).")
         return True
 
     # -- history -------------------------------------------------------------

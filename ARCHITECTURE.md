@@ -22,4 +22,4 @@
 
 ## 아직 없는 것
 
-- Code_Aster(Salome) 설치와 계산 검증, Windows 실화면 수용 검증이 남았습니다. 전문가 토론 패널은 구현 마무리 중이고, FreeCAD 파일 읽기와 ParaView 결과 열기는 확인된 상태입니다. OpenRadioss는 배포가 끝나 후계 OpenCourant로 등록·검증됐습니다.
+- Windows 실화면 수용 검증(홀드 중)이 남았습니다. Code_Aster는 SALOME_MECA 컨테이너로 계산 검증까지 끝났고(반력 Z 합 +1000.000 N), 전문가 토론 패널은 구현·RAG 지식 층까지 반영된 상태이며, FreeCAD 파일 읽기와 ParaView 결과 열기는 확인된 상태입니다. OpenRadioss는 배포가 끝나 후계 OpenCourant로 등록·검증됐습니다.
