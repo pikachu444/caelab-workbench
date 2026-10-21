@@ -44,6 +44,7 @@ from caelab.model.schema import (
     Step,
     StructuralModel,
 )
+from caelab.connections import launch_command, program_statuses
 from caelab.workbench import Workbench
 
 from .icons import icon
@@ -309,6 +310,7 @@ class ProjectWindow(QMainWindow):
         self.boxes["analysis"].set_state("ready", "CalculiX")
         self.boxes["results"].set_state("needs_input")
         self.boxes["expert"].set_state("needs_input")
+        self._reflect_programs()
         for c in self.connectors:
             c.refresh()
         self._log("프로젝트 체인을 만들었습니다: 형상 → 메시 → 구조 해석 → 결과 → 전문가 논의")
@@ -316,6 +318,39 @@ class ProjectWindow(QMainWindow):
     # -- behaviour --------------------------------------------------------------
     def _log(self, text: str) -> None:
         self.log.append(text)
+
+    def _reflect_programs(self) -> None:
+        """Show, on the boxes themselves, whether the program behind
+        each box is actually found on this machine. The workbench's
+        main line is connecting real programs, so a box whose program
+        is missing must say so instead of pretending."""
+        statuses = {s.spec.id: s for s in program_statuses()}
+        geo = statuses.get("freecad")
+        if geo is not None:
+            self.boxes["geometry"].set_state(
+                "done", "demo.FCStd" if geo.available else "FreeCAD를 찾지 못함")
+        pv = statuses.get("paraview")
+        if pv is not None:
+            box = self.boxes["results"]
+            box.set_state(box.state, "" if pv.available else "ParaView를 찾지 못함")
+
+    def _open_external(self, kind: str, program_id: str, file: str | None) -> None:
+        """Open a box's own program when it is installed."""
+        statuses = {s.spec.id: s for s in program_statuses()}
+        status = statuses[program_id]
+        command = launch_command(status, file)
+        if command is None:
+            self._log(
+                f"{status.spec.name}가 이 컴퓨터에서 발견되지 않아 열 수 없습니다. "
+                "설치 후 다시 시도해 주세요.")
+            return
+        import subprocess
+
+        try:
+            subprocess.Popen(command)
+            self._log(f"{status.spec.name}를 실행했습니다.")
+        except OSError as exc:
+            self._log(f"{status.spec.name} 실행 실패 — {exc}")
 
     def _scene_double_click(self, event) -> None:
         item = self.scene.itemAt(event.scenePos(), self.view.transform())
@@ -331,9 +366,11 @@ class ProjectWindow(QMainWindow):
             self._workspace.show()
             self._log("구조 해석 작업 창을 열었습니다.")
         elif box.kind == "geometry":
-            self._log("형상은 FreeCAD에서 엽니다 (연결은 다음 단계).")
+            self._open_external(box.kind, "freecad", "demo.FCStd")
         elif box.kind == "results":
-            self._log("결과는 ParaView에서 엽니다 (연결은 다음 단계).")
+            self._open_external(box.kind, "paraview", None)
+        elif box.kind == "mesh":
+            self._open_external(box.kind, "gmsh", None)
         elif box.kind == "expert":
             self._log("전문가 패널은 다음 단계에서 붙입니다.")
         else:

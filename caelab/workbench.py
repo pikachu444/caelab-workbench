@@ -28,6 +28,12 @@ class Workbench:
         return save_project(model, folder)
 
     # -- checking ---------------------------------------------------------
+    def programs(self):
+        """Availability of the connected external programs."""
+        from .connections import program_statuses
+
+        return program_statuses()
+
     def check(self, model: StructuralModel, solver_id: str = "calculix") -> list[Issue]:
         issues = validate_model(model)
         issues.extend(get_converter(solver_id).validate(model))
