@@ -8,6 +8,7 @@ QMenuBar::item:selected { background: #dcebf7; }
 QToolBar { background: #f7f8fa; border-bottom: 1px solid #cfd6dd; padding: 4px; spacing: 4px; }
 QToolButton { padding: 5px 10px; border: 1px solid transparent; border-radius: 4px; }
 QToolButton:hover { background: #e3eef8; border-color: #b9d2ea; }
+QToolButton:checked { background: #1668b4; color: white; font-weight: bold; }
 QDockWidget { border: 1px solid #cfd6dd; }
 QDockWidget::title { background: #e6eaef; padding: 5px 8px; font-weight: bold; }
 QTreeWidget { background: white; border: none; outline: 0; }

@@ -1,12 +1,11 @@
-"""Workbench main window (PySide6), structured like a CAE desktop.
+"""Workbench main window (PySide6).
 
-Layout and interaction follow the redesign GUI plan and the layout used
-by mainstream CAE programs (Abaqus/CAE, ANSYS Mechanical, Salome):
-menu + toolbar, a docked model tree on the left, a VTK viewport in the
-centre, a docked property editor for the selected object on the right,
-and a message/result dock at the bottom. One primary action per
-surface; input errors are one line plus a jump to the object; internal
-ids live only in Help > Diagnostics.
+The layout follows the structure of mainstream CAE desktops:
+Abaqus/CAE's module workflow (a module bar switches the tree, the
+context toolbar and the property editor to the current task) combined
+with a docked model tree, a VTK viewport, a message area, and a status
+bar. One primary action per surface; input errors are one line plus a
+jump to the object; internal ids live only in Help > Diagnostics.
 """
 
 from __future__ import annotations
@@ -14,21 +13,25 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QDockWidget,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QPushButton,
     QStyle,
     QTextEdit,
     QToolBar,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -43,6 +46,16 @@ from .viewport import Viewport
 
 FLOW_STEPS = ["열기", "검사", "실행", "결과", "토론", "제안 적용", "재실행"]
 TREE_GROUPS = ["재료·단면", "메시", "해석 단계", "하중·구속", "접촉·연결", "작업", "결과"]
+MODULES = [
+    ("모델", TREE_GROUPS),
+    ("재료", ["재료·단면"]),
+    ("메시", ["메시"]),
+    ("해석 단계", ["해석 단계"]),
+    ("하중·구속", ["하중·구속", "접촉·연결"]),
+    ("작업", ["작업", "결과"]),
+    ("결과", ["결과"]),
+    ("전문가", []),
+]
 
 
 def fmt_length(m: float) -> str:
@@ -63,8 +76,10 @@ class MainWindow(QMainWindow):
         self.project_folder: Path | None = None
         self._issue_target: str | None = None
         self._path_items: dict[str, QTreeWidgetItem] = {}
+        self._group_items: dict[str, QTreeWidgetItem] = {}
         self._dirty = False
         self._last_result = None
+        self.module = "모델"
         self.setWindowTitle("CAELAB Workbench")
         self.resize(1440, 900)
         self.setStyleSheet(THEME)
@@ -83,31 +98,59 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction("입력 검사", self.run_check)
         analysis_menu.addAction("실행", self.run_solve)
         results_menu = menu.addMenu("결과")
-        results_menu.addAction("ParaView에서 열기 (다음 단계)", lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
+        results_menu.addAction("ParaView에서 열기 (다음 단계)",
+                               lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
         expert_menu = menu.addMenu("전문가")
-        expert_menu.addAction("선택 대상으로 논의 (다음 단계)", lambda: self._log("전문가 패널은 다음 단계에서 붙입니다."))
+        expert_menu.addAction("선택 대상으로 논의 (다음 단계)",
+                              lambda: self._log("전문가 패널은 다음 단계에서 붙입니다."))
         help_menu = menu.addMenu("도움말")
         help_menu.addAction("진단 정보", self.show_diagnostics)
 
-        toolbar = QToolBar("주 도구")
-        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.addToolBar(toolbar)
-        toolbar.addAction(self._icon("SP_DialogOpenButton"), "열기", self.open_project_dialog)
-        toolbar.addAction(self._icon("SP_DialogSaveButton"), "저장", self.save_project)
-        toolbar.addSeparator()
-        toolbar.addAction(self._icon("SP_DialogApplyButton"), "검사", self.run_check)
-        run_action = toolbar.addAction(self._icon("SP_MediaPlay"), "실행", self.run_solve)
-        toolbar.widgetForAction(run_action).setObjectName("primary")
+        # module bar (Abaqus/CAE style): switches tree + context tools
+        module_bar = QToolBar("모듈")
+        module_bar.setMovable(False)
+        self.addToolBar(module_bar)
+        module_bar.addWidget(QLabel(" 모듈: "))
+        self.module_group = QButtonGroup(self)
+        self.module_group.setExclusive(True)
+        self._module_buttons: dict[str, QToolButton] = {}
+        for name, _groups in MODULES:
+            btn = QToolButton()
+            btn.setText(name)
+            btn.setCheckable(True)
+            btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            btn.clicked.connect(lambda _=False, n=name: self.set_module(n))
+            self.module_group.addButton(btn)
+            module_bar.addWidget(btn)
+            self._module_buttons[name] = btn
+            if name == "모델":
+                btn.setChecked(True)
+        module_bar.addSeparator()
+        module_bar.addAction(self._icon("SP_DialogOpenButton"), "열기", self.open_project_dialog)
+        module_bar.addAction(self._icon("SP_DialogSaveButton"), "저장", self.save_project)
+        module_bar.addSeparator()
+        module_bar.addAction(self._icon("SP_DialogApplyButton"), "검사", self.run_check)
+        run_action = module_bar.addAction(self._icon("SP_MediaPlay"), "실행", self.run_solve)
+        module_bar.widgetForAction(run_action).setObjectName("primary")
+
+        # context toolbar: actions for the current module
+        self.context_bar = QToolBar("모듈 도구")
+        self.context_bar.setMovable(False)
+        self.addToolBarBreak()
+        self.addToolBar(self.context_bar)
+        self._fill_context_bar()
 
         # left dock: model tree
         self.tree = QTreeWidget()
         self.tree.setHeaderLabel("모델")
         self.tree.itemSelectionChanged.connect(self._on_select)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
         tree_dock = QDockWidget("모델 탐색기")
         tree_dock.setWidget(self.tree)
         self.addDockWidget(Qt.LeftDockWidgetArea, tree_dock)
 
-        # centre: viewport with a small view toolbar
+        # centre: viewport with a view toolbar
         centre = QWidget()
         centre_layout = QVBoxLayout(centre)
         centre_layout.setContentsMargins(0, 0, 0, 0)
@@ -116,6 +159,9 @@ class MainWindow(QMainWindow):
             btn = QPushButton(label)
             btn.clicked.connect(lambda _=False, n=name: self.viewport.set_view(n))
             view_bar.addWidget(btn)
+        fit_btn = QPushButton("화면 맞춤")
+        fit_btn.clicked.connect(lambda: self.viewport.fit())
+        view_bar.addWidget(fit_btn)
         view_bar.addWidget(QLabel("변형 배율"))
         self.scale_spin = QDoubleSpinBox()
         self.scale_spin.setRange(0.1, 100.0)
@@ -135,11 +181,18 @@ class MainWindow(QMainWindow):
         # right dock: property editor
         self.props_panel = QWidget()
         self.props_panel.setObjectName("propsPanel")
-        self.props_layout = QFormLayout(self.props_panel)
+        self.props_layout = QVBoxLayout(self.props_panel)
+        self.props_title = QLabel("속성")
+        self.props_title.setStyleSheet("font-weight: bold;")
+        self.props_layout.addWidget(self.props_title)
+        self.props_form_holder = QWidget()
+        self.props_form = QFormLayout(self.props_form_holder)
+        self.props_layout.addWidget(self.props_form_holder)
         self.props_hint = QLabel("트리에서 항목을 고르면 여기서 고칠 수 있습니다.")
         self.props_hint.setObjectName("panelHint")
         self.props_hint.setWordWrap(True)
-        self.props_layout.addRow(self.props_hint)
+        self.props_layout.addWidget(self.props_hint)
+        self.props_layout.addStretch(1)
         props_dock = QDockWidget("속성")
         props_dock.setWidget(self.props_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
@@ -174,7 +227,59 @@ class MainWindow(QMainWindow):
         bottom_dock.setWidget(bottom)
         self.addDockWidget(Qt.BottomDockWidgetArea, bottom_dock)
 
-        self.statusBar().showMessage("솔버: CalculiX (변환기 1개 연결됨)")
+        self.statusBar().showMessage("작업 없음")
+        self.statusBar().addPermanentWidget(QLabel("솔버: CalculiX · 단위계: SI"))
+
+    # -- modules ------------------------------------------------------------
+    def _fill_context_bar(self) -> None:
+        self.context_bar.clear()
+        actions = {
+            "모델": [("열기", self.open_project_dialog), ("저장", self.save_project)],
+            "재료": [("재료 추가 (다음 단계)", lambda: self._log("재료 추가 편집기는 다음 단계입니다."))],
+            "메시": [("메시 다시 표시", lambda: self.model and self.viewport.show_model(self.model))],
+            "해석 단계": [],
+            "하중·구속": [],
+            "작업": [("입력 검사", self.run_check), ("실행", self.run_solve)],
+            "결과": [("ParaView에서 열기 (다음 단계)", lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))],
+            "전문가": [("선택 대상으로 논의 (다음 단계)", lambda: self._log("전문가 패널은 다음 단계에서 붙입니다."))],
+        }.get(self.module, [])
+        for label, fn in actions:
+            self.context_bar.addAction(label, fn)
+        if not actions:
+            self.context_bar.addWidget(QLabel(f" {self.module} 모듈 — 도구는 속성 패널에서 편집합니다."))
+
+    def set_module(self, name: str) -> None:
+        self.module = name
+        btn = self._module_buttons.get(name)
+        if btn is not None and not btn.isChecked():
+            btn.setChecked(True)
+        groups = dict(MODULES)[name]
+        for gname, item in self._group_items.items():
+            item.setHidden(gname not in groups)
+        self._fill_context_bar()
+        if name == "전문가":
+            self._clear_props()
+            self.props_title.setText("전문가")
+            self.props_hint.setText("전문가 패널은 다음 단계에서 붙입니다. 지금 모듈에서는 트리 대신 결과와 로그를 근거로 논의할 자리만 마련돼 있습니다.")
+            return
+        # select the first visible leaf of the module for immediate context
+        for gname in groups:
+            item = self._group_items.get(gname)
+            if item is not None and item.childCount():
+                self.tree.setCurrentItem(item.child(0))
+                return
+
+    def _tree_menu(self, pos: QPoint) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        self.tree.setCurrentItem(item)
+        menu = QMenu(self)
+        menu.addAction("속성 보기", self._on_select)
+        menu.addSeparator()
+        menu.addAction("입력 검사", self.run_check)
+        menu.addAction("실행", self.run_solve)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     # -- tree ---------------------------------------------------------------------
     def set_model(self, model: StructuralModel, folder: Path | None = None) -> None:
@@ -182,6 +287,7 @@ class MainWindow(QMainWindow):
         self.project_folder = folder
         self._dirty = False
         self._path_items.clear()
+        self._group_items.clear()
         self.tree.clear()
         root = QTreeWidgetItem([model.name])
         root.setIcon(0, self._icon("SP_ComputerIcon"))
@@ -194,6 +300,7 @@ class MainWindow(QMainWindow):
             item.setIcon(0, self._icon("SP_DirClosedIcon"))
             root.addChild(item)
             groups[gname] = item
+            self._group_items[gname] = item
         for i, m in enumerate(model.materials):
             self._add(groups["재료·단면"], f"{m.name} · {m.law}", f"materials[{i}]")
         for i, s in enumerate(model.sections):
@@ -211,6 +318,7 @@ class MainWindow(QMainWindow):
         self._add(groups["작업"], "CalculiX", "job")
         self.results_item = groups["결과"]
         self.tree.expandAll()
+        self.set_module(self.module)
         self.viewport.show_model(model)
         self.status.setText("모델을 열었습니다. 다음 행동: 검사")
         self._log(f"모델 '{model.name}'을 열었습니다.")
@@ -239,8 +347,8 @@ class MainWindow(QMainWindow):
         self._show_props(items[0].data(0, Qt.UserRole) or "model")
 
     def _clear_props(self) -> None:
-        while self.props_layout.rowCount():
-            self.props_layout.removeRow(0)
+        while self.props_form.rowCount():
+            self.props_form.removeRow(0)
 
     def _mark_dirty(self) -> None:
         if not self._dirty:
@@ -251,8 +359,10 @@ class MainWindow(QMainWindow):
         m = self.model
         assert m is not None
         self._clear_props()
-        lay = self.props_layout
+        lay = self.props_form
+        self.props_hint.setText("")
         if path == "model":
+            self.props_title.setText("모델")
             name_edit = QLineEdit(m.name)
             name_edit.editingFinished.connect(
                 lambda: (setattr(m, "name", name_edit.text()), self._mark_dirty()))
@@ -261,16 +371,19 @@ class MainWindow(QMainWindow):
             lay.addRow("형상 원본", QLabel(m.geometry_source or "-"))
             return
         if path == "mesh":
+            self.props_title.setText("메시")
             types = sorted({e["type"] for e in m.mesh.elements.values()})
             lay.addRow("절점", QLabel(f"{len(m.mesh.nodes):,}개"))
             lay.addRow("요소", QLabel(f"{len(m.mesh.elements):,}개"))
             lay.addRow("요소 종류", QLabel(", ".join(types)))
             return
         if path == "job":
+            self.props_title.setText("작업")
             lay.addRow("솔버", QLabel("CalculiX"))
             lay.addRow("주 행동", QLabel("상단 '실행' 버튼"))
             return
         if path == "result":
+            self.props_title.setText("결과")
             if self._last_result is not None:
                 lay.addRow("최대 변위", QLabel(fmt_length(self._last_result.max_displacement)))
                 lay.addRow("반력 합 Fy", QLabel(fmt_force(self._last_result.reaction_totals.get("fy", 0.0))))
@@ -278,10 +391,12 @@ class MainWindow(QMainWindow):
             return
         kind, _, rest = path.partition("[")
         if not rest:
+            self.props_title.setText(path)
             return
         idx = int(rest.rstrip("]"))
         if kind == "materials":
             mat = m.materials[idx]
+            self.props_title.setText(f"재료 — {mat.name}")
             lay.addRow("이름", QLabel(mat.name))
             lay.addRow("법칙", QLabel(mat.law))
             e_spin = QDoubleSpinBox()
@@ -305,6 +420,7 @@ class MainWindow(QMainWindow):
             return
         if kind == "loads":
             ld = m.loads[idx]
+            self.props_title.setText(f"하중 — {ld.name}")
             lay.addRow("이름", QLabel(ld.name))
             lay.addRow("종류", QLabel(ld.kind))
             lay.addRow("대상 집합", QLabel(ld.target_set or "-"))
@@ -320,6 +436,7 @@ class MainWindow(QMainWindow):
             return
         if kind == "bcs":
             bc = m.bcs[idx]
+            self.props_title.setText(f"구속 — {bc.name}")
             lay.addRow("이름", QLabel(bc.name))
             lay.addRow("대상 집합", QLabel(bc.target_set))
             for dof, label in ((1, "UX"), (2, "UY"), (3, "UZ")):
@@ -330,12 +447,14 @@ class MainWindow(QMainWindow):
             return
         if kind == "steps":
             st = m.steps[idx]
+            self.props_title.setText(f"해석 단계 — {st.name}")
             lay.addRow("이름", QLabel(st.name))
             lay.addRow("종류", QLabel(st.kind))
             lay.addRow("하중", QLabel(", ".join(st.loads) or "-"))
             lay.addRow("구속", QLabel(", ".join(st.bcs) or "-"))
             return
         obj = {"sections": m.sections, "interactions": m.interactions}[kind][idx]
+        self.props_title.setText(str(getattr(obj, "name", kind)))
         for key, value in vars(obj).items():
             lay.addRow(str(key), QLabel(str(value)))
 
@@ -416,6 +535,9 @@ class MainWindow(QMainWindow):
             self._log(result.log_tail[-1500:])
         self.status.setText(summary)
         self._log(summary)
+        state_ko = {"succeeded": "완료", "failed": "실패", "running": "실행 중",
+                    "queued": "대기", "preparing": "준비 중"}.get(job.state, job.state)
+        self.statusBar().showMessage(f"최근 작업: {state_ko}")
 
     def _rescale(self) -> None:
         self.viewport.rescale(self.scale_spin.value())

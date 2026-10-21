@@ -104,6 +104,15 @@ class Viewport(QWidget):
         self._renderer.GradientBackgroundOn()
         self._vtk_widget.GetRenderWindow().AddRenderer(self._renderer)
         self._vtk_widget.Initialize()
+        axes = vtk.vtkAxesActor()
+        axes.SetTotalLength(1.0, 1.0, 1.0)
+        marker = vtk.vtkOrientationMarkerWidget()
+        marker.SetOrientationMarker(axes)
+        marker.SetInteractor(self._vtk_widget.GetRenderWindow().GetInteractor())
+        marker.SetViewport(0.0, 0.0, 0.16, 0.22)
+        marker.EnabledOn()
+        marker.InteractiveOff()
+        self._marker = marker
 
     def _render(self) -> None:
         if self._vtk_widget is not None:
@@ -180,6 +189,15 @@ class Viewport(QWidget):
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
         self._renderer.RemoveAllViewProps()
+        ghost_edges = vtk.vtkExtractEdges()
+        ghost_edges.SetInputData(self._grid)
+        ghost_mapper = vtk.vtkPolyDataMapper()
+        ghost_mapper.SetInputConnection(ghost_edges.GetOutputPort())
+        ghost = vtk.vtkActor()
+        ghost.SetMapper(ghost_mapper)
+        ghost.GetProperty().SetColor(0.45, 0.45, 0.45)
+        ghost.GetProperty().SetOpacity(0.35)
+        self._renderer.AddActor(ghost)
         self._renderer.AddActor(actor)
         bar = vtk.vtkScalarBarActor()
         bar.SetLookupTable(lut)
@@ -202,6 +220,11 @@ class Viewport(QWidget):
         self._renderer.AddActor2D(bar)
         self._renderer.ResetCamera()
         self._render()
+
+    def fit(self) -> None:
+        if self.available:
+            self._renderer.ResetCamera()
+            self._render()
 
     def rescale(self, factor: float) -> None:
         if self.available and getattr(self, "_base_scale", None) is not None:
