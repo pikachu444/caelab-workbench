@@ -13,11 +13,13 @@
 
 ## 현재 범위
 
-- 연결 층: 프로그램 5종 등록(FreeCAD·Salome·Gmsh·CalculiX·ParaView), 환경 변수 우선·PATH 탐색, 실행 명령 생성(실행 자체는 호출자 결정).
+- 연결 층: 프로그램 8종 등록(FreeCAD·Salome·Gmsh·CalculiX·Code_Aster·OpenCourant·FEniCSx·ParaView), 환경 변수 우선·PATH 탐색, 실행 명령 생성(실행 자체는 호출자 결정).
 - 결과 요약: 솔버·성공 여부·최대 변위·반력 합·검증 상태·로그 꼬리를 솔버 중립 형식으로 정리하고 한국어 한 단락으로 서식화.
 - 보조 변환기: CalculiX 1종. 덱 생성(.inp), ccx 실행, 결과(.frd) 판독.
+- 수치 엔진: `caelab/numerical` — DOE·최소제곱 적합·차분진화 최적화·UQ·Sobol 민감도·RBF 대리모델. 평가자는 값→응답 딕셔너리 계약이며, `model_binding`이 공통 모델의 임의 숫자 위치를 변수로, 실행 결과의 임의 스칼라를 응답으로 연결한다.
+- PDE 라인: `caelab/pde` — FEniCSx(dolfinx) 실행 환경. 공통 모델 스키마에 넣지 않고 자체 형식을 유지한다.
 - GUI: PySide6 (`apps/workbench_qt`). 부모는 ANSYS Workbench식 프로젝트 화면(도구상자·상자 연결 도식·상태 표시·전체 실행), 상자는 자기 프로그램의 연결 상태를 표시하고 설치된 프로그램을 연다. 자체 작업 창은 확인·검사·실행·요약 수준으로 제한한다.
 
 ## 아직 없는 것
 
-- FreeCAD 파일(.FCStd) 읽기, ParaView로 결과 파일 열기, 전문가(LLM) 토론 패널, Code_Aster(Salome)·OpenRadioss(Gmsh) 연결, Windows 실화면 수용 검증.
+- Code_Aster(Salome) 설치와 계산 검증, Windows 실화면 수용 검증이 남았습니다. 전문가 토론 패널은 구현 마무리 중이고, FreeCAD 파일 읽기와 ParaView 결과 열기는 확인된 상태입니다. OpenRadioss는 배포가 끝나 후계 OpenCourant로 등록·검증됐습니다.

@@ -39,4 +39,9 @@ LEAF_ICONS = {
 
 def icon(name: str) -> QIcon:
     path = _DIR / f"{name}.svg"
-    return QIcon(str(path)) if path.exists() else QIcon()
+    if path.exists():
+        return QIcon(str(path))
+    # A mistyped name must not leave a blank gap in the tree or the
+    # toolbox: fall back to the folder icon so the spot stays visible.
+    fallback = _DIR / "folder.svg"
+    return QIcon(str(fallback)) if fallback.exists() else QIcon()

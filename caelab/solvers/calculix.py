@@ -9,8 +9,10 @@ not by adding new backends.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..model.schema import StructuralModel
@@ -156,22 +158,57 @@ class CalculiXConverter:
         )
         log = (proc.stdout or "") + (proc.stderr or "")
         frd = workdir / "job.frd"
-        if proc.returncode != 0 or not frd.exists():
+        dat = workdir / "job.dat"
+        if proc.returncode != 0 or (not frd.exists() and not dat.exists()):
             return ResultSet(solver_id=self.id, success=False, log_tail=log[-4000:])
-        result = parse_frd(frd)
+        result = (
+            parse_frd(frd)
+            if frd.exists()
+            else ResultSet(solver_id=self.id, success=True)
+        )
+        # Some native decks (FreeCAD FEM) write no FORC block to the .frd;
+        # their reactions only exist in the .dat from *NODE PRINT. Merge
+        # whatever the .frd lacks from the .dat.
+        dat_result = parse_dat(dat) if dat.exists() else None
+        if dat_result is not None:
+            if not result.displacements and dat_result.displacements:
+                result.displacements = dict(dat_result.displacements)
+                result.max_displacement = max(
+                    result.max_displacement, dat_result.max_displacement
+                )
+            if not result.nodal_forces and dat_result.nodal_forces:
+                result.nodal_forces = dict(dat_result.nodal_forces)
         # Reactions are the nodal forces at constrained nodes only; the
         # FORC block also carries applied loads, which cancel in the sum.
         constrained: set[int] = set()
+        constrained_sets: set[str] = set()
         for step in model.steps:
             for bname in step.bcs:
-                constrained.update(model.sets[model.bc(bname).target_set].members)
-        result.reactions = {
-            n: v for n, v in result.nodal_forces.items() if n in constrained
-        }
-        result.reaction_totals = {
-            axis: sum(v[i] for v in result.reactions.values())
-            for i, axis in enumerate(("fx", "fy", "fz"))
-        }
+                target = model.bc(bname).target_set
+                constrained.update(model.sets[target].members)
+                constrained_sets.add(target.upper())
+        if result.nodal_forces:
+            result.reactions = {
+                n: v for n, v in result.nodal_forces.items() if n in constrained
+            }
+            result.reaction_totals = {
+                axis: sum(v[i] for v in result.reactions.values())
+                for i, axis in enumerate(("fx", "fy", "fz"))
+            }
+        elif dat_result is not None and dat_result.totals_by_set:
+            # TOTALS=ONLY prints (the FreeCAD reaction output): the block
+            # carries the set total directly, with no per-node rows.
+            matched = {
+                name: v
+                for name, v in dat_result.totals_by_set.items()
+                if name in constrained_sets
+            }
+            if not matched and len(dat_result.totals_by_set) == 1:
+                matched = dict(dat_result.totals_by_set)
+            result.reaction_totals = {
+                axis: sum(v[i] for v in matched.values())
+                for i, axis in enumerate(("fx", "fy", "fz"))
+            }
         result.log_tail = log[-4000:]
         return result
 
@@ -207,3 +244,80 @@ def parse_frd(path: Path) -> ResultSet:
         nodal_forces=dict(forc),
         max_displacement=max_disp,
     )
+
+
+@dataclass
+class DatResults:
+    """What a CalculiX .dat (*NODE PRINT output) carries.
+
+    Two shapes occur in the wild:
+    - per-node blocks (``displacements (vx,vy,vz) for set X`` /
+      ``forces (fx,fy,fz) for set X``) with one row per node, and
+    - totals blocks (``total force (fx,fy,fz) for set X``) with a single
+      row of three values and no node id — this is what FreeCAD FEM
+      writes for reaction forces (``TOTALS=ONLY``).
+    With several increments the last block for a set wins.
+    """
+
+    displacements: dict = field(default_factory=dict)  # node id -> [ux, uy, uz]
+    nodal_forces: dict = field(default_factory=dict)  # node id -> [fx, fy, fz]
+    totals_by_set: dict = field(default_factory=dict)  # SET name (upper) -> [fx, fy, fz]
+    max_displacement: float = 0.0
+
+
+_DAT_HEADER = re.compile(
+    r"^\s*(displacements|forces|total force|total displacement)\s*"
+    r"\([^)]*\)\s+for set\s+(\S+)",
+    re.IGNORECASE,
+)
+
+
+def parse_dat(path: Path) -> DatResults:
+    """Parse a CalculiX .dat file's displacement / force blocks."""
+    out = DatResults()
+    current: str | None = None  # "disp" | "forc" | "total_forc" | "total_disp"
+    current_set = ""
+    totals_done = False
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        header = _DAT_HEADER.match(line)
+        if header:
+            kind = header.group(1).lower()
+            current = {
+                "displacements": "disp",
+                "forces": "forc",
+                "total force": "total_forc",
+                "total displacement": "total_disp",
+            }[kind]
+            current_set = header.group(2).upper()
+            totals_done = False
+            continue
+        if "S T E P" in line or "INCREMENT" in line:
+            current = None
+            continue
+        if current is None:
+            continue
+        parts = line.split()
+        if current in ("total_forc", "total_disp"):
+            if totals_done or len(parts) != 3:
+                continue
+            try:
+                values = [float(p) for p in parts]
+            except ValueError:
+                continue
+            if current == "total_forc":
+                out.totals_by_set[current_set] = values
+            totals_done = True
+            continue
+        if len(parts) != 4:
+            continue
+        try:
+            node = int(parts[0])
+            values = [float(p) for p in parts[1:]]
+        except ValueError:
+            continue
+        target = out.displacements if current == "disp" else out.nodal_forces
+        target[node] = values
+    for v in out.displacements.values():
+        mag = (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5
+        out.max_displacement = max(out.max_displacement, mag)
+    return out

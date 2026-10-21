@@ -59,6 +59,12 @@ PROGRAMS: tuple[ProgramSpec, ...] = (
         "명시적 동해석 솔버 (OpenRadioss의 후계). Radioss 블록 형식과 LS-DYNA 키워드 입력을 읽는다.",
     ),
     ProgramSpec(
+        "fenicsx", "FEniCSx", "solver", "CAELAB_FENICSX_PYTHON",
+        (),
+        "PDE 라인 실행 환경. dolfinx가 든 파이썬을 환경변수로 지정한다. "
+        "PDE는 공통 모델 스키마에 넣지 않고 자체 형식을 유지한다 (DESIGN §3.3).",
+    ),
+    ProgramSpec(
         "paraview", "ParaView", "postprocessor", "CAELAB_PARAVIEW",
         ("paraview",),
         "결과 후처리의 본선 프로그램.",

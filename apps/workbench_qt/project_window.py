@@ -166,9 +166,11 @@ class SystemBox(QGraphicsItem):
 
         rect = self.boundingRect()
         painter.setRenderHint(painter.RenderHint.Antialiasing)
-        body = QColor("#2f6db3") if self.isSelected() else QColor("#fdfdfe")
-        painter.setBrush(QBrush(body if self.isSelected() else QColor("#fdfdfe")))
-        painter.setPen(QPen(QColor("#1668b4") if self.isSelected() else QColor("#8a97a5"), 1.6))
+        # Selection is shown by the border and a light tint only: a
+        # dark fill would bury the dark title/status text drawn below.
+        painter.setBrush(QBrush(QColor("#dcebf7") if self.isSelected() else QColor("#fdfdfe")))
+        painter.setPen(QPen(QColor("#1668b4") if self.isSelected() else QColor("#8a97a5"),
+                            2.2 if self.isSelected() else 1.6))
         painter.drawRoundedRect(rect, 8, 8)
         # header band
         painter.setBrush(QBrush(QColor("#e8eef4")))
@@ -200,6 +202,12 @@ class SystemBox(QGraphicsItem):
     def left_anchor(self) -> QPointF:
         return self.pos() + QPointF(0, BOX_H / 2)
 
+    def bottom_anchor(self) -> QPointF:
+        return self.pos() + QPointF(BOX_W / 2, BOX_H)
+
+    def top_anchor(self) -> QPointF:
+        return self.pos() + QPointF(BOX_W / 2, 0)
+
 
 class Connector(QGraphicsPathItem):
     def __init__(self, src: SystemBox, dst: SystemBox) -> None:
@@ -212,10 +220,31 @@ class Connector(QGraphicsPathItem):
         self.refresh()
 
     def refresh(self) -> None:
-        a, b = self.src.right_anchor(), self.dst.left_anchor()
-        path = QPainterPath(a)
-        dx = max(40.0, abs(b.x() - a.x()) / 2)
-        path.cubicTo(a + QPointF(dx, 0), b - QPointF(dx, 0), b)
+        # Route along the dominant direction between the two boxes.
+        # A box placed below its source (e.g. the expert box under the
+        # results box) must connect bottom -> top; forcing every link
+        # through the right/left anchors drew a loop around the box.
+        src_c = self.src.pos() + QPointF(BOX_W / 2, BOX_H / 2)
+        dst_c = self.dst.pos() + QPointF(BOX_W / 2, BOX_H / 2)
+        dx, dy = dst_c.x() - src_c.x(), dst_c.y() - src_c.y()
+        if abs(dx) >= abs(dy):
+            if dx >= 0:
+                a, b = self.src.right_anchor(), self.dst.left_anchor()
+                off = QPointF(max(40.0, abs(b.x() - a.x()) / 2), 0)
+            else:
+                a, b = self.src.left_anchor(), self.dst.right_anchor()
+                off = QPointF(-max(40.0, abs(b.x() - a.x()) / 2), 0)
+            path = QPainterPath(a)
+            path.cubicTo(a + off, b - off, b)
+        else:
+            if dy >= 0:
+                a, b = self.src.bottom_anchor(), self.dst.top_anchor()
+                off = QPointF(0, max(40.0, abs(b.y() - a.y()) / 2))
+            else:
+                a, b = self.src.top_anchor(), self.dst.bottom_anchor()
+                off = QPointF(0, -max(40.0, abs(b.y() - a.y()) / 2))
+            path = QPainterPath(a)
+            path.cubicTo(a + off, b - off, b)
         self.setPath(path)
 
 
@@ -241,6 +270,10 @@ class ProjectWindow(QMainWindow):
         run_btn.setObjectName("primary")
         run_btn.clicked.connect(self.run_chain)
         toolbar.addWidget(run_btn)
+        fit_btn = QPushButton("도식 맞춤")
+        fit_btn.setToolTip("도식 전체가 창 안에 들어오도록 맞춥니다")
+        fit_btn.clicked.connect(self.fit_schematic)
+        toolbar.addWidget(fit_btn)
         toolbar.addWidget(QLabel("  상자를 더블클릭하면 그 프로그램의 작업 창이 열립니다."))
 
         toolbox = QListWidget()
@@ -278,8 +311,35 @@ class ProjectWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, dock2)
         self.statusBar().showMessage("상위 화면: 프로젝트 (런처) · 실행은 Workbench 단일 경로")
 
+    # -- view fitting ---------------------------------------------------------
+    def fit_schematic(self) -> None:
+        """Fit the whole schematic in the view.
+
+        The default chain is wider than a laptop window, so without a
+        fit the right-hand boxes start out clipped behind a scrollbar.
+        """
+        rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)
+        if not rect.isEmpty():
+            self.view.fitInView(rect, Qt.KeepAspectRatio)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        if not getattr(self, "_fitted_once", False):
+            self._fitted_once = True
+            self.fit_schematic()
+
     # -- schematic ------------------------------------------------------------
     def add_box(self, kind: str) -> SystemBox:
+        existing = self.boxes.get(kind)
+        if existing is not None:
+            # One box per system kind: adding the same kind twice used
+            # to leave an orphaned box on the canvas that the chain
+            # and the connectors no longer knew about.
+            self.scene.clearSelection()
+            existing.setSelected(True)
+            self.view.centerOn(existing)
+            self._log(f"{existing.title} 상자는 이미 도식에 있습니다.")
+            return existing
         title, sub = next((t, s) for k, t, s in SYSTEM_KINDS if k == kind)
         box = SystemBox(kind, title, sub)
         box.setPos(60 + 230 * (len(self.boxes) % 4), 60 + 130 * (len(self.boxes) // 4))
@@ -299,8 +359,6 @@ class ProjectWindow(QMainWindow):
                      "results": (820, 60), "expert": (820, 220)}
         for kind, (x, y) in positions.items():
             self.boxes[kind].setPos(x, y)
-        for c in self.connectors:
-            c.refresh()
         self.connect("geometry", "mesh")
         self.connect("mesh", "analysis")
         self.connect("analysis", "results")
@@ -323,21 +381,35 @@ class ProjectWindow(QMainWindow):
         """Show, on the boxes themselves, whether the program behind
         each box is actually found on this machine. The workbench's
         main line is connecting real programs, so a box whose program
-        is missing must say so instead of pretending."""
+        is missing must say so instead of pretending — in its state
+        colour as well as its text (a green "up-to-date" dot next to
+        "program not found" contradicts itself)."""
         statuses = {s.spec.id: s for s in program_statuses()}
-        geo = statuses.get("freecad")
-        if geo is not None:
-            self.boxes["geometry"].set_state(
-                "done", "demo.FCStd" if geo.available else "FreeCAD를 찾지 못함")
+
+        def reflect(kind: str, program_id: str, name: str,
+                    ok_state: str, ok_detail: str) -> None:
+            status = statuses.get(program_id)
+            if status is None or kind not in self.boxes:
+                return
+            if status.available:
+                self.boxes[kind].set_state(ok_state, ok_detail)
+            else:
+                self.boxes[kind].set_state("needs_input", f"{name}를 찾지 못함")
+
+        reflect("geometry", "freecad", "FreeCAD", "done", "demo.FCStd")
+        reflect("mesh", "gmsh", "Gmsh", "ready", "절점 99개 · 요소 40개")
+        reflect("analysis", "calculix", "CalculiX", "ready", "CalculiX")
         pv = statuses.get("paraview")
-        if pv is not None:
-            box = self.boxes["results"]
-            box.set_state(box.state, "" if pv.available else "ParaView를 찾지 못함")
+        if pv is not None and not pv.available and "results" in self.boxes:
+            self.boxes["results"].set_state("needs_input", "ParaView를 찾지 못함")
 
     def _open_external(self, kind: str, program_id: str, file: str | None) -> None:
         """Open a box's own program when it is installed."""
         statuses = {s.spec.id: s for s in program_statuses()}
-        status = statuses[program_id]
+        status = statuses.get(program_id)
+        if status is None:
+            self._log(f"{program_id} 프로그램 정보를 찾지 못해 열 수 없습니다.")
+            return
         command = launch_command(status, file)
         if command is None:
             self._log(
@@ -372,7 +444,13 @@ class ProjectWindow(QMainWindow):
         elif box.kind == "mesh":
             self._open_external(box.kind, "gmsh", None)
         elif box.kind == "expert":
-            self._log("전문가 패널은 다음 단계에서 붙입니다.")
+            from .main_window import MainWindow
+
+            self._workspace = MainWindow(self.workbench)
+            self._workspace.set_model(self.model)
+            self._workspace.set_module("전문가")
+            self._workspace.show()
+            self._log("전문가 토론 패널을 열었습니다. 근거는 최근 결과 요약입니다.")
         else:
             self._log(f"{box.title} 상자: 전용 화면은 다음 단계입니다.")
 
@@ -393,3 +471,6 @@ class ProjectWindow(QMainWindow):
         else:
             self.boxes["analysis"].set_state("failed")
             self.status.setText("실행 실패 — 메시지 로그를 확인하세요.")
+            if job.result is not None and job.result.log_tail:
+                # Say why it failed, not only that it failed.
+                self._log(job.result.log_tail[-800:])

@@ -25,7 +25,7 @@ def test_registry_covers_the_connected_programs():
     assert roles["freecad"] == "preprocessor"
     assert roles["paraview"] == "postprocessor"
     solvers = {spec.id for spec in PROGRAMS if spec.role == "solver"}
-    assert solvers == {"calculix", "codeaster", "opencourant"}
+    assert solvers == {"calculix", "codeaster", "opencourant", "fenicsx"}
 
 
 def test_env_override_wins_and_missing_program_is_not_an_error(tmp_path):

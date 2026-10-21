@@ -69,6 +69,47 @@ def fmt_force(n: float) -> str:
     return f"{n:,.1f} N"
 
 
+import re as _re
+
+_PATH_SEG = _re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\[(\d+)\])?$")
+
+
+def _path_step(obj, segment: str):
+    match = _PATH_SEG.match(segment)
+    if not match:
+        raise ValueError(f"잘못된 경로 조각입니다: {segment}")
+    value = obj[match.group(1)] if isinstance(obj, dict) else getattr(obj, match.group(1))
+    if match.group(3) is not None:
+        value = value[int(match.group(3))]
+    return value
+
+
+def _path_get(root, path: str):
+    obj = root
+    for segment in path.split("."):
+        obj = _path_step(obj, segment)
+    return obj
+
+
+def _path_set(root, path: str, new_value) -> None:
+    segments = path.split(".")
+    parent = root
+    for segment in segments[:-1]:
+        parent = _path_step(parent, segment)
+    last = _PATH_SEG.match(segments[-1])
+    if not last:
+        raise ValueError(f"잘못된 경로 조각입니다: {segments[-1]}")
+    name, index = last.group(1), last.group(3)
+    if index is None:
+        if isinstance(parent, dict):
+            parent[name] = new_value
+        else:
+            setattr(parent, name, new_value)
+        return
+    container = parent[name] if isinstance(parent, dict) else getattr(parent, name)
+    container[int(index)] = new_value
+
+
 class MainWindow(QMainWindow):
     def __init__(self, workbench: Workbench | None = None) -> None:
         super().__init__()
@@ -102,8 +143,8 @@ class MainWindow(QMainWindow):
         results_menu.addAction("ParaView에서 열기 (다음 단계)",
                                lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
         expert_menu = menu.addMenu("전문가")
-        expert_menu.addAction("선택 대상으로 논의 (다음 단계)",
-                              lambda: self._log("전문가 패널은 다음 단계에서 붙입니다."))
+        expert_menu.addAction("전문가 패널 열기", self.open_expert_panel)
+        expert_menu.addAction("선택 대상으로 논의", self.discuss_selection)
         help_menu = menu.addMenu("도움말")
         help_menu.addAction("진단 정보", self.show_diagnostics)
 
@@ -197,6 +238,23 @@ class MainWindow(QMainWindow):
         props_dock = QDockWidget("속성")
         props_dock.setWidget(self.props_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
+        self.props_dock = props_dock
+
+        # right dock, tabbed with properties: expert discussion panel
+        from .expert_panel import ExpertPanel
+
+        self.expert_panel = ExpertPanel(
+            get_model=lambda: self.model,
+            get_result=lambda: self._last_result,
+            apply_proposal=self._apply_proposal,
+            run_solve=self.run_solve,
+            on_discussed=lambda: self._set_flow(4),
+        )
+        self.expert_dock = QDockWidget("전문가 토론")
+        self.expert_dock.setWidget(self.expert_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.expert_dock)
+        self.tabifyDockWidget(props_dock, self.expert_dock)
+        self.expert_dock.hide()
 
         # bottom dock: messages + flow
         bottom = QWidget()
@@ -231,6 +289,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("작업 없음")
         self.statusBar().addPermanentWidget(QLabel("솔버: CalculiX · 단위계: SI"))
 
+        # Give the docks usable starting widths. At the default split
+        # the property dock came up ~200 px wide, which clipped the
+        # spin boxes (value + unit + arrows did not fit).
+        self.props_panel.setMinimumWidth(250)
+        self.resizeDocks([tree_dock, props_dock], [280, 320], Qt.Horizontal)
+        self.resizeDocks([bottom_dock], [190], Qt.Vertical)
+
     # -- modules ------------------------------------------------------------
     def _fill_context_bar(self) -> None:
         self.context_bar.clear()
@@ -242,7 +307,7 @@ class MainWindow(QMainWindow):
             "하중·구속": [],
             "작업": [("입력 검사", self.run_check), ("실행", self.run_solve)],
             "결과": [("ParaView에서 열기 (다음 단계)", lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))],
-            "전문가": [("선택 대상으로 논의 (다음 단계)", lambda: self._log("전문가 패널은 다음 단계에서 붙입니다."))],
+            "전문가": [("전문가 패널 열기", self.open_expert_panel), ("선택 대상으로 논의", self.discuss_selection)],
         }.get(self.module, [])
         for label, fn in actions:
             self.context_bar.addAction(label, fn)
@@ -259,9 +324,7 @@ class MainWindow(QMainWindow):
             item.setHidden(gname not in groups)
         self._fill_context_bar()
         if name == "전문가":
-            self._clear_props()
-            self.props_title.setText("전문가")
-            self.props_hint.setText("전문가 패널은 다음 단계에서 붙입니다. 지금 모듈에서는 트리 대신 결과와 로그를 근거로 논의할 자리만 마련돼 있습니다.")
+            self.open_expert_panel()
             return
         # select the first visible leaf of the module for immediate context
         for gname in groups:
@@ -511,6 +574,46 @@ class MainWindow(QMainWindow):
         if self._issue_target:
             self.select_path(self._issue_target)
 
+    # -- expert panel ---------------------------------------------------------
+    def open_expert_panel(self) -> None:
+        self.expert_dock.show()
+        self.expert_dock.raise_()
+        self.expert_panel.refresh_evidence()
+
+    def discuss_selection(self) -> None:
+        items = self.tree.selectedItems()
+        path = items[0].data(0, Qt.UserRole) if items else None
+        self.expert_panel.set_target(path)
+        self.open_expert_panel()
+
+    def _apply_proposal(self, proposal) -> str:
+        """Apply one expert proposal to the model. User-triggered only.
+
+        The recorded "before" value must still match the model —
+        otherwise the proposal is stale and is not applied.
+        """
+        if self.model is None:
+            return "모델이 열려 있지 않습니다."
+        try:
+            current = _path_get(self.model, proposal.target_path)
+        except (ValueError, KeyError, AttributeError, IndexError, TypeError) as exc:
+            return f"경로를 찾을 수 없습니다: {exc}"
+        if isinstance(current, (int, float)) and isinstance(proposal.before, (int, float)):
+            matches = abs(float(current) - float(proposal.before)) <= 1e-9 * max(1.0, abs(float(current)))
+        else:
+            matches = current == proposal.before
+        if not matches:
+            return f"현재 값({current})이 제안의 이전 값({proposal.before})과 달라 적용하지 않았습니다."
+        new_value = proposal.after
+        if isinstance(current, float) and isinstance(new_value, (int, float)):
+            new_value = float(new_value)
+        elif isinstance(current, int) and isinstance(new_value, (int, float)):
+            new_value = int(new_value)
+        _path_set(self.model, proposal.target_path, new_value)
+        self._mark_dirty()
+        self._log(f"전문가 제안을 적용했습니다: {proposal.target_path} {current} → {new_value}")
+        return "적용했습니다. 저장하고, 필요하면 실행 버튼으로 다시 계산하세요."
+
     def run_solve(self) -> None:
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
@@ -531,6 +634,7 @@ class MainWindow(QMainWindow):
             self._add(self.results_item, f"CalculiX · 최대 변위 {fmt_length(result.max_displacement)}", "result")
             self.viewport.show_results(self.model, result)
             self.legend_label.setText("색상 범례: 변위 (mm)")
+            self.expert_panel.refresh_evidence()
             self._set_flow(3)
         else:
             summary = "계산 실패 — 아래 로그를 확인하세요."

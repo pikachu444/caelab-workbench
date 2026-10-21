@@ -1,0 +1,107 @@
+import pytest
+
+from caelab.assist.experts import (
+    TEMPLATES,
+    Discussion,
+    ExpertProvider,
+    get_provider,
+    get_template,
+    parse_proposals,
+    summarize_model,
+)
+from caelab.solvers.base import ResultSet
+from caelab.result_summary import format_summary_ko, summarize_result
+from conftest import cantilever_model
+
+
+class FakeProvider(ExpertProvider):
+    id = "fake"
+    name = "시험용 공급자"
+
+    def availability(self):
+        return True, "시험용"
+
+    def discuss(self, prompt):
+        self.last_prompt = prompt
+        return (
+            "반력이 하중과 평형을 이룹니다.\n"
+            "```proposals\n"
+            '[{"target_path": "loads[0].values.fy", "before": -1000.0, '
+            '"after": -500.0, "reason": "하중 절반으로 민감도 확인"}]\n'
+            "```"
+        )
+
+
+def test_templates_are_four_and_tools_actually_differ():
+    assert len(TEMPLATES) == 4
+    tool_sets = {t.allowed_tools for t in TEMPLATES}
+    assert len(tool_sets) == 4  # each role may read different evidence
+    assert get_template("interpretation").allowed_tools == ("result_summary",)
+
+
+def test_default_provider_is_honestly_unavailable(monkeypatch):
+    monkeypatch.delenv("CAELAB_EXPERT_PROVIDER", raising=False)
+    provider = get_provider()
+    ok, reason = provider.availability()
+    assert not ok
+    assert "유료 API" in reason  # never silently spend on an API
+
+
+def test_discussion_is_grounded_and_keeps_history():
+    result = ResultSet(
+        solver_id="calculix", success=True, max_displacement=0.0001905,
+        reaction_totals={"fx": 0.0, "fy": 999.996, "fz": 0.0},
+    )
+    summary_text = format_summary_ko(summarize_result(result))
+    provider = FakeProvider()
+    discussion = Discussion(
+        template=get_template("convergence"),
+        summary_text=summary_text,
+        model_text=summarize_model(cantilever_model()),
+        log_tail="solver log tail",
+        provider=provider,
+    )
+    outcome = discussion.ask("평형이 맞나요?")
+    assert outcome["available"]
+    # the prompt carries only evidence numbers, incl. the measured reaction
+    assert "999" in provider.last_prompt or "1,000" in provider.last_prompt
+    assert "solver log tail" in provider.last_prompt  # template may read logs
+    assert len(outcome["proposals"]) == 1
+    assert outcome["proposals"][0].after == -500.0
+    # follow-up keeps the earlier exchange in context
+    discussion.ask("이어서 묻습니다")
+    assert "평형이 맞나요?" in provider.last_prompt
+
+
+def test_interpretation_template_cannot_read_log():
+    provider = FakeProvider()
+    discussion = Discussion(
+        template=get_template("interpretation"),
+        summary_text="요약",
+        log_tail="SECRET LOG",
+        provider=provider,
+    )
+    discussion.ask("해석해 주세요")
+    assert "SECRET LOG" not in provider.last_prompt
+
+
+def test_parse_proposals_drops_malformed_entries():
+    text = (
+        "```proposals\n"
+        '[{"target_path": "a.b", "before": 1, "after": 2},'
+        ' {"target_path": 3, "before": 1, "after": 2},'
+        ' {"before": 1, "after": 2}]\n```'
+    )
+    proposals = parse_proposals(text)
+    assert len(proposals) == 1
+    assert proposals[0].target_path == "a.b"
+    assert parse_proposals("제안이 없는 답변") == []
+    assert parse_proposals("```proposals\nnot json\n```") == []
+
+
+def test_unavailable_discussion_is_a_state_not_an_exception(monkeypatch):
+    monkeypatch.delenv("CAELAB_EXPERT_PROVIDER", raising=False)
+    discussion = Discussion(template=get_template("material"), summary_text="요약")
+    outcome = discussion.ask("재료가 맞나요?")
+    assert outcome["available"] is False
+    assert outcome["proposals"] == []
