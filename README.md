@@ -16,4 +16,14 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
 
 ## 상태
 
-- 2026-10-21 저장소 개설. 설계 단계이며 대규모 구현은 착수 전입니다.
+- 2026-10-21 저장소 개설. 재설계 골격 구현에 착수했습니다 (자세한 상태는 CURRENT_STATE.md).
+
+## 실행
+
+```bash
+pip install -e ".[gui,dev]"
+python -m pytest            # 자동 테스트 (CalculiX가 있으면 끝단 실행 테스트까지)
+python -m apps.workbench_qt # GUI 셸 (프로젝트 폴더를 인자로 줄 수 있습니다)
+```
+
+CalculiX 실행 파일은 PATH에서 찾고, `CAELAB_CCX` 환경변수로 직접 지정할 수도 있습니다.
