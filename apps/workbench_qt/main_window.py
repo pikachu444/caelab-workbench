@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
         analysis_menu = menu.addMenu("해석")
         analysis_menu.addAction("입력 검사", self.run_check)
         analysis_menu.addAction("실행", self.run_solve)
+        analysis_menu.addAction("최적화 패널 열기", self.open_optimization_panel)
         results_menu = menu.addMenu("결과")
         results_menu.addAction("ParaView에서 열기 (다음 단계)",
                                lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
@@ -255,6 +256,16 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.expert_dock)
         self.tabifyDockWidget(props_dock, self.expert_dock)
         self.expert_dock.hide()
+
+        # right dock, tabbed with properties: optimization panel
+        from .optimization_panel import OptimizationPanel
+
+        self.optimization_panel = OptimizationPanel()
+        self.optimization_dock = QDockWidget("최적화")
+        self.optimization_dock.setWidget(self.optimization_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.optimization_dock)
+        self.tabifyDockWidget(props_dock, self.optimization_dock)
+        self.optimization_dock.hide()
 
         # bottom dock: messages + flow
         bottom = QWidget()
@@ -573,6 +584,11 @@ class MainWindow(QMainWindow):
     def _goto_issue(self) -> None:
         if self._issue_target:
             self.select_path(self._issue_target)
+
+    # -- optimization panel ---------------------------------------------------
+    def open_optimization_panel(self) -> None:
+        self.optimization_dock.show()
+        self.optimization_dock.raise_()
 
     # -- expert panel ---------------------------------------------------------
     def open_expert_panel(self) -> None:

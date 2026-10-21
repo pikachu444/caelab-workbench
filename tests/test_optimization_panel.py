@@ -1,0 +1,121 @@
+"""Optimization panel (offscreen Qt): the 5-step HyperStudy-style flow.
+
+The evaluator is an analytic bowl with known minimum 0 at (0.5, -1);
+expected numbers are analytic or stated with their tolerance. This
+proves the panel flow on Linux offscreen only — GUI completion is
+judged on a real Windows screen (apps/workbench_qt rules).
+"""
+
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from PySide6.QtWidgets import QApplication
+
+from apps.workbench_qt.optimization_panel import OptimizationPanel
+
+VARS = [
+    {"id": "x", "unit": "1", "lower": -2.0, "upper": 2.0, "value": 0.0},
+    {"id": "y", "unit": "1", "lower": -2.0, "upper": 2.0, "value": 0.0},
+]
+
+
+def bowl(values):
+    return {"responses": {"f": {"kind": "scalar",
+                                "value": (values["x"] - 0.5) ** 2
+                                + (values["y"] + 1.0) ** 2,
+                                "unit": "1"}}}
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+def _panel(app):
+    panel = OptimizationPanel(
+        evaluator=bowl, variables=VARS,
+        objective={"response": "f", "unit": "1", "direction": "minimize"})
+    panel.doe_count.setValue(16)
+    panel.test_count.setValue(8)
+    panel.opt_generations.setValue(12)
+    panel.opt_population.setValue(10)
+    assert panel.apply_setup()
+    return panel
+
+
+def test_setup_rejects_inverted_bounds_with_one_line(app):
+    panel = _panel(app)
+    panel.variable_table.item(0, 2).setText("5")   # lower
+    panel.variable_table.item(0, 3).setText("-5")  # upper < lower
+    assert not panel.apply_setup()
+    assert "설정 오류" in panel.setup_status.text()
+
+
+def test_full_five_step_flow(app):
+    panel = _panel(app)
+
+    doe = panel.run_doe_step()
+    assert doe is not None and doe["execution_status"] == "SUCCEEDED"
+    # History: 16 training DOE + 8 test DOE actual rows.
+    assert panel.history_table.rowCount() == 24
+    assert panel.best_history_index is not None
+
+    surrogate = panel.run_surrogate_step()
+    assert surrogate is not None
+    # Accuracy is measured on the separate test DOE (8 rows).
+    assert len(surrogate.validation["holdout_ids"]) == 8
+    assert surrogate.validation["rmse"] < 0.6  # quadratic bowl, 16 training pts
+    assert "테스트 DOE 8개 기준" in panel.surrogate_status.text()
+
+    result = panel.run_optimization_step()
+    assert result is not None and result["best"] is not None
+    # Optimized on the surrogate; the best row is pinned and highlighted.
+    assert panel.best_history_index is not None
+    best_entry = panel._history[panel.best_history_index]
+    assert best_entry["source"] == "opt_surrogate"
+    item = panel.history_table.item(panel.best_history_index, 0)
+    assert item.background().color().green() > 200  # highlight brush applied
+    assert result["best"]["objective"] < 0.25
+
+    verification = panel.run_verification_step()
+    assert verification is not None
+    values = verification["values"]
+    analytic = (values["x"] - 0.5) ** 2 + (values["y"] + 1.0) ** 2
+    # The re-run actual value is exactly the analytic bowl at the best point.
+    assert verification["actual"] == pytest.approx(analytic, abs=1e-9)
+    # Predicted (surrogate) vs actual are compared, with the error stated.
+    assert verification["predicted"] is not None
+    assert verification["abs_error"] == pytest.approx(
+        abs(verification["predicted"] - verification["actual"]))
+    assert verification["abs_error"] < 0.6
+    # Error is also stated against the DOE objective range (a relative-to-
+    # actual error alone explodes near the zero optimum).
+    assert verification["range_fraction"] is not None
+    assert verification["range_fraction"] < 0.01
+    assert "예측값" in panel.verify_status.text()
+    assert "실제값" in panel.verify_status.text()
+    # Verification adds one actual re-run row at the end of the history.
+    assert panel._history[-1]["source"] == "verify"
+
+
+def test_optimization_without_surrogate_uses_actual_evaluator(app):
+    panel = _panel(app)
+    panel.run_doe_step()
+    result = panel.run_optimization_step()  # no surrogate built
+    assert result["best"]["objective"] < 0.05  # analytic minimum is 0
+    verification = panel.run_verification_step()
+    assert verification["predicted"] is None  # no surrogate -> no comparison
+    assert verification["actual"] == pytest.approx(
+        result["best"]["objective"], abs=1e-9)  # deterministic re-run
+
+
+def test_panel_without_evaluator_says_so(app):
+    panel = OptimizationPanel()
+    assert "연결되지 않았습니다" in panel.setup_status.text()
+    assert panel.run_doe_step() is None
+    assert "먼저 1단계" in panel.doe_status.text()

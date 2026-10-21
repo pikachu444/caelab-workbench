@@ -10,6 +10,7 @@ equilibrium), not just file existence.
 - CAELAB_OPENCOURANT_TESTDATA : dir with the TWISBEAM QA decks
 - CAELAB_CODEASTER : run_aster executable (Salome-Meca)
 - CAELAB_ASTER_TESTDATA : dir with beam.med / study.comm / study.export
+- CAELAB_SALOME : salome launcher of a Salome 9.16 install
 """
 
 from __future__ import annotations
@@ -94,3 +95,67 @@ def test_codeaster_cantilever_reaction(tmp_path):
     dz = values[2::3]
     total = sum(dz)
     assert total == pytest.approx(1000.0, rel=0.05), f"reaction sum {total}"
+
+
+# ---------------------------------------------------------------- Salome
+_SALOME_MED_SCRIPT = '''
+import salome
+salome.salome_init()
+from salome.geom import geomBuilder
+geompy = geomBuilder.New()
+box = geompy.MakeBoxDXDYDZ(100.0, 10.0, 10.0)
+geompy.addToStudy(box, "box")
+faces = geompy.SubShapeAllSorted(box, geompy.ShapeType["FACE"])
+fixed = load = None
+for f in faces:
+    bb = geompy.BoundingBox(f)
+    cx = 0.5 * (bb[0] + bb[1])
+    if abs(cx) < 1e-6:
+        fixed = f
+    if abs(cx - 100.0) < 1e-6:
+        load = f
+from salome.smesh import smeshBuilder
+smesh = smeshBuilder.New()
+mesh = smesh.Mesh(box, "beam_mesh")
+algo = mesh.Tetrahedron(algo=smeshBuilder.NETGEN_1D2D3D)
+algo.Parameters().SetMaxSize(4.0)
+assert mesh.Compute()
+mesh.GroupOnGeom(fixed, "FIXED")
+mesh.GroupOnGeom(load, "LOADF")
+mesh.GroupOnGeom(box, "SOLID")
+mesh.ExportMED(r"OUT_MED")
+import medcoupling as mc
+fmm = mc.MEDFileMesh.New(r"OUT_MED")
+print("NODES", fmm.getCoords().getNumberOfTuples())
+print("CELLS", fmm.getMeshAtLevel(0).getNumberOfCells())
+print("GROUPS", ",".join(sorted(fmm.getGroupsNames())))
+'''
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CAELAB_SALOME"),
+    reason="Salome not installed (CAELAB_SALOME unset)",
+)
+def test_salome_headless_med_mesh(tmp_path):
+    """Headless Salome: build a box mesh in SMESH, export MED, and read
+    it back with MEDCoupling. Counts must agree between the two readers
+    and the three geometry groups must survive the round trip."""
+    launcher = os.environ["CAELAB_SALOME"]
+    med = tmp_path / "salome_smoke.med"
+    script = tmp_path / "salome_smoke.py"
+    script.write_text(_SALOME_MED_SCRIPT.replace("OUT_MED", str(med)))
+    proc = subprocess.run(
+        [launcher, "shell", str(script)],
+        cwd=tmp_path, capture_output=True, text=True, timeout=1200,
+    )
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    nodes = re.search(r"NODES (\d+)", proc.stdout)
+    cells = re.search(r"CELLS (\d+)", proc.stdout)
+    groups = re.search(r"GROUPS ([A-Z,]+)", proc.stdout)
+    assert nodes and cells and groups, proc.stdout[-2000:]
+    # 100x10x10 box at max size 4 measured 259 nodes / 584 tetra on
+    # Salome 9.16; keep the band loose for other mesher versions.
+    assert int(nodes.group(1)) > 100
+    assert int(cells.group(1)) > 200
+    assert groups.group(1).split(",") == ["FIXED", "LOADF", "SOLID"]
+    assert med.exists() and med.stat().st_size > 10_000
