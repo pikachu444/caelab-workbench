@@ -17,6 +17,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from apps.workbench_qt.optimization_panel import OptimizationPanel
+from caelab.numerical import ModelEvaluator
+from caelab.solvers.calculix import find_ccx
 
 VARS = [
     {"id": "x", "unit": "1", "lower": -2.0, "upper": 2.0, "value": 0.0},
@@ -50,8 +52,8 @@ def _panel(app):
 
 def test_setup_rejects_inverted_bounds_with_one_line(app):
     panel = _panel(app)
-    panel.variable_table.item(0, 2).setText("5")   # lower
-    panel.variable_table.item(0, 3).setText("-5")  # upper < lower
+    panel.variable_table.item(0, 3).setText("5")   # lower (col 3)
+    panel.variable_table.item(0, 4).setText("-5")  # upper (col 4) < lower
     assert not panel.apply_setup()
     assert "설정 오류" in panel.setup_status.text()
 
@@ -119,3 +121,131 @@ def test_panel_without_evaluator_says_so(app):
     assert "연결되지 않았습니다" in panel.setup_status.text()
     assert panel.run_doe_step() is None
     assert "먼저 1단계" in panel.doe_status.text()
+
+
+# -- model connection (step-1 model paths -> ModelEvaluator) ---------------
+
+E_SPEC = {"id": "E", "path": "materials[0].params.youngs_modulus", "unit": "Pa",
+          "lower": 1.0e11, "upper": 3.0e11, "value": 2.1e11}
+FY_SPEC = {"id": "fy", "path": "loads[TIP_FORCE].values.fy", "unit": "N",
+           "lower": -2000.0, "upper": -500.0, "value": -1000.0}
+DISP_SPEC = {"response": "disp", "path": "max_displacement", "unit": "m",
+             "direction": "minimize"}
+
+
+def _fake_run(model):
+    """Cheap stand-in solver: Euler-Bernoulli tip deflection as the result."""
+    from caelab.solvers.base import ResultSet
+
+    e = model.materials[0].params["youngs_modulus"]
+    fy = model.loads[0].values["fy"]
+    inertia = 0.1 * 0.1 ** 3 / 12
+    return ResultSet(solver_id="fake", success=True,
+                     max_displacement=abs(fy) / (3 * e * inertia),
+                     reaction_totals={"fy": -fy})
+
+
+def _model_panel(app):
+    from conftest import cantilever_model
+
+    panel = OptimizationPanel()
+    panel.configure_with_model(cantilever_model(), [E_SPEC, FY_SPEC],
+                               _fake_run, [DISP_SPEC])
+    return panel
+
+
+def test_model_paths_shown_and_applied(app):
+    panel = _model_panel(app)
+    # The paths the user picked are visible in the step-1 table.
+    assert panel.variable_table.item(0, 2).text() == E_SPEC["path"]
+    assert panel.variable_table.item(1, 2).text() == FY_SPEC["path"]
+    assert panel.response_path_edit.text() == "max_displacement"
+    assert panel.apply_setup()
+    assert "모델 경로 연결" in panel.setup_status.text()
+    specs = panel.current_variable_specs()
+    assert [s["path"] for s in specs] == [E_SPEC["path"], FY_SPEC["path"]]
+    assert isinstance(panel.evaluator, ModelEvaluator)
+
+
+def test_model_path_errors_are_one_line(app):
+    panel = _model_panel(app)
+    panel.variable_table.item(0, 2).setText("")  # mixed path / no-path
+    assert not panel.apply_setup()
+    assert "모든 변수" in panel.setup_status.text()
+    panel = _model_panel(app)
+    panel.variable_table.item(0, 2).setText("materials[0].params.nope")
+    assert not panel.apply_setup()
+    assert "설정 오류" in panel.setup_status.text()
+
+
+def test_model_mode_full_flow_on_fake_solver(app):
+    panel = _model_panel(app)
+    panel.doe_count.setValue(8)
+    panel.test_count.setValue(4)
+    panel.opt_generations.setValue(8)
+    panel.opt_population.setValue(6)
+    assert panel.apply_setup()
+    assert panel.run_doe_step() is not None
+    assert panel.run_surrogate_step() is not None
+    assert panel.run_optimization_step()["best"] is not None
+    verification = panel.run_verification_step()
+    values = verification["values"]
+    inertia = 0.1 * 0.1 ** 3 / 12
+    analytic = abs(values["fy"]) / (3 * values["E"] * inertia)
+    assert verification["actual"] == pytest.approx(analytic, rel=1e-9)
+
+
+@pytest.mark.skipif(find_ccx() is None, reason="ccx not available (CAELAB_CCX)")
+def test_cantilever_end_to_end_with_real_solver(app, tmp_path):
+    """The whole panel flow on the real CalculiX converter: DOE ->
+    surrogate -> optimization -> re-run. The re-run value must match
+    an independent direct solver run at the same values, and beat the
+    nominal model's displacement (minimizing pushes E up, |F| down).
+    """
+    import copy
+    import tempfile
+
+    from caelab.numerical import set_path
+    from caelab.solvers.calculix import CalculiXConverter
+    from conftest import cantilever_model
+
+    converter = CalculiXConverter()
+
+    def run_fn(model):
+        with tempfile.TemporaryDirectory() as td:
+            deck = converter.write_input(model, td)
+            return converter.run(model, deck, td)
+
+    def direct(values):
+        model = copy.deepcopy(cantilever_model())
+        for spec in (E_SPEC, FY_SPEC):
+            set_path(model, spec["path"], values[spec["id"]])
+        return run_fn(model).max_displacement
+
+    panel = OptimizationPanel()
+    panel.configure_with_model(cantilever_model(), [E_SPEC, FY_SPEC],
+                               run_fn, [DISP_SPEC])
+    panel.doe_count.setValue(8)
+    panel.test_count.setValue(4)
+    panel.opt_generations.setValue(8)
+    panel.opt_population.setValue(6)
+    assert panel.apply_setup()
+
+    assert panel.run_doe_step()["execution_status"] == "SUCCEEDED"
+    assert panel.run_surrogate_step() is not None
+    result = panel.run_optimization_step()
+    assert result["best"] is not None
+    verification = panel.run_verification_step()
+    assert verification is not None
+
+    # Re-run value vs an independent direct solver run at the best values.
+    solver_value = direct(verification["values"])
+    assert verification["actual"] == pytest.approx(solver_value, rel=0.005)
+    # And it really improved on the nominal model (E=210 GPa, F=-1000 N).
+    nominal = direct({"E": 2.1e11, "fy": -1000.0})
+    assert verification["actual"] < 0.8 * nominal
+    # Sanity band against Euler-Bernoulli at the best values.
+    inertia = 0.1 * 0.1 ** 3 / 12
+    values = verification["values"]
+    analytic = abs(values["fy"]) / (3 * values["E"] * inertia)
+    assert 0.4 * analytic < verification["actual"] < 1.2 * analytic

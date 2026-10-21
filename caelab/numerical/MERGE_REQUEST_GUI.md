@@ -43,15 +43,38 @@ def open_optimization_panel(self) -> None:
     self.optimization_dock.raise_()
 ```
 
-## 2. 모델 연결 (후속 결정 필요)
+## 2. 모델 연결 (완료 — 2026-10-21 후속 작업)
 
-패널은 평가 함수를 주입받는 구조이고, 공통 모델 연결 지점은
-`OptimizationPanel.configure_with_model(model, variable_specs,
-run_fn, response_specs)`로 준비해 뒀습니다 (`caelab.numerical.
-ModelEvaluator` 사용). 메인 창에서 붙이려면 사용자가 변수로 쓸
-모델 경로를 고르는 방법이 필요한데, 이는 패널 1단계 표에
-"모델 경로" 열을 추가하는 후속 작업으로 제안합니다. 1차 결합은
-도킹 + 빈 패널 열기까지로 해 주세요.
+패널 1단계 표에 "모델 경로" 열과 "응답 모델 경로" 입력을
+추가했습니다. 사용자가 표에서 고른 경로 그대로
+`ModelEvaluator`를 다시 만들어 연결하며, 경로는 적용 시점에
+실재·숫자 여부를 검사합니다(하나만 경로를 쓰는 혼합 입력은
+한 줄 오류로 거절). 메인 창에서 남는 일은 모델과 run_fn을
+넘기는 것뿐입니다:
+
+```python
+# 열린 모델과 CalculiX 변환기 기준 예시
+def _opt_run_fn(model):
+    import tempfile
+    from caelab.solvers.calculix import CalculiXConverter
+
+    converter = CalculiXConverter()
+    with tempfile.TemporaryDirectory() as td:
+        return converter.run(model, converter.write_input(model, td), td)
+
+self.optimization_panel.configure_with_model(
+    model, variable_specs, _opt_run_fn, response_specs)
+```
+
+variable_specs/response_specs의 기본값(어떤 경로를 처음부터
+채워 둘지)은 통합에서 정해 주세요. 패널 쪽은 사용자가 표에서
+바꿀 수 있습니다.
+
+검증 (실측): cantilever 예제로 실제 ccx 끝단 실행 — DOE 실제
+평가 12회 실패 0, 근사 RMSE 1.80e-5 m, 최적점 E=2.98e11 Pa·
+fy=−516 N, 재실행 실제값 4.818e-5 m이 독립 직접 솔버 실행값과
+일치 (기준 모델 1.328e-4 m의 36%). 오프스크린 테스트는 패널
+파일에 8개 (모델 연결 4개 포함).
 
 ## 3. `CURRENT_STATE.md` — 최적화 화면 줄 추가 (제안 문구)
 

@@ -87,13 +87,18 @@ def test_codeaster_cantilever_reaction(tmp_path):
     )
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
     resu = (tmp_path / "study.resu").read_text(errors="replace")
-    values = [float(x) for x in re.findall(r"[-+]?\d+\.\d+E[-+]\d+", resu)]
-    # REAC_NODA rows are per node (DX DY DZ triples); the Z reactions at
-    # the fixed face must balance the -1000 N applied load. Load entries
-    # on the 3 nodes shared with the loaded face are absorbed by the
-    # constraint (same effect as the CalculiX cross-check), so allow 5%.
-    dz = values[2::3]
-    total = sum(dz)
+    # Parse data rows only: a row is a line holding exactly three
+    # E-notation floats (DX DY DZ per node). A naive findall over the
+    # whole file also catches the INST header timestamp and shifts the
+    # triples by one. The Z reactions at the fixed face must balance
+    # the -1000 N applied load; allow 5% (measured: exactly +1000.000).
+    rows = []
+    for line in resu.splitlines():
+        nums = re.findall(r"[-+]?\d+\.\d+E[-+]\d+", line)
+        if len(nums) == 3:
+            rows.append([float(x) for x in nums])
+    assert rows, "no REAC_NODA data rows parsed from study.resu"
+    total = sum(row[2] for row in rows)
     assert total == pytest.approx(1000.0, rel=0.05), f"reaction sum {total}"
 
 
