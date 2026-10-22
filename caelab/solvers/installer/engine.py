@@ -419,7 +419,8 @@ class Installer:
             resolved = {}
             for key, value in runtime.items():
                 resolved[key] = (value.replace("{root}", str(self.root))
-                                 .replace("{target}", target))
+                                 .replace("{target}", target)
+                                 .replace("{exe}", result.path or ""))
             self.registry["runtime_env"][prog["id"]] = resolved
         self.registry["programs"][prog["id"]] = {
             "version": prog.get("version"), "status": result.status,
