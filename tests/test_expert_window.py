@@ -320,3 +320,24 @@ def test_explicit_new_run_capture_keeps_same_discussion_and_old_basis(app, tmp_p
     assert ui.document['evidences'][ui.document['selected_evidence_id']]['run_id'] == later.id
     assert ui.run_id == first.id
     ui.close()
+
+
+def test_parent_reopen_missing_store_keeps_graph_and_reports_path(app, tmp_path, monkeypatch):
+    wb = Workbench()
+    monkeypatch.setattr(wb, 'programs', lambda: [])
+    project = wb.new_native_project('보존할 연구')
+    node = project.add_node('analysis', 'calculix')
+    inp = tmp_path / 'source.inp'
+    inp.write_text('** source', encoding='utf-8')
+    project.set_file(node.id, inp)
+    wb.save_native_project(project, tmp_path / 'saved.json')
+    project.run_store.rmdir()  # This test's saved store has no execution records.
+    ui = ProjectWindow(wb)
+    assert ui.open_project(project.path, confirm=False)
+    assert node.id in ui.boxes and ui.project.name == '보존할 연구'
+    assert str(project.run_store) in ui.log.toPlainText()
+    ui.refresh_files()
+    assert '기대 실행 저장소' in ui.log.toPlainText()
+    assert not project.run_store.exists()
+    ui._dirty = False
+    ui.close()
