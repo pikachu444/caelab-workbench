@@ -10,8 +10,8 @@ Design rules honored here:
   (Code_Aster .sif) are ``manual`` entries: the engine never tries to
   fetch them; it registers a file the user placed by hand, or reports
   the entry as skipped with the reason.
-- Windows entries are data only in this engine run (status
-  ``unverified-windows``); they are listed, never executed here.
+- Windows entries describe possible distributions only. Installation
+  returns ``not-implemented``; verification status is separate metadata.
 - Third-party test assets (OpenCourant QA decks, CC BY-NC) are not
   part of any entry and are never downloaded.
 """
@@ -39,12 +39,22 @@ STATUS_INSTALLED = "installed"
 STATUS_ALREADY = "already-installed"
 STATUS_SKIPPED_MANUAL = "skipped-manual"
 STATUS_UNVERIFIED_WINDOWS = "unverified-windows"
+STATUS_NOT_IMPLEMENTED = "not-implemented"
 STATUS_FAILED = "failed"
 
 
 def load_manifest(path: Path | None = None) -> dict:
     with open(path or MANIFEST_PATH, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def host_platform() -> str:
+    """Do not select Linux packages implicitly on a Windows host."""
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return sys.platform
 
 
 @dataclass
@@ -69,12 +79,12 @@ class Installer:
         self,
         root: Path,
         manifest: dict | None = None,
-        platform: str = "linux",
+        platform: str | None = None,
         log=print,
     ):
         self.root = Path(root).expanduser()
         self.manifest = manifest if manifest is not None else load_manifest()
-        self.platform = platform
+        self.platform = platform or host_platform()
         self.log = log
         self.cache = self.root / ".cache" / "downloads"
         self.registry: dict = {
@@ -343,8 +353,15 @@ class Installer:
         if entry is None:
             return ProgramResult(pid, STATUS_FAILED, f"no {self.platform} entry")
         if self.platform == "windows":
-            return ProgramResult(pid, STATUS_UNVERIFIED_WINDOWS,
-                                 entry.get("note", "Windows entry listed only"))
+            return ProgramResult(
+                pid, STATUS_NOT_IMPLEMENTED,
+                "Windows installation is not implemented; manifest entry only. "
+                + entry.get("note", ""))
+        if self.platform != host_platform():
+            return ProgramResult(
+                pid, STATUS_FAILED,
+                f"cannot install {self.platform} packages on {host_platform()}; "
+                "run the Linux installer inside Linux/WSL explicitly")
         exe_rel = entry.get("executable")
         exe_path = self.root / exe_rel if exe_rel else None
         if exe_path is not None and exe_path.exists() and entry.get("method") != "manual":
@@ -384,6 +401,13 @@ class Installer:
 
     def install(self, only: list[str] | None = None,
                 system_deps: bool = False) -> list[ProgramResult]:
+        # Cross-platform listing is supported; cross-platform execution
+        # and Windows installation are not. Do not write a misleading
+        # registry or a POSIX activation script for these requests.
+        if self.platform != "linux" or host_platform() != "linux":
+            return [self.install_one(prog, system_deps=system_deps)
+                    for prog in self.programs()
+                    if not only or prog["id"] in only]
         self.root.mkdir(parents=True, exist_ok=True)
         # Merge into any registry left by a previous (partial) run so a
         # targeted rerun (--only ...) does not drop other programs.
@@ -445,6 +469,10 @@ class Installer:
     # ------------------------------------------------------------ verify
     def verify(self) -> list[tuple[str, bool, str]]:
         """Best-effort version probes for already-registered programs."""
+        if self.platform != "linux" or host_platform() != "linux":
+            return [("runtime", False,
+                     "verification is implemented only inside Linux/WSL; "
+                     "Windows/WSL bridging is not implemented")]
         registry_path = self.root / REGISTRY_NAME
         registered: dict = {}
         if registry_path.exists():

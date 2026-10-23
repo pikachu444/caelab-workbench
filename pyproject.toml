@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "caelab-workbench"
 version = "0.1.0"
-description = "CAE research workbench: one common structural model, solver converters, expert discussion"
+description = "CAE research workbench: native program connections and evidence-based expert discussion"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26", "scipy>=1.11"]
 

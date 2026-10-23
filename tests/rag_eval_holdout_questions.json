@@ -1,0 +1,151 @@
+{
+  "status": "candidate_questions_unjudged_not_evaluated",
+  "created_against_commit": "18322ce3798d55b50a70d9a5275ef9d34d5b7ace",
+  "note": "기존 13문항과 별도로 작성한 평가 후보입니다. 이번 변경에서 검색·청킹 조정에 사용하지 않았습니다. 독립 검토자가 고정된 색인의 실제 출처와 조각을 읽고 정답 근거를 지정해야 하며, 그 전에는 독립 품질 평가 완료나 점수를 주장하지 않습니다. 답할 자료가 없는 문항은 억지로 정답을 지정하지 말고 별도의 자료 부재·답변 유보 평가로 분류합니다.",
+  "questions": [
+    {
+      "id": "calculix-holdout-01",
+      "solver": "calculix",
+      "question": "곡면에 일정한 압력을 가할 때 절점별 힘을 직접 넣는 방법과 입력·방향에서 무엇을 구분해야 하나요?",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "calculix-holdout-02",
+      "solver": "calculix",
+      "question": "길이를 mm, 힘을 N, 시간을 s로 선언한 모델에 자중을 넣으려면 밀도와 중력 가속도의 단위를 어떻게 일치시켜야 하나요?",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "calculix-holdout-03",
+      "solver": "calculix",
+      "question": "인장시험의 응력-전체변형률 표를 소성 재료 입력에 그대로 사용해도 되는지 매뉴얼의 입력 정의를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "calculix-holdout-04",
+      "solver": "calculix",
+      "question": "작은 변형으로 풀던 모델에 큰 회전이 생겼습니다. 기하 비선형 설정의 위치와 단계별 적용 범위를 확인할 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "calculix-holdout-05",
+      "solver": "calculix",
+      "question": "마찰 접촉에서 접촉면 방향이나 주면·종속면 선택을 확인할 때 참고할 입력 설명은 어디에 있나요?",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "calculix-holdout-06",
+      "solver": "calculix",
+      "question": "셸의 위·아래 면 응력을 비교하려고 합니다. 결과 위치와 출력 요청을 확인할 매뉴얼 부분을 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "code_aster-holdout-01",
+      "solver": "code_aster",
+      "question": "선형 탄성 계산을 비선형 재료 계산으로 바꿀 때 명령 선택과 증분 설정을 함께 확인할 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "code_aster-holdout-02",
+      "solver": "code_aster",
+      "question": "메시 그룹 이름을 구속과 하중에 연결하려면 어느 명령의 그룹 지정 규칙을 확인해야 하나요?",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "code_aster-holdout-03",
+      "solver": "code_aster",
+      "question": "분포하중을 받은 구조의 구속 반력 합을 구하려고 합니다. 결과 필드 생성과 추출 과정을 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "code_aster-holdout-04",
+      "solver": "code_aster",
+      "question": "중력 하중을 넣었는데 모델의 밀도와 단위계를 먼저 점검하고 싶습니다. 어떤 입력 정의를 확인해야 하나요?",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "code_aster-holdout-05",
+      "solver": "code_aster",
+      "question": "계산이 특정 하중 증분에서 수렴하지 않습니다. 증분 축소와 수렴 판정의 설정을 찾고 싶습니다.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "code_aster-holdout-06",
+      "solver": "code_aster",
+      "question": "MED 메시와 명령 파일을 계산에 전달할 때 export 파일의 파일 연결 역할을 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "radioss-holdout-01",
+      "solver": "radioss",
+      "question": "충격 계산에서 운동에너지가 줄어든 만큼 내부에너지가 늘지 않습니다. 에너지 항의 정의와 점검 항목을 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "radioss-holdout-02",
+      "solver": "radioss",
+      "question": "작은 요소 때문에 안정 시간증분이 줄어들었습니다. 질량 스케일링이 계산에 미치는 영향을 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "radioss-holdout-03",
+      "solver": "radioss",
+      "question": "접촉이 시작하기 전부터 물체가 크게 감속합니다. 접촉 간격과 접촉력 발생 조건을 확인할 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "radioss-holdout-04",
+      "solver": "radioss",
+      "question": "저감적분 요소에서 변형이 비정상적으로 나타납니다. 아워글래스 제어와 관련 에너지의 정의를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "radioss-holdout-05",
+      "solver": "radioss",
+      "question": "낙하 모델에서 초기 속도와 중력 하중을 함께 사용할 때 각각의 역할을 구분할 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "radioss-holdout-06",
+      "solver": "radioss",
+      "question": "셸 모델에 접촉을 정의할 때 두께와 접촉 간격의 관계를 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "lsdyna-holdout-01",
+      "solver": "lsdyna",
+      "question": "전체 에너지를 검토할 때 접촉 에너지의 부호와 크기를 어떻게 해석하는지 이론 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "lsdyna-holdout-02",
+      "solver": "lsdyna",
+      "question": "감쇠 설정을 바꾼 뒤 충돌 전 강체 운동이 달라졌습니다. 감쇠력이 어떤 운동 성분에 작용하는지 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "lsdyna-holdout-03",
+      "solver": "lsdyna",
+      "question": "명시적 해석의 시간증분과 요소 길이·재료 파동속도 사이의 관계를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "lsdyna-holdout-04",
+      "solver": "lsdyna",
+      "question": "저감적분 셸에서 아워글래스가 발생하는 이유와 제어 방법을 설명하는 이론 부분을 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "lsdyna-holdout-05",
+      "solver": "lsdyna",
+      "question": "접촉 페널티 강성을 높이면 침투와 시간증분에 어떤 영향이 생기는지 설명하는 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    },
+    {
+      "id": "lsdyna-holdout-06",
+      "solver": "lsdyna",
+      "question": "적층 셸의 두께 방향 적분점과 층별 응력을 구분해서 이해할 자료를 찾아 주세요.",
+      "relevant_chunk_ids": null
+    }
+  ]
+}

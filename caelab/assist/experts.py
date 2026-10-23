@@ -153,10 +153,10 @@ class UnavailableProvider(ExpertProvider):
 
 
 class OpenScienceProvider(ExpertProvider):
-    """ChatGPT-subscription route via the pinned Windows profile.
+    """Reserved subscription route; the host transport is not implemented.
 
-    Available only where that profile actually exists (the user's
-    Windows machine); everywhere else it says so plainly.
+    A profile is configuration evidence, not an executable provider.
+    Keep this unavailable until a real transport can send the prompt.
     """
 
     id = "openscience"
@@ -176,20 +176,15 @@ class OpenScienceProvider(ExpertProvider):
 
     def availability(self) -> tuple[bool, str]:
         if self._profile_root() is not None:
-            return True, "OpenScience 프로필이 있습니다."
+            return False, "OpenScience 프로필은 있지만 구독 실행 연결은 아직 구현되지 않았습니다."
         return False, (
-            "이 컴퓨터에서는 OpenScience 프로필(Windows·ChatGPT 구독 경로)을 "
-            "찾을 수 없습니다."
+            "OpenScience 구독 실행 연결은 아직 구현되지 않았습니다. "
+            "이 컴퓨터에서는 연결 프로필도 찾을 수 없습니다."
         )
 
-    def discuss(self, prompt: str) -> str:  # pragma: no cover - Windows host
-        ok, reason = self.availability()
-        if not ok:
-            raise RuntimeError(reason)
-        raise RuntimeError(
-            "OpenScience 호스트 실행은 Windows 작업 창에서 확인합니다. "
-            "이 환경에서는 아직 실행 경로가 없습니다."
-        )
+    def discuss(self, prompt: str) -> str:
+        _ok, reason = self.availability()
+        raise RuntimeError(reason)
 
 
 class OpenAICompatibleProvider(ExpertProvider):
