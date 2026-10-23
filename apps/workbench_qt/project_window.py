@@ -463,11 +463,11 @@ class ProjectWindow(QMainWindow):
         job = self.workbench.run(self.model, "calculix", workdir)
         if job.result is not None and job.result.success:
             result = job.result
-            self.boxes["analysis"].set_state("done", f"최대 변위 {fmt_length(result.max_displacement)}")
+            self.boxes["analysis"].set_state("done", f"최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}")
             self.boxes["results"].set_state("done", "결과 준비됨")
             self.boxes["expert"].set_state("ready", "논의 가능")
             self.status.setText("전체 실행 완료 — 결과 상자가 최신입니다. 다음 행동: 결과 열기 또는 전문가 논의")
-            self._log(f"구조 해석 완료: 최대 변위 {fmt_length(result.max_displacement)}")
+            self._log(f"구조 해석 완료: 최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}")
         else:
             self.boxes["analysis"].set_state("failed")
             self.status.setText("실행 실패 — 메시지 로그를 확인하세요.")
