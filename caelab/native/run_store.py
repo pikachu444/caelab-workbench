@@ -24,14 +24,20 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _retry_missing(read):
+def _retry_receipt_read(read):
     # DrvFS can briefly report ENOENT during replace or before the first receipt
-    # commit. Only that condition gets four 10-ms waits; real loss still raises.
+    # commit. Windows CRT open also reports sharing violations as errno 13
+    # without winerror. Bound both gaps to four 10-ms waits; persistent missing
+    # files or access denial still raise their original error.
     for attempt in range(5):
         try:
             return read()
         except FileNotFoundError:
             if attempt == 4:
+                raise
+            time.sleep(.01)
+        except PermissionError as exc:
+            if os.name != "nt" or exc.errno != 13 or attempt == 4:
                 raise
             time.sleep(.01)
 
@@ -117,14 +123,15 @@ class RunStore:
             cached = self._cache.get(path)
             if cached is not None:
                 stat = path.stat()  # a failed lookup must never reuse the old receipt
-                key = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+                key = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
                 if cached[0] == key:
                     return copy.deepcopy(cached[1])
             # Metadata and JSON belong to the same opened file even if another
             # process replaces its pathname. Never fall back to cache on ENOENT.
             with path.open(encoding="utf-8") as stream:
                 stat = os.fstat(stream.fileno())
-                key = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+                # Windows path stat and handle fstat may disagree on ctime.
+                key = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
                 data = json.load(stream)
             if not isinstance(data, dict):
                 raise ValueError(f'실행 기록 객체가 필요합니다: {path}')
@@ -137,7 +144,7 @@ class RunStore:
             run = NativeRun(**data)
             self._cache[path] = key, run
             return copy.deepcopy(run)
-        return _retry_missing(read_opened)
+        return _retry_receipt_read(read_opened)
 
     def runs(self, node_id=None) -> list[NativeRun]:
         issues = self.integrity_issues()
@@ -253,7 +260,7 @@ class RunStore:
             if not isinstance(run_id, str) or len(run_id) != 32 or any(c not in '0123456789abcdef' for c in run_id):
                 raise ValueError(f"선택 실행 ID가 잘못되었습니다: {path}")
             return data
-        return _retry_missing(read_opened)
+        return _retry_receipt_read(read_opened)
 
     def selected_id(self, node_id):
         path = self._selection_path(node_id)
