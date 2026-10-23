@@ -24,10 +24,23 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
 ## 실행
 
 ```bash
-pip install -e ".[gui,dev]"
+python -m pip install -e ".[gui,rag,dev]"
 python -m pytest            # 자동 검사; 설치된 솔버의 개별 검사는 전체 GUI 끝단 검증과 다릅니다
 python -m apps.workbench_qt # GUI 진입점; 위의 작업 창 누락 결함 참조
 ```
+
+Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,rag]` 의존성을 설치·동기화한 뒤 시작합니다. 기존 가상환경도 누락된 의존성을 설치하며, 설치 실패 시 앱을 시작하지 않습니다.
+
+| 설치 선택 | 포함 범위 |
+|---|---|
+| 기본 | 프로젝트·연결 및 NumPy 기반 기능 |
+| `gui` | PySide6·VTK와 기존 GUI가 사용하는 수치 기능(SciPy 1.15 이상) |
+| `numerical` | GUI 없이 수치 기능 사용(SciPy 1.15 이상) |
+| `rag` | PDF 매뉴얼 읽기(pypdf); 텍스트/Markdown 검색은 기본 설치로 가능 |
+| `sensitivity` | Sobol 민감도 분석용 SALib |
+| `dev` | pytest |
+
+GUI 없이 수치 기능만 쓰려면 `python -m pip install -e ".[numerical]"`로 설치합니다. 기존 코드의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
 
 CalculiX 실행 파일은 PATH에서 찾고, `CAELAB_CCX` 환경변수로 직접 지정할 수도 있습니다.
 
