@@ -1,67 +1,79 @@
-"""Independent program boundaries, exercised with Qt offscreen."""
-
+"""Independent program entry points, exercised with Qt offscreen."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
+import subprocess
+import sys
+import urllib.request
 from types import SimpleNamespace
 import pytest
-
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import QApplication
-
+from PySide6.QtWidgets import QApplication, QMessageBox
 from apps.workbench_qt.project_window import ProjectWindow
-from caelab.solvers.base import ResultSet
 from caelab.workbench import Workbench
-
 
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
 
-
-def test_expert_box_reports_unimplemented_without_starting_any_program(app, monkeypatch):
-    import subprocess
-    import urllib.request
-    import apps.workbench_qt.main_window as analysis
-
+def test_empty_project_and_expert_never_start_analysis_solver_or_llm(app, monkeypatch):
     def forbidden(*args, **kwargs):
-        pytest.fail("Expert box must not launch analysis, solver, external app or LLM")
+        pytest.fail("Opening a project or the unimplemented expert must not run another program")
     workbench = Workbench()
     monkeypatch.setattr(workbench, "run", forbidden)
-    monkeypatch.setattr(analysis, "MainWindow", forbidden)
     monkeypatch.setattr(subprocess, "Popen", forbidden)
     monkeypatch.setattr(urllib.request, "urlopen", forbidden)
-    project = ProjectWindow(workbench)
-    box = project.boxes["expert"]
-    assert box.state == "unavailable"
+    monkeypatch.setitem(sys.modules, "apps.workbench_qt.main_window", None)
+    monkeypatch.setitem(sys.modules, "caelab.assist.experts", None)
+    window = ProjectWindow(workbench)
+    assert window.boxes == {}
+    box = window.add_box("expert")
     windows = set(app.topLevelWidgets())
     event = SimpleNamespace(scenePos=lambda: box.pos() + QPointF(20, 20))
-    project._scene_double_click(event)
-    assert project._workspace is None
+    window._scene_double_click(event)
     assert set(app.topLevelWidgets()) == windows
     assert box.state == "unavailable"
-    assert "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다" in project.status.text()
-    assert "미구현" in project.log.toPlainText()
-    assert not any(connector.dst is box for connector in project.connectors)
+    assert "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다" in window.status.text()
+    assert not hasattr(window, "_workspace")
+    window.run_chain()
+    assert "계산은 아직 구현되지 않았습니다" in window.status.text()
+    assert box.state == "unavailable"
+    window._dirty = False
+    window.close()
 
+def test_analysis_opens_independent_process_with_project_and_node(app, monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs:
+                        calls.append((command, kwargs)) or SimpleNamespace(pid=731))
+    monkeypatch.setitem(sys.modules, "apps.workbench_qt.main_window", None)
+    monkeypatch.setitem(sys.modules, "caelab.assist.experts", None)
+    window = ProjectWindow()
+    box = window.add_box("analysis")
+    deck = tmp_path / "사용자 덱.inp"
+    deck.write_text("*HEADING\nuser input\n", encoding="utf-8")
+    assert window.register_file(box.node_id, deck)
+    project_path = tmp_path / "연구 프로젝트.json"
+    assert window.save_project(project_path)
+    window.open_box(box)
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[:3] == [sys.executable, "-m", "apps.workbench_qt.native_analysis"]
+    assert str(project_path) in command
+    assert command[command.index("--node") + 1] == box.node_id
+    assert "cwd" in kwargs and "env" in kwargs
+    assert not hasattr(window, "_workspace")
+    assert "열기 요청" in window.status.text()
+    window.close()
 
-def test_analysis_completion_does_not_make_expert_program_ready(app, monkeypatch):
-    workbench = Workbench()
-    result = ResultSet("calculix", True, max_displacement=0.001, units={"length": "m"})
-    monkeypatch.setattr(workbench, "run", lambda *args: SimpleNamespace(state="succeeded", result=result))
-    project = ProjectWindow(workbench)
-    project.run_chain()
-    assert project.boxes["analysis"].state == "done"
-    assert project.boxes["expert"].state == "unavailable"
-    assert "전문가 논의" not in project.status.text()
-    assert project._workspace is None
-
-
-def test_analysis_box_opens_analysis_workspace_without_expert(app):
-    project = ProjectWindow()
-    project.open_box(project.boxes["analysis"])
-    assert project._workspace is not None
-    assert project._workspace.model is project.model
-    assert not hasattr(project._workspace, "expert_panel")
-    project._workspace.close()
+def test_unsaved_analysis_open_can_be_cancelled(app, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.Cancel)
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: pytest.fail("cancelled open launched"))
+    window = ProjectWindow()
+    box = window.add_box("analysis")
+    project = window.project
+    window.open_box(box)
+    assert window.project is project
+    assert window.project.path is None
+    assert window._dirty
+    window._dirty = False
+    window.close()

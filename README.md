@@ -20,6 +20,7 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
 
 - 골격과 개별 기능이 있으나 사용자 파일부터 결과·토론·재개까지의 1단계 연결은 진행 중입니다. 확인 범위와 남은 결함은 [CURRENT_STATE.md](CURRENT_STATE.md)에 기록합니다.
 - 해석 작업 창은 전문가 UI·공급자 없이 확인·검사·실행·요약을 수행합니다. 전문가 토론은 별도 프로그램으로 연결하는 것이 기준이며, 현재 전문가 상자는 연결 미구현을 표시합니다. 독립 프로그램 간 사용자 파일·결과 전달은 아직 완성되지 않았습니다.
+- 부모 화면은 빈 프로젝트로 시작합니다. 사용자 파일·프로그램 상자·연결을 저장하고 다시 열 수 있으며, 네이티브 INP 확인 창은 별도 프로세스로 엽니다. 이 창의 계산 실행과 실행 결과를 전문가에게 전달하는 기능은 아직 미구현입니다.
 
 ## 실행
 
@@ -27,6 +28,7 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
 python -m pip install -e ".[gui,rag,dev]"
 python -m pytest            # 자동 검사; 설치된 솔버의 개별 검사는 전체 GUI 끝단 검증과 다릅니다
 python -m apps.workbench_qt # 프로젝트 GUI 진입점; 전체 사용자 파일 흐름은 아직 미완료
+python -m apps.workbench_qt "프로젝트 폴더/project.json" # 저장한 프로젝트 열기
 ```
 
 Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,rag]` 의존성을 설치·동기화한 뒤 시작합니다. 기존 가상환경도 누락된 의존성을 설치하며, 설치 실패 시 앱을 시작하지 않습니다.
@@ -43,5 +45,9 @@ Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저�
 GUI 없이 수치 기능만 쓰려면 `python -m pip install -e ".[numerical]"`로 설치합니다. 기존 코드의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
 
 CalculiX 실행 파일은 PATH에서 찾고, `CAELAB_CCX` 환경변수로 직접 지정할 수도 있습니다.
+
+프로젝트 화면에서는 도구상자의 프로그램을 추가하고, 선택한 상자에 실제 입력 파일을 등록합니다. FreeCAD 상자에는 `.FCStd`를 입력으로, FreeCAD에서 작성한 `.inp`를 출력으로 등록한 뒤 CalculiX 상자에 연결할 수 있습니다. 파일 메뉴의 저장·다른 이름으로 저장은 원본 파일을 옮기거나 덮어쓰지 않고 파일 참조와 연결을 저장합니다. 외부에서 파일을 수정한 뒤 새로고침하면 변경된 입력과 오래된 하위 출력이 표시됩니다.
+
+설치 도우미가 만든 레지스트리는 `CAELAB_INSTALL_REGISTRY`에 `caelab-install-registry.json` 경로를 지정하면 읽습니다. `CAELAB_FREECAD`, `CAELAB_GMSH`, `CAELAB_PARAVIEW`처럼 명시한 실행 파일이 우선하며 잘못된 경로를 다른 프로그램으로 대체하지 않습니다. FreeCAD 창을 열 때는 `FreeCADCmd` 대신 GUI 실행 파일을 지정해야 합니다. Windows에서 Linux·WSL 실행을 자동 연결하지 않으며, 미지원 환경은 이유를 표시합니다.
 
 설치 도우미의 실행 구현은 Linux 대상입니다. Windows 항목은 배포·실행 전제 안내이며 설치 요청은 `not-implemented`와 실패 종료 코드를 반환합니다. Windows의 Code_Aster·FEniCSx 및 WSL 연결 범위는 [ARCHITECTURE.md](ARCHITECTURE.md)를 참조합니다.

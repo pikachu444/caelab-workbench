@@ -137,3 +137,63 @@ def test_actual_calculix_run_is_independent_of_expert_provider(app, monkeypatch)
     assert "계산 완료" in window.status.text(), window.log.toPlainText()
     assert window._last_result.success
     assert window._last_result.reaction_totals["fy"] == pytest.approx(1000, rel=0.005)
+
+
+def test_new_model_clears_previous_result_and_issue_state(app, monkeypatch):
+    from types import SimpleNamespace
+    from caelab.solvers.base import ResultSet
+
+    window = MainWindow()
+    model_a = cantilever_model()
+    window.set_model(model_a)
+    result = ResultSet("calculix", True, max_displacement=0.25)
+    monkeypatch.setattr(window.workbench, "run", lambda *args:
+                        SimpleNamespace(state="succeeded", result=result))
+    window.run_solve()
+    window._issue_target = "materials[0]"
+    window.btn_goto.setEnabled(True)
+    window.viewport._last_result = result
+    window.viewport._last_model = model_a
+    window.viewport._base_scale = 10.0
+    model_b = cantilever_model()
+    model_b.name = "model B"
+    window.set_model(model_b)
+    assert window._last_result is None
+    assert window.results_item.childCount() == 0
+    assert window._issue_target is None
+    assert not window.btn_goto.isEnabled()
+    assert not window.legend_label.text()
+    assert not window.statusBar().currentMessage()
+    assert "계산 완료" not in window.log.toPlainText()
+    assert window.viewport._last_model is None
+    assert window.viewport._last_result is None
+    assert window.viewport._base_scale is None
+    window.close()
+
+
+@pytest.mark.parametrize("failure_has_result", [True, False])
+def test_failed_rerun_removes_previous_success_display(app, monkeypatch, failure_has_result):
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QLabel
+    from caelab.solvers.base import ResultSet
+
+    window = MainWindow()
+    window.set_model(cantilever_model())
+    success = ResultSet("calculix", True, max_displacement=0.25, units={"length": "m"})
+    failure = ResultSet("calculix", False, log_tail="failed input") if failure_has_result else None
+    jobs = iter([SimpleNamespace(state="succeeded", result=success),
+                 SimpleNamespace(state="failed", result=failure)])
+    monkeypatch.setattr(window.workbench, "run", lambda *args: next(jobs))
+    window.run_solve()
+    assert window.results_item.childCount() == 1
+    window.select_path("result")
+    assert any(label.text() == "0.2500 m" for label in window.props_panel.findChildren(QLabel))
+    window.run_solve()
+    assert window.results_item.childCount() == 0
+    assert "result" not in window._path_items
+    assert window._last_result is failure
+    assert not window.legend_label.text()
+    assert "완료" not in window.statusBar().currentMessage()
+    assert "완료" not in window.status.text()
+    assert all(label.text() != "0.2500 m" for label in window.props_panel.findChildren(QLabel))
+    window.close()
