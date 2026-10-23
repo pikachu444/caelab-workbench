@@ -181,3 +181,19 @@ def test_polling_keeps_log_scroll_and_allows_cancel_while_reading(analysis, app,
     assert "결과 판독 중" in window.active_status.text()
     window.cancel_run()
     assert state.cancelled == [run.id]
+
+
+def test_dat_only_sets_are_visible_without_inventing_frd_or_reaction(analysis, tmp_path):
+    window, state = analysis
+    parsed = {"frames": [], "summary": {}, "warnings": [], "dat": {
+        "status": "readable", "frame": {"step": None, "increment": None, "value": 1.0},
+        "max_displacement": .25, "sets": {"SUPPORT": {"total_force": [1., 2., 3.]}}, "warnings": []}}
+    run = make_run(tmp_path, "dat-only", "completed", "readable", parsed)
+    run.units["force"] = "N"
+    state.runs, state.selected = [run], run
+    window.refresh_runs()
+    text = window.result_text.toPlainText()
+    assert "DAT 판독 절점 중 최대 변위: 0.25 mm" in text
+    assert "집합 SUPPORT" in text and "절점력 합계 원값: (1, 2, 3) N" in text
+    assert "반력" not in text
+    assert window.frame_selector.count() == 0

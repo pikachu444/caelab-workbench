@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtGui import QKeySequence
@@ -41,6 +42,13 @@ def _signature(path: Path):
 
 def _unit_text(units: dict) -> str:
     return ", ".join(f"{_UNIT_LABELS.get(key, key)}: {value}" for key, value in units.items()) or "미확인"
+
+
+def _time_text(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    except (TypeError, ValueError):
+        return str(value)
 
 
 class NativeAnalysisWindow(QMainWindow):
@@ -262,7 +270,7 @@ class NativeAnalysisWindow(QMainWindow):
         if rebuild:
             self.run_selector.clear()
         for index, run in enumerate(runs):
-            label = f"{run.created_at} — {Path(run.input_path).name} — {_RUN_LABELS.get(run.state, run.state)}"
+            label = f"{_time_text(run.created_at)} — {Path(run.input_path).name} — {_RUN_LABELS.get(run.state, run.state)}"
             if rebuild:
                 self.run_selector.addItem(label, run.id)
             elif self.run_selector.itemText(index) != label:
@@ -297,7 +305,9 @@ class NativeAnalysisWindow(QMainWindow):
         parsed = _PARSE_LABELS.get(run.parse_state, run.parse_state)
         stale = f" — 오래된 입력의 결과: {run.stale_reason}" if run.stale else ""
         self.run_status.setText(f"실행: {state} / 결과: {parsed}{stale}" + (f"\n{run.error}" if run.error else ""))
-        self.run_source.setText(f"이 실행의 입력: {run.input_path}\n보존 위치: {run.workdir}")
+        self.run_source.setText(f"이 실행의 입력: {run.input_path}")
+        self.run_source.setToolTip(f"입력·로그·결과 보존 위치: {run.workdir}")
+        self.log.setToolTip(f"전체 로그: {run.log_path}")
         text = ""
         if run.log_path:
             try:
@@ -345,9 +355,9 @@ class NativeAnalysisWindow(QMainWindow):
             label = "판독된 절점 중 최대 변위" if summary.get("displacement_node_count", 0) < summary.get("mesh_node_count", 0) else "최대 변위"
             lines.append("최대 변위: 미확인" if value is None else
                          f"{label}: {value:.8g} {run.units.get('length', '(단위 미확인)')}")
-            lines.append(f"출력 종류: {frame.get('analysis_type', '미확인')}")
             for item in frame.get("fields", []):
-                components = ", ".join(component["name"] for component in item.get("components", []))
+                components = ", ".join(component["name"] for component in item.get("components", [])
+                                       if component.get("exist", 0) == 0)
                 coverage = item.get("coverage", {})
                 lines.append(f"{item['name']} ({components}) — 판독 절점 {coverage.get('record_count', '?')} / 메시 절점 {coverage.get('mesh_node_count', '?')}")
                 for component in item.get("summary", {}).get("components", []):
@@ -358,7 +368,28 @@ class NativeAnalysisWindow(QMainWindow):
                 lines.append(f"교환 파일: {Path(run.workdir) / frame['vtu_file']}")
         else:
             lines.append("판독한 결과 프레임이 없습니다. 원본 출력과 로그를 확인하세요.")
+        dat = result.get("dat", {})
+        if dat and dat.get("status") != "missing":
+            lines += ["", f"DAT 집합 결과: {_PARSE_LABELS.get(dat.get('status'), dat.get('status'))}"]
+            metadata = dat.get("frame") or {}
+            if metadata:
+                lines.append(f"DAT 최종 프레임 — 단계 {metadata.get('step')} / 증분 {metadata.get('increment')} / 값 {metadata.get('value')}")
+            value = dat.get("max_displacement")
+            if value is not None:
+                lines.append(f"DAT 판독 절점 중 최대 변위: {value:.8g} {run.units.get('length', '(단위 미확인)')}")
+            for name, values in dat.get("sets", {}).items():
+                lines.append(f"집합 {name}")
+                for key, label in (("displacements", "변위"), ("nodal_forces", "절점력 원값")):
+                    if key in values:
+                        lines.append(f"  {label}: {len(values[key])}개 절점")
+                for key, label, unit_key in (("total_force", "절점력 합계 원값", "force"),
+                                             ("total_displacement", "변위 합계 원값", "length")):
+                    if key in values:
+                        numbers = ", ".join(f"{item:.8g}" for item in values[key])
+                        lines.append(f"  {label}: ({numbers}) {run.units.get(unit_key, '(단위 미확인)')}")
+            lines.extend(str(message) for message in dat.get("warnings", []))
         lines.extend(str(message) for message in result.get("warnings", []))
+        lines += ["", f"입력·로그·결과 보존 위치: {run.workdir}"]
         text = "\n".join(lines)
         if self.result_text.toPlainText() != text:
             self.result_text.setPlainText(text)
