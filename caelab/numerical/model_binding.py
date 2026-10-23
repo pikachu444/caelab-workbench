@@ -194,6 +194,21 @@ class ModelEvaluator:
             if name in self._paths:
                 set_path(candidate_model, self._paths[name], value)
         result = self.run_fn(candidate_model)
+        status = (result.get("execution_status", "SUCCEEDED")
+                  if isinstance(result, dict) else "SUCCEEDED")
+        success = (result.get("success", True) if isinstance(result, dict)
+                   else getattr(result, "success", True))
+        if not success and status == "SUCCEEDED":
+            status = "FAILED"
+        if status != "SUCCEEDED":
+            diagnostics = deepcopy(result.get("diagnostics", {})) \
+                if isinstance(result, dict) else {}
+            diagnostics.setdefault("failure_reason", diagnostics.get(
+                "reason", "run_fn reported " + str(status)))
+            return _normalize_evaluation({
+                "execution_status": status, "responses": {},
+                "checks": deepcopy(result.get("checks", []))
+                if isinstance(result, dict) else [], "diagnostics": diagnostics})
         responses = {}
         for spec in self.response_specs:
             try:
@@ -211,9 +226,7 @@ class ModelEvaluator:
                 "kind": "scalar", "value": float(raw), "unit": spec.get("unit", "1"),
                 **{k: spec[k] for k in ("component", "location", "reduction")
                    if k in spec}}
-        success = bool(getattr(result, "success", True)) \
-            if not isinstance(result, dict) else True
         return _normalize_evaluation({
-            "execution_status": "SUCCEEDED" if success else "FAILED",
+            "execution_status": "SUCCEEDED",
             "responses": responses, "checks": [],
-            "diagnostics": {} if success else {"failure_reason": "run_fn reported failure"}})
+            "diagnostics": {}})

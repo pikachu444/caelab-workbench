@@ -13,6 +13,12 @@ def _index(chunks):
     return rag.HybridIndex.build(chunks, rag.HashingEmbedder())
 
 
+@pytest.fixture(autouse=True)
+def offline_retrieval(monkeypatch):
+    monkeypatch.setattr(rag, "get_embedder", rag.HashingEmbedder)
+    monkeypatch.setattr(rag, "get_reranker", rag.LexicalReranker)
+
+
 def test_markdown_chunks_carry_heading_path(tmp_path):
     doc = tmp_path / "manual.md"
     doc.write_text(
@@ -151,3 +157,59 @@ def test_per_solver_prebuilt_folders_merge(tmp_path, monkeypatch):
     hits = merged.search("반력", top_k=3, embedder=rag.get_embedder(), solver="lsdyna")
     assert all(h.solver != "calculix" for h in hits)
     knowledge_mod._index_cache.clear()
+
+
+def test_absent_solver_never_relaxes_either_index_search_path():
+    index = _index(notes_chunks())
+    embedder = rag.HashingEmbedder()
+    assert index.search("반력", solver="code_aster", embedder=embedder) == []
+    assert index.search_embedded("반력", embedder.embed_query("반력"),
+                                 solver="code_aster") == []
+
+
+def test_public_search_preserves_scope_and_reports_absent_material(monkeypatch):
+    monkeypatch.setattr(knowledge_mod, "default_index", lambda: _index(notes_chunks()))
+    result = knowledge_mod.search_knowledge_result("CalculiX 반력", solver="Code_Aster")
+    assert result.status == "no_material"
+    assert result.solver == "code_aster"
+    assert result.entries == []
+    assert result.error is None
+    assert knowledge_mod.search_knowledge("반력", solver="code_aster") == []
+    found = knowledge_mod.search_knowledge_result("반력", solver="ccx")
+    assert found.status == "ok" and found.entries
+    assert all(entry.solver == "calculix" for entry in found.entries)
+
+
+@pytest.mark.parametrize("stage", ["index", "embedding", "reranking"])
+def test_retrieval_error_is_distinct_and_never_falls_back(monkeypatch, stage):
+    def broken(*args, **kwargs):
+        raise RuntimeError(f"{stage} unavailable")
+
+    monkeypatch.setattr(knowledge_mod, "default_index", lambda: _index(notes_chunks()))
+    if stage == "index":
+        monkeypatch.setattr(knowledge_mod, "default_index", broken)
+    elif stage == "embedding":
+        class BrokenEmbedder(rag.HashingEmbedder):
+            embed_query = broken
+        monkeypatch.setattr(rag, "get_embedder", BrokenEmbedder)
+    else:
+        class BrokenReranker(rag.LexicalReranker):
+            rerank = broken
+        monkeypatch.setattr(rag, "get_reranker", BrokenReranker)
+    result = knowledge_mod.search_knowledge_result("반력", solver="calculix")
+    assert result.status == "error"
+    assert result.entries == []
+    assert f"{stage} unavailable" in result.error
+    with pytest.raises(RuntimeError, match=f"{stage} unavailable"):
+        knowledge_mod.search_knowledge("반력", solver="calculix")
+
+
+@pytest.mark.parametrize("setting", ["CAELAB_RAG_INDEX_DIR", "CAELAB_KNOWLEDGE_DIR"])
+def test_explicit_missing_index_or_source_directory_is_an_error(tmp_path, monkeypatch, setting):
+    monkeypatch.delenv("CAELAB_RAG_INDEX_DIR", raising=False)
+    monkeypatch.delenv("CAELAB_KNOWLEDGE_DIR", raising=False)
+    monkeypatch.setenv(setting, str(tmp_path / "missing"))
+    result = knowledge_mod.search_knowledge_result("반력", solver="code_aster")
+    assert result.status == "error"
+    assert result.entries == []
+    assert "missing" in result.error
