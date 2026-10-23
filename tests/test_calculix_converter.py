@@ -1,3 +1,6 @@
+from pathlib import Path
+import re
+
 import pytest
 
 from caelab.model.schema import (
@@ -195,3 +198,210 @@ def test_end_to_end_cantilever(tmp_path):
     inertia = 0.1 * 0.1 ** 3 / 12
     analytic = 1000.0 * 1.0 ** 3 / (3 * 210e9 * inertia)
     assert 0.4 * analytic < result.max_displacement < 1.2 * analytic
+
+
+# Synthetic fixed-width records follow CalculiX frdheader.c / frd.c layout.
+def _frd_block(name, values, time=1.0, step=1, increment=1, count=None):
+    header = "    1PSTEP".ljust(24) + f"{1:12d}{increment:12d}{step:12d}"
+    frame = "  100CL".ljust(12) + f"{time:12.5E}{len(values) if count is None else count:12d}"
+    data = [header, frame, " -4  " + name.ljust(8)]
+    data += [f" -1{node:10d}" + "".join(f"{value:12.5E}" for value in vector) for node, vector in values.items()]
+    return "\n".join(data + [" -3"]) + "\n"
+
+
+@pytest.mark.parametrize("change,path", [
+    (lambda m: setattr(m.steps[0], "kind", "modal"), "steps[0]"),
+    (lambda m: m.steps[0].options.update(increments=20), "steps[0].options.increments"),
+    (lambda m: m.materials[0].params.update(damping=0.1), "materials[0].params.damping"),
+    (lambda m: setattr(m.sections[0], "kind", "shell"), "sections[0].kind"),
+    (lambda m: m.sections[0].options.update(thickness=0.1), "sections[0].options.thickness"),
+    (lambda m: m.initial_conditions.update(temperature=300), "initial_conditions"),
+    (lambda m: m.outputs.update(frequency=2), "outputs.frequency"),
+    (lambda m: m.outputs.update(fields=["U", "TEMP"]), "outputs.fields"),
+    (lambda m: m.loads[0].values.update(amplitude="Ramp"), "loads[0].values.amplitude"),
+    (lambda m: m.bcs[0].values.update({"2": 0.0, 2: 1.0}), "bcs[0].values.2"),
+])
+def test_ignored_input_is_rejected_before_writing(tmp_path, change, path):
+    model = cantilever_model()
+    change(model)
+    converter = CalculiXConverter()
+    assert any(issue.target_path == path for issue in converter.validate(model))
+    with pytest.raises(ValueError, match=re.escape(path)):
+        converter.write_input(model, tmp_path)
+    assert not (tmp_path / "job.inp").exists()
+
+
+@pytest.mark.parametrize("text", ["", "arbitrary bytes", " -4  DISP\n -1       broken\n -3\n"])
+def test_frd_empty_or_corrupt_is_not_success_or_zero(tmp_path, text):
+    from caelab.solvers.calculix import parse_frd
+    path = tmp_path / "job.frd"
+    path.write_text(text)
+    result = parse_frd(path)
+    assert not result.success
+    assert result.max_displacement is None
+
+
+def test_frd_selects_latest_frame_and_keeps_valid_zero(tmp_path):
+    from caelab.solvers.calculix import parse_frd
+    path = tmp_path / "job.frd"
+    path.write_text(_frd_block("DISP", {1: [3, 4, 0]}, time=0.5) + _frd_block("DISP", {1: [0, 0, 0]}))
+    result = parse_frd(path)
+    assert result.success
+    assert result.max_displacement == 0.0
+    path.write_text(path.read_text() + _frd_block("FORC", {1: [1, 2, 3]}, time=2.0))
+    result = parse_frd(path)
+    assert not result.success
+    assert result.max_displacement is None
+
+
+@pytest.mark.parametrize("text", [
+    _frd_block("DISP", {1: [0, 0, 0]}, count=2),
+    _frd_block("DISP", {1: [float("nan"), 0, 0]}),
+    _frd_block("DISP", {1: [0, 0, 0]}).removesuffix(" -3\n"),
+])
+def test_frd_incomplete_or_nonfinite_records_fail(tmp_path, text):
+    from caelab.solvers.calculix import parse_frd
+    path = tmp_path / "job.frd"
+    path.write_text(text)
+    assert not parse_frd(path).success
+
+
+def test_dat_final_frame_replaces_earlier_nodes_and_detects_local_or_corrupt_rows(tmp_path):
+    path = tmp_path / "job.dat"
+    path.write_text(_PER_NODE_DAT + _PER_NODE_DAT.replace("INCREMENT     1", "INCREMENT     2").replace("0.1000000E+01", "0.2000000E+01").replace("         4 -1.428571E-03 -1.428571E-03 -1.714286E-03", ""))
+    assert set(parse_dat(path).displacements) == {1}
+    path.write_text(_PER_NODE_DAT.replace("1.000000E+02", "1.000000E+02 L"))
+    assert parse_dat(path).errors
+    path.write_text(_PER_NODE_DAT.replace("1.000000E+02", "NaN"))
+    assert parse_dat(path).errors
+
+
+def _fake_solver(monkeypatch, tmp_path, frd_text, dat_text=None, stdout="solver output"):
+    import subprocess
+    import caelab.solvers.calculix as module
+    monkeypatch.setattr(module, "find_ccx", lambda: "mock-ccx")
+    def execute(*args, **kwargs):
+        if frd_text is not None:
+            (tmp_path / "job.frd").write_text(frd_text)
+        if dat_text is not None:
+            (tmp_path / "job.dat").write_text(dat_text)
+        return subprocess.CompletedProcess(args[0], 0, stdout, "")
+    monkeypatch.setattr(module.subprocess, "run", execute)
+
+
+def test_run_requires_actual_requested_stress_and_keeps_full_log(tmp_path, monkeypatch):
+    model = cantilever_model()
+    converter = CalculiXConverter()
+    deck = converter.write_input(model, tmp_path)
+    text = _frd_block("DISP", {1: [0, 0, 0]}) + _frd_block("FORC", {1: [0, 0, 1]})
+    _fake_solver(monkeypatch, tmp_path, text, stdout="beginning\n" + "x" * 5000)
+    result = converter.run(model, deck, tmp_path)
+    assert not result.success
+    assert any("outputs.S" in issue for issue in result.validation_issues)
+    assert "beginning" in Path(result.log_path).read_text(encoding="utf-8")
+    assert "beginning" not in result.log_tail
+    assert result.units == {"length": "m", "force": "N"}
+
+
+def test_run_direct_deck_uses_requested_fields_and_exact_reaction_set(tmp_path, monkeypatch):
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU\n*NODE PRINT, NSET=PIN, TOTALS=ONLY\nRF\n")
+    _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}), _TOTALS_DAT)
+    result = CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path)
+    assert result.success
+    assert result.reaction_totals == {}  # FIXED output must not be relabelled PIN
+    _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}), _TOTALS_DAT.replace("FIXED", "PIN"))
+    assert CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).reaction_totals["fz"] == pytest.approx(981.3477)
+
+
+def test_run_rejects_stale_output_and_timeout_preserves_captured_log(tmp_path, monkeypatch):
+    import subprocess
+    import caelab.solvers.calculix as module
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU\n")
+    (tmp_path / "job.frd").write_text(_frd_block("DISP", {1: [0, 0, 0]}))
+    _fake_solver(monkeypatch, tmp_path, None)
+    assert not CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 3600, output=b"partial output", stderr=b"partial error")
+    monkeypatch.setattr(module.subprocess, "run", timeout)
+    result = CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path)
+    assert not result.success
+    assert "partial output" in Path(result.log_path).read_text(encoding="utf-8")
+    assert "TimeoutExpired" in result.log_tail
+
+
+@pytest.mark.parametrize("change,path", [
+    (lambda m: m.steps.append(Step("SECOND", "linear_static")), "steps"),
+    (lambda m: (setattr(m.steps[0], "kind", "nonlinear_static"), m.steps[0].options.update(nlgeom=False)), "steps[0].options.nlgeom"),
+    (lambda m: m.materials[0].params.pop("density"), "materials[0].params.density"),
+    (lambda m: setattr(m.loads[0], "target_set", "TIP"), "loads[0].target_set"),
+    (lambda m: (setattr(m, "unit_system", "mm-tonne-s"), m.loads[0].values.pop("accel")), "loads[0].values.accel"),
+])
+def test_unrepresented_step_and_gravity_semantics_are_rejected(change, path):
+    from caelab.model.schema import Load
+    model = cantilever_model()
+    model.loads = [Load("TIP_FORCE", "gravity", values={"accel": 9.81})]
+    change(model)
+    assert any(issue.target_path == path for issue in CalculiXConverter().validate(model))
+
+
+def test_dat_duplicate_or_conflicting_blocks_fail(tmp_path):
+    path = tmp_path / "job.dat"
+    path.write_text(_PER_NODE_DAT + _PER_NODE_DAT)
+    assert parse_dat(path).errors
+    path.write_text(_PER_NODE_DAT + _PER_NODE_DAT.replace("ALL_NODES", "OTHER").replace("1.000000E+02", "2.000000E+02"))
+    assert parse_dat(path).errors
+
+
+def test_run_does_not_merge_different_frames(tmp_path, monkeypatch):
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU\n*NODE PRINT, NSET=PIN\nRF\n")
+    _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}, time=2), _TOTALS_DAT)
+    result = CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path)
+    assert not result.success
+    assert any("results.frame" in issue for issue in result.validation_issues)
+
+
+def test_run_support_force_requires_complete_unloaded_supports(tmp_path, monkeypatch):
+    from caelab.model.schema import Load
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU, RF\n")
+    text = _frd_block("DISP", {1: [0, 0, 0]}) + _frd_block("FORC", {1: [7, 8, 9]})
+    _fake_solver(monkeypatch, tmp_path, text)
+    model = _tet_model("PIN")
+    model.bcs[0].fixed_dofs = [3]
+    result = CalculiXConverter().run(model, deck, tmp_path)
+    assert result.success
+    assert result.reaction_totals == {"fx": 0, "fy": 0, "fz": 9}
+    model.sets["PIN"].members.append(2)
+    assert CalculiXConverter().run(model, deck, tmp_path).reaction_totals == {}
+    model.sets["PIN"].members = [1]
+    model.loads.append(Load("support_force", "force", "PIN", {"fz": 3}))
+    assert CalculiXConverter().run(model, deck, tmp_path).reaction_totals == {}
+
+
+
+def test_frd_requires_header_and_rejects_repeated_field(tmp_path):
+    from caelab.solvers.calculix import parse_frd
+    path = tmp_path / "job.frd"
+    block = _frd_block("DISP", {1: [0, 0, 0]})
+    path.write_text("\n".join(block.splitlines()[2:]))
+    assert not parse_frd(path).success
+    path.write_text(block + block)
+    assert not parse_frd(path).success
+
+
+def test_run_ignores_unused_dat_and_does_not_invent_dat_step_ids(tmp_path, monkeypatch):
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU, RF\n")
+    frd = _frd_block("DISP", {1: [0, 0, 0]}, step=2, increment=5)
+    frd += _frd_block("FORC", {1: [0, 0, 2]}, step=2, increment=5)
+    _fake_solver(monkeypatch, tmp_path, frd, _TOTALS_DAT.replace("0.1000000E+01", "0.2000000E+01"))
+    assert CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success
+    dat = _TOTALS_DAT[_TOTALS_DAT.index(" total force"):].replace("FIXED", "PIN")
+    frd = _frd_block("DISP", {1: [0, 0, 0]}, step=2, increment=5)
+    _fake_solver(monkeypatch, tmp_path, frd, dat)
+    assert CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success
+    _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}) + frd, dat)
+    assert not CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success

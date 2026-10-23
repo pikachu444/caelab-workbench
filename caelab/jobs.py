@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import itertools
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model.schema import StructuralModel
 from .solvers.base import ResultSet, SolverConverter
+from .validate.checker import validate_model
 
 JOB_STATES = ("queued", "preparing", "running", "succeeded", "failed", "cancelled")
 
@@ -41,17 +43,41 @@ class JobManager:
         self.jobs[job.id] = job
         job._set("preparing")
         try:
+            job.workdir.mkdir(parents=True, exist_ok=True)
+            issues = validate_model(model) + converter.validate(model)
+            errors = [str(issue) for issue in issues if issue.severity == "error"]
+            if errors:
+                job.result = ResultSet(
+                    solver_id=converter.id, success=False,
+                    log_tail="\n".join(errors)[-4000:], validation_issues=errors,
+                )
+                (job.workdir / "job.log").write_text("\n".join(errors), encoding="utf-8")
+                job.result.log_path = str(job.workdir / "job.log")
+                job._set("failed")
+                return job
             deck = converter.write_input(model, job.workdir)
-        except Exception as exc:  # deck errors fail the job, not the app
+            job._set("running")
+            job.result = converter.run(model, deck, job.workdir)
+            if job.result.log_path is None:
+                log_path = job.workdir / "job.log"
+                log_path.write_text(job.result.log_tail, encoding="utf-8")
+                job.result.log_path = str(log_path)
+            job._set("succeeded" if job.result.success else "failed")
+        except Exception as exc:  # preparation, execution and reading all terminate
+            detail = traceback.format_exc()
+            log_path = job.workdir / "job.log"
+            try:
+                with log_path.open("a", encoding="utf-8") as log:
+                    log.write("\n" + detail)
+                saved_path = str(log_path)
+            except OSError:
+                saved_path = None
             job.result = ResultSet(
-                solver_id=converter.id, success=False, log_tail=f"deck 작성 실패: {exc}"
+                solver_id=converter.id, success=False,
+                log_tail=f"{type(exc).__name__}: {exc}\n{detail}"[-4000:],
+                log_path=saved_path,
             )
             job._set("failed")
-            return job
-        job._set("running")
-        result = converter.run(model, deck, job.workdir)
-        job.result = result
-        job._set("succeeded" if result.success else "failed")
         return job
 
     def get(self, job_id: int) -> Job:
