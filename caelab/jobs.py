@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import itertools
+import os
+import subprocess
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model.schema import StructuralModel
+from .connections import LaunchRequest
 from .solvers.base import ResultSet, SolverConverter
 from .validate.checker import validate_model
 
@@ -28,10 +31,37 @@ class Job:
         self.history.append(state)
 
 
+@dataclass
+class LaunchRecord:
+    id: int
+    request: LaunchRequest
+    state: str = "opened"
+    process: subprocess.Popen | None = None
+    error: str = ""
+
+    @property
+    def pid(self) -> int | None:
+        return self.process.pid if self.process is not None else None
+
+
 class JobManager:
     def __init__(self) -> None:
         self._ids = itertools.count(1)
         self.jobs: dict[int, Job] = {}
+        self.launches: dict[int, LaunchRecord] = {}
+
+    def launch(self, request: LaunchRequest) -> LaunchRecord:
+        """Retain this GUI process; creation never means calculation success."""
+        record = LaunchRecord(next(self._ids), request)
+        self.launches[record.id] = record
+        try:
+            record.process = subprocess.Popen(
+                request.argv, cwd=request.cwd, env=request.env, shell=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+        except Exception as exc:
+            record.state, record.error = "failed", f"{type(exc).__name__}: {exc}"
+        return record
 
     def submit(
         self,

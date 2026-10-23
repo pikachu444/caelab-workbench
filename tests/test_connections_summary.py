@@ -32,8 +32,9 @@ def test_registry_covers_the_connected_programs():
 def test_env_override_wins_and_missing_program_is_not_an_error(tmp_path):
     spec = ProgramSpec("dummy", "Dummy", "solver", "CAELAB_DUMMY_XYZ", ("dummy-xyz",))
     assert find_program(spec) is None
-    target = tmp_path / "dummy-xyz"
+    target = tmp_path / ("dummy-xyz.exe" if os.name == "nt" else "dummy-xyz")
     target.write_text("")
+    target.chmod(0o755)
     os.environ["CAELAB_DUMMY_XYZ"] = str(target)
     try:
         assert find_program(spec) == str(target)
@@ -117,3 +118,99 @@ def test_failed_result_summary_keeps_failure_and_solver():
     summary = summarize_result(result)
     assert not summary["success"]
     assert "fenicsx 계산이 실패" in format_summary_ko(summary)
+
+
+
+def test_explicit_invalid_path_never_falls_back_to_registry_or_path(tmp_path, monkeypatch):
+    import json
+    import sys
+    spec = next(spec for spec in PROGRAMS if spec.id == "gmsh")
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({"env": {spec.env_var: sys.executable}}))
+    monkeypatch.setenv(spec.env_var, str(tmp_path / "missing"))
+    monkeypatch.setattr("caelab.connections.shutil.which", lambda name: sys.executable)
+    status = next(status for status in program_statuses(registry) if status.spec.id == "gmsh")
+    assert not status.available
+    assert status.source == "environment"
+    assert "실행 파일" in status.reason
+    assert find_program(spec, registry) is None
+
+
+def test_registry_runtime_defaults_and_explicit_environment_precedence(tmp_path, monkeypatch):
+    import json
+    import sys
+    from caelab.connections import launch_request
+    monkeypatch.delenv("CAELAB_GMSH", raising=False)
+    monkeypatch.setenv("GUI_EXPLICIT", "host wins")
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({"env": {"CAELAB_GMSH": sys.executable},
+                                    "runtime_env": {"gmsh": {"GUI_DEFAULT": "registered", "GUI_EXPLICIT": "registry"}}}))
+    document = tmp_path / "한글 입력 공백.geo"
+    document.write_text("Point(1) = {0,0,0};")
+    status = next(status for status in program_statuses(registry) if status.spec.id == "gmsh")
+    request = launch_request(status, document)
+    assert status.available and status.source == "registry"
+    assert request.argv == [sys.executable, str(document.resolve())]
+    assert request.cwd == tmp_path.resolve()
+    assert request.env["GUI_DEFAULT"] == "registered"
+    assert request.env["GUI_EXPLICIT"] == "host wins"
+
+
+@pytest.mark.parametrize("program,name", [("freecad", "freecadcmd"), ("paraview", "pvpython")])
+def test_console_only_programs_are_not_gui_launchers(tmp_path, monkeypatch, program, name):
+    target = tmp_path / (name + (".exe" if os.name == "nt" else ""))
+    target.write_text("not executed")
+    target.chmod(0o755)
+    spec = next(spec for spec in PROGRAMS if spec.id == program)
+    monkeypatch.setenv(spec.env_var, str(target))
+    status = next(status for status in program_statuses() if status.spec.id == program)
+    assert not status.available
+    assert "GUI" in status.reason
+
+
+def test_native_file_open_arguments_and_solver_separation(tmp_path):
+    import sys
+    from caelab.connections import ProgramStatus, launch_request
+    for program, suffix, expected in [("freecad", ".FCStd", None), ("gmsh", ".msh", None), ("paraview", ".vtk", "--data=")]:
+        spec = next(spec for spec in PROGRAMS if spec.id == program)
+        file = tmp_path / ("한글 공백" + suffix)
+        file.write_bytes(b"native input")
+        request = launch_request(ProgramStatus(spec, sys.executable), file)
+        assert request.argv == [sys.executable, (expected or "") + str(file.resolve())]
+        assert request.cwd == tmp_path.resolve()
+    solver = next(spec for spec in PROGRAMS if spec.id == "calculix")
+    with pytest.raises(ValueError, match="P4"):
+        launch_request(ProgramStatus(solver, sys.executable), file)
+
+
+def test_unimplemented_windows_wsl_environment_is_visible(monkeypatch):
+    monkeypatch.setattr("caelab.connections.host_platform", lambda: "windows")
+    by_id = {status.spec.id: status for status in program_statuses()}
+    assert not by_id["fenicsx"].available
+    assert by_id["fenicsx"].execution_environment == "wsl2"
+    assert "구현되지" in by_id["fenicsx"].reason
+    assert not by_id["codeaster"].available
+    assert by_id["codeaster"].execution_environment == "unresolved"
+
+
+def test_changed_and_stale_files_can_open_without_accepting_new_revision(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    wb = Workbench()
+    project = wb.new_native_project()
+    source = wb.add_program_node(project, "mesh", "gmsh")
+    target = wb.add_program_node(project, "results", "paraview")
+    file = tmp_path / "source.msh"
+    file.write_bytes(b"original")
+    ref = wb.set_node_file(project, source.id, file)
+    original_revision = ref.revision
+    wb.connect_nodes(project, source.id, target.id, "input")
+    monkeypatch.setenv("CAELAB_GMSH", sys.executable)
+    monkeypatch.setenv("CAELAB_PARAVIEW", sys.executable)
+    monkeypatch.setattr(wb.jobs, "launch", lambda req: SimpleNamespace(state="opened"))
+    file.write_bytes(b"edited outside")
+    assert wb.open_program(project, source.id).state == "opened"
+    assert source.state == "changed"
+    assert ref.revision == original_revision
+    assert wb.open_program(project, target.id).state == "opened"
+    assert target.state == "stale"

@@ -60,3 +60,46 @@ def test_success_remains_success_and_unknown_values_remain_unknown(tmp_path):
     assert job.result.max_displacement is None
     assert '미확인' in job.result.summary()
     assert job.result.log_path
+
+
+def test_gui_launch_probe_receives_exact_arguments_cwd_and_environment(tmp_path):
+    import json
+    import os
+    import sys
+    from caelab.connections import LaunchRequest
+    folder = tmp_path / "한글 작업 공백"
+    folder.mkdir()
+    output = folder / "probe.json"
+    native_file = folder / "선택 파일.geo"
+    native_file.write_text("input")
+    script = (
+        "import json,os,sys; from pathlib import Path; "
+        "Path('probe.json').write_text(json.dumps({'cwd':os.getcwd(), 'args':sys.argv[1:], "
+        "'value':os.environ['CAELAB_PROBE_VALUE']}),encoding='utf-8')"
+    )
+    manager = JobManager()
+    request = LaunchRequest([sys.executable, "-c", script, str(native_file)], folder,
+                            {**os.environ, "CAELAB_PROBE_VALUE": "명시 환경"}, "probe")
+    record = manager.launch(request)
+    try:
+        assert record.state == "opened" and record.pid is not None
+        assert manager.launches[record.id] is record
+        assert manager.jobs == {}
+        assert record.process.wait(timeout=15) == 0
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data == {"cwd": str(folder), "args": [str(native_file)], "value": "명시 환경"}
+        assert record.state == "opened"  # process exit is not a calculated result
+    finally:
+        if record.process is not None and record.process.poll() is None:
+            record.process.terminate()
+            record.process.wait(timeout=5)
+
+
+def test_gui_process_start_failure_is_kept_as_failed_record(tmp_path):
+    from caelab.connections import LaunchRequest
+    manager = JobManager()
+    record = manager.launch(LaunchRequest([str(tmp_path / "missing")], tmp_path, {}, "probe"))
+    assert record.state == "failed"
+    assert record.process is None and record.pid is None
+    assert "FileNotFoundError" in record.error
+    assert manager.launches[record.id] is record
