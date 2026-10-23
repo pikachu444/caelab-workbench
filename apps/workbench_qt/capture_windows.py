@@ -64,7 +64,6 @@ def main() -> int:
         app.processEvents()
         project.grab().save(str(out / "01_project_window.png"))
         main = MainWindow(workbench)
-        main.set_model(project.model)
         main.resize(1440, 900)
         main.show()
         app.processEvents()
