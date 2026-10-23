@@ -357,7 +357,7 @@ class NativeAnalysisWindow(QMainWindow):
                          f"{label}: {value:.8g} {run.units.get('length', '(단위 미확인)')}")
             for item in frame.get("fields", []):
                 components = ", ".join(component["name"] for component in item.get("components", [])
-                                       if component.get("exist", 0) == 0)
+                                       if component.get("exist", 0) in (0, 2))
                 coverage = item.get("coverage", {})
                 lines.append(f"{item['name']} ({components}) — 판독 절점 {coverage.get('record_count', '?')} / 메시 절점 {coverage.get('mesh_node_count', '?')}")
                 for component in item.get("summary", {}).get("components", []):
