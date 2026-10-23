@@ -304,7 +304,7 @@ class CalculiXConverter:
         log_path.write_text((proc.stdout or "") + (proc.stderr or ""), encoding="utf-8")
         if proc.returncode != 0:
             return finish(ResultSet(self.id, False), f"솔버 종료 코드: {proc.returncode}")
-        requested = _requested_fields(Path(deck))
+        requested = _output_requests(Path(deck))
         frd_path = workdir / f"{Path(deck).stem}.frd"
         dat_path = workdir / f"{Path(deck).stem}.dat"
         frd = _read_frd(frd_path) if frd_path.exists() else FrdResults()
@@ -313,6 +313,7 @@ class CalculiXConverter:
         use_dat = bool(
             (not result.displacements and dat.displacements)
             or (not result.nodal_forces and (dat.nodal_forces or dat.totals_by_set))
+            or any(kind == "*NODE PRINT" for _, kind, _ in requested)
         )
         errors = list(result.validation_issues) + (dat.errors if use_dat or not frd.fields else [])
         if use_dat and frd.frame is not None and dat.frame is not None and (
@@ -334,14 +335,29 @@ class CalculiXConverter:
             result.nodal_forces = dict(dat.nodal_forces)
         if not frd.fields and not dat.displacements and not dat.nodal_forces and not dat.totals_by_set:
             errors.append("results: 유효한 결과 프레임이 없습니다.")
-        for field in requested:
-            available = {
-                "U": bool(result.displacements),
-                "RF": bool(result.nodal_forces or dat.totals_by_set),
-                "S": "STRESS" in frd.fields,
-            }[field]
+        for field, kind, options in requested:
+            scope = options.get("NSET")
+            if kind == "*NODE PRINT":
+                blocks = dat.displacements_by_set if field == "U" else dat.forces_by_set
+                totals = dat.displacement_totals_by_set if field == "U" else dat.totals_by_set
+                mode = options.get("TOTALS", "NO")
+                available = bool(scope) and field in ("U", "RF") and mode in ("NO", "YES", "ONLY")
+                if mode != "ONLY":
+                    available = available and bool(blocks.get(scope))
+                if mode in ("YES", "ONLY"):
+                    available = available and scope in totals
+            elif kind == "*NODE FILE" and field in ("U", "RF"):
+                values = result.displacements if field == "U" else result.nodal_forces
+                selection = next((s for name, s in model.sets.items() if name.upper() == scope), None) if scope else None
+                required = selection.members if selection is not None and selection.kind == "node" else model.mesh.nodes
+                available = bool(values) and set(required) <= values.keys()
+                if scope and (selection is None or selection.kind != "node"):
+                    available = False
+            else:
+                # Scoped element output needs a field/element mapping this reader lacks.
+                available = field == "S" and "STRESS" in frd.fields and not options.get("ELSET")
             if not available:
-                errors.append(f"outputs.{field}: 요청한 결과 필드가 없습니다.")
+                errors.append(f"outputs.{field}{'.' + scope if scope else ''}: 요청한 결과 필드·집합·출력 형식이 없거나 확인할 수 없습니다.")
         constrained = {}
         for step in model.steps:
             for name in step.bcs:
@@ -391,21 +407,25 @@ class CalculiXConverter:
         return finish(result, "\n".join(errors))
 
 
-def _requested_fields(deck: Path) -> set[str]:
+def _output_requests(deck: Path) -> list[tuple[str, str, dict]]:
     """Known output requests used by this writer and direct U/RF/S decks.
 
     This does not interpret arbitrary native decks or included files.
     """
-    requested = set()
-    output = False
+    requested = []
+    kind = ""
+    options = {}
     for raw in deck.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip().upper()
         if line.startswith("**"):
             continue
         if line.startswith("*"):
-            output = line.split(",")[0] in ("*NODE FILE", "*NODE PRINT", "*EL FILE")
-        elif output:
-            requested.update(token.strip() for token in line.split(",") if token.strip() in ("U", "RF", "S"))
+            parts = [part.strip() for part in line.split(",")]
+            kind = parts[0] if parts[0] in ("*NODE FILE", "*NODE PRINT", "*EL FILE") else ""
+            options = dict(part.split("=", 1) for part in parts[1:] if "=" in part)
+            options = {key.strip(): value.strip() for key, value in options.items()}
+        elif kind:
+            requested.extend((token.strip(), kind, dict(options)) for token in line.split(",") if token.strip() in ("U", "RF", "S"))
     return requested
 
 
@@ -506,6 +526,9 @@ class DatResults:
     displacements: dict = field(default_factory=dict)  # node id -> [ux, uy, uz]
     nodal_forces: dict = field(default_factory=dict)  # node id -> [fx, fy, fz]
     totals_by_set: dict = field(default_factory=dict)  # SET name (upper) -> [fx, fy, fz]
+    displacements_by_set: dict = field(default_factory=dict)
+    forces_by_set: dict = field(default_factory=dict)
+    displacement_totals_by_set: dict = field(default_factory=dict)
     max_displacement: float | None = None
     frame: tuple | None = None
     errors: list[str] = field(default_factory=list)
@@ -590,14 +613,18 @@ def parse_dat(path: Path) -> DatResults:
         out.frame = next(reversed(frames))
         for (kind, name), block in frames[out.frame].items():
             if kind == "displacements":
+                out.displacements_by_set[name] = block
                 if any(node in out.displacements and out.displacements[node] != value for node, value in block.items()):
                     out.errors.append(f"{path.name}.{name}: 집합 사이의 변위 값이 충돌합니다.")
                 out.displacements.update(block)
             elif kind == "forces":
+                out.forces_by_set[name] = block
                 if any(node in out.nodal_forces and out.nodal_forces[node] != value for node, value in block.items()):
                     out.errors.append(f"{path.name}.{name}: 집합 사이의 힘 값이 충돌합니다.")
                 out.nodal_forces.update(block)
             elif kind == "total force" and block:
                 out.totals_by_set[name] = block[0]
+            elif kind == "total displacement" and block:
+                out.displacement_totals_by_set[name] = block[0]
     out.max_displacement = max((math.hypot(*value) for value in out.displacements.values()), default=None)
     return out

@@ -308,7 +308,8 @@ def test_run_direct_deck_uses_requested_fields_and_exact_reaction_set(tmp_path, 
     deck.write_text("*NODE FILE\nU\n*NODE PRINT, NSET=PIN, TOTALS=ONLY\nRF\n")
     _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}), _TOTALS_DAT)
     result = CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path)
-    assert result.success
+    assert not result.success
+    assert any("outputs.RF.PIN" in issue for issue in result.validation_issues)
     assert result.reaction_totals == {}  # FIXED output must not be relabelled PIN
     _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}), _TOTALS_DAT.replace("FIXED", "PIN"))
     assert CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).reaction_totals["fz"] == pytest.approx(981.3477)
@@ -399,9 +400,42 @@ def test_run_ignores_unused_dat_and_does_not_invent_dat_step_ids(tmp_path, monke
     frd += _frd_block("FORC", {1: [0, 0, 2]}, step=2, increment=5)
     _fake_solver(monkeypatch, tmp_path, frd, _TOTALS_DAT.replace("0.1000000E+01", "0.2000000E+01"))
     assert CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success
+    deck.write_text("*NODE FILE\nU\n*NODE PRINT, NSET=PIN, TOTALS=ONLY\nRF\n")
     dat = _TOTALS_DAT[_TOTALS_DAT.index(" total force"):].replace("FIXED", "PIN")
     frd = _frd_block("DISP", {1: [0, 0, 0]}, step=2, increment=5)
     _fake_solver(monkeypatch, tmp_path, frd, dat)
     assert CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success
     _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}) + frd, dat)
     assert not CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path).success
+
+
+
+@pytest.mark.parametrize("output_request,dat", [
+    ("*NODE PRINT, NSET=PIN, TOTALS=ONLY\nRF", _TOTALS_DAT),
+    ("*NODE PRINT, NSET=PIN\nRF", _PER_NODE_DAT),
+    ("*NODE PRINT, NSET=PIN\nU", _PER_NODE_DAT),
+    ("*NODE PRINT, NSET=PIN\nRF", _TOTALS_DAT.replace("FIXED", "PIN")),
+    ("*NODE PRINT, NSET=PIN, TOTALS=ONLY\nRF", _PER_NODE_DAT.replace("ALL_NODES", "PIN")),
+    ("*NODE FILE, NSET=MISSING\nRF", _PER_NODE_DAT),
+])
+def test_requested_output_scope_and_form_cannot_use_unrelated_dat(tmp_path, monkeypatch, output_request, dat):
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU\n" + output_request + "\n")
+    frd = _frd_block("DISP", {1: [0, 0, 0]}) + _frd_block("FORC", {1: [1, 2, 3]})
+    _fake_solver(monkeypatch, tmp_path, frd, dat)
+    result = CalculiXConverter().run(_tet_model("PIN"), deck, tmp_path)
+    assert not result.success
+    assert any("outputs." in issue for issue in result.validation_issues)
+
+
+def test_present_scoped_force_can_remain_unqualified_as_reaction(tmp_path, monkeypatch):
+    from caelab.model.schema import Load
+    deck = tmp_path / "job.inp"
+    deck.write_text("*NODE FILE\nU\n*NODE PRINT, NSET=PIN\nRF\n")
+    _fake_solver(monkeypatch, tmp_path, _frd_block("DISP", {1: [0, 0, 0]}), _PER_NODE_DAT.replace("ALL_NODES", "PIN"))
+    model = _tet_model("PIN")
+    model.loads = [Load("SUPPORT_LOAD", "force", "PIN", {"fz": 1})]
+    result = CalculiXConverter().run(model, deck, tmp_path)
+    assert result.success
+    assert result.nodal_forces[1][2] == 100
+    assert result.reaction_totals == {}
