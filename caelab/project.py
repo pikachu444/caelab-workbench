@@ -69,6 +69,7 @@ class NativeProject:
     nodes: dict[str, ProgramNode] = field(default_factory=dict)
     connections: list[Connection] = field(default_factory=list)
     path: Path | None = None
+    run_store: Path | None = None
 
     def add_node(self, kind: str, program_id: str, position=(0.0, 0.0)) -> ProgramNode:
         node = ProgramNode(uuid.uuid4().hex, kind, program_id, position=tuple(position))
@@ -206,6 +207,10 @@ def load_native_project(path: str | Path) -> NativeProject:
         if not isinstance(data.get("name"), str) or not isinstance(data.get("nodes"), dict) or not isinstance(data.get("connections"), list):
             raise ValueError("name/nodes/connections 자료 형식이 잘못되었습니다.")
         project = NativeProject(data["name"], path=path)
+        stored = data.get("run_store", path.stem + ".runs")
+        if not isinstance(stored, str) or not stored.strip():
+            raise ValueError("run_store: 저장소 경로가 잘못되었습니다.")
+        project.run_store = (path.parent / stored).resolve()
         for key, raw in data["nodes"].items():
             if not isinstance(raw, dict) or not key.strip() or raw.get("id") != key:
                 raise ValueError(f"nodes.{key}: 비어 있거나 일치하지 않는 노드 ID입니다.")
@@ -244,27 +249,58 @@ def load_native_project(path: str | Path) -> NativeProject:
 
 
 def save_native_project(project: NativeProject, path: str | Path | None = None) -> Path:
+    from .native.run_store import RunStore
+    import shutil
     destination = Path(path or project.path or PROJECT_FILENAME).expanduser().resolve()
     if destination.is_dir():
         destination /= PROJECT_FILENAME
     if any(destination == Path(ref.path).resolve() for node in project.nodes.values() for ref in node.files.values()):
         raise ValueError("프로젝트 저장 경로가 원본 파일과 같습니다.")
     _check_connections(project.nodes, project.connections)
+    source_store = project.run_store or (project.path.with_suffix(".runs") if project.path else None)
+    saving_as = project.path is not None and destination != project.path
+    target_store = destination.with_suffix(".runs") if saving_as or source_store is None else source_store
+    if source_store and saving_as and (target_store == source_store or source_store in target_store.parents):
+        raise ValueError("다른 이름 저장에는 기존 실행 저장소와 분리된 경로가 필요합니다.")
+    if saving_as and target_store.exists():
+        raise ValueError("다른 이름 저장의 실행 저장소가 이미 있습니다. 기존 기록을 보호하기 위해 다른 이름을 선택하세요.")
     data = {"schema_version": SCHEMA_VERSION, "name": project.name,
+            "run_store": os.path.relpath(target_store, destination.parent),
             "nodes": {key: asdict(node) for key, node in project.nodes.items()},
             "connections": [asdict(edge) for edge in project.connections]}
+    rebased = []
+    if saving_as and source_store:
+        for key, node in data["nodes"].items():
+            for role, ref in node["files"].items():
+                try:
+                    relative = Path(ref["path"]).relative_to(source_store)
+                except ValueError:
+                    continue
+                ref["path"] = str(target_store / relative)
+                rebased.append((key, role, ref["path"]))
     encoded = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
+    copied = False
     try:
+        if saving_as and source_store and source_store.exists():
+            RunStore(source_store).copy_to(target_store)
+            copied = True
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=destination.parent, prefix=destination.name + ".", suffix=".tmp", delete=False) as stream:
             temporary = Path(stream.name)
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
+    except Exception:
+        if copied:
+            shutil.rmtree(target_store)
+        raise
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     project.path = destination
+    project.run_store = target_store
+    for key, role, new_path in rebased:
+        project.nodes[key].files[role].path = new_path
     return destination
