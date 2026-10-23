@@ -4,15 +4,15 @@ The workbench is a launcher/integration shell: independent systems
 (geometry in FreeCAD, meshing, a solver run, results in ParaView, an
 expert discussion) appear as boxes on a project schematic. Boxes are
 connected through selected native files. Double-clicking a box opens
-its independent program. The CalculiX box opens a separate read-only
-input window; native calculation is a later step.
+its independent program. The CalculiX box opens a separate input and
+execution window; recorded runs can be inspected from this project.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -48,7 +48,7 @@ _KIND_ICONS = {"geometry": "geometry", "mesh": "mesh", "analysis": "solver",
 SYSTEM_KINDS = [
     ("geometry", "형상", "FreeCAD에서 열기"),
     ("mesh", "메시", "메시 보기"),
-    ("analysis", "CalculiX", "네이티브 입력 확인"),
+    ("analysis", "CalculiX", "네이티브 계산"),
     ("results", "결과", "ParaView에서 열기"),
     ("expert", "전문가 논의", "독립 프로그램 연결"),
 ]
@@ -63,6 +63,8 @@ STATE_COLORS = {
     "missing": "#d64545",
     "stale": "#c28422",
     "opened": "#7fb2e5",
+    "queued": "#f2b134", "preparing": "#f2b134", "completed": "#7fb2e5",
+    "cancelled": "#c28422", "interrupted": "#c28422",
 }
 STATE_LABELS = {
     "unavailable": "연결 미구현",
@@ -75,6 +77,8 @@ STATE_LABELS = {
     "missing": "파일 누락",
     "stale": "오래됨",
     "opened": "프로그램 열림",
+    "queued": "대기", "preparing": "입력 보존 중", "completed": "프로세스 종료",
+    "cancelled": "취소됨", "interrupted": "중단됨",
 }
 BOX_W, BOX_H = 210, 98
 
@@ -246,6 +250,11 @@ class ProjectWindow(QMainWindow):
         self._show_project()
         if project_path is not None:
             self.open_project(project_path, confirm=False)
+        self.run_timer = QTimer(self)
+        self.run_timer.setInterval(1500)
+        self.run_timer.timeout.connect(self._poll_runs)
+        self.run_timer.start()
+        self._run_signature = None
 
     def _build_ui(self) -> None:
         file_menu = self.menuBar().addMenu("파일(&F)")
@@ -279,7 +288,7 @@ class ProjectWindow(QMainWindow):
         fit.triggered.connect(self.fit_schematic)
         original = toolbar.addAction("원래 크기")
         original.triggered.connect(self.reset_view)
-        run = toolbar.addAction("계산 안내")
+        run = toolbar.addAction("해석창 열기")
         run.triggered.connect(self.run_chain)
 
         self.toolbox = QListWidget()
@@ -412,7 +421,11 @@ class ProjectWindow(QMainWindow):
         return self.save_project(path) if path else False
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        event.accept() if self._confirm_transition() else event.ignore()
+        if self._confirm_transition():
+            self.run_timer.stop()
+            event.accept()
+        else:
+            event.ignore()
 
     def _show_project(self) -> None:
         self._loading = True
@@ -509,6 +522,21 @@ class ProjectWindow(QMainWindow):
         else:
             lines += ["", "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다."
                       if node.kind == "expert" else f"{node.program_id} 프로그램을 찾지 못했습니다."]
+        if node.kind == "analysis" and self.project.path is not None:
+            from .native_analysis import _PARSE_LABELS, _RUN_LABELS
+            try:
+                run = self.workbench.selected_native_run(self.project, node.id)
+                if run is not None:
+                    lines += ["", f"선택한 실행: {run.created_at}",
+                              f"실행 상태: {_RUN_LABELS.get(run.state, run.state)}",
+                              f"결과 판독: {_PARSE_LABELS.get(run.parse_state, run.parse_state)}",
+                              f"실행 입력: {run.input_path}", f"보존 위치: {run.workdir}"]
+                    if run.error:
+                        lines.append(run.error)
+                    if run.stale:
+                        lines.append(f"오래된 입력의 결과: {run.stale_reason}")
+            except (OSError, ValueError, RuntimeError) as error:
+                lines.append(f"실행 기록을 읽지 못했습니다: {error}")
         self.properties.setPlainText("\n".join(lines))
 
     def choose_file(self, role: str = "input") -> bool:
@@ -648,14 +676,47 @@ class ProjectWindow(QMainWindow):
             program = statuses.get(node.program_id)
             box.subtitle = (f"{program.spec.name} — {'설치됨' if program.available else '미설치'}"
                             if program else "독립 프로그램 연결 미구현")
-            reference = self.workbench.input_file(self.project, node_id)
-            title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), node.kind)
-            identifying_file = reference or node.files.get("output")
-            box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
-            box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
-            box.set_state("unavailable" if node.kind == "expert" else node.state, node.reason)
-            box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
-                           f"{self._display_reason(node.reason)}")
+            self._reflect_node(node_id)
+        self._poll_runs()
+
+    def _reflect_node(self, node_id: str) -> None:
+        node, box = self.project.nodes[node_id], self.boxes[node_id]
+        reference = self.workbench.input_file(self.project, node_id)
+        title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), node.kind)
+        identifying_file = reference or node.files.get("output")
+        box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
+        box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
+        box.set_state("unavailable" if node.kind == "expert" else node.state, node.reason)
+        box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
+                       f"{self._display_reason(node.reason)}")
+
+    def _poll_runs(self) -> None:
+        if self.project.path is None:
+            return
+        signature = []
+        run_states = {}
+        for node_id, box in self.boxes.items():
+            if box.kind != "analysis":
+                continue
+            try:
+                run = self.workbench.selected_native_run(self.project, node_id)
+                if run is None:
+                    continue
+                state = "stale" if run.stale and run.state == "completed" else run.state
+                run_states[node_id] = (state, run.error or run.stale_reason)
+                signature.append((node_id, run.id, run.state, run.parse_state, run.stale, run.error))
+            except (OSError, ValueError, RuntimeError) as error:
+                run_states[node_id] = ("failed", f"실행 기록을 읽지 못했습니다: {error}")
+                signature.append((node_id, str(error)))
+        # Selecting a run can replace/remove outputs and invalidate downstream nodes.
+        for node_id in self.boxes:
+            self._reflect_node(node_id)
+        for node_id, (state, reason) in run_states.items():
+            self.boxes[node_id].set_state(state, reason)
+        signature = tuple(signature)
+        if signature != getattr(self, "_run_signature", None):
+            self._run_signature = signature
+            self._selection_changed()
 
     def _display_reason(self, reason: str) -> str:
         for node_id, box in self.boxes.items():
@@ -681,7 +742,7 @@ class ProjectWindow(QMainWindow):
             return
         if box.kind == "analysis" and (self._dirty or self.project.path is None):
             answer = QMessageBox.question(
-                self, "별도 입력 확인창 열기", "프로젝트를 저장한 뒤 별도 입력 확인창을 엽니다.",
+                self, "별도 해석창 열기", "프로젝트를 저장한 뒤 별도 해석창을 엽니다.",
                 QMessageBox.Save | QMessageBox.Cancel, QMessageBox.Save)
             if answer != QMessageBox.Save or not self.save_project():
                 return
@@ -704,7 +765,11 @@ class ProjectWindow(QMainWindow):
         self._selection_changed()
 
     def run_chain(self) -> None:
-        self._message("네이티브 덱 계산은 아직 구현되지 않았습니다. 현재는 실제 파일 연결과 입력 확인까지 가능합니다.")
+        boxes = self._selected_boxes()
+        if len(boxes) != 1 or boxes[0].kind != "analysis":
+            self._message("CalculiX 상자를 하나 선택하세요. 별도 해석창에서 입력을 확인하고 계산합니다.")
+            return
+        self.open_box(boxes[0])
 
     def fit_schematic(self) -> None:
         rect = self.scene.itemsBoundingRect().adjusted(-30, -30, 30, 30)

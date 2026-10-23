@@ -277,6 +277,17 @@ def analysis_launch_request(project_file: str | Path, node_id: str) -> LaunchReq
     )
 
 
+def calculix_run_request(status: ProgramStatus, workdir: Path) -> LaunchRequest:
+    """Native CCX execution; the input is already snapshotted as model.inp."""
+    if status.spec.id != "calculix" or not status.available:
+        raise ValueError(status.reason or "CalculiX 실행 파일이 없습니다.")
+    reason = _executable_reason(Path(status.path), host_platform())
+    if reason:
+        raise ValueError(reason)
+    return LaunchRequest([status.path, "-i", "model"], Path(workdir),
+                         {**status.runtime_env, **os.environ}, "calculix")
+
+
 def launch_command(status: ProgramStatus, file: str | None = None) -> list[str] | None:
     """Legacy command construction only; native GUI callers use launch_request."""
     if not status.available:

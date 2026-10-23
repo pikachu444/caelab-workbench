@@ -36,7 +36,7 @@ def test_empty_project_and_expert_never_start_analysis_solver_or_llm(app, monkey
     assert "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다" in window.status.text()
     assert not hasattr(window, "_workspace")
     window.run_chain()
-    assert "계산은 아직 구현되지 않았습니다" in window.status.text()
+    assert "CalculiX 상자를 하나 선택" in window.status.text()
     assert box.state == "unavailable"
     window._dirty = False
     window.close()

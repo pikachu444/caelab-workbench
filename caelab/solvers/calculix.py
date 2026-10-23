@@ -517,7 +517,7 @@ def parse_frd(path: Path) -> ResultSet:
 
 @dataclass
 class DatResults:
-    """What a CalculiX .dat (*NODE PRINT output) carries.
+    """Known *NODE PRINT values and observed result headers in a CalculiX .dat.
 
     Two shapes occur in the wild:
     - per-node blocks (``displacements (vx,vy,vz) for set X`` /
@@ -525,7 +525,9 @@ class DatResults:
     - totals blocks (``total force (fx,fy,fz) for set X``) with a single
       row of three values and no node id — this is what FreeCAD FEM
       writes for reaction forces (``TOTALS=ONLY``).
-    Only blocks from the final encountered step/increment/time are exposed.
+    Only supported blocks from the last observed frame occurrence are exposed.
+    Other explicit set-result headers still select that frame and are recorded
+    in unsupported_blocks; their numeric rows are never interpreted here.
     """
 
     displacements: dict = field(default_factory=dict)  # node id -> [ux, uy, uz]
@@ -537,6 +539,7 @@ class DatResults:
     max_displacement: float | None = None
     frame: tuple | None = None
     errors: list[str] = field(default_factory=list)
+    unsupported_blocks: list[dict] = field(default_factory=list)
 
 
 _DAT_HEADER = re.compile(
@@ -544,11 +547,19 @@ _DAT_HEADER = re.compile(
     r"\([^)]*\)\s+for set\s+(\S+)",
     re.IGNORECASE,
 )
+_DAT_RESULT_HEADER = re.compile(
+    r"^\s*(.+?)\s+for set\s+(\S+)(?:\s+and time\b(.*))?\s*$",
+    re.IGNORECASE,
+)
 
 
-def parse_dat(path: Path) -> DatResults:
+def parse_dat(path: Path, *, check_cancelled=None) -> DatResults:
     """Read complete global-coordinate blocks from the final DAT frame."""
-    frames = {}
+    # Observe every explicit set-result header, including fields whose values we
+    # cannot read. Otherwise a later EL PRINT/thermal block leaves old U/RF final.
+    # Keep the last contiguous frame occurrence, not a dictionary insertion order.
+    blocks = {}
+    unsupported_blocks = []
     errors = []
     step, increment = None, None
     current = None
@@ -561,11 +572,13 @@ def parse_dat(path: Path) -> DatResults:
             return
         if not rows:
             errors.append(f"{Path(path).name}.{current_set}: 유효한 {current} 레코드가 없습니다.")
-        if (current, current_set) in frames[frame]:
+        if (current, current_set) in blocks:
             errors.append(f"{Path(path).name}.{current_set}: 같은 프레임의 {current} 블록이 중복됩니다.")
-        frames[frame][(current, current_set)] = dict(rows)
+        blocks[(current, current_set)] = dict(rows)
 
     for line_number, line in enumerate(Path(path).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        if check_cancelled is not None and line_number % 1024 == 1:
+            check_cancelled()
         step_match = re.search(r"S T E P\s+(\d+)", line)
         inc_match = re.search(r"INCREMENT\s+(\d+)", line)
         if step_match or inc_match:
@@ -577,11 +590,10 @@ def parse_dat(path: Path) -> DatResults:
             if inc_match:
                 increment = int(inc_match.group(1))
             continue
-        header = _DAT_HEADER.match(line)
-        if header:
+        observed = _DAT_RESULT_HEADER.match(line)
+        if observed:
             finish()
-            current = header.group(1).lower()
-            current_set = header.group(2).upper()
+            current = None
             time_match = re.search(r"and time\s+(\S+)", line, re.IGNORECASE)
             try:
                 time = float(time_match.group(1)) if time_match else None
@@ -590,9 +602,19 @@ def parse_dat(path: Path) -> DatResults:
             except ValueError:
                 errors.append(f"{path.name}:{line_number}: 유효한 결과 시간이 없습니다.")
                 time = None
-            frame = (step, increment, time)
-            frames.setdefault(frame, {})
+            observed_frame = (step, increment, time)
+            if observed_frame != frame:
+                blocks = {}
+                unsupported_blocks = []
+            frame = observed_frame
             rows = {}
+            header = _DAT_HEADER.match(line)
+            if header:
+                current = header.group(1).lower()
+                current_set = header.group(2).upper()
+            else:
+                unsupported_blocks.append({"header": line.strip(), "set": observed.group(2).upper(),
+                                           "frame": frame, "line": line_number})
             continue
         if current is None or not line.strip():
             continue
@@ -613,10 +635,9 @@ def parse_dat(path: Path) -> DatResults:
         except ValueError:
             errors.append(f"{path.name}:{line_number}: 손상되었거나 전역 좌표가 아닌 {current} 레코드입니다.")
     finish()
-    out = DatResults(errors=errors)
-    if frames:
-        out.frame = next(reversed(frames))
-        for (kind, name), block in frames[out.frame].items():
+    out = DatResults(errors=errors, frame=frame, unsupported_blocks=unsupported_blocks)
+    if frame is not None:
+        for (kind, name), block in blocks.items():
             if kind == "displacements":
                 out.displacements_by_set[name] = block
                 if any(node in out.displacements and out.displacements[node] != value for node, value in block.items()):

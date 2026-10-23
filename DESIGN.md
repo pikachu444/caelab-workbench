@@ -134,7 +134,7 @@
 ## 8. 실행·저장 설계
 
 - 실행 소유는 JobManager 하나이며 GUI와 다른 입구는 Workbench 명령 경로를 사용한다.
-- 작업 상태는 `queued → preparing → running → succeeded / failed / cancelled`로 관리한다. 실행·판독 예외가 작업을 running에 남기지 않게 한다.
+- 네이티브 작업 상태는 `queued → preparing → running → completed / failed / cancelled`로 관리하고, 제어가 중단된 작업은 `interrupted`로 복원한다. `completed`는 프로세스의 정상 종료이며 결과 판독 상태는 별도로 기록한다. 보조 Job의 `succeeded`와 네이티브 프로세스 종료를 혼동하지 않는다. 실행·판독 예외가 작업을 running에 남기지 않게 한다.
 - 프로세스 종료와 결과 유효성을 구분하고, 실행 기록·입력 개정·결과 파일·로그를 프로젝트와 함께 저장한다. 예기치 않은 중단은 재열기에서 interrupted로 알리고 자동 재실행하지 않는다.
 - 입력이 바뀌면 하위 결과를 오래된 상태로 표시한다. 다른 실행의 결과와 토론을 현재 입력의 결과로 사용하지 않는다.
 - 저장 단위는 프로젝트 관계 + 네이티브 파일 참조 + 실행별 기록·결과 + 토론이다. 열기만으로 계산이나 LLM 호출이 일어나지 않는다.
