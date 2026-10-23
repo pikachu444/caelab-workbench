@@ -399,12 +399,14 @@ class ProjectWindow(QMainWindow):
         self.project = project
         self._dirty = False
         self._show_project()
-        self._message(f"프로젝트를 열었습니다: {self.project.path}")
+        self._message(f"프로젝트를 열었습니다: {self.project.path}" +
+                      ('\n확인 필요:\n' + '\n'.join(project.issues) if project.issues else ''))
         return True
 
     def save_project(self, path: str | Path | None = None) -> bool:
         if path is None and self.project.path is None:
             return self.save_project_as()
+        previous_path = self.project.path
         try:
             self.workbench.save_native_project(self.project, path)
         except Exception as error:
@@ -412,7 +414,10 @@ class ProjectWindow(QMainWindow):
             return False
         self._dirty = False
         self._title()
-        self._message(f"프로젝트를 저장했습니다: {self.project.path}")
+        message = f"프로젝트를 저장했습니다: {self.project.path}"
+        if previous_path and previous_path != self.project.path:
+            message += "\n실행 기록과 대화는 복사했습니다. CAD·INP 원본은 기존 파일을 계속 참조합니다."
+        self._message(message)
         return True
 
     def save_project_as(self) -> bool:
@@ -662,12 +667,13 @@ class ProjectWindow(QMainWindow):
 
     def refresh_files(self) -> None:
         before = [(node.state, node.reason) for node in self.project.nodes.values()]
-        self.workbench.refresh_native_project(self.project)
+        issues = self.workbench.refresh_native_project(self.project)
         if before != [(node.state, node.reason) for node in self.project.nodes.values()]:
             self._mark_dirty()
         self._reflect_programs()
         self._selection_changed()
-        self._message("파일 상태를 다시 확인했습니다. 변경된 원본과 오래된 연결을 확인하세요.")
+        self._message("파일 상태를 다시 확인했습니다. 변경된 원본과 오래된 연결을 확인하세요." +
+                      ('\n' + '\n'.join(issues) if issues else ''))
 
     def _reflect_programs(self) -> None:
         statuses = {status.spec.id: status for status in self.workbench.programs()}
