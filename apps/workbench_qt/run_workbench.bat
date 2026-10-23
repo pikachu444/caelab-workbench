@@ -1,6 +1,6 @@
 @echo off
 rem CAELAB Workbench - Windows launcher.
-rem First run creates .venv in the repo root and installs the GUI packages.
+rem Creates .venv if needed and syncs the declared GUI/RAG packages on every run.
 rem Usage: double-click this file, or run it from the repo root folder.
 setlocal
 cd /d "%~dp0\..\.."
@@ -16,18 +16,18 @@ if not exist ".venv\Scripts\python.exe" (
     echo Creating virtual environment...
     %PY% -m venv .venv
     if errorlevel 1 goto :fail
-    echo Installing packages (PySide6, numpy, vtk) - first run only...
-    .venv\Scripts\python -m pip install --upgrade pip
-    .venv\Scripts\python -m pip install PySide6 numpy vtk
-    if errorlevel 1 goto :fail
 )
 
-.venv\Scripts\python -m apps.workbench_qt
+echo Synchronizing Workbench packages...
+.venv\Scripts\python.exe -m pip install -e ".[gui,rag]"
+if errorlevel 1 goto :fail
+
+.venv\Scripts\python.exe -m apps.workbench_qt
 if errorlevel 1 goto :fail
 exit /b 0
 
 :fail
 echo.
-echo Failed to start. Check that Python 3.11+ is installed and on PATH.
+echo Failed to prepare or start Workbench. See the error output above.
 pause
 exit /b 1

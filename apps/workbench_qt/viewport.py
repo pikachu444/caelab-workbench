@@ -17,6 +17,7 @@ from caelab.model.schema import StructuralModel
 from caelab.solvers.base import ResultSet
 
 _CELL_TYPES = {}
+_VTK_IMPORT_ERROR = ""
 try:
     import vtk
     from vtk.util.numpy_support import numpy_to_vtk
@@ -28,8 +29,12 @@ try:
         "C3D8R": vtk.VTK_HEXAHEDRON,
         "C3D20": vtk.VTK_QUADRATIC_HEXAHEDRON,
     }
-except Exception:  # pragma: no cover - vtk is a declared gui dependency
+except Exception as exc:  # import failure must not masquerade as headless mode
     vtk = None
+    if isinstance(exc, ModuleNotFoundError) and exc.name == "vtk":
+        _VTK_IMPORT_ERROR = 'VTK가 설치되어 있지 않습니다.\npython -m pip install -e ".[gui]"로 GUI 의존성을 설치하세요.'
+    else:
+        _VTK_IMPORT_ERROR = f"VTK 모듈을 불러오지 못했습니다.\n{type(exc).__name__}: {exc}"
 
 
 _FONT_CANDIDATES = (
@@ -78,14 +83,26 @@ class Viewport(QWidget):
         self._grid = None
         self._node_ids: list[int] = []
         self.available = False
-        if vtk is not None and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+        self.unavailable_reason = None
+        if vtk is None:
+            self.unavailable_reason = _VTK_IMPORT_ERROR
+        elif os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            self.unavailable_reason = "QT_QPA_PLATFORM=offscreen으로 실행 중이어서 3D 화면을 비활성화했습니다."
+        else:
             try:
                 self._init_vtk()
                 self.available = True
-            except Exception:
-                self.available = False
+            except Exception as exc:
+                self.unavailable_reason = f"VTK 3D 화면을 초기화하지 못했습니다.\n{type(exc).__name__}: {exc}"
+                if self._vtk_widget is not None:
+                    self._layout.removeWidget(self._vtk_widget)
+                    self._vtk_widget.hide()
+                    self._vtk_widget.deleteLater()
+                    self._vtk_widget = None
+                self._renderer = None
         if not self.available:
-            label = QLabel("3D 화면은 실제 디스플레이에서 켜집니다.\n(헤드리스 실행 중에는 비활성화됩니다)")
+            label = QLabel(self.unavailable_reason)
+            label.setWordWrap(True)
             label.setStyleSheet("color:#666;")
             from PySide6.QtCore import Qt
 

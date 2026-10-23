@@ -7,10 +7,12 @@ name = "caelab-workbench"
 version = "0.1.0"
 description = "CAE research workbench: native program connections and evidence-based expert discussion"
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.26", "scipy>=1.11"]
+dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
-gui = ["PySide6>=6.6"]
+gui = ["PySide6>=6.6", "vtk>=9.3", "scipy>=1.15"]
+numerical = ["scipy>=1.15"]
+rag = ["pypdf>=4"]
 dev = ["pytest>=8"]
 sensitivity = ["SALib>=1.4"]
 
