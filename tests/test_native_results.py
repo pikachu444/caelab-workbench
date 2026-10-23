@@ -394,8 +394,15 @@ def test_actual_ccx_native_results_match_independent_uniform_strain_solution(tmp
         factor = .01 * (index + 1)
         fields = {f["name"]: f for f in frame["fields"]}
         stress = {c["name"]: c for c in fields["STRESS"]["summary"]["components"]}
-        assert stress["SXX"]["minimum"] == pytest.approx(1000 * factor, rel=2e-5)
-        assert stress["SXX"]["maximum"] == pytest.approx(1000 * factor, rel=2e-5)
+        analytical = 1000 * factor
+        # CCX 2.21 extrapolate.f: Hex8 a8 rows sum to 0.99996; Tet10 a4
+        # rows sum to 0.99999, with midside values averaged from corner values.
+        # https://www.dhondt.de/ccx_2.21.src.tar.bz2
+        # Preserve this known nodal extrapolation bias, rather than correcting FRD.
+        expected_nodal = analytical * {"C3D8": 0.99996, "C3D10": 0.99999}.get(topology, 1.0)
+        assert stress["SXX"]["minimum"] == pytest.approx(expected_nodal, rel=5e-6)
+        assert stress["SXX"]["maximum"] == pytest.approx(expected_nodal, rel=5e-6)
+        assert stress["SXX"]["minimum"] == pytest.approx(analytical, rel=4.5e-5)
         assert abs(stress["SYY"]["maximum"]) < 1e-9
         assert abs(stress["SZZ"]["maximum"]) < 1e-9
         if stress_only:
@@ -406,6 +413,7 @@ def test_actual_ccx_native_results_match_independent_uniform_strain_solution(tmp
                            for x, y, z in coordinates)
             assert frame["summary"]["max_displacement"] == pytest.approx(expected, rel=2e-5)
         _, arrays = _arrays(tmp_path / frame["vtu_file"])
+        assert arrays["STRESS"][1][::6] == pytest.approx([expected_nodal] * len(coordinates), rel=5e-6)
         assert arrays["Coordinates"][1] == [value for xyz in coordinates for value in xyz]
         assert arrays["NativeNodeId"][1] == [10 * (i + 1) for i in range(len(coordinates))]
         assert arrays["NativeElementId"][1] == [71]
