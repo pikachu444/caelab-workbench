@@ -264,6 +264,56 @@ def test_dat_only_preserves_final_set_output_without_claiming_geometry_or_reacti
     json.dumps(result, allow_nan=False)
 
 
+def _unsupported_dat(value="2.0", label="stresses (elem, integ.pnt.,sxx,syy,szz,sxy,sxz,syz)"):
+    return f" {label} for set BODY and time {value}\n 71 1 20.0 0.0 0.0 0.0 0.0 0.0\n"
+
+
+@pytest.mark.parametrize("label", ["stresses (elem, integ.pnt.,sxx,syy,szz,sxy,sxz,syz)", "temperatures"])
+def test_later_unsupported_dat_output_never_reuses_earlier_displacements(tmp_path, label):
+    source = (_dat_text(1.0) + _unsupported_dat(label=label)).encode("ascii")
+    (tmp_path / "model.dat").write_bytes(source)
+    result = collect_results(tmp_path)
+    assert result["status"] == result["dat"]["status"] == "unsupported"
+    assert result["dat"]["frame"]["value"] == 2.0
+    assert result["dat"]["sets"] == {} and result["dat"]["max_displacement"] is None
+    assert result["summary"].get("max_displacement") is None
+    block = result["dat"]["unsupported_blocks"][0]
+    assert block["header"] == _unsupported_dat(label=label).splitlines()[0].strip()
+    assert block["set"] == "BODY" and block["frame"] == result["dat"]["frame"]
+    assert block["line"] > 1
+    assert (tmp_path / "model.dat").read_bytes() == source
+    json.dumps(result, allow_nan=False)
+
+
+def test_same_dat_frame_supported_and_unsupported_blocks_are_partial(tmp_path):
+    (tmp_path / "model.dat").write_text(_dat_text() + _unsupported_dat("1.0"), encoding="ascii")
+    result = collect_results(tmp_path)
+    assert result["status"] == result["dat"]["status"] == "partial"
+    assert result["summary"]["max_displacement"] == 5.0
+    assert result["dat"]["sets"]["OBSERVED"]["displacements"][20] == [3, 4, 0]
+    assert result["dat"]["unsupported_blocks"][0]["frame"]["value"] == 1.0
+
+
+def test_later_supported_dat_frame_does_not_inherit_earlier_unsupported_blocks(tmp_path):
+    (tmp_path / "model.dat").write_text(_unsupported_dat("1.0") + _dat_text(2.0), encoding="ascii")
+    result = collect_results(tmp_path)
+    assert result["status"] == "readable"
+    assert result["dat"]["frame"]["value"] == 2.0
+    assert result["dat"]["unsupported_blocks"] == []
+    assert result["summary"]["max_displacement"] == 5.0
+
+
+@pytest.mark.parametrize("value", ["NaN", "broken", ""])
+def test_unknown_final_dat_time_does_not_restore_earlier_supported_frame(tmp_path, value):
+    (tmp_path / "model.dat").write_text(_dat_text() + _unsupported_dat(value), encoding="ascii")
+    result = collect_results(tmp_path)
+    assert result["status"] == result["dat"]["status"] == "failed"
+    assert result["dat"]["frame"]["value"] is None
+    assert result["dat"]["sets"] == {} and result["dat"]["max_displacement"] is None
+    assert result["dat"]["unsupported_blocks"] and result["dat"]["warnings"]
+    json.dumps(result, allow_nan=False)
+
+
 def test_good_dat_never_overrides_broken_frd_or_a_different_frd_frame(tmp_path):
     (tmp_path / "model.dat").write_text(_dat_text(999.0), encoding="ascii")
     (tmp_path / "model.frd").write_text("broken FRD", encoding="ascii")
@@ -471,4 +521,28 @@ def test_actual_ccx_dat_only_node_print_retains_named_set_and_raw_totals(tmp_pat
     assert values["nodal_forces"][20][0] == pytest.approx(10 / 6, rel=2e-5)
     assert values["total_force"][0] == pytest.approx(10 / 6, rel=2e-5)
     assert result["summary"]["max_displacement"] == pytest.approx(.01)
+    assert (tmp_path / "model.dat").read_bytes() == original
+
+
+def test_actual_ccx_later_el_print_does_not_select_previous_node_print(tmp_path):
+    executable = shutil.which("ccx")
+    if executable is None:
+        pytest.skip("CalculiX ccx unavailable for actual later EL PRINT frame check")
+    deck, _ = _affine_deck("C3D8", stress_only=True, two_steps=True)
+    deck = deck.replace("*NODE\n", "*NODE,NSET=NALL\n", 1)
+    deck = deck.replace("*EL FILE\nS", "*NODE PRINT,NSET=NALL,GLOBAL=YES\nU", 1)
+    deck = deck.replace("*EL FILE\nS", "*NODE PRINT,NSET=NALL,FREQUENCY=0\nU\n*EL PRINT,ELSET=BODY,GLOBAL=YES\nS", 1)
+    (tmp_path / "model.inp").write_text(deck, encoding="ascii")
+    completed = subprocess.run([executable, "-i", "model"], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    original = (tmp_path / "model.dat").read_bytes()
+    assert b"displacements" in original and b"stresses (elem, integ.pnt." in original
+    assert b"0.1000000E+01" in original and b"0.2000000E+01" in original
+    result = collect_results(tmp_path)
+    assert result["status"] == result["dat"]["status"] == "unsupported"
+    assert result["dat"]["frame"] == {"step": 2, "increment": 1, "value": 2.0}
+    assert result["dat"]["sets"] == {} and result["dat"]["max_displacement"] is None
+    assert result["dat"]["unsupported_blocks"][0]["set"] == "BODY"
+    assert result["summary"].get("max_displacement") is None
+    assert result["exchange_files"] == []
     assert (tmp_path / "model.dat").read_bytes() == original

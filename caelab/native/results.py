@@ -412,7 +412,7 @@ def _collect_dat(path, checkpoint):
 
     answer = {"status": "missing", "frame": None, "selection": "final_frame",
               "sets": {}, "warnings": [], "max_displacement": None,
-              "displacement_node_count": 0, "units": {}}
+              "displacement_node_count": 0, "units": {}, "unsupported_blocks": []}
     if not path.is_file() or path.stat().st_size == 0:
         return answer
     checkpoint()
@@ -425,6 +425,9 @@ def _collect_dat(path, checkpoint):
     answer["warnings"] = list(parsed.errors)
     if parsed.frame is not None:
         answer["frame"] = dict(zip(("step", "increment", "value"), parsed.frame))
+    for block in _checked(parsed.unsupported_blocks, checkpoint):
+        answer["unsupported_blocks"].append({**block, "frame": dict(zip(("step", "increment", "value"), block["frame"]))})
+        answer["warnings"].append(f"DAT 마지막 출력의 미지원 블록 (행 {block['line']}): {block['header']}")
     for values, key in ((parsed.displacements_by_set, "displacements"),
                         (parsed.forces_by_set, "nodal_forces"),
                         (parsed.totals_by_set, "total_force"),
@@ -432,7 +435,7 @@ def _collect_dat(path, checkpoint):
         for name, block in _checked(values.items(), checkpoint):
             answer["sets"].setdefault(name, {})[key] = block
     if answer["sets"]:
-        answer["status"] = "partial" if parsed.errors else "readable"
+        answer["status"] = "partial" if parsed.errors or parsed.unsupported_blocks else "readable"
         answer["max_displacement"] = parsed.max_displacement
         answer["displacement_node_count"] = len(parsed.displacements)
         if parsed.max_displacement is not None and not math.isfinite(parsed.max_displacement):

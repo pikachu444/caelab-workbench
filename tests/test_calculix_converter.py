@@ -276,6 +276,32 @@ def test_dat_final_frame_replaces_earlier_nodes_and_detects_local_or_corrupt_row
     assert parse_dat(path).errors
 
 
+def test_dat_reappearing_frame_selects_last_occurrence_without_old_fields(tmp_path):
+    path = tmp_path / "job.dat"
+    path.write_text(
+        " displacements (vx,vy,vz) for set OLD and time 1.0\n 1 3.0 4.0 0.0\n"
+        " temperatures for set HOT and time 2.0\n 1 300.0\n"
+        " forces (fx,fy,fz) for set FINAL and time 1.0\n 2 1.0 2.0 3.0\n")
+    parsed = parse_dat(path)
+    assert parsed.frame == (None, None, 1.0)
+    assert parsed.nodal_forces == {2: [1, 2, 3]}
+    assert parsed.displacements == {} and parsed.max_displacement is None
+    assert parsed.unsupported_blocks == [] and parsed.errors == []
+
+
+def test_dat_final_unsupported_frame_preserves_header_without_interpreting_values(tmp_path):
+    path = tmp_path / "job.dat"
+    path.write_text(_PER_NODE_DAT + " S T E P 2\n INCREMENT 1\n"
+                    " stresses (elem, integ.pnt.,sxx,syy,szz,sxy,sxz,syz) for set BODY and time 2.0\n"
+                    " 71 1 20.0 0.0 0.0 0.0 0.0 0.0\n")
+    parsed = parse_dat(path)
+    assert parsed.frame == (2, 1, 2.0)
+    assert parsed.displacements == {} and parsed.nodal_forces == {} and parsed.max_displacement is None
+    assert parsed.unsupported_blocks[0]["set"] == "BODY"
+    assert parsed.unsupported_blocks[0]["frame"] == (2, 1, 2.0)
+    assert parsed.errors == []
+
+
 def _fake_solver(monkeypatch, tmp_path, frd_text, dat_text=None, stdout="solver output"):
     import subprocess
     import caelab.solvers.calculix as module
@@ -287,6 +313,18 @@ def _fake_solver(monkeypatch, tmp_path, frd_text, dat_text=None, stdout="solver 
             (tmp_path / "job.dat").write_text(dat_text)
         return subprocess.CompletedProcess(args[0], 0, stdout, "")
     monkeypatch.setattr(module.subprocess, "run", execute)
+
+
+def test_converter_does_not_use_displacements_before_final_unsupported_dat_frame(tmp_path, monkeypatch):
+    model = cantilever_model()
+    converter = CalculiXConverter()
+    deck = converter.write_input(model, tmp_path)
+    dat = _PER_NODE_DAT + " temperatures for set HOT and time 2.0\n 1 300.0\n"
+    _fake_solver(monkeypatch, tmp_path, None, dat)
+    result = converter.run(model, deck, tmp_path)
+    assert not result.success
+    assert result.displacements == {} and result.max_displacement is None
+    assert any("유효한 결과 프레임" in issue for issue in result.validation_issues)
 
 
 def test_run_requires_actual_requested_stress_and_keeps_full_log(tmp_path, monkeypatch):
