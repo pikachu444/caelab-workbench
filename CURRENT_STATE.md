@@ -28,7 +28,7 @@
 - 빈 결과·손상 레코드·최종 프레임의 요청 필드 누락은 성공이나 0이 되지 않는다. 요청한 노드 집합과 출력 형식(절점별/합계)을 구분하며, 다른 집합의 결과로 요청 충족을 판정하지 않는다. FRD/DAT를 합칠 때 프레임을 대조하고, 출처가 맞지 않는 DAT 집합 합계를 반력으로 채우지 않는다. 하중이 걸린 구속 절점의 외력을 반력으로 단정하지 않는다.
 - 실패·취소·부분 실패 딕셔너리는 최적화의 유효 후보가 되지 않는다. 결과 요약과 화면은 실제 solver_id·선언 단위를 쓰고, 누락 값과 미선언 단위를 표시한다. 부분 변위장을 0으로 채워 변형을 그리지 않는다.
 - 지식 검색은 요청 솔버 자료가 없을 때 다른 솔버로 범위를 풀지 않는다. 자료 없음과 색인/서비스 오류를 구분하며 내장 노트로 오류를 숨기지 않는다.
-- 통합 제품 커밋 `72be016`의 전체 회귀: WSL Ubuntu·Python 3.12.3·NumPy 2.5.4·SciPy 1.18.1·PySide6 6.12.0(offscreen), `CAELAB_CCX=/usr/bin/ccx`(실제 CalculiX 2.21)에서 `4 failed, 157 passed, 5 skipped`. 실패 4개는 기존 `expert_panel.py` 누락으로 동일하다. skip은 선택 의존성 SALib와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재다. CalculiX의 기존 반력·외팔보 검사는 실제 프로세스로 통과했다.
+- 통합 제품 커밋 `3bfe62b`의 전체 회귀: WSL Ubuntu·Python 3.12.3·NumPy 2.5.4·SciPy 1.18.1·PySide6 6.12.0(offscreen), `CAELAB_CCX=/usr/bin/ccx`(실제 CalculiX 2.21)에서 `4 failed, 164 passed, 5 skipped`. 실패 4개는 기존 `expert_panel.py` 누락으로 동일하다. skip은 선택 의존성 SALib와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재다. CalculiX의 기존 반력·외팔보 검사는 실제 프로세스로 통과했다.
 - Windows·Python 3.13 기준점 검사에서는 `7 failed, 78 passed, 10 skipped`였다. 위 패널 4개 외에 Linux 설치 전제의 테스트 2개와 5.7GB 파일을 sparse로 가정한 디스크 공간 실패 1개가 있었다. 같은 설치 테스트 10개는 WSL에서 통과했다. 이 플랫폼 검사 문제를 P1에서 skip/기대값 변경으로 숨기지 않았다.
 - 이 범위는 P1의 데이터 무결성 수정이다. P2의 패널 원본 복구, P3~P7의 사용자 네이티브 프로젝트 본선, 실제 LLM·Windows 실화면 완료를 뜻하지 않는다.
 
