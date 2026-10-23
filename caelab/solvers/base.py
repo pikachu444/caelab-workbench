@@ -1,10 +1,4 @@
-"""Solver converter contract (redesign decision D1).
-
-A solver is a converter from the common structural model. Each
-converter declares exactly one support table; menus, run eligibility
-and numerical-study exposure all read that declaration. Nothing else
-keeps its own copy of what a solver supports.
-"""
+"""Auxiliary model converter contract; not a native-deck capability gate."""
 
 from __future__ import annotations
 
@@ -69,18 +63,25 @@ class ResultSet:
     displacements: dict = field(default_factory=dict)   # node id -> [ux, uy, uz]
     reactions: dict = field(default_factory=dict)       # constrained node id -> [fx, fy, fz]
     nodal_forces: dict = field(default_factory=dict)    # every node id -> [fx, fy, fz]
-    max_displacement: float = 0.0
+    max_displacement: float | None = None
     reaction_totals: dict = field(default_factory=dict)  # {"fx":.., "fy":.., "fz":..}
     log_tail: str = ""
     verification: str = "검증 사례 없음"  # benchmark coverage state, shown on the result
+    units: dict = field(default_factory=dict)
+    log_path: str | None = None
+    validation_issues: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         state = "성공" if self.success else "실패"
+        displacement = "미확인" if self.max_displacement is None else f"{self.max_displacement:.6g}"
+        forces = " ".join(
+            f"{axis.upper()}={self.reaction_totals[axis]:.6g}"
+            if axis in self.reaction_totals else f"{axis.upper()}=미확인"
+            for axis in ("fx", "fy", "fz")
+        )
         return (
-            f"{self.solver_id} 실행 {state}: 최대 변위 {self.max_displacement:.6g}, "
-            f"반력 합 Fx={self.reaction_totals.get('fx', 0.0):.6g} "
-            f"Fy={self.reaction_totals.get('fy', 0.0):.6g} "
-            f"Fz={self.reaction_totals.get('fz', 0.0):.6g} ({self.verification})"
+            f"{self.solver_id} 실행 {state}: 최대 변위 {displacement}, "
+            f"반력 합 {forces} ({self.verification})"
         )
 
 

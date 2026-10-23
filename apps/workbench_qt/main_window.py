@@ -57,14 +57,20 @@ MODULES = [
 ]
 
 
-def fmt_length(m: float) -> str:
+def fmt_length(m: float | None, unit: str | None = "m") -> str:
+    if m is None:
+        return "미확인"
+    if unit != "m":
+        return f"{m:.6g} {unit or '(단위 미확인 — 사용자 선언 필요)'}"
     if m != 0 and abs(m) < 0.01:
         return f"{m * 1000:.3f} mm"
     return f"{m:.4f} m"
 
 
-def fmt_force(n: float) -> str:
-    return f"{n:,.1f} N"
+def fmt_force(n: float | None, unit: str | None = "N") -> str:
+    if n is None:
+        return "미확인"
+    return f"{n:,.1f} {unit or '(단위 미확인 — 사용자 선언 필요)'}"
 
 
 import re as _re
@@ -468,8 +474,8 @@ class MainWindow(QMainWindow):
         if path == "result":
             self.props_title.setText("결과")
             if self._last_result is not None:
-                lay.addRow("최대 변위", QLabel(fmt_length(self._last_result.max_displacement)))
-                lay.addRow("반력 합 Fy", QLabel(fmt_force(self._last_result.reaction_totals.get("fy", 0.0))))
+                lay.addRow("최대 변위", QLabel(fmt_length(self._last_result.max_displacement, self._last_result.units.get("length"))))
+                lay.addRow("반력 합 Fy", QLabel(fmt_force(self._last_result.reaction_totals.get("fy"), self._last_result.units.get("force"))))
                 lay.addRow("검증 상태", QLabel(self._last_result.verification))
             return
         kind, _, rest = path.partition("[")
@@ -623,13 +629,17 @@ class MainWindow(QMainWindow):
         self._last_result = result
         if result.success:
             summary = (
-                f"계산 완료 — 최대 변위 {fmt_length(result.max_displacement)}, "
-                f"반력 합 Fy {fmt_force(result.reaction_totals.get('fy', 0.0))} "
+                f"계산 완료 — 최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}, "
+                f"반력 합 Fy {fmt_force(result.reaction_totals.get('fy'), result.units.get('force'))} "
                 f"({result.verification})"
             )
-            self._add(self.results_item, f"CalculiX · 최대 변위 {fmt_length(result.max_displacement)}", "result")
+            self._add(self.results_item, f"{result.solver_id} · 최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}", "result")
             self.viewport.show_results(self.model, result)
-            self.legend_label.setText("색상 범례: 변위 (mm)")
+            unit = result.units.get("length")
+            if not self.model.mesh.nodes or not self.model.mesh.nodes.keys() <= result.displacements.keys():
+                self.legend_label.setText("변위 필드 누락 — 변형 미표시")
+            else:
+                self.legend_label.setText(f"색상 범례: 변위 ({'mm' if unit == 'm' else unit or '단위 미확인'})")
             self.expert_panel.refresh_evidence()
             self._set_flow(3)
         else:

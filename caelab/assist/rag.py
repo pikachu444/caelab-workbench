@@ -438,7 +438,7 @@ class HybridIndex:
             allowed = [i for i, c in enumerate(self.chunks)
                        if not c.solver or c.solver == solver]
             if not allowed:
-                allowed = None  # unknown solver: hide nothing
+                return []
         bm25_scores = self.bm25.scores(tokenize(query))
         query_vector = None
         if embedder is not None and self.vectors is not None:
@@ -477,7 +477,7 @@ class HybridIndex:
         allowed = None
         if solver:
             allowed = [i for i, c in enumerate(self.chunks)
-                       if not c.solver or c.solver == solver] or None
+                       if not c.solver or c.solver == solver]
         return self._search_with_scores(query, top_k, reranker, candidate_count,
                                         bm25_scores, query_vector=query_vector,
                                         allowed=allowed)

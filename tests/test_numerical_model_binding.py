@@ -64,6 +64,65 @@ def test_model_evaluator_extracts_resultset_responses_by_path():
     assert evaluation["responses"]["rfy"]["value"] == pytest.approx(1000.0)
 
 
+@pytest.mark.parametrize("state", [
+    {"success": False},
+    {"success": False, "execution_status": "FAILED"},
+    {"execution_status": "CANCELLED"},
+    {"success": True, "execution_status": "PARTIAL_FAILURE"},
+    {"success": False, "execution_status": "SUCCEEDED"},
+])
+def test_failed_dictionary_never_becomes_a_valid_candidate(state):
+    from caelab.numerical.core import EvaluationFailed, scalar_value
+
+    result = {**state, "score": 0.0,
+              "checks": [{"status": "failed"}],
+              "diagnostics": {"failure_reason": "actual run did not finish"}}
+    evaluator = ModelEvaluator(
+        cantilever_model(), SPECS, lambda model: result,
+        [{"response": "score", "path": "score"}])
+    evaluation = evaluator({})
+    expected = state.get("execution_status", "FAILED")
+    if not state.get("success", True) and expected == "SUCCEEDED":
+        expected = "FAILED"
+    assert evaluation["execution_status"] == expected
+    assert evaluation["responses"] == {}
+    assert evaluation["checks"] == result["checks"]
+    assert evaluation["diagnostics"] == result["diagnostics"]
+    with pytest.raises(EvaluationFailed, match="actual run did not finish"):
+        scalar_value(evaluation, {"response": "score"})
+    table = run_doe(evaluator, evaluator.variables, count=2, seed=2)
+    assert table["execution_status"] == "PARTIAL_FAILURE"
+    assert all(row["execution_status"] == expected for row in table["candidates"])
+
+
+def test_run_failure_is_preserved_before_trying_missing_responses():
+    evaluator = ModelEvaluator(
+        cantilever_model(), SPECS,
+        lambda model: {"execution_status": "CANCELLED",
+                       "diagnostics": {"failure_reason": "user cancelled"}},
+        [{"response": "disp", "path": "not_produced"}])
+    evaluation = evaluator({})
+    assert evaluation["execution_status"] == "CANCELLED"
+    assert evaluation["diagnostics"]["failure_reason"] == "user cancelled"
+
+
+def test_failure_reason_alias_remains_the_downstream_reason():
+    evaluator = ModelEvaluator(
+        cantilever_model(), SPECS,
+        lambda model: {"success": False, "diagnostics": {"reason": "solver timeout"}},
+        [{"response": "disp", "path": "not_produced"}])
+    assert evaluator({})["diagnostics"]["failure_reason"] == "solver timeout"
+
+
+def test_successful_plain_dictionary_remains_supported():
+    evaluator = ModelEvaluator(
+        cantilever_model(), SPECS, lambda model: {"score": 1.25},
+        [{"response": "score", "path": "score"}])
+    evaluation = evaluator({})
+    assert evaluation["execution_status"] == "SUCCEEDED"
+    assert evaluation["responses"]["score"]["value"] == 1.25
+
+
 def test_doe_and_optimize_over_model_variables():
     evaluator = ModelEvaluator(
         cantilever_model(), SPECS, _run,

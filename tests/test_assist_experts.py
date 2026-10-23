@@ -1,5 +1,6 @@
 import pytest
 
+from caelab.assist import knowledge, rag
 from caelab.assist.experts import (
     TEMPLATES,
     Discussion,
@@ -12,6 +13,14 @@ from caelab.assist.experts import (
 from caelab.solvers.base import ResultSet
 from caelab.result_summary import format_summary_ko, summarize_result
 from conftest import cantilever_model
+
+
+@pytest.fixture(autouse=True)
+def offline_knowledge(monkeypatch):
+    monkeypatch.setattr(rag, "get_embedder", rag.HashingEmbedder)
+    monkeypatch.setattr(rag, "get_reranker", rag.LexicalReranker)
+    monkeypatch.setattr(knowledge, "default_index",
+                        lambda: rag.HybridIndex.build(knowledge.notes_chunks(), rag.HashingEmbedder()))
 
 
 class FakeProvider(ExpertProvider):
@@ -124,3 +133,35 @@ def test_openscience_profile_does_not_claim_a_working_transport(tmp_path, monkey
     assert discussion.history == []
     with pytest.raises(RuntimeError, match="구현되지"):
         provider.discuss("직접 호출")
+
+
+def test_discussion_uses_result_solver_even_when_question_names_another():
+    provider = FakeProvider()
+    discussion = Discussion(template=get_template("material"),
+                            summary_text="code_aster 계산 완료", provider=provider)
+    outcome = discussion.ask("CalculiX 반력 자료로 설명해 주세요")
+    assert outcome["knowledge_status"] == "no_material"
+    assert outcome["knowledge_solver"] == "code_aster"
+    assert outcome["knowledge_error"] is None
+    assert "지식 자료 없음" in provider.last_prompt
+    assert "calculix-manual" not in provider.last_prompt
+    assert discussion.knowledge_ids == []
+
+
+def test_discussion_passes_explicit_solver_and_keeps_retrieval_error(monkeypatch):
+    def broken():
+        raise OSError("index damaged")
+    monkeypatch.setattr(knowledge, "default_index", broken)
+    provider = FakeProvider()
+    discussion = Discussion(template=get_template("material"),
+                            summary_text="calculix 결과", provider=provider,
+                            solver_id="fenicsx")
+    outcome = discussion.ask("재료를 설명해 주세요")
+    assert outcome["available"]
+    assert outcome["knowledge_status"] == "error"
+    assert outcome["knowledge_solver"] == "fenicsx"
+    assert outcome["knowledge_error"] == "OSError: index damaged"
+    assert "지식 검색 오류" in provider.last_prompt
+    assert "index damaged" in provider.last_prompt
+    assert "지식 자료 없음" not in provider.last_prompt
+    assert discussion.knowledge_ids == []

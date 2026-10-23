@@ -56,6 +56,14 @@ class KnowledgeEntry:
     solver: str = ""
 
 
+@dataclass(frozen=True)
+class KnowledgeSearchResult:
+    status: str  # ok | no_material | error
+    entries: list[KnowledgeEntry]
+    solver: str = ""
+    error: str | None = None
+
+
 # Canonical solver names and the spellings that identify them in
 # source ids, file names and discussion text. Inference for search
 # uses word boundaries, so "dynamic" never resolves to LS-DYNA.
@@ -205,7 +213,9 @@ def configured_sources() -> list[tuple[str, Path, str]]:
             file = Path(path.strip())
             sources.append((source_id, file, solver or solver_for_source(source_id, file)))
     folder = os.environ.get("CAELAB_KNOWLEDGE_DIR", "")
-    if folder and Path(folder).is_dir():
+    if folder and not Path(folder).is_dir():
+        raise FileNotFoundError(f"Knowledge directory not found: {folder}")
+    if folder:
         for file in sorted(Path(folder).iterdir()):
             if file.suffix.lower() in rag.PARSERS:
                 source_id = rag._slug(file.stem) or file.stem
@@ -261,7 +271,7 @@ def default_index() -> rag.HybridIndex:
     or a parent folder of per-solver indexes."""
     embedder = rag.get_embedder()
     prebuilt = os.environ.get("CAELAB_RAG_INDEX_DIR", "")
-    if prebuilt and Path(prebuilt).exists():
+    if prebuilt:
         key = ("prebuilt", prebuilt, embedder.id)
         if key in _index_cache:
             return _index_cache[key]
@@ -270,6 +280,7 @@ def default_index() -> rag.HybridIndex:
             _index_cache.clear()
             _index_cache[key] = loaded
             return loaded
+        raise ValueError(f"Configured RAG index is missing or incompatible: {prebuilt}")
     sources = configured_sources()
     key = (embedder.id, tuple((sid, str(p), p.stat().st_mtime if p.exists() else 0)
                                for sid, p, _solver in sources))
@@ -294,28 +305,30 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
     )
 
 
-def search_knowledge(query: str, limit: int = 3, solver: str | None = None) -> list[KnowledgeEntry]:
-    """Hybrid RAG search over the default index, restricted to one
-    solver's material when a solver is known — from the `solver`
-    argument, CAELAB_KNOWLEDGE_SOLVER, or the solver named in the
-    query text (a result summary names its solver). If the index
-    cannot be built (e.g. a configured file is unreadable), fall back
-    to the pre-RAG keyword search over the notes so a discussion
-    never dies because of the knowledge layer."""
+def search_knowledge_result(query: str, limit: int = 3,
+                            solver: str | None = None) -> KnowledgeSearchResult:
+    """Keep solver scope and distinguish absent material from retrieval failure."""
+    requested = solver or os.environ.get("CAELAB_KNOWLEDGE_SOLVER", "") or infer_solver(query)
+    resolved = infer_solver(requested) or requested
     try:
         index = default_index()
         embedder = rag.get_embedder()
         reranker = rag.get_reranker()
-        resolved = solver or os.environ.get("CAELAB_KNOWLEDGE_SOLVER", "") \
-            or infer_solver(query)
         chunks = index.search(query, top_k=limit, embedder=embedder,
                               reranker=reranker, solver=resolved or None)
-        if not chunks and resolved:
-            chunks = index.search(query, top_k=limit, embedder=embedder,
-                                  reranker=reranker)
-    except Exception:
-        return search_notes_keyword(query, limit)
-    return [_to_entry(c) for c in chunks]
+    except Exception as error:
+        return KnowledgeSearchResult("error", [], resolved,
+                                     f"{type(error).__name__}: {error}")
+    return KnowledgeSearchResult("ok" if chunks else "no_material",
+                                 [_to_entry(c) for c in chunks], resolved)
+
+
+def search_knowledge(query: str, limit: int = 3, solver: str | None = None) -> list[KnowledgeEntry]:
+    """List-returning compatibility API; retrieval errors are never silent."""
+    result = search_knowledge_result(query, limit, solver)
+    if result.status == "error":
+        raise RuntimeError(result.error)
+    return result.entries
 
 
 def search_notes_keyword(query: str, limit: int = 3) -> list[KnowledgeEntry]:

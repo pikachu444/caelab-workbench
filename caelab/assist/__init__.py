@@ -12,8 +12,10 @@ from .experts import (
 from .knowledge import (
     KNOWLEDGE_PACK,
     KnowledgeEntry,
+    KnowledgeSearchResult,
     extract_citations,
     search_knowledge,
+    search_knowledge_result,
     search_notes_keyword,
     verify_citations,
 )
@@ -30,8 +32,10 @@ __all__ = [
     "summarize_model",
     "KNOWLEDGE_PACK",
     "KnowledgeEntry",
+    "KnowledgeSearchResult",
     "extract_citations",
     "search_knowledge",
+    "search_knowledge_result",
     "search_notes_keyword",
     "verify_citations",
 ]

@@ -23,7 +23,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .knowledge import citation_id, search_knowledge, verify_citations
+from .knowledge import (KnowledgeSearchResult, citation_id, infer_solver,
+                        search_knowledge_result, verify_citations)
 
 
 # ---------------------------------------------------------------- templates
@@ -298,6 +299,8 @@ class Discussion:
     constraints: list = field(default_factory=list)  # [str]
     failures: list = field(default_factory=list)  # [str]
     knowledge_ids: list = field(default_factory=list)  # citation ids actually shown
+    solver_id: str = ""
+    knowledge_result: KnowledgeSearchResult | None = field(default=None, init=False)
 
     def build_prompt(self, question: str) -> str:
         parts = [
@@ -312,15 +315,23 @@ class Discussion:
             parts += ["", "[근거 — 솔버 로그 끝부분]", self.log_tail[-1500:]]
         knowledge_shown = False
         if "knowledge" in self.template.allowed_tools:
-            entries = search_knowledge(f"{question} {self.summary_text}")
+            self.knowledge_result = search_knowledge_result(
+                f"{question} {self.summary_text}",
+                solver=self.solver_id or infer_solver(self.summary_text))
+            entries = self.knowledge_result.entries
             if entries:
                 knowledge_shown = True
-                parts += ["", "[근거 — CalculiX 매뉴얼 지식 팩]"]
+                parts += ["", "[근거 — 솔버 매뉴얼 지식 팩]"]
                 for entry in entries:
                     cid = citation_id(entry)
                     if cid not in self.knowledge_ids:
                         self.knowledge_ids.append(cid)
                     parts.append(f"[{cid}] {entry.topic}: {entry.text}")
+            elif self.knowledge_result.status == "error":
+                parts += ["", "[지식 검색 오류 — 매뉴얼 근거를 가져오지 못함]",
+                          self.knowledge_result.error or "검색 원인 미확인"]
+            else:
+                parts += ["", f"[지식 자료 없음 — 솔버: {self.knowledge_result.solver or '미확인'}]"]
         if self.constraints:
             parts += ["", "[사용자 제약 — 이전 논의에서 유지]"]
             parts += [f"- {c}" for c in self.constraints]
@@ -366,4 +377,7 @@ class Discussion:
         self.history.append((question, reply))
         self.proposals.extend(proposals)
         return {"available": True, "reply": reply, "proposals": proposals,
-                "unverified_citations": unverified}
+                "unverified_citations": unverified,
+                "knowledge_status": self.knowledge_result.status if self.knowledge_result else "not_requested",
+                "knowledge_error": self.knowledge_result.error if self.knowledge_result else None,
+                "knowledge_solver": self.knowledge_result.solver if self.knowledge_result else ""}

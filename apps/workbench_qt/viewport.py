@@ -148,21 +148,25 @@ class Viewport(QWidget):
                      scale: float | None = None) -> None:
         if not self.available or self._grid is None:
             return
-        disp = np.zeros((len(self._node_ids), 3))
-        for i, nid in enumerate(self._node_ids):
-            if nid in result.displacements:
-                disp[i] = result.displacements[nid]
-        magnitude_mm = np.linalg.norm(disp, axis=1) * 1000.0
+        if not self._node_ids or any(n not in result.displacements for n in self._node_ids):
+            self._base_scale = None
+            self._last_model, self._last_result = None, None
+            self.show_model(model)
+            return
+        disp = np.array([result.displacements[n] for n in self._node_ids], dtype=float)
+        magnitude = np.linalg.norm(disp, axis=1)
+        if result.units.get("length") == "m":
+            magnitude *= 1000.0
         grid = vtk.vtkUnstructuredGrid()
         grid.DeepCopy(self._grid)
         vec = numpy_to_vtk(disp, deep=True)
         vec.SetName("U")
         grid.GetPointData().AddArray(vec)
-        mag = numpy_to_vtk(magnitude_mm, deep=True)
-        mag.SetName("disp_mm")
+        mag = numpy_to_vtk(magnitude, deep=True)
+        mag.SetName("displacement_magnitude")
         grid.GetPointData().AddArray(mag)
         grid.GetPointData().SetActiveVectors("U")
-        grid.GetPointData().SetActiveScalars("disp_mm")
+        grid.GetPointData().SetActiveScalars("displacement_magnitude")
         if scale is None:
             bounds = grid.GetBounds()
             size = max(bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4])
@@ -176,14 +180,14 @@ class Viewport(QWidget):
         surface = vtk.vtkDataSetSurfaceFilter()
         surface.SetInputConnection(warp.GetOutputPort())
         lut = vtk.vtkColorTransferFunction()
-        lo, hi = float(magnitude_mm.min()), float(magnitude_mm.max()) or 1.0
+        lo, hi = float(magnitude.min()), float(magnitude.max()) or 1.0
         lut.AddRGBPoint(lo, 0.0, 0.0, 0.85)
         lut.AddRGBPoint((lo + hi) / 2, 0.0, 0.8, 0.35)
         lut.AddRGBPoint(hi, 0.9, 0.05, 0.0)
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputConnection(surface.GetOutputPort())
         mapper.SetScalarModeToUsePointData()
-        mapper.SelectColorArray("disp_mm")
+        mapper.SelectColorArray("displacement_magnitude")
         mapper.SetLookupTable(lut)
         mapper.SetScalarRange(lo, hi)
         actor = vtk.vtkActor()
