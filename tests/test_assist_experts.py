@@ -56,6 +56,15 @@ def test_default_provider_is_honestly_unavailable(monkeypatch):
     assert "유료 API" in reason  # never silently spend on an API
 
 
+def test_explicit_none_does_not_fall_back_to_environment_provider(monkeypatch):
+    monkeypatch.setenv("CAELAB_EXPERT_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("CAELAB_EXPERT_ENDPOINT", "http://localhost.invalid/v1")
+    monkeypatch.setenv("CAELAB_EXPERT_MODEL", "configured")
+    provider = get_provider("none")
+    assert provider.id == "none"
+    assert provider.availability() == (False, "선택한 전문가 공급자가 없습니다.")
+
+
 def test_discussion_is_grounded_and_keeps_history():
     result = ResultSet(
         solver_id="calculix", success=True, max_displacement=0.0001905,

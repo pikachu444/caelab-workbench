@@ -243,6 +243,8 @@ class OpenAICompatibleProvider(ExpertProvider):
 def get_provider(provider_id: str | None = None) -> ExpertProvider:
     """Resolve the configured provider; default is honestly unavailable."""
     chosen = provider_id or os.environ.get("CAELAB_EXPERT_PROVIDER", "")
+    if chosen == "none":
+        return UnavailableProvider("선택한 전문가 공급자가 없습니다.")
     if chosen == "openscience":
         return OpenScienceProvider()
     if chosen == "openai_compatible":
