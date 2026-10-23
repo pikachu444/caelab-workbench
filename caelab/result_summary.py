@@ -100,10 +100,26 @@ def format_native_evidence(evidence: dict, result: dict) -> str:
     if dat and dat.get('status') != 'missing':
         lines += ["DAT는 FRD와 합치지 않은 별도 파일의 마지막 판독 프레임입니다. 시간값 일치로 같은 실행 상태를 단정하지 않습니다.",
                   "DAT 프레임=" + encode(dat.get('frame')) + " / 상태=" + str(dat.get('status'))]
+        lines.append("DAT 변위 요약=" + encode({
+            'max_displacement': dat.get('max_displacement'),
+            'displacement_node_count': dat.get('displacement_node_count'),
+            'mesh_node_count': dat.get('mesh_node_count'),
+            'units': evidence['units'], 'unit_source': evidence['unit_source']}))
+        lines.append("DAT 수치는 판독된 집합·절점만 포함합니다. 전체 메시 절점 수·누락 범위는 미확인이며, 누락을 0으로 채우지 않습니다.")
         for name, values in dat.get('sets', {}).items():
             totals = {key: values[key] for key in ('total_force', 'total_displacement') if key in values}
             counts = {key: len(values[key]) for key in ('displacements', 'nodal_forces') if key in values}
-            lines.append(f"DAT 집합 {name}: 개수={encode(counts)}, 원 합계={encode(totals)}")
+            ranges = {}
+            for kind in ('displacements', 'nodal_forces'):
+                if kind not in values:
+                    continue
+                ranges[kind] = {}
+                for index, component in enumerate(('x', 'y', 'z')):
+                    finite = [row[index] for row in values[kind].values() if len(row) > index
+                              and isinstance(row[index], (int, float)) and math.isfinite(row[index])]
+                    ranges[kind][component] = {'minimum': min(finite, default=None),
+                                              'maximum': max(finite, default=None), 'finite_count': len(finite)}
+            lines.append(f"DAT 집합 {name}: 개수={encode(counts)}, 유한 성분 범위={encode(ranges)}, 원 합계={encode(totals)}")
     lines.append("FORC·DAT 힘과 힘합은 원 출력이며 반력으로 바꾸지 않습니다.")
     for warning in dict.fromkeys([*evidence.get('warnings', []), *result.get('warnings', []), *dat.get('warnings', [])]):
         lines.append("경고: " + str(warning))

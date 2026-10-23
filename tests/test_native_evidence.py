@@ -108,6 +108,35 @@ def test_manual_include_failure_does_not_claim_complete_conditions(tmp_path):
     assert 'absent.inc' in evidence['model_text']
 
 
+def test_dat_only_displacement_summary_keeps_finite_values_units_and_set_frame(tmp_path):
+    dat = tmp_path / 'displacement.dat'
+    dat.write_text(' displacements (vx,vy,vz) for set TIP and time 1.0\n\n 101 3.0 4.0 0.0\n\n', encoding='ascii')
+    evidence = import_file_evidence(tmp_path / 'assets', files={'dat': dat}, solver_id='calculix',
+                                    units={'length': 'mm'}, unit_source='user declaration')
+    assert evidence['parse_state'] == 'readable' and evidence['frame_index'] is None
+    summary = evidence['summary_text']
+    assert 'DAT 변위 요약=' in summary and '"max_displacement": 5.0' in summary
+    assert '"displacement_node_count": 1' in summary and '"mesh_node_count": null' in summary
+    assert '"length": "mm"' in summary and 'user declaration' in summary
+    assert 'DAT 집합 TIP' in summary and '"value": 1.0' in summary
+    assert '"minimum": 3.0, "maximum": 3.0, "finite_count": 1' in summary
+    assert '"minimum": 4.0, "maximum": 4.0, "finite_count": 1' in summary
+    assert '누락 범위는 미확인' in summary
+
+
+def test_dat_displacement_summary_stays_separate_from_selected_frd_frame(tmp_path):
+    run = make_run(tmp_path)
+    dat = run.workdir / 'model.dat'
+    dat.write_text(' displacements (vx,vy,vz) for set TIP and time 9.0\n\n 101 6.0 8.0 0.0\n\n', encoding='ascii')
+    run.snapshot['artifacts']['model.dat'] = file_revision(dat)
+    evidence = capture_run_evidence(run, tmp_path / 'assets', frame_index=0)
+    summary = evidence['summary_text']
+    assert 'FRD 프레임 요약={"max_displacement": 1.0' in summary
+    assert 'DAT 변위 요약={"max_displacement": 10.0' in summary
+    assert 'DAT 집합 TIP' in summary and '"value": 9.0' in summary
+    assert evidence['frame_index'] == 0 and 'FRD와 합치지 않은 별도 파일' in summary
+
+
 @pytest.mark.parametrize('change', ['tamper', 'missing', 'escape', 'other_id'])
 def test_verification_detects_tamper_missing_and_path_escape(tmp_path, change):
     run = make_run(tmp_path)
