@@ -13,6 +13,7 @@ from pathlib import Path, PureWindowsPath
 from filelock import FileLock, Timeout
 
 from ..native.run_store import atomic_json, utc_now
+from ..native.input_snapshot import fingerprint
 from . import experts
 from .knowledge import extract_citations, verify_citations
 
@@ -248,7 +249,7 @@ def _native_proposals(reply, evidence, request_id):
         return []
     if not isinstance(items, list):
         return []
-    targets = {item["source_path"] for item in evidence["files"] if "input" in item["role"] or "include" in item["role"]}
+    targets = {item["source_path"]: item for item in evidence["files"] if item["role"] in {"input", "include"}}
     proposals = []
     for item in items:
         if not isinstance(item, dict) or not {"target_file", "location", "before", "after", "reason"} <= item.keys():
@@ -261,9 +262,160 @@ def _native_proposals(reply, evidence, request_id):
             continue
         proposals.append({**{key: item[key] for key in ("target_file", "location", "before", "after", "reason")},
                           "id": str(uuid.uuid4()), "request_id": request_id, "status": "unapplied",
+                          "target_sha256": targets[item["target_file"]]["sha256"], "review_history": [],
                           **{key: evidence.get(key) for key in ("run_id", "input_revision", "frame_index")},
                           "evidence_id": evidence["id"]})
     return proposals
+
+
+def _sha_valid(value):
+    return isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def _source_input_issues(evidence):
+    """Check the complete captured source list without reparsing or guessing paths."""
+    issues = []
+    original_items = [item for item in evidence["files"] if item["role"] in {"input", "include"}]
+    originals = {item["source_path"]: item for item in original_items}
+    if len(originals) != len(original_items):
+        issues.append("원본 입력/INCLUDE 보존 자산의 경로가 중복되어 출처가 모호합니다.")
+    manifest = evidence.get("input_manifest")
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("files"), list) or not manifest["files"] or not isinstance(manifest.get("includes"), list):
+        return ["전체 입력/INCLUDE 캡처 목록이 없어 현재 원본과의 일치를 확인할 수 없습니다."]
+    recorded = {}
+    observed = {}
+    for index, record in enumerate(manifest["files"]):
+        if not isinstance(record, dict) or not isinstance(record.get("source_path"), str) or not _sha_valid(record.get("original_sha256")):
+            issues.append("입력/INCLUDE 캡처 경로·SHA256 자료가 잘못되었습니다.")
+            continue
+        source = record["source_path"]
+        if source in recorded:
+            issues.append(f"입력/INCLUDE 캡처 경로가 중복됩니다: {source}")
+        recorded[source] = record["original_sha256"]
+        item = originals.get(source)
+        if item is None or item["role"] != ("input" if index == 0 else "include") or item["sha256"] != recorded[source]:
+            issues.append(f"원본 입력/INCLUDE 보존 자산과 캡처 목록이 다릅니다: {source}")
+        if item and (item.get("verification") == "mismatch" or item.get("expected_sha256") not in (None, item["sha256"])):
+            issues.append(f"실행 당시 입력 SHA256과 보존 자산이 다릅니다: {source}")
+        path = Path(source)
+        if not path.is_absolute():
+            issues.append(f"원본 절대 경로를 현재 환경에서 확인할 수 없습니다: {source}")
+            continue
+        try:
+            before = fingerprint(path)
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if before is None or before != fingerprint(path):
+                issues.append(f"확인 중 입력 원본이 변경되었습니다: {source}")
+            elif digest.hexdigest() != recorded[source]:
+                issues.append(f"오래된 제안: 입력/INCLUDE 원본 SHA256이 달라졌습니다: {source}")
+            else:
+                observed[path] = before
+        except OSError as error:
+            issues.append(f"입력/INCLUDE 원본이 없거나 읽을 수 없습니다: {source} ({error})")
+    if set(originals) != set(recorded):
+        issues.append("원본 입력/INCLUDE 자산 목록과 캡처 목록의 파일 범위가 다릅니다.")
+    for include in manifest["includes"]:
+        if not isinstance(include, dict) or include.get("source_path") not in recorded or include.get("parent_path") not in recorded:
+            issues.append("캡처 INCLUDE 참조에 보존되지 않은 원본 경로가 있습니다.")
+    for path, before in observed.items():
+        if fingerprint(path) != before:
+            issues.append(f"전체 입력을 확인하는 동안 원본이 변경되었습니다: {path}")
+    return issues
+
+
+def _proposal_evidence(document, proposal):
+    evidence = document["evidences"].get(proposal.get("evidence_id"))
+    if evidence is None:
+        raise ValueError("제안의 원래 근거가 없습니다.")
+    required = {"id", "request_id", "target_file", "location", "before", "after", "reason", "evidence_id",
+                "run_id", "input_revision", "frame_index"}
+    if not required <= proposal.keys() or any(not isinstance(proposal[key], str) or not proposal[key].strip() for key in
+                                            ("id", "request_id", "target_file", "location", "reason")):
+        raise ValueError("옛 제안의 대상·전후값·이유·출처 정보가 부족하거나 잘못되었습니다.")
+    if proposal.get("status") not in ("unapplied", "manual_required", "blocked", "rejected"):
+        raise ValueError("저장된 제안 상태를 신뢰할 수 없습니다. 자동 적용은 지원하지 않습니다.")
+    if any(proposal[key] != evidence.get(key) for key in ("run_id", "input_revision", "frame_index")):
+        raise ValueError("제안과 원래 실행·입력 개정·프레임 출처가 다릅니다.")
+    turn = next((turn for turn in document["turns"] if turn.get("id") == proposal["request_id"]), None)
+    if turn is None or turn.get("status") != "completed" or any(
+            turn.get(key) != proposal[key] for key in ("evidence_id", "run_id", "input_revision", "frame_index")):
+        raise ValueError("제안의 원래 답변과 근거 출처를 확인할 수 없습니다.")
+    if not isinstance(turn.get("evidence_sources"), list) or "model_summary" not in turn["evidence_sources"]:
+        raise ValueError("제안한 답변에 실제 입력 자료가 제공됐는지 확인할 수 없습니다.")
+    targets = [item for item in evidence["files"] if item["role"] in {"input", "include"} and item["source_path"] == proposal["target_file"]]
+    if len(targets) != 1 or not _sha_valid(targets[0]["sha256"]):
+        raise ValueError("제안 대상은 원래 근거의 input/include 파일 하나여야 합니다. 실행 스냅샷은 대상이 아닙니다.")
+    if proposal.get("target_sha256", targets[0]["sha256"]) != targets[0]["sha256"]:
+        raise ValueError("제안 대상의 저장 SHA256이 원래 캡처와 다릅니다.")
+    return evidence, targets[0]
+
+
+def review_proposal(path, proposal_id, *, expected_revision: int, decision="check", reason="") -> dict:
+    """Record an explicit review only. Native files and solver state are untouched."""
+    if decision not in ("check", "reject") or not isinstance(reason, str):
+        raise ValueError("제안 검토는 check 또는 reject와 문자열 이유를 사용하세요.")
+    path = Path(path).resolve()
+    try:
+        with _lock(path):
+            document = _current(path, expected_revision)
+            matches = [item for item in document["proposals"] if isinstance(item, dict) and item.get("id") == proposal_id]
+            if len(matches) != 1:
+                raise ValueError("제안 ID가 없거나 중복되어 검토할 수 없습니다.")
+            proposal = matches[0]
+            issues = []
+            try:
+                evidence, target = _proposal_evidence(document, proposal)
+                proposal["target_sha256"] = target["sha256"]  # derived only from captured original bytes
+                issues.extend(verify_evidence(evidence, path.parent / "assets"))
+                issues.extend(_source_input_issues(evidence))
+            except (ValueError, TypeError, KeyError, OSError) as error:
+                issues.append(str(error))
+            if not isinstance(proposal.get("review_history", []), list):
+                raise DiscussionFormatError("제안 검토 이력 형식이 잘못되었습니다.")
+            if proposal.get("status") == "rejected":
+                status, review_reason = "rejected", "이미 거절한 제안입니다. 새 제안 없이는 되살리지 않습니다."
+            elif decision == "reject":
+                status, review_reason = "rejected", reason.strip() or "사용자가 제안을 거절했습니다."
+                document["failures"].append({"proposal_id": proposal_id, "reason": review_reason,
+                                            "evidence_sources": [], "evidence_id": proposal.get("evidence_id"),
+                                            "run_id": proposal.get("run_id"), "input_revision": proposal.get("input_revision")})
+            elif issues:
+                status, review_reason = "blocked", "; ".join(issues)
+            else:
+                status, review_reason = "manual_required", "미적용: 전용 프로그램에서 수정하세요. 수정 뒤 새 계산은 별도 명령입니다."
+            now = utc_now()
+            proposal.update(status=status, review_reason=review_reason, reviewed_at=now)
+            proposal.setdefault("review_history", []).append({"decision": decision, "status": status,
+                "reason": review_reason, "user_reason": reason, "reviewed_at": now, "issues": issues})
+            return _write(path, document)
+    except Timeout as error:
+        raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
+
+
+def discussion_issues(path, document=None) -> list[str]:
+    """Read-only reopening diagnostics; no provider calls or transient document keys."""
+    path = Path(path).resolve()
+    try:
+        document = _read(path) if document is None else copy.deepcopy(document)
+        _validate(document)
+        issues = []
+        for identifier, evidence in document["evidences"].items():
+            issues.extend(f"근거 {identifier}: {issue}" for issue in verify_evidence(evidence, path.parent / "assets"))
+            if any(item["role"] in {"input", "include"} for item in evidence["files"]):
+                issues.extend(f"근거 {identifier}: {issue}" for issue in _source_input_issues(evidence))
+        for proposal in document["proposals"]:
+            try:
+                if not isinstance(proposal, dict):
+                    raise ValueError("저장된 옛 제안의 자료 형식이 잘못되었습니다.")
+                _proposal_evidence(document, proposal)
+            except (ValueError, TypeError, KeyError) as error:
+                issues.append(f"제안 출처 확인 제한: {error}")
+        return list(dict.fromkeys(issues))
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return [f"대화/보존 자료 확인 실패: {error}"]
 
 
 def _provided_materials(discussion, evidence, origin):
