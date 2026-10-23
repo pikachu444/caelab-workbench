@@ -45,10 +45,15 @@ jobs:
           import PySide6
           import scipy
           import vtk
-          from PySide6.QtWidgets import QApplication
+          from PySide6.QtWidgets import QApplication, QLabel
 
           app = QApplication([])
           assert app.platformName() == "offscreen", app.platformName()
+          # Exercise void Qt calls: affected Python 3.11 bindings can crash at exit.
+          label = QLabel()
+          for i in range(10000):
+              label.setText(str(i))
+              app.processEvents()
           print("PySide6", PySide6.__version__, "VTK", vtk.vtkVersion.GetVTKVersion(), "SciPy", scipy.__version__)
           PY
       - name: Run full product regression
