@@ -375,6 +375,34 @@ def test_polling_does_not_hash_source_files(tmp_path, probe, monkeypatch):
     assert wb.close()
 
 
+def test_reopened_run_ignores_mount_device_change_but_detects_content_change(tmp_path, probe, monkeypatch):
+    wb, project, node, source = project_with_input(tmp_path)
+    cad = wb.add_program_node(project, "geometry", "freecad")
+    geometry = source.with_suffix(".FCStd")
+    geometry.write_bytes(b"original geometry")
+    wb.set_node_file(project, cad.id, geometry)
+    wb.set_node_file(project, cad.id, source, role="output")
+    wb.connect_nodes(project, cad.id, node.id)
+    wb.save_native_project(project)
+    run = wait_run(wb, project, wb.submit_native(project, node.id).id)
+    assert not run.stale and wb.close()
+    # Reproduce a persisted receipt across WSL remounts: original bytes and
+    # persistent metadata agree, while the saved mount device number differs.
+    for item in run.snapshot["files"] + run.snapshot["prerequisites"]:
+        item["stat"]["st_dev"] += 100
+    RunStore(project.run_store).write(run)
+    reopened_wb = Workbench()
+    reopened = reopened_wb.open_native_project(project.path)
+    import caelab.project as storage
+    def forbidden(*args):
+        raise AssertionError("hash on run polling path")
+    monkeypatch.setattr(storage, "file_revision", forbidden)
+    assert not reopened_wb.selected_native_run(reopened, node.id).stale
+    source.write_bytes(b"** actual changed input")
+    assert reopened_wb.selected_native_run(reopened, node.id).stale
+    assert reopened_wb.close()
+
+
 def test_os_store_lock_is_exclusive_in_another_process(tmp_path):
     store = RunStore(tmp_path / "runs")
     lease = store.lease()

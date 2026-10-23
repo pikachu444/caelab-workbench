@@ -19,6 +19,16 @@ from .native.run_store import NativeRun, RunStore
 from .native.input_snapshot import fingerprint
 
 
+def _source_metadata_changed(item: dict) -> bool:
+    current = fingerprint(item["source_path"])
+    if current is None:
+        return True
+    # WSL remounts can assign a different device number to the same file.
+    # Keep full device identity for collection races, but not saved-run freshness.
+    return any(current[key] != item["stat"].get(key) for key in
+               ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino"))
+
+
 class Workbench:
     def __init__(self, registry_path: str | Path | None = None) -> None:
         self.jobs = JobManager()
@@ -111,7 +121,7 @@ class Workbench:
                 reason = "상위 변경으로 현재 입력 덱이 오래되었습니다."
             elif reference.units != run.units or reference.unit_source != run.unit_source:
                 reason = "입력 단위 선언/출처가 변경되었습니다."
-            elif any(fingerprint(item["source_path"]) != item["stat"] for item in
+            elif any(_source_metadata_changed(item) for item in
                      run.snapshot.get("files", []) + run.snapshot.get("prerequisites", [])):
                 reason = "실행 원본 또는 INCLUDE 파일이 변경/누락되었습니다."
             run.stale, run.stale_reason = bool(reason), reason
