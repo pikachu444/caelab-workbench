@@ -179,3 +179,20 @@ def test_first_input_registration_invalidates_already_registered_output(tmp_path
     wb.set_node_file(project, source.id, native_input)
     assert source.files["output"].stale
     assert target.state == "stale"
+
+
+def test_missing_inactive_local_file_does_not_invalidate_effective_connected_input(tmp_path):
+    wb, project, first, second, result, source = graph(tmp_path)
+    active = source.with_suffix(".msh")
+    active.write_bytes(b"actual connected input")
+    wb.set_node_file(project, first.id, active, "output")
+    inactive = source.with_name("unused local.geo")
+    inactive.write_bytes(b"old local input")
+    wb.set_node_file(project, second.id, inactive)
+    wb.connect_nodes(project, first.id, second.id)
+    wb.connect_nodes(project, second.id, result.id, "input")
+    assert second.state == result.state == "ready"
+    inactive.unlink()
+    wb.refresh_native_project(project)
+    assert wb.input_file(project, second.id).path == str(active.resolve())
+    assert second.state == result.state == "ready"

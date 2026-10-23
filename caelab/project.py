@@ -141,6 +141,8 @@ class NativeProject:
                 if status != "ready":
                     reason = f"{node.id}.files.{role}: {status} — {reference.path}"
                     issues.append(reason)
+                    if role == "input" and self.input_file(node.id) is not reference:
+                        continue  # a connected input supersedes this retained local selection
                     self.invalidate(node.id, reason)
                     if role == "input" or self.input_file(node.id) is reference:
                         node.state, node.reason = status, reason
@@ -205,7 +207,7 @@ def load_native_project(path: str | Path) -> NativeProject:
             raise ValueError("name/nodes/connections 자료 형식이 잘못되었습니다.")
         project = NativeProject(data["name"], path=path)
         for key, raw in data["nodes"].items():
-            if not isinstance(raw, dict) or not key or raw.get("id") != key:
+            if not isinstance(raw, dict) or not key.strip() or raw.get("id") != key:
                 raise ValueError(f"nodes.{key}: 비어 있거나 일치하지 않는 노드 ID입니다.")
             if any(not isinstance(raw.get(name), str) or not raw[name].strip() for name in ("kind", "program_id")):
                 raise ValueError(f"nodes.{key}: kind/program_id가 필요합니다.")
