@@ -115,7 +115,9 @@ def _interrupt(document):
     reason = "이전 요청이 중단되었습니다. 자동으로 다시 호출하지 않습니다."
     for turn in document["turns"]:
         if turn.get("id") == pending["id"]:
-            turn.update(status="interrupted", error=reason, finished_at=utc_now())
+            # A restored request has no observed completion time. Keep this
+            # deterministic across read-only recovery views and their later save.
+            turn.update(status="interrupted", error=reason, finished_at=turn.get("finished_at"))
     document["draft_question"] = pending["question"]
     if not any(isinstance(f, dict) and f.get("request_id") == pending["id"] for f in document["failures"]):
         document["failures"].append({"request_id": pending["id"], "reason": reason,
@@ -186,15 +188,35 @@ def save_discussion(path, document, *, expected_revision: int) -> dict:
     _validate(candidate)
     try:
         with _lock(path):
-            current = _current(path, expected_revision)
+            current = _current(path, expected_revision, idle=False)
+            if _active(path):
+                raise DiscussionBusy("이 대화에 진행 중인 질문이 있습니다.")
+            saved_pending = copy.deepcopy(current.get("pending_request"))
+            _interrupt(current)
             if candidate["id"] != current["id"] or candidate["revision"] != expected_revision:
                 raise DiscussionConflict("다른 대화 또는 개정의 내용으로 덮어쓸 수 없습니다.")
-            if candidate["evidences"] != current["evidences"]:
-                raise DiscussionConflict("저장으로 근거를 바꿀 수 없습니다. 근거 붙이기를 사용하세요.")
             if candidate.get("pending_request"):
-                # Recovered pending requests are historical, never live jobs.
+                pending = {key: value for key, value in candidate["pending_request"].items() if key not in {"live", "status"}}
+                if pending != saved_pending:
+                    raise DiscussionConflict("저장으로 질문 요청 기록을 바꿀 수 없습니다.")
+                draft = candidate.get("draft_question", "")
                 _interrupt(candidate)
-            return _write(path, candidate)
+                candidate["draft_question"] = draft
+            editable = {"title", "constraints", "draft_question", "provider_id", "selected_evidence_id"}
+            for key in (current.keys() | candidate.keys()) - editable - {"pending_request", "failures"}:
+                if key not in current or key not in candidate or candidate[key] != current[key]:
+                    raise DiscussionConflict("저장으로 기존 발언·제안·근거·출처 기록을 바꿀 수 없습니다.")
+            if any(not isinstance(value, str) for value in candidate["constraints"]):
+                raise DiscussionFormatError("사용자 제약은 문자열 목록이어야 합니다.")
+            old_failures = current["failures"]
+            if candidate["failures"][:len(old_failures)] != old_failures or any(
+                    not isinstance(value, str) for value in candidate["failures"][len(old_failures):]):
+                raise DiscussionConflict("기존 실패 기록은 보존하고 사용자 실패 이유만 추가할 수 있습니다.")
+            for key in editable:
+                if key in candidate:
+                    current[key] = candidate[key]
+            current["failures"] = candidate["failures"]
+            return _write(path, current)
     except Timeout as error:
         raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 

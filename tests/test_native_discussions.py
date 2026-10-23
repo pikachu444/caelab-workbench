@@ -105,6 +105,69 @@ def test_save_conflict_identity_and_immutable_evidence_preserve_file(tmp_path, m
         service.create_discussion(path)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("evidence_id", "B"), ("run_id", "run-B"), ("input_revision", "revision-B"),
+    ("frame_index", 999), ("reply", "rewritten reply"), ("question", "rewritten question"),
+    ("status", "failed"), ("evidence_sources", []), ("provided_materials", []),
+    ("citations", {"shown_ids": ["invented:source"], "unverified": [], "verified": []}),
+])
+def test_save_cannot_reassign_or_rewrite_existing_turn_after_new_evidence(tmp_path, monkeypatch, field, value):
+    path, doc, _ = prepared(tmp_path, monkeypatch)
+    doc = ask(path, doc, "A의 원래 질문")
+    doc = service.attach_evidence(path, evidence("B"), expected_revision=doc["revision"])
+    original = path.read_bytes()
+    original_turn = copy.deepcopy(doc["turns"][0])
+    candidate = copy.deepcopy(doc)
+    candidate["turns"][0][field] = value
+    with pytest.raises(service.DiscussionConflict):
+        service.save_discussion(path, candidate, expected_revision=doc["revision"])
+    assert path.read_bytes() == original
+    assert service.load_discussion(path)["turns"][0] == original_turn
+
+
+@pytest.mark.parametrize("change", ["remove", "append", "origin", "values", "applied"])
+def test_save_cannot_replace_existing_proposal_record(tmp_path, monkeypatch, change):
+    reply = '```proposals\n' + json.dumps([
+        {"target_file": "/original/A.inp", "location": "*STATIC", "before": "0.1", "after": "0.01", "reason": "원래 제안"}
+    ]) + '\n```'
+    path, doc, _ = prepared(tmp_path, monkeypatch, Provider(reply))
+    doc = ask(path, doc, template_id="convergence")
+    doc = service.attach_evidence(path, evidence("B"), expected_revision=doc["revision"])
+    assert len(doc["proposals"]) == 1
+    original = path.read_bytes()
+    candidate = copy.deepcopy(doc)
+    if change == "remove":
+        candidate["proposals"].clear()
+    elif change == "append":
+        candidate["proposals"].append(copy.deepcopy(candidate["proposals"][0]))
+    elif change == "origin":
+        candidate["proposals"][0].update(evidence_id="B", run_id="run-B", frame_index=999)
+    elif change == "values":
+        candidate["proposals"][0].update(before="fabricated", after="replacement")
+    else:
+        candidate["proposals"][0]["status"] = "applied"
+    with pytest.raises(service.DiscussionConflict):
+        service.save_discussion(path, candidate, expected_revision=doc["revision"])
+    assert path.read_bytes() == original
+
+
+def test_save_allows_user_fields_and_append_only_failure_notes(tmp_path, monkeypatch):
+    path, doc, _ = prepared(tmp_path, monkeypatch)
+    doc = ask(path, doc)
+    doc = service.attach_evidence(path, evidence("B"), expected_revision=doc["revision"])
+    saved_turns = copy.deepcopy(doc["turns"])
+    doc.update(title="사용자 제목", constraints=["형상 변경 금지"], draft_question="새 질문 초안",
+               provider_id="none", selected_evidence_id="A", failures=["사용자가 추가한 실패 이유"])
+    doc = service.save_discussion(path, doc, expected_revision=doc["revision"])
+    assert doc["turns"] == saved_turns and doc["draft_question"] == "새 질문 초안"
+    assert doc["selected_evidence_id"] == "A" and doc["provider_id"] == "none"
+    original = path.read_bytes()
+    doc["failures"][0] = "과거 실패 이유 변조"
+    with pytest.raises(service.DiscussionConflict):
+        service.save_discussion(path, doc, expected_revision=doc["revision"])
+    assert path.read_bytes() == original
+
+
 def test_failed_atomic_write_preserves_saved_document(tmp_path, monkeypatch):
     path, doc, _ = prepared(tmp_path, monkeypatch)
     original = path.read_bytes()
@@ -322,8 +385,24 @@ def test_restored_pending_is_interrupted_without_provider_call(tmp_path, monkeyp
     assert restored["pending_request"]["live"] is False
     assert restored["turns"][0]["status"] == "interrupted" and restored["draft_question"] == "미완료 질문"
     assert path.read_bytes() == original and provider.prompts == []
+    restored["draft_question"] = "중단 후 편집한 질문"
     saved = service.save_discussion(path, restored, expected_revision=doc["revision"])
     assert saved["pending_request"] is None and len(saved["failures"]) == 1
+    assert saved["draft_question"] == "중단 후 편집한 질문"
+    assert saved["turns"][0]["finished_at"] is None
+
+
+def test_stale_pending_recovery_cannot_hide_a_reply_or_origin_rewrite(tmp_path, monkeypatch):
+    path, doc, _ = prepared(tmp_path, monkeypatch)
+    doc["pending_request"] = {"id": "crashed", "question": "질문", "evidence_id": "A"}
+    doc["turns"] = [{"id": "crashed", "question": "질문", "status": "pending", "reply": "", "evidence_id": "A"}]
+    atomic_json(path, doc)
+    original = path.read_bytes()
+    candidate = service.load_discussion(path)
+    candidate["turns"][0].update(reply="invented completion", evidence_id="B")
+    with pytest.raises(service.DiscussionConflict):
+        service.save_discussion(path, candidate, expected_revision=doc["revision"])
+    assert path.read_bytes() == original
 
 
 def test_replaced_document_drops_late_response_without_touching_replacement(tmp_path, monkeypatch):
