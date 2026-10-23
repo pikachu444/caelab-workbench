@@ -24,6 +24,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _retry_missing(read):
+    # DrvFS can briefly report ENOENT during replace or before the first receipt
+    # commit. Only that condition gets four 10-ms waits; real loss still raises.
+    for attempt in range(5):
+        try:
+            return read()
+        except FileNotFoundError:
+            if attempt == 4:
+                raise
+            time.sleep(.01)
+
+
 def atomic_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
@@ -82,6 +94,7 @@ class RunStore:
         self.root = Path(root).resolve()
         self.expected = expected
         self._cache = {}
+        self._known_selections = set()
 
     def lease(self):
         if self.expected and not self.root.is_dir():
@@ -100,11 +113,19 @@ class RunStore:
         atomic_json(run.workdir / "job.json", data)
 
     def read(self, path: Path) -> NativeRun:
-        stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
-        cached = self._cache.get(path)
-        if cached is None or cached[0] != key:
-            data = json.loads(path.read_text(encoding="utf-8"))
+        def read_opened():
+            cached = self._cache.get(path)
+            if cached is not None:
+                stat = path.stat()  # a failed lookup must never reuse the old receipt
+                key = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+                if cached[0] == key:
+                    return copy.deepcopy(cached[1])
+            # Metadata and JSON belong to the same opened file even if another
+            # process replaces its pathname. Never fall back to cache on ENOENT.
+            with path.open(encoding="utf-8") as stream:
+                stat = os.fstat(stream.fileno())
+                key = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+                data = json.load(stream)
             if not isinstance(data, dict):
                 raise ValueError(f'실행 기록 객체가 필요합니다: {path}')
             if data.get("id") != path.parent.name or len(path.parent.name) != 32 or any(c not in "0123456789abcdef" for c in path.parent.name):
@@ -115,7 +136,8 @@ class RunStore:
             data["log_path"] = str(path.parent / "job.log") if data.get('log_path') else ''
             run = NativeRun(**data)
             self._cache[path] = key, run
-        return copy.deepcopy(self._cache[path][1])
+            return copy.deepcopy(run)
+        return _retry_missing(read_opened)
 
     def runs(self, node_id=None) -> list[NativeRun]:
         issues = self.integrity_issues()
@@ -124,7 +146,9 @@ class RunStore:
         return self._records(node_id)
 
     def _records(self, node_id=None) -> list[NativeRun]:
-        runs = [self.read(path) for path in self.root.glob("*/job.json")]
+        folders = (folder for folder in self.root.iterdir() if folder.is_dir() and len(folder.name) == 32
+                   and all(c in '0123456789abcdef' for c in folder.name)) if self.root.is_dir() else ()
+        runs = [self.read(folder / 'job.json') for folder in folders]
         return sorted((run for run in runs if node_id is None or run.node_id == node_id), key=lambda run: run.created_at)
 
     def integrity_issues(self) -> list[str]:
@@ -132,24 +156,25 @@ class RunStore:
         if not self.root.is_dir():
             return [f"기대 실행 저장소가 없습니다: {self.root}"] if self.expected else []
         issues = []
-        for selection in (self.root / 'selected').glob('*.json'):
+        selections = set((self.root / 'selected').glob('*.json')) | self._known_selections
+        self._known_selections.update(selections)
+        for selection in sorted(selections):
             try:
-                data = json.loads(selection.read_text(encoding='utf-8'))
+                data = self._read_selection(selection)
                 run_id = data['run_id']
-                if not isinstance(run_id, str) or len(run_id) != 32 or any(c not in '0123456789abcdef' for c in run_id):
-                    raise ValueError('실행 ID가 잘못되었습니다.')
-                if not (self.root / run_id / 'job.json').is_file():
+                try:
+                    run = self.read(self.root / run_id / 'job.json')
+                except FileNotFoundError:
                     issues.append(f"선택한 실행 기록이 없습니다: {self.root / run_id / 'job.json'}")
-                elif self.read(self.root / run_id / 'job.json').node_id != data.get('node_id'):
+                    continue
+                if run.node_id != data.get('node_id'):
                     issues.append(f'선택 실행 기록의 노드가 다릅니다: {selection}')
             except (OSError, ValueError, KeyError, TypeError) as error:
                 issues.append(f"선택 실행을 읽지 못했습니다 ({selection}): {error}")
-        for folder in self.root.iterdir():
-            if folder.is_dir() and len(folder.name) == 32 and all(c in '0123456789abcdef' for c in folder.name):
-                if not (folder / 'job.json').is_file():
-                    issues.append(f'실행 폴더의 기록이 없습니다: {folder / "job.json"}')
         try:
             records = self._records()
+        except FileNotFoundError as error:
+            return [*issues, f"실행 폴더의 기록이 없습니다: {error}"]
         except (OSError, ValueError, TypeError) as error:
             return [*issues, f"실행 기록 읽기 실패: {error}"]
         for run in records:
@@ -210,13 +235,31 @@ class RunStore:
     def select(self, node_id, run_id):
         if not any(run.id == run_id and run.node_id == node_id for run in self.runs(node_id)):
             raise ValueError("선택할 실행이 이 프로젝트/노드에 없습니다.")
-        atomic_json(self._selection_path(node_id), {"node_id": node_id, "run_id": run_id})
+        path = self._selection_path(node_id)
+        atomic_json(path, {"node_id": node_id, "run_id": run_id})
+        self._known_selections.add(path)
+
+    def _read_selection(self, path):
+        def read_opened():
+            with path.open(encoding="utf-8") as stream:
+                self._known_selections.add(path)
+                data = json.load(stream)
+            if not isinstance(data, dict):
+                raise ValueError(f"선택 실행 기록 객체가 필요합니다: {path}")
+            run_id = data.get('run_id')
+            if not isinstance(run_id, str) or len(run_id) != 32 or any(c not in '0123456789abcdef' for c in run_id):
+                raise ValueError(f"선택 실행 ID가 잘못되었습니다: {path}")
+            return data
+        return _retry_missing(read_opened)
 
     def selected_id(self, node_id):
         path = self._selection_path(node_id)
-        if not path.exists():
-            return None
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = self._read_selection(path)
+        except FileNotFoundError:
+            if path in self._known_selections:
+                raise
+            return None  # a node that has never had a selection remains unselected
         if data.get("node_id") != node_id:
             raise ValueError(f"선택 실행의 노드가 다릅니다: {path}")
         return data["run_id"]
