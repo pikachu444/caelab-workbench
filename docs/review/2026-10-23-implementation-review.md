@@ -8,6 +8,23 @@
 - 성격: 사용자가 요청한 리뷰 전달 문서다. 제품 코드 수정·구현 착수를 승인하는 문서가 아니다.
 - 후속 실행 계획: [Codex 개선 계획](2026-10-23-codex-improvement-plan.md)
 
+## 독립 반박 검증 반영 — 2026-10-23 정정 위치
+
+사용자가 전달한 독립 검증에서 R1~R10의 결함 판정은 모두 유지됐고, 원격 저장소 새 clone의 테스트 결과도 `4 failed, 73 passed, 9 skipped`로 일치했다. 이 정정은 기존 판정과 수치를 유지하며 아래 범위만 바꾼다.
+
+정정 작업도 원격 main을 새로 clone한 `36205cede6f0fa933926556d7ce91d63f281dffd`에서 시작했다. `f8b88c6`과의 차이는 리뷰·계획 문서 두 개뿐이며 제품 코드는 동일함을 직접 확인했다. 개발자 로컬 파일·커밋 이력과 구버전 SciPy의 12개 실패 실측은 **사용자가 전달한 독립 검증 결과**로 출처를 구분한다. 로컬에 파일이 있다는 사실을 원격 반영 완료로 세지 않는다.
+
+| 정정 표식 | 수정 위치 | 반영 내용 |
+|---|---|---|
+| C1 | R1 | 도달 경로를 명시하고 심각도만 높음으로 조정. 결함과 P1 유지 |
+| C2 | R3, §5 | 패널·테스트의 원격 업로드 누락 원인 확정, 기존 파일 복구로 수정 방향 구체화 |
+| C3 | R8 | 출처 태그는 보존되며 대체 발생 사실·사유의 전달이 누락됨을 명시 |
+| C4 | R10 | SciPy 선언 하한과 `rng` API의 최소 버전 불일치 추가 |
+| C5 | R11 | 실제 메시 생성·결과 파일 연결 없는 완료 상태 표시 추가(낮음) |
+| C6a | §5, 개선 계획 P2·P5 뒤 | CI 신설은 재발 방지이며 본선 연결 P5 이후로 이동 |
+| C6b | 개선 계획 P6 완료 검사 | 미지원 변경은 전용 프로그램 수정 안내로 남기는 범위 제한 |
+| C7 | §6 | DESIGN 내부 편집 범위 충돌과 이미 표시 전용인 구현을 구분 |
+
 ## 1. 개발 담당 Codex에게
 
 요구한 제품은 **각 프로그램을 연결하고, 그 결과를 근거로 토론하는 워크벤치**다. 이번 코드는 그 정의를 문서에는 반복해서 적었지만 실제 실행 경로에는 충분히 반영하지 않았다.
@@ -58,7 +75,7 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q -ra
 
 ## 4. 심각도순 결함
 
-### R1 — 치명적: 실행 시 입력 검사를 우회하여 물리 조건을 누락하거나 치환
+### R1 — 높음: 실행 시 입력 검사를 우회하여 물리 조건을 누락하거나 치환
 
 근거: [caelab/workbench.py:43–50](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/workbench.py#L43), [caelab/solvers/calculix.py:108–139](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/solvers/calculix.py#L108).
 
@@ -74,6 +91,8 @@ lines.append("*STATIC")
 ```
 
 직접 재현: contact를 추가하면 check는 미지원 오류를 반환하지만, 작성된 덱은 접촉 없는 모델의 덱과 동일했다. modal도 검사에서는 거부되지만 run 경로는 실행 함수까지 호출하고 STATIC 덱을 만들었다. 후자의 솔버 호출은 모의했다.
+
+**[정정 C1]** 이 경로는 DESIGN 결정 3에서 보조로 제한한 자체 변환기다. 부모 프로젝트 화면에는 사용자 파일 열기가 없어 사용자 모델의 해당 조건을 이 화면에서 입력할 수 없다. 사용자 모델을 실행에 연결하는 코드상 GUI 입구는 MainWindow의 파일 열기→실행이다(현재 원격 코드에서는 R3 때문에 창 생성부터 차단됨). 이 도달 범위를 반영해 심각도를 치명적에서 높음으로 낮춘다. 조건 누락 결함의 판정과 개선 계획 P1의 순서·내용은 유지한다.
 
 수정: 보조 변환기의 공용 실행 진입점에서 유효성·지원 검사를 강제한다. 표현할 수 없는 조건을 생략하지 않는다. 네이티브 본선은 원 덱을 보존하고 자체 변환기의 제한을 적용하지 않는다.
 
@@ -106,9 +125,11 @@ return ResultSet(
 from .expert_panel import ExpertPanel
 ```
 
-해당 커밋에는 `expert_panel.py`가 없다. MainWindow 생성과 구조 해석·전문가 상자 열기가 ModuleNotFoundError로 실패했다. 관련 테스트 4개도 같은 이유로 실패했다. `caelab/assist/MERGE_REQUEST.md`의 파일 작성·통합 기록과 원격 파일 목록이 다르다. 로컬 작업의 원격 반영 누락 가능성은 추정이며 원인은 미확인이다.
+해당 커밋에는 `expert_panel.py`가 없다. MainWindow 생성과 구조 해석·전문가 상자 열기가 ModuleNotFoundError로 실패했다. 관련 테스트 4개도 같은 이유로 실패했다. `caelab/assist/MERGE_REQUEST.md`의 파일 작성·통합 기록과 원격 파일 목록이 다르다.
 
-수정: 실제 파일의 이력을 확인해 복구·통합하고 깨끗한 checkout에서 검사한다. 전문가 공급자 미설정이 일반 해석 창 사용까지 막지 않도록 한다.
+**[정정 C2 — 사용자 전달 독립 검증으로 확정된 원인]** `expert_panel.py`(7,006B), `tests/test_workbench_expert_panel.py`, `tests/test_assist_knowledge.py`는 개발자 로컬 main과 작업 브랜치에 있지만 원격 main에는 없다. 패널 커밋 `fcac805`와 `c3c8c79`는 `origin/main`의 조상이 아니며, PR 방식의 파일 업로드 병합 과정에서 세 파일이 빠졌다. 따라서 원인을 미확인으로 남기지 않는다. 이번 문서 정정에서도 원격 main 새 clone에 세 파일이 없음을 직접 확인했다. 개발자 로컬의 파일 크기와 커밋 관계는 전달받은 검증 결과이며 이 정정 작업에서 개발자 컴퓨터를 다시 조회한 것은 아니다.
+
+수정: 새 패널을 구현하지 않는다. 확인된 기존 패널과 테스트 두 개를 가져와 현재 인터페이스와 대조한 뒤 복구·통합한다. 완료는 원격 main을 새로 clone해 세 파일과 관련 테스트를 확인한 뒤 보고한다. 전문가 공급자 미설정이 일반 해석 창 사용까지 막지 않도록 한다.
 
 ### R4 — 높음: 네이티브 연결 본선 대신 고정 예제·자체 변환기 실행
 
@@ -176,7 +197,7 @@ success = bool(getattr(result, "success", True)) \
 
 수정: 결과 타입별 실행 상태 계약을 명시하고 실패·취소·부분 실패를 성공 응답으로 정규화하지 않는다.
 
-### R8 — 높음: 잘못된 솔버 출처와 다른 솔버 지식으로의 무음 대체
+### R8 — 높음: 잘못된 솔버 출처와 지식 검색 대체 사실·사유의 전달 누락
 
 근거: [caelab/result_summary.py:15–20](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/result_summary.py#L15), [caelab/assist/knowledge.py:311–317](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/assist/knowledge.py#L311).
 
@@ -193,6 +214,8 @@ except Exception:
 ```
 
 Code_Aster 결과를 기본 인자로 요약하니 CalculiX로 표시됐다. Code_Aster를 명시한 검색에 해당 색인이 없자 CalculiX 자료가 반환됐다. 색인 오류도 사용자에게 원인을 전달하지 않고 내장 노트로 대체한다.
+
+**[정정 C3]** 검색 결과 항목의 `solver` 태그와 출처 id는 남아 있다. [knowledge.py:286–294의 `_to_entry`](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/assist/knowledge.py#L286)는 `id`, `source_id`, `solver`를 보존한다. 종전의 '무음 대체'는 자료 출처 자체가 숨겨진다는 뜻이 아니라, **요청한 솔버 자료가 없어 검색 범위를 풀었는지, 색인·서비스 오류로 내장 노트로 바뀌었는지 그 발생 사실과 사유가 호출자·화면에 전달되지 않는다**는 범위로 한정한다.
 
 수정: 결과 자체의 solver_id·단위를 사용하고, 검색에는 실행의 솔버를 명시적으로 전달한다. 자료 없음·검색 실패·의도적 대체를 구분한다. 다른 솔버 자료는 비교 요청 때만 출처를 명시해 제공한다.
 
@@ -229,7 +252,36 @@ gui = ["PySide6>=6.6"]
 
 GUI extras에 VTK가 없고 PDF 파서의 pypdf도 선언되지 않았다. Windows 실행기는 프로젝트·SciPy를 설치하지 않는다. VTK 부재·초기화 실패도 헤드리스 실행 안내로 표시한다. 선언 불일치는 확인했으며 Windows 새 환경 설치 실패는 직접 재현하지 않았다.
 
-수정: 설치 경로를 프로젝트 extras로 통일하고 의존성 부재와 그래픽 초기화 실패를 구분한다.
+**[추가 C4 — SciPy 버전 하한 불일치]** `scipy>=1.11` 선언과 달리 [core.py:220](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/numerical/core.py#L220), [core.py:413–418](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/numerical/core.py#L413), [uq.py:59–60](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/caelab/numerical/uq.py#L59)는 SciPy 1.15부터 지원하는 `rng` 키워드를 사용한다.
+
+```python
+cube = qmc.LatinHypercube(len(free), rng=np.random.default_rng(seed)).random(count)
+
+# differential_evolution 호출 인자 (core.py:416)
+rng=np.random.default_rng(seed), polish=False, init=init_population,
+
+# uq.py:59–60
+uniform = qmc.LatinHypercube(len(variables),
+                             rng=np.random.default_rng(seed)).random(count)
+```
+
+API 변경 시점은 SciPy 1.15 문서의 [differential_evolution](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.optimize.differential_evolution.html)과 [LatinHypercube](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 명시돼 있다. 사용자 전달 독립 검증에서는 SciPy 1.11~1.14 환경의 수치 엔진 테스트 12개가 `TypeError`로 실패했다. 이 구버전 환경 실측은 이번 문서 정정에서 재실행하지 않았으며, §3의 기존 전체 테스트 수치와 별도의 환경 결과로 기록한다.
+
+수정: 설치 경로를 프로젝트 extras로 통일하고 의존성 부재와 그래픽 초기화 실패를 구분한다. SciPy는 하한을 `scipy>=1.15`로 올리거나 세 호출의 `rng` 사용을 없애 선언한 하한과 호환되게 하는 방식 중 하나로 통일한다.
+
+### R11 — 낮음: 실제 메시 생성·결과 연결 없이 완료 상태 표시
+
+**[추가 C5]** R5와 같은 상태·파일 연결 단절의 추가 사례다. 근거: [apps/workbench_qt/project_window.py:457–469](https://github.com/pikachu444/caelab-workbench/blob/f8b88c6ab1bf37f414657f0ba4d6eef04b4dcb0c/apps/workbench_qt/project_window.py#L457).
+
+```python
+self.boxes["mesh"].set_state("done", "절점 99개 · 요소 40개")
+# job.result.success인 분기
+self.boxes["results"].set_state("done", "결과 준비됨")
+```
+
+`run_chain()`은 실제 메시 생성 없이 메시 상자를 고정된 절점·요소 수와 함께 done으로 바꾼다. 해석 성공 분기에서는 결과 파일을 상자에 연결하지 않은 채 결과 상자를 done으로 표시한다. 원격 main 새 clone의 코드에서 직접 확인했다. 별도의 메시 생성과 결과 열기 준비가 끝났다고 사용자가 오인할 수 있다.
+
+수정: 기존 계획 P3~P5의 상태·파일 연결 안에서 처리한다. 메시 상태는 실제 메시와 생성·읽기 결과에서 얻고, 결과 준비 상태는 선택 실행의 결과 파일이 연결돼 열 수 있을 때 표시한다. 이 표시 결함 때문에 새 메시 생성 기능을 자체 구현하지 않는다.
 
 ## 5. 현황·테스트 해석을 바로잡을 것
 
@@ -237,7 +289,7 @@ GUI extras에 VTK가 없고 PDF 파서의 pypdf도 선언되지 않았다. Windo
 |---|---|
 | 프로그램 8종 연결 | 등록 목록·경로 탐색·명령 생성은 있음. 프로그램 간 파일·상태 전달 완료와 구분 |
 | 저장/재개 | 모델 JSON 왕복은 있음. 작업·결과·토론 포함 프로젝트 재개는 없음 |
-| 전문가 패널 반영 | 해당 커밋에는 필수 파일이 없음 |
+| 전문가 패널 반영 | **[정정 C2]** 로컬의 기존 패널·테스트 두 개가 PR 파일 업로드에서 누락됨. 원격 main에는 없음 |
 | 최적화 모델 연결 완료 | 독립 패널 API는 있음. 메인 결합은 문서에도 남은 일로 적혀 있으며 실제로 없음 |
 | 실제 솔버·LLM·설치 실측 | 개발자 환경 기록은 이번에 미확인. 허위라고 단정하지 않음 |
 | RAG 7,688조각·Hit@5 100% | 외부 자산·모델을 재검증하지 못함. 솔버별 분리의 무조건적 보장은 코드와 다름 |
@@ -251,12 +303,14 @@ GUI extras에 VTK가 없고 PDF 파서의 pypdf도 선언되지 않았다. Windo
 - PySide6가 없으면 GUI 테스트가 건너뛰어질 수 있다. GUI 의존성을 설치한 필수 검사 경로가 필요하다.
 - 해당 커밋에 GitHub Actions workflow는 없다. 외부 CI 존재 여부는 미확인이다.
 
+**[정정 C6a]** CI 신설은 재발 방지 작업이다. P2의 결함 수정·완료 조건에서 제외하고 본선 연결 P5 이후에 수행한다. 그 전에도 해당 수정의 관련 테스트는 직접 실행한다.
+
 ## 6. 문서 충돌
 
 | 문서 위치 | 충돌 |
 |---|---|
 | DESIGN 맨 앞 ↔ §1·§4·§5·§12 | 네이티브 연결·축소 공통 형식 ↔ 전체 공통 모델·자체 변환기 중심 |
-| DESIGN 결정 4 ↔ §11.2 | 자체 화면의 확인·검사·실행·요약 제한 ↔ 자체 재료·단면·하중·접촉 편집 |
+| DESIGN 결정 4 ↔ §11.2 | **[정정 C7] 문서 내부 충돌.** 자체 화면의 확인·검사·실행·요약 제한 ↔ 자체 재료·단면·하중·접촉 편집. 구현은 이미 표시 전용 속성으로 이동했으므로 이 문서 충돌을 현재 구현의 정밀 편집 침범으로 세지 않음 |
 | README ↔ ARCHITECTURE | 공통 구조 모델 중심 ↔ 프로그램 연결 중심 |
 | DESIGN §3.3 ↔ §12 | PDE를 구조 스키마에서 제외 ↔ PDE를 공통 모델 위로 일반화 |
 | README 실행 안내 ↔ __main__.py | 프로젝트 인자 지원 안내 ↔ 실제 인자 처리 없음 |
