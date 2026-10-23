@@ -196,3 +196,22 @@ def test_missing_inactive_local_file_does_not_invalidate_effective_connected_inp
     wb.refresh_native_project(project)
     assert wb.input_file(project, second.id).path == str(active.resolve())
     assert second.state == result.state == "ready"
+
+
+@pytest.mark.parametrize("current_state", ["ready", "changed", "missing", "stale"])
+def test_reopen_recomputes_opened_status_without_restoring_a_live_program(tmp_path, current_state):
+    wb, project, first, _, _, source = graph(tmp_path)
+    first.state = "opened"
+    first.reason = "과거 프로그램 열기 요청을 전달했습니다."
+    if current_state == "stale":
+        first.files["input"].stale = True
+    path = wb.save_native_project(project, tmp_path / "project.json")
+    if current_state == "changed":
+        source.write_bytes(b"changed after the program was opened")
+    elif current_state == "missing":
+        source.unlink()
+    reopened_workbench = Workbench()
+    loaded = reopened_workbench.open_native_project(path)
+    assert reopened_workbench.jobs.launches == {}
+    assert loaded.nodes[first.id].state == current_state
+    assert "과거 프로그램 열기" not in loaded.nodes[first.id].reason

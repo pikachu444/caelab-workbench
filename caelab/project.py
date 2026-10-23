@@ -217,6 +217,9 @@ def load_native_project(path: str | Path) -> NativeProject:
             if raw.get("state", "needs_input") not in NODE_STATES or not isinstance(raw.get("reason", ""), str):
                 raise ValueError(f"nodes.{key}: 상태 형식이 잘못되었습니다.")
             node = ProgramNode(key, raw["kind"], raw["program_id"], position=tuple(position), state=raw.get("state", "needs_input"), reason=raw.get("reason", ""))
+            if node.state == "opened":
+                # Saved launch requests are not evidence of a live process now.
+                node.state, node.reason = "needs_input", ""
             if not isinstance(raw.get("files", {}), dict):
                 raise ValueError(f"nodes.{key}.files: 파일 사전이 필요합니다.")
             for role, ref in raw.get("files", {}).items():
