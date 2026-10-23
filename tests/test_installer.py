@@ -14,10 +14,13 @@ import json
 import tarfile
 from pathlib import Path
 
+import pytest
+
 from caelab.solvers.installer.engine import (
     STATUS_ALREADY,
     STATUS_INSTALLED,
     STATUS_SKIPPED_MANUAL,
+    STATUS_NOT_IMPLEMENTED,
     Installer,
     load_manifest,
 )
@@ -125,3 +128,49 @@ def test_archive_install_and_idempotency(tmp_path):
     assert registry["env"]["CAELAB_TINY"] == str(tool)
     second = Installer(tmp_path / "root", manifest=_tiny_manifest(tarball, tarball.stat().st_size)).install()
     assert second[0].status == STATUS_ALREADY
+
+
+def test_windows_request_is_not_install_success(tmp_path, monkeypatch, capsys):
+    from caelab.solvers.installer import cli
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a Windows metadata entry must not start installation")
+
+    monkeypatch.setattr("caelab.solvers.installer.engine.subprocess.run", forbidden)
+    monkeypatch.setattr(Installer, "download", forbidden)
+    root = tmp_path / "not-created"
+    results = Installer(root, platform="windows").install()
+    assert results and all(r.status == STATUS_NOT_IMPLEMENTED for r in results)
+    assert not root.exists()
+    assert cli.main(["install", "--platform", "windows", "--root", str(root)]) == 1
+    output = capsys.readouterr().out
+    assert "not-implemented" in output
+    assert "registry:" not in output
+
+
+def test_windows_host_does_not_default_to_linux_packages(tmp_path, monkeypatch):
+    from caelab.solvers.installer import cli
+
+    monkeypatch.setattr("caelab.solvers.installer.engine.sys.platform", "win32")
+    root = tmp_path / "not-created"
+    assert Installer(root).platform == "windows"
+    assert cli.main(["install", "--root", str(root)]) == 1
+    assert cli.main(["install", "--platform", "linux", "--root", str(root)]) == 1
+    assert cli.main(["verify", "--root", str(root)]) == 1
+    assert not root.exists()
+
+
+def test_manual_install_and_empty_verify_are_incomplete(tmp_path):
+    from caelab.solvers.installer import cli
+
+    assert cli.main(["install", "--root", str(tmp_path), "--only", "codeaster"]) == 1
+    assert cli.main(["verify", "--root", str(tmp_path)]) == 1
+
+
+def test_windows_listing_explains_runtime_and_installation(capsys):
+    from caelab.solvers.installer import cli
+
+    assert cli.main(["list", "--platform", "windows"]) == 0
+    output = capsys.readouterr().out
+    assert "installer_support: not-implemented" in output
+    assert "execution_environment: wsl2" in output

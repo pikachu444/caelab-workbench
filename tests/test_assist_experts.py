@@ -105,3 +105,22 @@ def test_unavailable_discussion_is_a_state_not_an_exception(monkeypatch):
     outcome = discussion.ask("재료가 맞나요?")
     assert outcome["available"] is False
     assert outcome["proposals"] == []
+
+
+def test_openscience_profile_does_not_claim_a_working_transport(tmp_path, monkeypatch):
+    profile = tmp_path / "AutonomousCAELab" / "profiles" / "test"
+    profile.mkdir(parents=True)
+    (profile / "caelab-profile-owner.json").write_text("{}")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    provider = get_provider("openscience")
+    discussion = Discussion(template=get_template("material"),
+                            summary_text="요약", provider=provider)
+    # Configuration exists, but asking must remain an unavailable state;
+    # it must neither report readiness nor raise from Discussion.ask().
+    outcome = discussion.ask("재료가 맞나요?")
+    assert outcome["available"] is False
+    assert "프로필은 있지만" in outcome["reply"]
+    assert "구현되지" in outcome["reply"]
+    assert discussion.history == []
+    with pytest.raises(RuntimeError, match="구현되지"):
+        provider.discuss("직접 호출")
