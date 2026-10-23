@@ -3,6 +3,7 @@
 The old project converter required FreeCADCmd, assigned units and lost frame/ID
 information. Only its format investigation is reused: no vendor code is copied.
 FRD layout: https://www.dhondt.de/ccx_2.21.src.tar.bz2 (frd.c, frdheader.c).
+Nodal records: https://www.dhondt.de/cgx_2.21.htm.tar.bz2 (doc/cgx/node225.html).
 Topology: FreeCAD FRDReader::mapCcxTypeNodes/mapCcxToVtk/fillCell:
 https://github.com/FreeCAD/FreeCAD/blob/dc1ab881ca0bbea9735e92938a660acee339679e/src/Mod/Fem/App/FemVTKTools.cpp
 VTU: https://docs.vtk.org/en/latest/vtk_file_formats/vtkxml_file_format.html
@@ -71,7 +72,9 @@ class _Field:
 
     @property
     def stored(self):
-        return [component for component in self.components if component["exist"] == 0]
+        # CGX IEXIST=2 stores values with an additional display marker; only 1
+        # denotes a predefined component without a value in the nodal record.
+        return [component for component in self.components if component["exist"] in (0, 2)]
 
 
 @dataclass
@@ -195,7 +198,7 @@ class _Reader:
                                       "type": int(line[18:23]), "row": int(line[23:28]),
                                       "column": int(line[28:33]), "exist": int(line[33:38].strip() or "0"),
                                       "definition": line[38:].strip()})
-        if result.result_type != 1 or not result.stored or any(c["exist"] not in (0, 1) for c in result.components):
+        if result.result_type != 1 or not result.stored or any(c["exist"] not in (0, 1, 2) for c in result.components):
             result.warnings.append(f"{name}: nodal 결과 또는 저장 성분 배치가 지원되지 않습니다.")
             for _ in self._block():
                 pass
@@ -219,7 +222,11 @@ class _Reader:
                     node, values, malformed = int(line[3:3 + digits]), [], False
                     raw = line[3 + digits:]
                 elif line.startswith(" -2") and node is not None:
-                    raw = line[3:]
+                    # Result continuations reserve the node-ID column, unlike
+                    # element connectivity -2 records. Its width follows FORMAT.
+                    if line[3:3 + digits].strip():
+                        raise ValueError(f"{name}: 결과 연속 레코드의 절점 칸이 비어 있지 않습니다.")
+                    raw = line[3 + digits:]
                 else:
                     raise ValueError(f"{name}: 결과 레코드 형식이 잘못되었습니다.")
                 try:

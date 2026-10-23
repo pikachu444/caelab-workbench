@@ -49,7 +49,7 @@ def _field(rows, *, name="DISP", components=DISPLACEMENT, step=1, increment=2,
     for identifier, values in rows:
         text += f" -1{identifier:{digits}d}" + "".join(f"{v:12.5E}" for v in values[:6]) + "\n"
         if len(values) > 6:
-            text += " -2" + "".join(f"{v:12.5E}" for v in values[6:]) + "\n"
+            text += " -2" + " " * digits + "".join(f"{v:12.5E}" for v in values[6:]) + "\n"
     return text + " -3\n"
 
 
@@ -315,14 +315,45 @@ def test_cancellation_during_frd_or_array_work_is_not_a_read_failure(tmp_path):
     assert (tmp_path / "model.frd").read_text(encoding="ascii") == text
 
 
-def test_stored_component_continuations_and_unknown_metadata_are_preserved(tmp_path):
+@pytest.mark.parametrize("indicator", [0, 1])
+def test_stored_component_continuations_and_unknown_metadata_are_preserved(tmp_path, indicator):
     components = [(f"V{i}", 1, 0, 0, 0) for i in range(9)]
     rows = [(node, list(range(9))) for node in (40, 10, 90, 25)]
-    result = _collect(tmp_path, _geometry() + _field(rows, name="UNKNOWN", components=components))
+    result = _collect(tmp_path, _geometry(indicator=indicator)
+                      + _field(rows, name="UNKNOWN", components=components, indicator=indicator))
     assert result["status"] == "readable"
     _, arrays = _arrays(tmp_path / result["frames"][0]["vtu_file"])
     assert arrays["UNKNOWN"][1] == list(range(9)) * 4
     assert arrays["UNKNOWN"][0].get("ComponentName8") == "V8"
+
+
+def test_cgx_marked_components_keep_metadata_values_and_vtu_order(tmp_path):
+    components = [("MARKED", 1, 0, 0, 2), ("COMPUTED", 1, 0, 0, 1),
+                  ("PLAIN", 1, 0, 0, 0), ("MARKED2", 1, 0, 0, 2)]
+    rows = [(node, [12.5, -7.25, 3.75]) for node in (40, 10, 90, 25)]
+    result = _collect(tmp_path, _geometry() + _field(rows, name="CGX", components=components))
+    assert result["status"] == "readable"
+    frame = result["frames"][0]
+    metadata = frame["fields"][0]["components"]
+    assert [(c["name"], c["exist"]) for c in metadata] == [
+        ("MARKED", 2), ("COMPUTED", 1), ("PLAIN", 0), ("MARKED2", 2)]
+    _, arrays = _arrays(tmp_path / frame["vtu_file"])
+    array, values = arrays["CGX"]
+    assert array.get("NumberOfComponents") == "3"
+    assert [array.get(f"ComponentName{i}") for i in range(3)] == ["MARKED", "PLAIN", "MARKED2"]
+    assert values == [12.5, -7.25, 3.75] * 4
+
+
+@pytest.mark.parametrize("indicator", [0, 1])
+def test_result_continuations_reject_nonblank_node_slot(tmp_path, indicator):
+    components = [(f"V{i}", 1, 0, 0, 0) for i in range(9)]
+    rows = [(node, list(range(9))) for node in (40, 10, 90, 25)]
+    digits = 10 if indicator else 5
+    field = _field(rows, name="UNKNOWN", components=components, indicator=indicator)
+    field = field.replace(" -2" + " " * digits, " -2" + f"{40:{digits}d}")
+    result = _collect(tmp_path, _geometry(indicator=indicator) + field)
+    assert result["status"] == "partial"
+    assert result["warnings"]
 
 
 def test_incomplete_last_frame_does_not_show_an_earlier_displacement(tmp_path):
