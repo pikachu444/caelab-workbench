@@ -134,10 +134,10 @@ class ExpertWindow(QMainWindow):
         proposal_layout.addWidget(self.proposals, 1)
         proposal_actions = QHBoxLayout()
         self.check_proposal = QPushButton('원본 개정 확인')
-        self.check_proposal.clicked.connect(lambda: self.review_proposal('check'))
+        self.check_proposal.clicked.connect(self.check_selected_proposal)
         proposal_actions.addWidget(self.check_proposal)
         self.reject_proposal = QPushButton('제안 거절')
-        self.reject_proposal.clicked.connect(lambda: self.review_proposal('reject'))
+        self.reject_proposal.clicked.connect(self.reject_selected_proposal)
         proposal_actions.addWidget(self.reject_proposal)
         proposal_actions.addStretch()
         proposal_layout.addLayout(proposal_actions)
@@ -370,6 +370,12 @@ class ExpertWindow(QMainWindow):
             '이 변경은 자동 적용을 지원하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 수정하세요. '
             '재계산은 해석 창에서 별도로 실행한 뒤 새 결과를 이 대화로 가져오세요.\n\n'
             + '\n'.join(f"{review.get('reviewed_at', '')}: {review.get('reason', '')}" for review in reviews[:-1]))
+
+    def check_selected_proposal(self):
+        self.review_proposal('check')
+
+    def reject_selected_proposal(self):
+        self.review_proposal('reject')
 
     def review_proposal(self, decision):
         proposal_id = self.proposal_choice.currentData()
