@@ -166,6 +166,113 @@ class Workbench:
     def close(self) -> bool:
         return self.jobs.close()
 
+    def resolve_evidence_run(self, project: NativeProject, node_id: str) -> NativeRun | None:
+        """Follow the selected node's real incoming path to one selected analysis."""
+        seen = set()
+        while node_id not in seen:
+            seen.add(node_id)
+            node = project.nodes[node_id]
+            if node.program_id == 'calculix':
+                return self.selected_native_run(project, node_id)
+            edge = next((edge for edge in project.connections if edge.target_id == node_id), None)
+            if edge is None:
+                return None
+            node_id = edge.source_id
+        raise ValueError('실행 근거 연결이 순환합니다.')
+
+    def open_native_results(self, project: NativeProject, node_id: str) -> LaunchRecord:
+        from .native.evidence import native_results_file
+        from .connections import launch_request
+
+        run = self.resolve_evidence_run(project, node_id)
+        if run is None:
+            raise ValueError('연결된 해석 노드에서 실행을 선택하세요.')
+        document = native_results_file(run)
+        status = next(status for status in self.programs() if status.spec.id == 'paraview')
+        return self.jobs.launch(launch_request(status, document))
+
+    def capture_native_evidence(self, project: NativeProject, node_id: str, asset_root: Path, *, frame_index=None) -> dict:
+        from .native.evidence import capture_run_evidence
+
+        run = self.resolve_evidence_run(project, node_id)
+        if run is None:
+            raise ValueError('연결된 해석 노드에서 실행을 선택하세요.')
+        return capture_run_evidence(run, asset_root, frame_index=frame_index)
+
+    def import_expert_files(self, asset_root: Path, **kwargs) -> dict:
+        from .native.evidence import import_file_evidence
+        return import_file_evidence(asset_root, **kwargs)
+
+    # Independent expert front ends use this facade, without importing a solver UI.
+    def expert_templates(self):
+        from .assist.experts import TEMPLATES
+        return TEMPLATES
+
+    def expert_provider_status(self, provider_id=None):
+        from .assist.experts import get_provider
+        provider = get_provider(provider_id)
+        available, reason = provider.availability()
+        return {'id': provider.id, 'name': provider.name, 'available': available,
+                'reason': reason or '설정됨 — 실제 호출은 질문을 보낼 때 확인합니다.'}
+
+    def expert_provider_configuration(self):
+        import os
+        return {key: os.environ.get('CAELAB_EXPERT_' + suffix, '') for key, suffix in
+                [('provider_id', 'PROVIDER'), ('endpoint', 'ENDPOINT'), ('model', 'MODEL'), ('api_key', 'API_KEY')]}
+
+    def configure_expert_provider(self, *, endpoint, model, api_key):
+        import os
+        for key, value in [('ENDPOINT', endpoint), ('MODEL', model), ('API_KEY', api_key)]:
+            os.environ['CAELAB_EXPERT_' + key] = value
+
+    def open_expert_discussion(self, path, *, create=False):
+        from .assist.discussions import create_discussion, load_discussion
+        return create_discussion(path) if create and not Path(path).exists() else load_discussion(path)
+
+    def save_expert_discussion(self, path, document, *, expected_revision):
+        from .assist.discussions import save_discussion
+        return save_discussion(path, document, expected_revision=expected_revision)
+
+    def attach_expert_evidence(self, path, evidence, *, expected_revision):
+        from .assist.discussions import attach_evidence
+        return attach_evidence(path, evidence, expected_revision=expected_revision)
+
+    def ask_expert_discussion(self, path, question, **kwargs):
+        from .assist.discussions import ask_discussion
+        return ask_discussion(path, question, **kwargs)
+
+    def expert_evidence_run(self, project, node_id, run_id=None):
+        if not run_id:
+            return self.resolve_evidence_run(project, node_id)
+        ancestors, pending = set(), [node_id]
+        while pending:
+            current = pending.pop()
+            if current in ancestors:
+                continue
+            ancestors.add(current)
+            pending.extend(edge.source_id for edge in project.connections if edge.target_id == current)
+        run = next((run for run in self.native_runs(project) if run.id == run_id), None)
+        if run is None or run.node_id not in ancestors:
+            raise ValueError('전달받은 실행이 연결된 해석 기록에 없습니다.')
+        return run
+
+    def capture_expert_run(self, run, asset_root, *, frame_index=None):
+        from .native.evidence import capture_run_evidence
+        return capture_run_evidence(run, asset_root, frame_index=frame_index)
+
+    def open_native_expert(self, project, node_id):
+        import hashlib
+        from .connections import expert_launch_request
+        if project.path is None or node_id not in project.nodes or project.nodes[node_id].kind != 'expert':
+            raise ValueError('프로젝트를 저장하고 전문가 상자를 선택하세요.')
+        run = self.resolve_evidence_run(project, node_id)
+        folder = hashlib.sha256(node_id.encode('utf-8')).hexdigest()
+        path = self._run_store(project).root / 'discussions' / folder / 'discussion.json'
+        request = expert_launch_request(path, project.path, node_id, run.id if run else None)
+        if self.registry_path is not None:
+            request.env['CAELAB_INSTALL_REGISTRY'] = str(Path(self.registry_path).expanduser().resolve())
+        return self.jobs.launch(request)
+
     def mark_node_failed(self, project: NativeProject, node_id: str, reason: str) -> None:
         node = project.nodes[node_id]
         node.state, node.reason = "failed", reason

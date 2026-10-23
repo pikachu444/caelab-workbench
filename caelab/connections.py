@@ -288,6 +288,17 @@ def calculix_run_request(status: ProgramStatus, workdir: Path) -> LaunchRequest:
                          {**status.runtime_env, **os.environ}, "calculix")
 
 
+def expert_launch_request(discussion_file, project_file=None, node_id=None, run_id=None) -> LaunchRequest:
+    argv = [sys.executable, '-m', 'apps.workbench_qt.expert_window',
+            '--discussion', str(Path(discussion_file).resolve())]
+    if project_file:
+        argv.extend(['--project', str(Path(project_file).resolve()), '--node', node_id])
+    if run_id:
+        argv.extend(['--run-id', run_id])
+    return LaunchRequest(argv, Path(__file__).resolve().parent.parent,
+                         dict(os.environ), 'native_expert')
+
+
 def launch_command(status: ProgramStatus, file: str | None = None) -> list[str] | None:
     """Legacy command construction only; native GUI callers use launch_request."""
     if not status.available:

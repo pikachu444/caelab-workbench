@@ -289,6 +289,25 @@ class JobManager:
             except OSError:
                 pass
         finally:
+            # Hash immutable, closed outputs on the worker, outside the UI snapshot
+            # lock. Old receipts without these hashes remain explicitly unverified.
+            try:
+                from .project import file_revision
+                artifacts = {}
+                paths = [run.workdir / name for name in ('model.frd', 'model.dat', 'job.log')]
+                paths.extend((run.workdir / 'results').glob('*.pvd'))
+                paths.extend((run.workdir / 'results').glob('*.vtu'))
+                for path in paths:
+                    if path.is_file():
+                        if not path.resolve().is_relative_to(run.workdir.resolve()):
+                            raise ValueError(f'실행 출력 경로가 실행 폴더 밖을 가리킵니다: {path}')
+                        artifacts[path.relative_to(run.workdir).as_posix()] = file_revision(path)
+                with self._native_lock:
+                    run.snapshot['artifacts'] = artifacts
+            except Exception as exc:
+                with self._native_lock:
+                    run.state = 'failed'
+                    run.error += f' 실행 출력 해시 기록 실패: {exc}'
             with self._native_lock:
                 run.finished_at = utc_now()
                 try:
