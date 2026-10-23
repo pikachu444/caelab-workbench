@@ -514,6 +514,7 @@ class MainWindow(QMainWindow):
         self._last_result = None
         self.results_item.takeChildren()
         self._path_items.pop("result", None)
+        self.select_path("model")
         self.legend_label.clear()
         self.viewport.show_model(self.model)
         self._set_flow(2)

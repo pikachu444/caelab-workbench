@@ -174,17 +174,20 @@ def test_new_model_clears_previous_result_and_issue_state(app, monkeypatch):
 @pytest.mark.parametrize("failure_has_result", [True, False])
 def test_failed_rerun_removes_previous_success_display(app, monkeypatch, failure_has_result):
     from types import SimpleNamespace
+    from PySide6.QtWidgets import QLabel
     from caelab.solvers.base import ResultSet
 
     window = MainWindow()
     window.set_model(cantilever_model())
-    success = ResultSet("calculix", True, max_displacement=0.25)
+    success = ResultSet("calculix", True, max_displacement=0.25, units={"length": "m"})
     failure = ResultSet("calculix", False, log_tail="failed input") if failure_has_result else None
     jobs = iter([SimpleNamespace(state="succeeded", result=success),
                  SimpleNamespace(state="failed", result=failure)])
     monkeypatch.setattr(window.workbench, "run", lambda *args: next(jobs))
     window.run_solve()
     assert window.results_item.childCount() == 1
+    window.select_path("result")
+    assert any(label.text() == "0.2500 m" for label in window.props_panel.findChildren(QLabel))
     window.run_solve()
     assert window.results_item.childCount() == 0
     assert "result" not in window._path_items
@@ -192,4 +195,5 @@ def test_failed_rerun_removes_previous_success_display(app, monkeypatch, failure
     assert not window.legend_label.text()
     assert "완료" not in window.statusBar().currentMessage()
     assert "완료" not in window.status.text()
+    assert all(label.text() != "0.2500 m" for label in window.props_panel.findChildren(QLabel))
     window.close()
