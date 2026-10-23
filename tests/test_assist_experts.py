@@ -165,3 +165,33 @@ def test_discussion_passes_explicit_solver_and_keeps_retrieval_error(monkeypatch
     assert "index damaged" in provider.last_prompt
     assert "지식 자료 없음" not in provider.last_prompt
     assert discussion.knowledge_ids == []
+
+
+def test_current_request_cannot_approve_a_citation_from_previous_retrieval(monkeypatch):
+    from caelab.assist import experts
+    entry = knowledge.KnowledgeEntry("old", "old topic", (), "old material", source_id="manual")
+    outcomes = iter([knowledge.KnowledgeSearchResult("ok", [entry], "calculix"),
+                     knowledge.KnowledgeSearchResult("no_material", [], "calculix")])
+    monkeypatch.setattr(experts, "search_knowledge_result", lambda *args, **kwargs: next(outcomes))
+    provider = FakeProvider()
+    provider.discuss = lambda prompt: "[근거: manual:old]"
+    discussion = Discussion(template=get_template("material"), summary_text="calculix", provider=provider)
+    assert discussion.ask("first")["unverified_citations"] == []
+    assert discussion.ask("second")["unverified_citations"] == ["manual:old"]
+    assert discussion.knowledge_ids == []
+
+
+def test_openai_compatible_provider_uses_configured_finite_timeout(monkeypatch):
+    import io
+    from caelab.assist import experts
+    monkeypatch.setenv("CAELAB_EXPERT_ENDPOINT", "http://localhost.invalid/v1")
+    monkeypatch.setenv("CAELAB_EXPERT_MODEL", "mock")
+    calls = []
+    def open_mock(request, *, timeout):
+        calls.append(timeout)
+        return io.BytesIO(b'{"choices":[{"message":{"content":"mock reply"}}]}')
+    monkeypatch.setattr(experts.urllib.request, "urlopen", open_mock)
+    provider = experts.OpenAICompatibleProvider()
+    provider.timeout_seconds = 60
+    assert provider.discuss("mock") == "mock reply"
+    assert calls == [60]
