@@ -11,7 +11,7 @@ from filelock import FileLock
 from caelab.assist import discussions, experts
 from caelab.assist.knowledge import KnowledgeSearchResult
 from caelab.native.evidence import import_file_evidence, verify_evidence
-from caelab.native.run_store import RunStore
+from caelab.native.run_store import NativeRun, RunStore
 from caelab.project import load_native_project, save_native_project
 from caelab.workbench import Workbench
 from test_native_evidence import make_run
@@ -241,6 +241,49 @@ def test_partial_or_wrong_job_json_is_an_explicit_resume_issue(tmp_path):
     assert any('실행 기록' in issue for issue in reopened.issues)
     with pytest.raises(ValueError, match='실행 기록'):
         RunStore(project.run_store, expected=True).runs()
+
+
+@pytest.mark.parametrize('reader', ['integrity', 'runs'])
+def test_new_run_folder_waits_briefly_for_its_first_receipt(tmp_path, monkeypatch, reader):
+    store = RunStore(tmp_path / 'runs', expected=True)
+    run = NativeRun('b' * 32, 'new-analysis', store.root / ('b' * 32))
+    run.workdir.mkdir(parents=True)
+    record = run.workdir / 'job.json'
+    original_open = Path.open
+    attempts = []
+    def first_commit(path, *args, **kwargs):
+        if path == record:
+            attempts.append(path)
+            if len(attempts) == 2:
+                store.write(run)
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', first_commit)
+    if reader == 'integrity':
+        assert store.integrity_issues() == []
+    else:
+        assert [item.id for item in store.runs()] == [run.id]
+    assert len(attempts) >= 2 and record.is_file()
+
+
+def test_persistent_orphan_folder_stays_an_explicit_error(tmp_path):
+    store = RunStore(tmp_path / 'runs', expected=True)
+    folder = store.root / ('c' * 32)
+    folder.mkdir(parents=True)
+    issues = store.integrity_issues()
+    assert issues and '실행 폴더의 기록이 없습니다' in '; '.join(issues)
+    with pytest.raises(ValueError, match='실행 폴더의 기록이 없습니다'):
+        store.runs()
+    assert not (folder / 'job.json').exists()  # missing history is never invented
+
+
+def test_receipt_in_invalid_named_folder_is_not_silently_ignored(tmp_path):
+    store = RunStore(tmp_path / 'runs', expected=True)
+    run = NativeRun('d' * 32, 'analysis', store.root / ('d' * 32))
+    store.write(run)
+    run.workdir.rename(store.root / 'invalid-name')
+    assert any('잘못된 실행 기록 ID' in issue for issue in store.integrity_issues())
+    with pytest.raises(ValueError, match='잘못된 실행 기록 ID'):
+        store.runs()
 
 
 def test_explicit_store_outside_project_root_stays_an_absolute_reference(tmp_path):

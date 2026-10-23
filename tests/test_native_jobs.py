@@ -18,6 +18,223 @@ from caelab.project import file_revision
 from caelab.workbench import Workbench
 
 
+def receipt_store(tmp_path):
+    store = RunStore(tmp_path / "runs")
+    run = NativeRun("a" * 32, "analysis-node", store.root / ("a" * 32), state="queued")
+    store.write(run)
+    store.select(run.node_id, run.id)
+    return store, run
+
+
+def test_receipt_cache_tolerates_windows_stat_fstat_ctime_difference(tmp_path, monkeypatch):
+    store, run = receipt_store(tmp_path)
+    store = RunStore(store.root)  # select() already verified and cached the receipt
+    record = run.workdir / "job.json"
+    original_fstat, original_open = os.fstat, Path.open
+    opened = []
+    def different_ctime(fd):
+        stat = original_fstat(fd)
+        # Windows can expose different ctime values through the pathname and
+        # opened handle while mtime, size and file ID still describe one file.
+        return types.SimpleNamespace(st_mtime_ns=stat.st_mtime_ns,
+                                     st_ctime_ns=stat.st_ctime_ns + 1,
+                                     st_size=stat.st_size, st_ino=stat.st_ino)
+    def counted_open(path, *args, **kwargs):
+        if path == record:
+            opened.append(path)
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(os, "fstat", different_ctime)
+    monkeypatch.setattr(Path, "open", counted_open)
+    assert store.read(record).state == "queued"
+    assert store.read(record).state == "queued"
+    assert len(opened) == 1
+    run.state, run.error = "running", "changed receipt must be read"
+    store.write(run)
+    current = store.read(record)
+    assert current.state == "running" and current.error == run.error
+    assert len(opened) == 2
+
+
+@pytest.mark.parametrize("reader", ["read", "integrity", "runs"])
+def test_receipt_replace_gap_reopens_actual_new_record_instead_of_cached_success(tmp_path, monkeypatch, reader):
+    store, run = receipt_store(tmp_path)
+    record = run.workdir / "job.json"
+    assert store.read(record).state == "queued"  # old cache must not replace a failed read
+    run.state, run.error = "running", "new persisted receipt"
+    store.write(run)
+    held = run.workdir / "held.json"
+    record.rename(held)
+    original_stat = Path.stat
+    attempts = []
+    def disappearing(path, *args, **kwargs):
+        if path == record:
+            attempts.append(path)
+            if len(attempts) == 1:
+                held.rename(record)
+                raise FileNotFoundError(2, "one atomic-replace gap", str(path))
+        return original_stat(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "stat", disappearing)
+    if reader == "read":
+        current = store.read(record)
+    elif reader == "integrity":
+        assert store.integrity_issues() == []
+        current = store.read(record)
+    else:
+        current, = store.runs()
+    assert len(attempts) >= 2
+    assert current.state == "running" and current.error == "new persisted receipt"
+
+
+@pytest.mark.parametrize("reader", ["selected_id", "integrity", "runs"])
+def test_selected_record_replace_gap_is_not_an_unselected_or_missing_run(tmp_path, monkeypatch, reader):
+    store, run = receipt_store(tmp_path)
+    path = store._selection_path(run.node_id)
+    held = path.with_suffix(".held")
+    path.rename(held)
+    original_open = Path.open
+    attempts = []
+    def disappearing(candidate, *args, **kwargs):
+        if candidate == path:
+            attempts.append(candidate)
+            if len(attempts) == 1:
+                held.rename(path)
+                raise FileNotFoundError(2, "one selected-record replace gap", str(candidate))
+        return original_open(candidate, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", disappearing)
+    if reader == "selected_id":
+        assert store.selected_id(run.node_id) == run.id
+    elif reader == "integrity":
+        assert store.integrity_issues() == []
+    else:
+        assert [item.id for item in store.runs()] == [run.id]
+    assert len(attempts) >= 2
+
+
+def test_record_and_selection_paths_do_not_depend_on_file_existence_prechecks_or_job_glob(tmp_path, monkeypatch):
+    store, run = receipt_store(tmp_path)
+    record, selected = run.workdir / "job.json", store._selection_path(run.node_id)
+    original_exists, original_is_file, original_glob = Path.exists, Path.is_file, Path.glob
+    monkeypatch.setattr(Path, "exists", lambda path: False if path in (record, selected) else original_exists(path))
+    monkeypatch.setattr(Path, "is_file", lambda path: False if path in (record, selected) else original_is_file(path))
+    monkeypatch.setattr(Path, "glob", lambda path, pattern: iter(()) if pattern == "*/job.json" else original_glob(path, pattern))
+    assert store.selected_id(run.node_id) == run.id
+    assert store.integrity_issues() == []
+    assert [item.id for item in store.runs()] == [run.id]
+
+
+@pytest.mark.parametrize("kind", ["receipt", "selection"])
+def test_persistent_missing_record_has_bounded_reads_and_never_returns_cached_data(tmp_path, monkeypatch, kind):
+    import caelab.native.run_store as module
+    store, run = receipt_store(tmp_path)
+    record = run.workdir / "job.json" if kind == "receipt" else store._selection_path(run.node_id)
+    assert store.read(run.workdir / "job.json").id == run.id
+    assert store.selected_id(run.node_id) == run.id
+    record.unlink()
+    original_read = Path.stat if kind == "receipt" else Path.open
+    attempts, waits = [], []
+    def missing(path, *args, **kwargs):
+        if path == record:
+            attempts.append(path)
+        return original_read(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "stat" if kind == "receipt" else "open", missing)
+    monkeypatch.setattr(module.time, "sleep", waits.append)
+    with pytest.raises(FileNotFoundError):
+        store.read(record) if kind == "receipt" else store.selected_id(run.node_id)
+    assert len(attempts) == 5 and waits == [.01] * 4
+    assert store.integrity_issues()
+    with pytest.raises(ValueError):
+        store.runs()
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+@pytest.mark.parametrize("kind", ["receipt", "selection"])
+@pytest.mark.parametrize("failure", ["json", "permission", "other_permission", "other_oserror"])
+def test_persistent_read_errors_keep_their_failure_after_permitted_retries(tmp_path, monkeypatch, kind, failure, platform):
+    import caelab.native.run_store as module
+    store, run = receipt_store(tmp_path)
+    record = run.workdir / "job.json" if kind == "receipt" else store._selection_path(run.node_id)
+    if failure == "json":
+        record.write_text("{broken JSON", encoding="utf-8")
+    elif kind == "receipt":
+        # A real persisted update requires an open, rather than the validated
+        # unchanged-cache fast path whose metadata lookup does not read JSON.
+        run.error = "new receipt requiring a fresh read"
+        store.write(run)
+    monkeypatch.setattr(module, "os", types.SimpleNamespace(**{**vars(os), "name": platform}))
+    original_open = Path.open
+    error = {"permission": PermissionError(13, "permission denied", str(record)),
+             "other_permission": PermissionError(1, "different permission error", str(record)),
+             "other_oserror": OSError(5, "I/O error", str(record))}.get(failure)
+    attempts, waits = [], []
+    def broken(path, *args, **kwargs):
+        if path == record:
+            attempts.append(path)
+            if error is not None:
+                raise error
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", broken)
+    monkeypatch.setattr(module.time, "sleep", waits.append)
+    with pytest.raises(json.JSONDecodeError if failure == "json" else type(error)) as raised:
+        store.read(record) if kind == "receipt" else store.selected_id(run.node_id)
+    if error is not None:
+        assert raised.value is error
+    retried = platform == "nt" and failure == "permission"
+    assert len(attempts) == (5 if retried else 1)
+    assert waits == ([.01] * 4 if retried else [])
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_cached_receipt_permission_lookup_error_is_not_a_cache_fallback(tmp_path, monkeypatch, platform):
+    import caelab.native.run_store as module
+    store, run = receipt_store(tmp_path)
+    record = run.workdir / "job.json"
+    assert store.read(record).id == run.id
+    monkeypatch.setattr(module, "os", types.SimpleNamespace(**{**vars(os), "name": platform}))
+    original_stat = Path.stat
+    attempts, waits = [], []
+    def denied(path, *args, **kwargs):
+        if path == record:
+            attempts.append(path)
+            raise PermissionError(13, "receipt metadata denied", str(path))
+        return original_stat(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "stat", denied)
+    monkeypatch.setattr(module.time, "sleep", waits.append)
+    with pytest.raises(PermissionError, match="metadata denied"):
+        store.read(record)
+    assert len(attempts) == (5 if platform == "nt" else 1)
+    assert waits == ([.01] * 4 if platform == "nt" else [])
+
+
+@pytest.mark.parametrize("kind", ["receipt", "selection"])
+def test_windows_sharing_gap_reopens_the_new_record(tmp_path, monkeypatch, kind):
+    import caelab.native.run_store as module
+    store, run = receipt_store(tmp_path)
+    run.state, run.error = "running", "new receipt after sharing gap"
+    store.write(run)
+    record = run.workdir / "job.json" if kind == "receipt" else store._selection_path(run.node_id)
+    monkeypatch.setattr(module, "os", types.SimpleNamespace(**{**vars(os), "name": "nt"}))
+    original_open = Path.open
+    attempts, waits = [], []
+    def sharing_gap(path, *args, **kwargs):
+        if path == record:
+            attempts.append(path)
+            if len(attempts) == 1:
+                raise PermissionError(13, "Windows sharing violation", str(path))
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", sharing_gap)
+    monkeypatch.setattr(module.time, "sleep", waits.append)
+    if kind == "receipt":
+        current = store.read(record)
+        assert current.state == "running" and current.error == run.error
+    else:
+        assert store.selected_id(run.node_id) == run.id
+    assert len(attempts) == 2 and waits == [.01]
+
+
+def test_never_selected_node_remains_none(tmp_path):
+    assert RunStore(tmp_path / "new store").selected_id("new analysis") is None
+
+
 def project_with_input(tmp_path):
     wb = Workbench()
     project = wb.new_native_project("한글 프로젝트")
