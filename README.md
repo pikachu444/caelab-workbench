@@ -33,7 +33,7 @@ python -m apps.workbench_qt.expert_window # 독립 전문가 프로그램; 새 �
 python -m apps.workbench_qt.expert_window --discussion "연구/discussion.json" # 대화 재열기
 ```
 
-Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,rag]` 의존성을 설치·동기화한 뒤 시작합니다. 기존 가상환경도 누락된 의존성을 설치하며, 설치 실패 시 앱을 시작하지 않습니다.
+Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,rag]` 의존성을 설치·동기화한 뒤 `pip check`로 일관성을 확인합니다. 설치나 의존성 검사에 실패하면 오류를 표시하고 앱을 시작하지 않습니다.
 
 | 설치 선택 | 포함 범위 |
 |---|---|
@@ -46,7 +46,11 @@ Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저�
 
 GUI 없이 수치 기능만 쓰려면 `python -m pip install -e ".[numerical]"`로 설치합니다. 기존 코드의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
 
+Python 3.11에서는 PySide6 6.12.0의 Qt 호출 중 참조 계수 손상을 재현해 GUI 의존성을 6.12 미만으로 제한합니다. 동일 검사에서 6.11.1·6.11.2는 정상 종료했습니다. 이미 6.12를 설치한 3.11 환경은 낮은 버전을 설치해도 분리 배포된 PDF·WebEngine 패키지가 남아 충돌할 수 있습니다. 이 경우 기존 환경을 보관하고 새 가상환경에 설치하세요. Python 3.12 이상은 기존 PySide6 범위를 유지합니다.
+
 CalculiX 실행 파일은 PATH에서 찾고, `CAELAB_CCX` 환경변수로 직접 지정할 수도 있습니다.
+
+GitHub Actions는 PR과 main 변경에서 Python 3.11·3.12 전체 제품 검사를 실행합니다. PySide6·VTK·SciPy와 offscreen QApplication을 먼저 확인하며, 별도 작업은 CalculiX를 설치해 실제 계산 검사를 실행합니다. 외부 솔버·Windows 전용 검사 등 환경에 따른 건너뜀 이유는 로그에 남습니다. CI의 offscreen 검사는 Windows 실화면이나 사용자 모델의 검증을 대신하지 않습니다.
 
 프로젝트 화면에서는 도구상자의 프로그램을 추가하고, 선택한 상자에 실제 입력 파일을 등록합니다. FreeCAD 상자에는 `.FCStd`를 입력으로, FreeCAD에서 작성한 `.inp`를 출력으로 등록한 뒤 CalculiX 상자에 연결할 수 있습니다. 파일 메뉴의 저장·다른 이름으로 저장은 원본 파일을 옮기거나 덮어쓰지 않고 파일 참조와 연결을 저장합니다. 외부에서 파일을 수정한 뒤 새로고침하면 변경된 입력과 오래된 하위 출력이 표시됩니다.
 
