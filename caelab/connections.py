@@ -110,9 +110,49 @@ def _registry(path=None):
         data = json.loads(Path(configured).expanduser().read_text(encoding="utf-8"))
         if not isinstance(data, dict) or any(not isinstance(data.get(key, {}), dict) for key in ("env", "runtime_env", "programs")):
             raise ValueError("env/runtime_env/programs 사전이 필요합니다.")
+        data["_directory"] = Path(configured).expanduser().resolve().parent
         return data, ""
     except (OSError, ValueError) as exc:
         return {}, f"설치 레지스트리를 읽을 수 없습니다: {exc}"
+
+
+def _registered_path(value: str, registry: dict) -> Path:
+    if not value.strip():
+        raise ValueError("설치 레지스트리에 빈 상대경로 항목이 있습니다.")
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    root = registry.get("root")
+    if not isinstance(root, str) or not root.strip():
+        raise ValueError(f"설치 root가 없어 레지스트리 상대경로를 해석할 수 없습니다: {value}")
+    root_path = Path(root).expanduser()
+    if root_path.is_absolute():
+        return root_path / path
+    # Installer stores root/executable, not an executable relative to registry.
+    # Replace that recorded root prefix with the registry's actual directory.
+    prefix = root_path.parts
+    if path.parts[:len(prefix)] != prefix:
+        raise ValueError(f"설치 root 접두부와 맞지 않는 레지스트리 상대경로입니다: {value}")
+    return Path(registry["_directory"]).joinpath(*path.parts[len(prefix):])
+
+
+_RUNTIME_PATH_LISTS = {"PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "QT_PLUGIN_PATH"}
+_RUNTIME_PATHS = {"OPENRADIOSS_PATH", "RAD_CFG_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"}
+
+
+def _runtime_environment(runtime: dict, registry: dict) -> dict[str, str]:
+    resolved = {}
+    for key, value in runtime.items():
+        # A host override is authoritative, including an explicitly empty value.
+        if key in os.environ or not value:
+            resolved[key] = value
+        elif key in _RUNTIME_PATH_LISTS:
+            resolved[key] = os.pathsep.join(str(_registered_path(part, registry)) for part in value.split(os.pathsep))
+        elif key in _RUNTIME_PATHS:
+            resolved[key] = str(_registered_path(value, registry))
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def _executable_reason(path: Path, host: str) -> str:
@@ -160,8 +200,13 @@ def _status(spec: ProgramSpec, registry: dict, registry_error: str, host: str) -
     if not isinstance(candidate, str) or not candidate.strip():
         status.reason = f"{spec.name} 실행 파일을 찾지 못했습니다 ({status.source})."
         return status
+    try:
+        candidate_path = _registered_path(candidate, registry) if status.source == "registry" else Path(candidate).expanduser()
+    except ValueError as exc:
+        status.reason = str(exc)
+        return status
     # Keep the invoked path: resolving a venv interpreter symlink loses its environment.
-    path = Path(os.path.abspath(Path(candidate).expanduser()))
+    path = Path(os.path.abspath(candidate_path))
     status.path = str(path)
     status.reason = _executable_reason(path, host)
     if spec.id == "freecad" and path.stem.lower() == "freecadcmd":
@@ -172,7 +217,10 @@ def _status(spec: ProgramSpec, registry: dict, registry_error: str, host: str) -
     if not isinstance(runtime, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in runtime.items()):
         status.reason = "설치 레지스트리의 runtime_env 형식이 잘못되었습니다."
     else:
-        status.runtime_env = dict(runtime)
+        try:
+            status.runtime_env = _runtime_environment(runtime, registry)
+        except ValueError as exc:
+            status.reason = str(exc)
     registered = registry.get("programs", {}).get(spec.id, {})
     if isinstance(registered, dict) and registered.get("host_os", host) != host:
         status.reason = f"다른 호스트의 설치 레지스트리입니다: {registered.get('host_os')} → {host}"

@@ -1,6 +1,7 @@
 """Connection registry and discussion-summary contracts."""
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -214,3 +215,66 @@ def test_changed_and_stale_files_can_open_without_accepting_new_revision(tmp_pat
     assert ref.revision == original_revision
     assert wb.open_program(project, target.id).state == "opened"
     assert target.state == "stale"
+
+
+def test_relative_installer_registry_uses_install_location_after_cwd_changes(tmp_path, monkeypatch):
+    import json
+    first, other = tmp_path / "cwd A", tmp_path / "cwd B"
+    first.mkdir()
+    other.mkdir()
+    relative_root = Path("한글 설치") / "tools"
+    suffix = "gmsh.exe" if os.name == "nt" else "gmsh"
+    executable = first / relative_root / "bin" / suffix
+    executable.parent.mkdir(parents=True)
+    executable.write_text("original installation")
+    executable.chmod(0o755)
+    decoy = other / relative_root / "bin" / suffix
+    decoy.parent.mkdir(parents=True)
+    decoy.write_text("wrong cwd executable")
+    decoy.chmod(0o755)
+    registry = first / relative_root / "caelab-install-registry.json"
+    registry.write_text(json.dumps({
+        "root": str(relative_root),
+        "env": {"CAELAB_GMSH": str(relative_root / "bin" / suffix)},
+        "runtime_env": {"gmsh": {
+            "LD_LIBRARY_PATH": os.pathsep.join(str(relative_root / name) for name in ("lib", "vendor")),
+            "OMP_STACKSIZE": "400m", "CUSTOM_NOTE": str(relative_root / "ordinary text"),
+        }},
+    }), encoding="utf-8")
+    monkeypatch.delenv("CAELAB_GMSH", raising=False)
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    monkeypatch.delenv("OMP_STACKSIZE", raising=False)
+    for directory in (first, other):
+        monkeypatch.chdir(directory)
+        status = next(status for status in program_statuses(registry) if status.spec.id == "gmsh")
+        assert status.available, status.reason
+        assert status.path == str(executable)
+        assert status.runtime_env["LD_LIBRARY_PATH"] == os.pathsep.join(str(registry.parent / name) for name in ("lib", "vendor"))
+        assert status.runtime_env["OMP_STACKSIZE"] == "400m"
+        assert status.runtime_env["CUSTOM_NOTE"] == str(relative_root / "ordinary text")
+
+
+@pytest.mark.parametrize("recorded_root", [None, "unrelated-root"])
+def test_ambiguous_registry_relative_path_does_not_guess_from_cwd(tmp_path, monkeypatch, recorded_root):
+    import json
+    import sys
+    target = tmp_path / ("gmsh.exe" if os.name == "nt" else "gmsh")
+    target.write_text("must not select this cwd file")
+    target.chmod(0o755)
+    data = {"env": {"CAELAB_GMSH": target.name}}
+    if recorded_root:
+        data["root"] = recorded_root
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CAELAB_GMSH", raising=False)
+    monkeypatch.setattr("caelab.connections.shutil.which", lambda name: sys.executable)
+    status = next(status for status in program_statuses(registry) if status.spec.id == "gmsh")
+    assert not status.available
+    assert status.source == "registry"
+    assert "상대경로" in status.reason
+    monkeypatch.setenv("CAELAB_GMSH", target.name)
+    explicit = next(status for status in program_statuses(registry) if status.spec.id == "gmsh")
+    assert explicit.available
+    assert explicit.source == "environment"
+    assert explicit.path == str(target)
