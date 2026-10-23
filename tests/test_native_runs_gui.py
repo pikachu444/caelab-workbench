@@ -159,3 +159,25 @@ def test_close_waits_for_owned_process_termination(analysis):
     window.closeEvent(event)
     assert event.isAccepted()
     assert not window.timer.isActive()
+
+
+def test_polling_keeps_log_scroll_and_allows_cancel_while_reading(analysis, app, tmp_path):
+    window, state = analysis
+    run = make_run(tmp_path, "reading", "completed", "reading", {})
+    Path(run.log_path).write_text("\n".join(f"line {i}" for i in range(200)), encoding="utf-8")
+    state.runs, state.selected = [run], run
+    window._owned_run_ids.add(run.id)
+    window.show()
+    window.refresh_runs()
+    app.processEvents()
+    scroll = window.log.verticalScrollBar()
+    scroll.setValue(5)
+    with Path(run.log_path).open("a", encoding="utf-8") as stream:
+        stream.write("\nappended line")
+    window.refresh_runs()
+    assert scroll.value() == 5
+    assert not window.run_action.isEnabled()
+    assert window.cancel_action.isEnabled()
+    assert "결과 판독 중" in window.active_status.text()
+    window.cancel_run()
+    assert state.cancelled == [run.id]

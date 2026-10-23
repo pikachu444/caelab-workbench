@@ -27,6 +27,10 @@ _PARSE_LABELS = {"pending": "대기", "unparsed": "미판독", "reading": "판�
 _ACTIVE_STATES = {"queued", "preparing", "running"}
 
 
+def _busy(run) -> bool:
+    return run.state in _ACTIVE_STATES or run.parse_state == "reading"
+
+
 def _signature(path: Path):
     try:
         stat = path.stat()
@@ -193,13 +197,13 @@ class NativeAnalysisWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         changed = _signature(self.project.path) != self._project_signature
-        active = [run for run in self._runs.values() if run.state in _ACTIVE_STATES]
+        active = [run for run in self._runs.values() if _busy(run)]
         self.run_action.setEnabled(not changed and not active)
         self.cancel_action.setEnabled(any(run.id in self._owned_run_ids for run in active))
         self.reload_action.setEnabled(not active)
         self.active_status.setText("\n".join(
             f"{'이 창에서 진행 중' if run.id in self._owned_run_ids else '다른 창에서 진행 중'}: "
-            f"{Path(run.input_path).name} — {_RUN_LABELS.get(run.state, run.state)}"
+            f"{Path(run.input_path).name} — {'결과 판독 중' if run.parse_state == 'reading' else _RUN_LABELS.get(run.state, run.state)}"
             for run in active))
         self.active_status.setVisible(bool(active))
         if changed:
@@ -236,7 +240,7 @@ class NativeAnalysisWindow(QMainWindow):
 
     def cancel_run(self) -> None:
         for run in self._runs.values():
-            if run.id in self._owned_run_ids and run.state in _ACTIVE_STATES:
+            if run.id in self._owned_run_ids and _busy(run):
                 self.workbench.cancel_native_run(run.id)
         self.refresh_runs()
 
