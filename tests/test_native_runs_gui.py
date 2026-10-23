@@ -197,3 +197,49 @@ def test_dat_only_sets_are_visible_without_inventing_frd_or_reaction(analysis, t
     assert "집합 SUPPORT" in text and "절점력 합계 원값: (1, 2, 3) N" in text
     assert "반력" not in text
     assert window.frame_selector.count() == 0
+
+
+def test_parent_updates_connected_result_when_other_window_selects_failed_run(app, tmp_path):
+    from apps.workbench_qt.project_window import ProjectWindow
+    from caelab.native.run_store import NativeRun, RunStore
+    from caelab.project import file_revision
+
+    wb = Workbench()
+    project = wb.new_native_project()
+    node = wb.add_program_node(project, "analysis", "calculix")
+    output_node = wb.add_program_node(project, "results", "paraview")
+    deck = tmp_path / "source.inp"
+    deck.write_text("*HEADING\nsource\n")
+    wb.set_node_file(project, node.id, deck)
+    wb.save_native_project(project, tmp_path / "project.json")
+    store = RunStore(project.run_store)
+    success = NativeRun("a" * 32, node.id, store.root / ("a" * 32),
+                        state="completed", parse_state="readable", input_path=str(deck),
+                        input_revision=file_revision(deck), unit_source="user")
+    success.workdir.mkdir(parents=True)
+    raw = success.workdir / "model.frd"
+    raw.write_text("saved result")
+    success.snapshot["outputs"] = {"model.frd": file_revision(raw)}
+    store.write(success)
+    wb.select_native_run(project, node.id, success.id)
+    wb.connect_nodes(project, node.id, output_node.id)
+    wb.save_native_project(project)
+    window = ProjectWindow(workbench=wb, project_path=project.path)
+    try:
+        result_box = window.boxes[output_node.id]
+        assert result_box.state == "ready"
+        assert result_box.file_label == "model.frd"
+        failure = NativeRun("b" * 32, node.id, store.root / ("b" * 32), state="failed",
+                            input_path=str(deck), error="solver failed", unit_source="user")
+        store.write(failure)
+        store.select(node.id, failure.id)  # independent analysis window updates disk only
+        window._poll_runs()
+        assert window.boxes[node.id].state == "failed"
+        assert result_box.state == "stale"
+        assert result_box.file_label == "선택 파일 없음"
+        assert "model.frd" not in result_box.title + result_box.toolTip()
+        assert "입력 파일 없음" in result_box.toolTip()
+        assert "output" not in window.project.nodes[node.id].files
+    finally:
+        window._dirty = False
+        window.close()

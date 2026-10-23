@@ -676,20 +676,25 @@ class ProjectWindow(QMainWindow):
             program = statuses.get(node.program_id)
             box.subtitle = (f"{program.spec.name} — {'설치됨' if program.available else '미설치'}"
                             if program else "독립 프로그램 연결 미구현")
-            reference = self.workbench.input_file(self.project, node_id)
-            title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), node.kind)
-            identifying_file = reference or node.files.get("output")
-            box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
-            box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
-            box.set_state("unavailable" if node.kind == "expert" else node.state, node.reason)
-            box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
-                           f"{self._display_reason(node.reason)}")
+            self._reflect_node(node_id)
         self._poll_runs()
+
+    def _reflect_node(self, node_id: str) -> None:
+        node, box = self.project.nodes[node_id], self.boxes[node_id]
+        reference = self.workbench.input_file(self.project, node_id)
+        title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), node.kind)
+        identifying_file = reference or node.files.get("output")
+        box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
+        box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
+        box.set_state("unavailable" if node.kind == "expert" else node.state, node.reason)
+        box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
+                       f"{self._display_reason(node.reason)}")
 
     def _poll_runs(self) -> None:
         if self.project.path is None:
             return
         signature = []
+        run_states = {}
         for node_id, box in self.boxes.items():
             if box.kind != "analysis":
                 continue
@@ -698,11 +703,16 @@ class ProjectWindow(QMainWindow):
                 if run is None:
                     continue
                 state = "stale" if run.stale and run.state == "completed" else run.state
-                box.set_state(state, run.error or run.stale_reason)
+                run_states[node_id] = (state, run.error or run.stale_reason)
                 signature.append((node_id, run.id, run.state, run.parse_state, run.stale, run.error))
             except (OSError, ValueError, RuntimeError) as error:
-                box.set_state("failed", f"실행 기록을 읽지 못했습니다: {error}")
+                run_states[node_id] = ("failed", f"실행 기록을 읽지 못했습니다: {error}")
                 signature.append((node_id, str(error)))
+        # Selecting a run can replace/remove outputs and invalidate downstream nodes.
+        for node_id in self.boxes:
+            self._reflect_node(node_id)
+        for node_id, (state, reason) in run_states.items():
+            self.boxes[node_id].set_state(state, reason)
         signature = tuple(signature)
         if signature != getattr(self, "_run_signature", None):
             self._run_signature = signature
