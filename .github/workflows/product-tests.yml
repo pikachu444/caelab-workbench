@@ -76,11 +76,12 @@ jobs:
           ccx_path="$(command -v ccx)"
           test -x "$ccx_path"
           printf 'CAELAB_CCX=%s\n' "$ccx_path" >> "$GITHUB_ENV"
-          # ccx 2.21 prints its version with exit 1; calculations must still pass below.
+          # ccx 2.21 may exit 201 for -v; calculations must still pass below.
           version_status=0
           version_output="$(ccx -v 2>&1)" || version_status=$?
           printf '%s\n' "$version_output"
-          test "$version_status" -eq 0 || test "$version_status" -eq 1
+          printf 'Version command exit: %s\n' "$version_status"
+          test "$version_status" -eq 0 || test "$version_status" -eq 201
           printf '%s\n' "$version_output" | grep -Eq 'This is Version [0-9]'
           printf '%s\n' 'Scope: native affine solid results, DAT frames, direct/service execution, auxiliary cantilever and DAT reaction checks.'
       - name: Run actual native solver checks
