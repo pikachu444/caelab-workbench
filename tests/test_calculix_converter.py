@@ -439,3 +439,33 @@ def test_present_scoped_force_can_remain_unqualified_as_reaction(tmp_path, monke
     assert result.success
     assert result.nodal_forces[1][2] == 100
     assert result.reaction_totals == {}
+
+
+
+@pytest.mark.parametrize("field,mode,complete,with_total,expected", [
+    ("RF", "NO", False, False, False),
+    ("U", "NO", False, False, False),
+    ("RF", "YES", False, True, False),
+    ("RF", "YES", True, False, False),
+    ("RF", "YES", True, True, True),
+    ("RF", "NO", True, False, True),
+    ("RF", "ONLY", False, True, True),
+])
+def test_node_print_requires_complete_requested_membership(tmp_path, monkeypatch, field, mode, complete, with_total, expected):
+    deck = tmp_path / "job.inp"
+    deck.write_text(f"*NODE FILE\nU\n*NODE PRINT, NSET=SUPPORT, TOTALS={mode}\n{field}\n")
+    label = "forces (fx,fy,fz)" if field == "RF" else "displacements (vx,vy,vz)"
+    dat = f" {label} for set SUPPORT and time 1.0\n 1 1.0 2.0 3.0\n"
+    if complete:
+        dat += " 2 4.0 5.0 6.0\n"
+    if with_total:
+        dat += " total force (fx,fy,fz) for set SUPPORT and time 1.0\n 5.0 7.0 9.0\n"
+    frd = _frd_block("DISP", {1: [0, 0, 0], 2: [0, 0, 0]})
+    _fake_solver(monkeypatch, tmp_path, frd, dat)
+    model = _tet_model("SUPPORT")
+    model.sets["SUPPORT"].members = [1, 2]
+    model.mesh.nodes[2] = [1, 0, 0]
+    result = CalculiXConverter().run(model, deck, tmp_path)
+    assert result.success is expected
+    if not expected:
+        assert any(f"outputs.{field}.SUPPORT" in issue for issue in result.validation_issues)

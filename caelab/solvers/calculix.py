@@ -343,7 +343,12 @@ class CalculiXConverter:
                 mode = options.get("TOTALS", "NO")
                 available = bool(scope) and field in ("U", "RF") and mode in ("NO", "YES", "ONLY")
                 if mode != "ONLY":
-                    available = available and bool(blocks.get(scope))
+                    selection = next((s for name, s in model.sets.items() if name.upper() == scope), None)
+                    available = (
+                        available and bool(blocks.get(scope)) and selection is not None
+                        and selection.kind == "node" and bool(selection.members)
+                        and set(selection.members) <= blocks[scope].keys()
+                    )
                 if mode in ("YES", "ONLY"):
                     available = available and scope in totals
             elif kind == "*NODE FILE" and field in ("U", "RF"):
