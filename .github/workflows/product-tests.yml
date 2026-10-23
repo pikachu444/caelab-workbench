@@ -1,0 +1,99 @@
+name: Product tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  OMP_NUM_THREADS: "1"
+
+jobs:
+  product:
+    name: Product / Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install headless Qt libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libegl1 libopengl0 libgl1
+      - name: Install product and test dependencies
+        run: python -m pip install -e ".[dev,gui,rag]"
+      - name: Require GUI and numerical imports
+        run: |
+          python - <<'PY'
+          import PySide6
+          import scipy
+          import vtk
+          from PySide6.QtWidgets import QApplication, QLabel
+
+          app = QApplication([])
+          assert app.platformName() == "offscreen", app.platformName()
+          # Exercise void Qt calls: affected Python 3.11 bindings can crash at exit.
+          label = QLabel()
+          for i in range(10000):
+              label.setText(str(i))
+              app.processEvents()
+          print("PySide6", PySide6.__version__, "VTK", vtk.vtkVersion.GetVTKVersion(), "SciPy", scipy.__version__)
+          PY
+      - name: Run full product regression
+        run: python -m pytest -q -ra
+
+  calculix:
+    name: Actual CalculiX / Python 3.12
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install CalculiX and headless libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y calculix-ccx libegl1 libopengl0 libgl1
+      - name: Install product and test dependencies
+        run: python -m pip install -e ".[dev,gui,rag]"
+      - name: Require actual solver and print scope
+        run: |
+          ccx_path="$(command -v ccx)"
+          test -x "$ccx_path"
+          printf 'CAELAB_CCX=%s\n' "$ccx_path" >> "$GITHUB_ENV"
+          # ccx 2.21 may exit 201 for -v; calculations must still pass below.
+          version_status=0
+          version_output="$(ccx -v 2>&1)" || version_status=$?
+          printf '%s\n' "$version_output"
+          printf 'Version command exit: %s\n' "$version_status"
+          test "$version_status" -eq 0 || test "$version_status" -eq 201
+          printf '%s\n' "$version_output" | grep -Eq 'This is Version [0-9]'
+          printf '%s\n' 'Scope: native affine solid results, DAT frames, direct/service execution, auxiliary cantilever and DAT reaction checks.'
+      - name: Run actual native solver checks
+        run: python -m pytest -q -ra tests/test_native_results.py tests/test_native_jobs.py -k actual_ccx
+      - name: Run actual auxiliary solver checks
+        run: |
+          python -m pytest -q -ra \
+            tests/test_calculix_converter.py::test_run_reads_reactions_from_dat_per_node \
+            tests/test_calculix_converter.py::test_run_reads_reactions_from_dat_totals_only \
+            tests/test_calculix_converter.py::test_end_to_end_cantilever
