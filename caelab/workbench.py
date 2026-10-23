@@ -166,6 +166,43 @@ class Workbench:
     def close(self) -> bool:
         return self.jobs.close()
 
+    def resolve_evidence_run(self, project: NativeProject, node_id: str) -> NativeRun | None:
+        """Follow the selected node's real incoming path to one selected analysis."""
+        seen = set()
+        while node_id not in seen:
+            seen.add(node_id)
+            node = project.nodes[node_id]
+            if node.program_id == 'calculix':
+                return self.selected_native_run(project, node_id)
+            edge = next((edge for edge in project.connections if edge.target_id == node_id), None)
+            if edge is None:
+                return None
+            node_id = edge.source_id
+        raise ValueError('실행 근거 연결이 순환합니다.')
+
+    def open_native_results(self, project: NativeProject, node_id: str) -> LaunchRecord:
+        from .native.evidence import native_results_file
+        from .connections import launch_request
+
+        run = self.resolve_evidence_run(project, node_id)
+        if run is None:
+            raise ValueError('연결된 해석 노드에서 실행을 선택하세요.')
+        document = native_results_file(run)
+        status = next(status for status in self.programs() if status.spec.id == 'paraview')
+        return self.jobs.launch(launch_request(status, document))
+
+    def capture_native_evidence(self, project: NativeProject, node_id: str, asset_root: Path, *, frame_index=None) -> dict:
+        from .native.evidence import capture_run_evidence
+
+        run = self.resolve_evidence_run(project, node_id)
+        if run is None:
+            raise ValueError('연결된 해석 노드에서 실행을 선택하세요.')
+        return capture_run_evidence(run, asset_root, frame_index=frame_index)
+
+    def import_expert_files(self, asset_root: Path, **kwargs) -> dict:
+        from .native.evidence import import_file_evidence
+        return import_file_evidence(asset_root, **kwargs)
+
     def mark_node_failed(self, project: NativeProject, node_id: str, reason: str) -> None:
         node = project.nodes[node_id]
         node.state, node.reason = "failed", reason
