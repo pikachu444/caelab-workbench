@@ -276,6 +276,16 @@ def test_persistent_orphan_folder_stays_an_explicit_error(tmp_path):
     assert not (folder / 'job.json').exists()  # missing history is never invented
 
 
+def test_receipt_in_invalid_named_folder_is_not_silently_ignored(tmp_path):
+    store = RunStore(tmp_path / 'runs', expected=True)
+    run = NativeRun('d' * 32, 'analysis', store.root / ('d' * 32))
+    store.write(run)
+    run.workdir.rename(store.root / 'invalid-name')
+    assert any('잘못된 실행 기록 ID' in issue for issue in store.integrity_issues())
+    with pytest.raises(ValueError, match='잘못된 실행 기록 ID'):
+        store.runs()
+
+
 def test_explicit_store_outside_project_root_stays_an_absolute_reference(tmp_path):
     wb = Workbench()
     project = wb.new_native_project()

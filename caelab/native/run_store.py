@@ -146,9 +146,12 @@ class RunStore:
         return self._records(node_id)
 
     def _records(self, node_id=None) -> list[NativeRun]:
-        folders = (folder for folder in self.root.iterdir() if folder.is_dir() and len(folder.name) == 32
-                   and all(c in '0123456789abcdef' for c in folder.name)) if self.root.is_dir() else ()
-        runs = [self.read(folder / 'job.json') for folder in folders]
+        folders = self.root.iterdir() if self.root.is_dir() else ()
+        runs = []
+        for folder in folders:
+            valid_id = len(folder.name) == 32 and all(c in '0123456789abcdef' for c in folder.name)
+            if folder.is_dir() and (valid_id or (folder / 'job.json').is_file()):
+                runs.append(self.read(folder / 'job.json'))
         return sorted((run for run in runs if node_id is None or run.node_id == node_id), key=lambda run: run.created_at)
 
     def integrity_issues(self) -> list[str]:
