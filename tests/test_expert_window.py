@@ -249,14 +249,14 @@ def test_proposal_review_reject_and_reopen_preserve_original(window, app, tmp_pa
     ui.ask()
     finish(ui, app)
     assert ui.proposal_choice.count() == 1
-    ui.review_proposal('check')
+    ui.check_proposal.click()
     assert ui.document['proposals'][0]['status'] == 'manual_required'
     assert '전용 프로그램에서 수정' in ui.proposals.toPlainText()
     source.write_bytes(original + b'** edited externally\n')
-    ui.review_proposal('check')
+    ui.check_proposal.click()
     assert ui.document['proposals'][0]['status'] == 'blocked'
     monkeypatch.setattr(QInputDialog, 'getMultiLineText', lambda *args: ('이 변경은 사용자 제약에 맞지 않습니다.', True))
-    ui.review_proposal('reject')
+    ui.reject_proposal.click()
     assert ui.document['proposals'][0]['status'] == 'rejected'
     assert source.read_bytes() == original + b'** edited externally\n'
     ui.reload_document()
