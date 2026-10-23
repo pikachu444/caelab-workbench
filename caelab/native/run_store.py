@@ -158,18 +158,50 @@ class RunStore:
             if not isinstance(run.snapshot, dict):
                 issues.append(f'실행 manifest 자료 형식이 잘못되었습니다: {run.id}')
                 continue
-            expected = set(run.snapshot.get('outputs', {})) | set(run.snapshot.get('artifacts', {}))
-            for item in run.snapshot.get('files', []):
-                expected.update(item[key] for key in ('source_copy', 'execution_path') if item.get(key))
+            expected = set()
+            for key in ('outputs', 'artifacts'):
+                entries = run.snapshot.get(key, {})
+                if not isinstance(entries, dict):
+                    issues.append(f'{run.id}.snapshot.{key}: 상대 경로와 해시의 객체가 필요합니다.')
+                    continue
+                for relative, digest in entries.items():
+                    if not isinstance(relative, str) or not relative.strip() or '\x00' in relative:
+                        issues.append(f'{run.id}.snapshot.{key}: 파일 경로 문자열이 잘못되었습니다.')
+                        continue
+                    if not isinstance(digest, str):
+                        issues.append(f'{run.id}.snapshot.{key}.{relative}: 해시 문자열이 필요합니다.')
+                    expected.add(relative)
+            for list_key in ('files', 'prerequisites'):
+                files = run.snapshot.get(list_key, [])
+                if not isinstance(files, list):
+                    issues.append(f'{run.id}.snapshot.{list_key}: 파일 기록 목록이 필요합니다.')
+                    continue
+                for index, item in enumerate(files):
+                    location = f'{run.id}.snapshot.{list_key}[{index}]'
+                    if not isinstance(item, dict):
+                        issues.append(f'{location}: 파일 기록 객체가 필요합니다.')
+                        continue
+                    keys = ('source_path', 'source_copy', 'execution_path') if list_key == 'files' else ('source_path',)
+                    for key in keys:
+                        relative = item.get(key)
+                        if not isinstance(relative, str) or not relative.strip() or '\x00' in relative:
+                            issues.append(f'{location}.{key}: 파일 경로 문자열이 필요합니다.')
+                        elif key != 'source_path':
+                            expected.add(relative)
+                    if not isinstance(item.get('stat'), dict):
+                        issues.append(f'{location}.stat: 파일 상태 객체가 필요합니다.')
             if run.log_path:
                 expected.add('job.log')
             for relative in expected:
-                path = Path(relative)
-                target = (run.workdir / path).resolve()
-                if path.is_absolute() or '..' in path.parts or not target.is_relative_to(run.workdir.resolve()):
-                    issues.append(f"실행 파일 참조가 소유 폴더 밖입니다: {run.id}: {relative}")
-                elif not target.is_file():
-                    issues.append(f"기록된 실행 파일이 없습니다: {target}")
+                try:
+                    path = Path(relative)
+                    target = (run.workdir / path).resolve()
+                    if path.is_absolute() or '..' in path.parts or not target.is_relative_to(run.workdir.resolve()):
+                        issues.append(f"실행 파일 참조가 소유 폴더 밖입니다: {run.id}: {relative}")
+                    elif not target.is_file():
+                        issues.append(f"기록된 실행 파일이 없습니다: {target}")
+                except (OSError, ValueError, RuntimeError) as error:
+                    issues.append(f'{run.id}: 실행 파일 경로를 읽지 못했습니다 ({relative}): {error}')
         return issues
 
     def _selection_path(self, node_id):

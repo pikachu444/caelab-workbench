@@ -251,3 +251,35 @@ def test_explicit_store_outside_project_root_stays_an_absolute_reference(tmp_pat
     data = json.loads(path.read_text(encoding='utf-8'))
     assert Path(data['run_store']).is_absolute()
     assert load_native_project(path).run_store == project.run_store
+
+
+@pytest.mark.parametrize('mutation,field', [
+    (lambda snapshot: snapshot.update(outputs=None), 'snapshot.outputs'),
+    (lambda snapshot: snapshot.update(outputs=[]), 'snapshot.outputs'),
+    (lambda snapshot: snapshot.update(artifacts=['model.frd']), 'snapshot.artifacts'),
+    (lambda snapshot: snapshot.update(outputs={'model.frd': None}), 'snapshot.outputs.model.frd'),
+    (lambda snapshot: snapshot.update(outputs={'\x00bad': 'sha'}), 'snapshot.outputs'),
+    (lambda snapshot: snapshot.update(files=None), 'snapshot.files'),
+    (lambda snapshot: snapshot.update(files={}), 'snapshot.files'),
+    (lambda snapshot: snapshot.update(files=[1]), 'snapshot.files[0]'),
+    (lambda snapshot: snapshot.update(files=[{}]), 'snapshot.files[0].source_copy'),
+    (lambda snapshot: snapshot['files'][0].update(source_copy=[]), 'snapshot.files[0].source_copy'),
+    (lambda snapshot: snapshot['files'][0].update(execution_path=None), 'snapshot.files[0].execution_path'),
+    (lambda snapshot: snapshot['files'][0].update(execution_path='\x00bad'), 'snapshot.files[0].execution_path'),
+    (lambda snapshot: snapshot['files'][0].update(source_path=[]), 'snapshot.files[0].source_path'),
+    (lambda snapshot: snapshot['files'][0].update(stat=None), 'snapshot.files[0].stat'),
+    (lambda snapshot: snapshot.update(prerequisites=None), 'snapshot.prerequisites'),
+    (lambda snapshot: snapshot.update(prerequisites=[1]), 'snapshot.prerequisites[0]'),
+    (lambda snapshot: snapshot.update(prerequisites=[{'source_path': [], 'stat': {}}]), 'snapshot.prerequisites[0].source_path'),
+    (lambda snapshot: snapshot.update(prerequisites=[{'source_path': '/original/file', 'stat': []}]), 'snapshot.prerequisites[0].stat'),
+])
+def test_malformed_saved_manifest_has_specific_issues_instead_of_uncaught_status_error(tmp_path, mutation, field):
+    _, project, node, run, _, _, _ = research(tmp_path)
+    record = run.workdir / 'job.json'
+    data = json.loads(record.read_text(encoding='utf-8'))
+    mutation(data['snapshot'])
+    record.write_text(json.dumps(data), encoding='utf-8')
+    reopened = Workbench().open_native_project(project.path)
+    assert any(field in issue for issue in reopened.issues)
+    with pytest.raises(ValueError, match='실행 기록을 온전히 읽을 수 없습니다'):
+        Workbench().native_runs(reopened, node.id)
