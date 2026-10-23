@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -43,7 +42,7 @@ from .icons import GROUP_ICONS, LEAF_ICONS, icon
 from .theme import THEME
 from .viewport import Viewport
 
-FLOW_STEPS = ["열기", "검사", "실행", "결과", "토론", "제안 적용", "재실행"]
+FLOW_STEPS = ["열기", "검사", "실행", "결과"]
 TREE_GROUPS = ["재료·단면", "메시", "해석 단계", "하중·구속", "접촉·연결", "작업", "결과"]
 MODULES = [
     ("모델", TREE_GROUPS),
@@ -53,7 +52,6 @@ MODULES = [
     ("하중·구속", ["하중·구속", "접촉·연결"]),
     ("작업", ["작업", "결과"]),
     ("결과", ["결과"]),
-    ("전문가", []),
 ]
 
 
@@ -73,47 +71,6 @@ def fmt_force(n: float | None, unit: str | None = "N") -> str:
     return f"{n:,.1f} {unit or '(단위 미확인 — 사용자 선언 필요)'}"
 
 
-import re as _re
-
-_PATH_SEG = _re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\[(\d+)\])?$")
-
-
-def _path_step(obj, segment: str):
-    match = _PATH_SEG.match(segment)
-    if not match:
-        raise ValueError(f"잘못된 경로 조각입니다: {segment}")
-    value = obj[match.group(1)] if isinstance(obj, dict) else getattr(obj, match.group(1))
-    if match.group(3) is not None:
-        value = value[int(match.group(3))]
-    return value
-
-
-def _path_get(root, path: str):
-    obj = root
-    for segment in path.split("."):
-        obj = _path_step(obj, segment)
-    return obj
-
-
-def _path_set(root, path: str, new_value) -> None:
-    segments = path.split(".")
-    parent = root
-    for segment in segments[:-1]:
-        parent = _path_step(parent, segment)
-    last = _PATH_SEG.match(segments[-1])
-    if not last:
-        raise ValueError(f"잘못된 경로 조각입니다: {segments[-1]}")
-    name, index = last.group(1), last.group(3)
-    if index is None:
-        if isinstance(parent, dict):
-            parent[name] = new_value
-        else:
-            setattr(parent, name, new_value)
-        return
-    container = parent[name] if isinstance(parent, dict) else getattr(parent, name)
-    container[int(index)] = new_value
-
-
 class MainWindow(QMainWindow):
     def __init__(self, workbench: Workbench | None = None) -> None:
         super().__init__()
@@ -123,10 +80,9 @@ class MainWindow(QMainWindow):
         self._issue_target: str | None = None
         self._path_items: dict[str, QTreeWidgetItem] = {}
         self._group_items: dict[str, QTreeWidgetItem] = {}
-        self._dirty = False
         self._last_result = None
         self.module = "모델"
-        self.setWindowTitle("CAELAB Workbench")
+        self.setWindowTitle("CAELAB 구조 해석")
         self.resize(1440, 900)
         self.setStyleSheet(THEME)
         self._build_ui()
@@ -147,9 +103,6 @@ class MainWindow(QMainWindow):
         results_menu = menu.addMenu("결과")
         results_menu.addAction("ParaView에서 열기 (다음 단계)",
                                lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
-        expert_menu = menu.addMenu("전문가")
-        expert_menu.addAction("전문가 패널 열기", self.open_expert_panel)
-        expert_menu.addAction("선택 대상으로 논의", self.discuss_selection)
         help_menu = menu.addMenu("도움말")
         help_menu.addAction("진단 정보", self.show_diagnostics)
 
@@ -244,11 +197,10 @@ class MainWindow(QMainWindow):
         # screens stay at check/run/summary level; preprocessing edits
         # belong to the native programs). The guide stays visible under
         # the values so the way to change a value is never a dead end:
-        # edit in the native program, or apply an expert proposal.
+        # edit in the native program.
         self.props_guide = QLabel(
             "값은 여기서 고치지 않습니다. 형상·재료·조건을 바꾸려면 "
-            "FreeCAD·Salome 같은 전용 프로그램에서 여세요. 이 화면의 값은 "
-            "전문가 토론에서 제안을 적용할 때만 바뀝니다.")
+            "FreeCAD·Salome 같은 전용 프로그램에서 수정한 뒤 다시 여세요.")
         self.props_guide.setObjectName("panelHint")
         self.props_guide.setWordWrap(True)
         self.props_layout.addWidget(self.props_guide)
@@ -256,22 +208,6 @@ class MainWindow(QMainWindow):
         props_dock.setWidget(self.props_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
         self.props_dock = props_dock
-
-        # right dock, tabbed with properties: expert discussion panel
-        from .expert_panel import ExpertPanel
-
-        self.expert_panel = ExpertPanel(
-            get_model=lambda: self.model,
-            get_result=lambda: self._last_result,
-            apply_proposal=self._apply_proposal,
-            run_solve=self.run_solve,
-            on_discussed=lambda: self._set_flow(4),
-        )
-        self.expert_dock = QDockWidget("전문가 토론")
-        self.expert_dock.setWidget(self.expert_panel)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.expert_dock)
-        self.tabifyDockWidget(props_dock, self.expert_dock)
-        self.expert_dock.hide()
 
         # right dock, tabbed with properties: optimization panel
         from .optimization_panel import OptimizationPanel
@@ -328,13 +264,12 @@ class MainWindow(QMainWindow):
         self.context_bar.clear()
         actions = {
             "모델": [("열기", self.open_project_dialog), ("저장", self.save_project)],
-            "재료": [("재료 편집 안내", lambda: self._log("재료는 여기서 고치지 않습니다. FreeCAD 같은 전용 프로그램에서 고치거나, 전문가 토론의 제안을 적용하세요."))],
+            "재료": [("재료 편집 안내", lambda: self._log("재료는 여기서 고치지 않습니다. FreeCAD 같은 전용 프로그램에서 수정한 뒤 다시 여세요."))],
             "메시": [("메시 다시 표시", lambda: self.model and self.viewport.show_model(self.model))],
             "해석 단계": [],
             "하중·구속": [],
             "작업": [("입력 검사", self.run_check), ("실행", self.run_solve)],
             "결과": [("ParaView에서 열기 (다음 단계)", lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))],
-            "전문가": [("전문가 패널 열기", self.open_expert_panel), ("선택 대상으로 논의", self.discuss_selection)],
         }.get(self.module, [])
         for label, fn in actions:
             self.context_bar.addAction(label, fn)
@@ -350,9 +285,6 @@ class MainWindow(QMainWindow):
         for gname, item in self._group_items.items():
             item.setHidden(gname not in groups)
         self._fill_context_bar()
-        if name == "전문가":
-            self.open_expert_panel()
-            return
         # select the first visible leaf of the module for immediate context
         for gname in groups:
             item = self._group_items.get(gname)
@@ -376,7 +308,6 @@ class MainWindow(QMainWindow):
     def set_model(self, model: StructuralModel, folder: Path | None = None) -> None:
         self.model = model
         self.project_folder = folder
-        self._dirty = False
         self._path_items.clear()
         self._group_items.clear()
         self.tree.clear()
@@ -441,11 +372,6 @@ class MainWindow(QMainWindow):
     def _clear_props(self) -> None:
         while self.props_form.rowCount():
             self.props_form.removeRow(0)
-
-    def _mark_dirty(self) -> None:
-        if not self._dirty:
-            self._dirty = True
-            self.status.setText("변경 사항이 있습니다. 저장하세요.")
 
     def _show_props(self, path: str) -> None:
         m = self.model
@@ -545,7 +471,6 @@ class MainWindow(QMainWindow):
         folder = self.project_folder or Path(tempfile.mkdtemp(prefix="caelab-project-"))
         self.workbench.save_project(self.model, folder)
         self.project_folder = folder
-        self._dirty = False
         self.status.setText(f"저장했습니다: {folder}")
         self._log(f"프로젝트를 저장했습니다: {folder}")
 
@@ -576,46 +501,6 @@ class MainWindow(QMainWindow):
         self.optimization_dock.show()
         self.optimization_dock.raise_()
 
-    # -- expert panel ---------------------------------------------------------
-    def open_expert_panel(self) -> None:
-        self.expert_dock.show()
-        self.expert_dock.raise_()
-        self.expert_panel.refresh_evidence()
-
-    def discuss_selection(self) -> None:
-        items = self.tree.selectedItems()
-        path = items[0].data(0, Qt.UserRole) if items else None
-        self.expert_panel.set_target(path)
-        self.open_expert_panel()
-
-    def _apply_proposal(self, proposal) -> str:
-        """Apply one expert proposal to the model. User-triggered only.
-
-        The recorded "before" value must still match the model —
-        otherwise the proposal is stale and is not applied.
-        """
-        if self.model is None:
-            return "모델이 열려 있지 않습니다."
-        try:
-            current = _path_get(self.model, proposal.target_path)
-        except (ValueError, KeyError, AttributeError, IndexError, TypeError) as exc:
-            return f"경로를 찾을 수 없습니다: {exc}"
-        if isinstance(current, (int, float)) and isinstance(proposal.before, (int, float)):
-            matches = abs(float(current) - float(proposal.before)) <= 1e-9 * max(1.0, abs(float(current)))
-        else:
-            matches = current == proposal.before
-        if not matches:
-            return f"현재 값({current})이 제안의 이전 값({proposal.before})과 달라 적용하지 않았습니다."
-        new_value = proposal.after
-        if isinstance(current, float) and isinstance(new_value, (int, float)):
-            new_value = float(new_value)
-        elif isinstance(current, int) and isinstance(new_value, (int, float)):
-            new_value = int(new_value)
-        _path_set(self.model, proposal.target_path, new_value)
-        self._mark_dirty()
-        self._log(f"전문가 제안을 적용했습니다: {proposal.target_path} {current} → {new_value}")
-        return "적용했습니다. 저장하고, 필요하면 실행 버튼으로 다시 계산하세요."
-
     def run_solve(self) -> None:
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
@@ -640,7 +525,6 @@ class MainWindow(QMainWindow):
                 self.legend_label.setText("변위 필드 누락 — 변형 미표시")
             else:
                 self.legend_label.setText(f"색상 범례: 변위 ({'mm' if unit == 'm' else unit or '단위 미확인'})")
-            self.expert_panel.refresh_evidence()
             self._set_flow(3)
         else:
             summary = "계산 실패 — 아래 로그를 확인하세요."

@@ -30,41 +30,56 @@ def test_window_tree_and_check(app):
     assert not window.btn_goto.isEnabled()
 
 
-def test_expert_panel_evidence_and_proposal_apply(app):
-    from caelab.assist.experts import Proposal
+def test_analysis_runs_without_expert_provider_or_proposal_editor(app, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QDockWidget
     from caelab.solvers.base import ResultSet
+    from caelab.workbench import Workbench
 
-    window = MainWindow()
+    # Analysis must work even if neither the old panel nor providers can import.
+    monkeypatch.setitem(sys.modules, "apps.workbench_qt.expert_panel", None)
+    monkeypatch.setitem(sys.modules, "caelab.assist.experts", None)
+    workbench = Workbench()
     model = cantilever_model()
-    window.set_model(model)
-    # no result yet: the panel must say so, not invent a discussion
-    window.expert_panel.refresh_evidence()
-    assert "아직 계산 결과가 없습니다" in window.expert_panel.evidence_label.text()
-
-    window._last_result = ResultSet(
+    before = model.to_dict()
+    result = ResultSet(
         solver_id="calculix", success=True, max_displacement=0.0002,
+        displacements={node: [0.0, -0.0002, 0.0] for node in model.mesh.nodes},
         reaction_totals={"fx": 0.0, "fy": 1000.0, "fz": 0.0},
+        units={"length": "m", "force": "N"},
     )
-    window.expert_panel.refresh_evidence()
-    assert window.expert_panel.discussion is not None
-    assert "1,000" in window.expert_panel.evidence_label.text()
-
-    # proposal application is a user action and checks the before value
-    applied = window._apply_proposal(Proposal("loads[0].values.fy", -1000.0, -500.0))
-    assert "적용했습니다" in applied
-    assert model.loads[0].values["fy"] == -500.0
-    stale = window._apply_proposal(Proposal("loads[0].values.fy", -1000.0, -250.0))
-    assert "적용하지 않았습니다" in stale
-    assert model.loads[0].values["fy"] == -500.0
+    calls = []
+    def solve(actual_model, solver, workdir):
+        calls.append((actual_model, solver))
+        return SimpleNamespace(state="succeeded", result=result)
+    monkeypatch.setattr(workbench, "run", solve)
+    window = MainWindow(workbench)
+    window.set_model(model)
+    assert calls == []
+    window.run_solve()
+    assert calls == [(model, "calculix")]
+    assert window._last_result is result
+    assert "계산 완료" in window.status.text()
+    assert "1,000" in window.status.text()
+    assert window.results_item.childCount() == 1
+    assert model.to_dict() == before
+    assert not hasattr(window, "expert_panel")
+    assert not hasattr(window, "_apply_proposal")
+    assert all("전문가" not in dock.windowTitle() for dock in window.findChildren(QDockWidget))
+    assert "전문가" not in window._module_buttons
+    assert all("전문가" not in action.text() for action in window.menuBar().actions())
+    assert all("토론" not in chip.text() and "제안" not in chip.text() for chip in window.flow_labels)
+    assert window.optimization_panel is not None
 
 
 def test_props_panel_is_display_only(app):
     """The property panel shows values; it must not edit the model.
 
-    Editing belongs to the native programs (FreeCAD/Salome) and, in
-    this window, to applying an expert proposal — so no input widget
-    may appear in the panel for any selectable object, the values are
-    labels, and the native-program guide stays visible.
+    Editing belongs to native programs (FreeCAD/Salome). No input
+    widget may appear for a selectable object; values are labels and
+    the native-program guide stays visible.
     """
     from PySide6.QtWidgets import (
         QCheckBox, QComboBox, QDoubleSpinBox, QLabel, QLineEdit, QSpinBox, QWidget,
@@ -89,6 +104,7 @@ def test_props_panel_is_display_only(app):
     assert any("UX" in t and "UY" in t and "UZ" in t for t in texts), texts
     # the guide to the native programs is present in the panel
     assert "전용 프로그램" in window.props_guide.text()
+    assert "제안" not in window.props_guide.text()
     # and the model is untouched by all this viewing
     assert model.materials[0].params["youngs_modulus"] == 210e9
     assert model.bcs[0].fixed_dofs == [1, 2, 3]
@@ -105,3 +121,19 @@ def test_window_issue_navigation(app):
     current = window.tree.currentItem()
     assert current is not None
     assert "단면" in current.text(0)
+
+
+
+def test_actual_calculix_run_is_independent_of_expert_provider(app, monkeypatch):
+    import sys
+    from caelab.solvers.calculix import find_ccx
+
+    if find_ccx() is None:
+        pytest.skip("ccx is not available for the analysis-window run path")
+    monkeypatch.setitem(sys.modules, "caelab.assist.experts", None)
+    window = MainWindow()
+    window.set_model(cantilever_model())
+    window.run_solve()
+    assert "계산 완료" in window.status.text(), window.log.toPlainText()
+    assert window._last_result.success
+    assert window._last_result.reaction_totals["fy"] == pytest.approx(1000, rel=0.005)

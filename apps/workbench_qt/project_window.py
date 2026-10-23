@@ -58,9 +58,10 @@ SYSTEM_KINDS = [
     ("mesh", "메시", "메시 보기"),
     ("analysis", "구조 해석", "해석 창 열기 (CalculiX)"),
     ("results", "결과", "ParaView에서 열기"),
-    ("expert", "전문가 논의", "전문가 패널 열기"),
+    ("expert", "전문가 논의", "독립 프로그램 연결"),
 ]
 STATE_COLORS = {
+    "unavailable": "#c9ced4",
     "needs_input": "#c9ced4",
     "ready": "#7fb2e5",
     "running": "#f2b134",
@@ -68,6 +69,7 @@ STATE_COLORS = {
     "failed": "#d64545",
 }
 STATE_LABELS = {
+    "unavailable": "연결 미구현",
     "needs_input": "입력 필요",
     "ready": "준비됨",
     "running": "실행 중",
@@ -345,6 +347,8 @@ class ProjectWindow(QMainWindow):
         box.setPos(60 + 230 * (len(self.boxes) % 4), 60 + 130 * (len(self.boxes) // 4))
         self.scene.addItem(box)
         self.boxes[kind] = box
+        if kind == "expert":
+            box.set_state("unavailable")
         return box
 
     def connect(self, src: str, dst: str) -> None:
@@ -362,16 +366,15 @@ class ProjectWindow(QMainWindow):
         self.connect("geometry", "mesh")
         self.connect("mesh", "analysis")
         self.connect("analysis", "results")
-        self.connect("results", "expert")
         self.boxes["geometry"].set_state("done", "demo.FCStd")
         self.boxes["mesh"].set_state("ready", "절점 99개 · 요소 40개")
         self.boxes["analysis"].set_state("ready", "CalculiX")
         self.boxes["results"].set_state("needs_input")
-        self.boxes["expert"].set_state("needs_input")
+        self.boxes["expert"].set_state("unavailable")
         self._reflect_programs()
         for c in self.connectors:
             c.refresh()
-        self._log("프로젝트 체인을 만들었습니다: 형상 → 메시 → 구조 해석 → 결과 → 전문가 논의")
+        self._log("프로젝트 체인을 만들었습니다: 형상 → 메시 → 구조 해석 → 결과. 독립 전문가 연결은 미구현입니다.")
 
     # -- behaviour --------------------------------------------------------------
     def _log(self, text: str) -> None:
@@ -444,13 +447,10 @@ class ProjectWindow(QMainWindow):
         elif box.kind == "mesh":
             self._open_external(box.kind, "gmsh", None)
         elif box.kind == "expert":
-            from .main_window import MainWindow
-
-            self._workspace = MainWindow(self.workbench)
-            self._workspace.set_model(self.model)
-            self._workspace.set_module("전문가")
-            self._workspace.show()
-            self._log("전문가 토론 패널을 열었습니다. 근거는 최근 결과 요약입니다.")
+            box.set_state("unavailable")
+            message = "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다."
+            self.status.setText(message)
+            self._log(message)
         else:
             self._log(f"{box.title} 상자: 전용 화면은 다음 단계입니다.")
 
@@ -465,8 +465,8 @@ class ProjectWindow(QMainWindow):
             result = job.result
             self.boxes["analysis"].set_state("done", f"최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}")
             self.boxes["results"].set_state("done", "결과 준비됨")
-            self.boxes["expert"].set_state("ready", "논의 가능")
-            self.status.setText("전체 실행 완료 — 결과 상자가 최신입니다. 다음 행동: 결과 열기 또는 전문가 논의")
+            self.boxes["expert"].set_state("unavailable")
+            self.status.setText("전체 실행 완료 — 결과 상자가 최신입니다. 다음 행동: 결과 확인")
             self._log(f"구조 해석 완료: 최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}")
         else:
             self.boxes["analysis"].set_state("failed")
