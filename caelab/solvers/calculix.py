@@ -546,7 +546,7 @@ _DAT_HEADER = re.compile(
 )
 
 
-def parse_dat(path: Path) -> DatResults:
+def parse_dat(path: Path, *, check_cancelled=None) -> DatResults:
     """Read complete global-coordinate blocks from the final DAT frame."""
     frames = {}
     errors = []
@@ -566,6 +566,8 @@ def parse_dat(path: Path) -> DatResults:
         frames[frame][(current, current_set)] = dict(rows)
 
     for line_number, line in enumerate(Path(path).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        if check_cancelled is not None and line_number % 1024 == 1:
+            check_cancelled()
         step_match = re.search(r"S T E P\s+(\d+)", line)
         inc_match = re.search(r"INCREMENT\s+(\d+)", line)
         if step_match or inc_match:
