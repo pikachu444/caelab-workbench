@@ -32,7 +32,7 @@ def _evidence_name(evidence) -> str:
              if item['role'] in {'input', 'frd', 'dat'}]
     name = names[0] if names else evidence.get('solver_id', '자료')
     run = evidence.get('run_id')
-    return f"{name} / 실행 {run[:8]}" if run else f"{name} / 직접 불러온 자료"
+    return f"{name} / 실행 {run[:8]}" if run else f"{name} / 직접 불러온 자료 {evidence.get('id', '')[:6]}"
 
 
 class ExpertWindow(QMainWindow):
@@ -90,6 +90,7 @@ class ExpertWindow(QMainWindow):
         left_layout.addWidget(QLabel('보존된 근거'))
         self.sources = QListWidget()
         self.sources.setMinimumHeight(90)
+        self.sources.setWordWrap(True)
         self.sources.currentItemChanged.connect(self.preview_evidence)
         left_layout.addWidget(self.sources, 2)
         self.use_source = QPushButton('질문의 근거로 사용')
@@ -258,7 +259,9 @@ class ExpertWindow(QMainWindow):
         self.sources.clear()
         selected = self.document.get('selected_evidence_id')
         for evidence_id, evidence in self.document.get('evidences', {}).items():
-            item = QListWidgetItem(_evidence_name(evidence))
+            frame = evidence.get('frame_index')
+            label = _evidence_name(evidence).replace(' / ', '\n', 1)
+            item = QListWidgetItem(label + (f' / 프레임 {frame}' if frame is not None else ''))
             item.setData(Qt.UserRole, evidence_id)
             item.setToolTip(f"근거 {evidence_id}\n프레임 {evidence.get('frame_index')}\n{evidence.get('created_at')}")
             self.sources.addItem(item)
