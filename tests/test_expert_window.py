@@ -1,6 +1,8 @@
 """Independent discussion UI with real saved assets and mock model responses."""
 import copy
+import json
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -196,7 +198,7 @@ def test_launch_pins_the_run_even_when_selection_changes(tmp_path, monkeypatch):
     later = copy.deepcopy(run)
     later.id = 'b' * 32
     later.workdir = project.run_store / later.id
-    later.workdir.mkdir()
+    shutil.copytree(run.workdir, later.workdir)
     RunStore(project.run_store).write(later)
     workbench.select_native_run(project, analysis.id, later.id)
     assert workbench.expert_evidence_run(project, expert.id, pinned_id).id == run.id
@@ -223,5 +225,119 @@ def test_parent_routes_expert_and_selected_result_to_new_services(app, tmp_path,
     ui.open_box(expert)
     ui.open_box(results)
     assert called == [('expert', expert.node_id), ('results', results.node_id)]
+    ui._dirty = False
+    ui.close()
+
+
+def test_proposal_review_reject_and_reopen_preserve_original(window, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    from caelab.assist.knowledge import KnowledgeSearchResult
+    from test_native_evidence import make_run
+    ui, provider = window
+    run = make_run(tmp_path)
+    source = Path(run.input_path)
+    original = source.read_bytes()
+    evidence = ui.workbench.capture_expert_run(run, ui.assets)
+    ui.document = ui.workbench.attach_expert_evidence(ui.path, evidence, expected_revision=ui.document['revision'])
+    monkeypatch.setattr(experts, 'search_knowledge_result', lambda *a, **kw: KnowledgeSearchResult('no_material', [], 'calculix'))
+    provider.discuss = lambda prompt: '```proposals\n' + json.dumps([{
+        'target_file': str(source), 'location': 'comment', 'before': '** native original',
+        'after': '** revised', 'reason': '검토용 모의 제안'}]) + '\n```'
+    ui.role.setCurrentIndex(ui.role.findData('convergence'))
+    ui.render()
+    ui.question.setPlainText('변경 제안을 검토합니다.')
+    ui.ask()
+    finish(ui, app)
+    assert ui.proposal_choice.count() == 1
+    ui.check_proposal.click()
+    assert ui.document['proposals'][0]['status'] == 'manual_required'
+    assert '전용 프로그램에서 수정' in ui.proposals.toPlainText()
+    source.write_bytes(original + b'** edited externally\n')
+    ui.check_proposal.click()
+    assert ui.document['proposals'][0]['status'] == 'blocked'
+    monkeypatch.setattr(QInputDialog, 'getMultiLineText', lambda *args: ('이 변경은 사용자 제약에 맞지 않습니다.', True))
+    ui.reject_proposal.click()
+    assert ui.document['proposals'][0]['status'] == 'rejected'
+    assert source.read_bytes() == original + b'** edited externally\n'
+    ui.reload_document()
+    assert '사용자 제약' in ui.proposals.toPlainText()
+    assert ui.document['proposals'][0]['status'] == 'rejected'
+
+
+def test_missing_asset_warning_is_visible_on_reopen_without_model(window, tmp_path):
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** retained input')
+    asset = ui.assets / evidence['files'][0]['stored_path']
+    asset.unlink()
+    ui.reload_document()
+    assert not ui.asset_warning.isHidden()
+    assert '파일 확인' in ui.asset_warning.text()
+    assert evidence['files'][0]['stored_path'] in ui.asset_details.toPlainText()
+    assert provider.prompts == []
+
+
+def test_malformed_legacy_proposal_warns_without_hiding_the_discussion(window):
+    from caelab.native.run_store import atomic_json
+    ui, provider = window
+    document = copy.deepcopy(ui.document)
+    document['proposals'] = [None, {'id': 'legacy', 'status': [], 'review_history': [1]}]
+    atomic_json(ui.path, document)
+    ui.reload_document()
+    assert ui.proposal_choice.count() == 1
+    assert '미확인' in ui.proposals.toPlainText()
+    assert '제안 출처' in ui.asset_details.toPlainText()
+    assert provider.prompts == []
+
+
+def test_explicit_new_run_capture_keeps_same_discussion_and_old_basis(app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QComboBox, QDialog
+    from caelab.native.run_store import RunStore
+    from test_result_delivery import selected_project
+    wb, project, analysis, _, expert, first = selected_project(tmp_path)
+    ui = ExpertWindow(project.run_store / 'discussions/topic/discussion.json',
+                      project_path=project.path, node_id=expert.id, run_id=first.id, workbench=wb)
+    first_evidence = wb.capture_expert_run(first, ui.assets, frame_index=0)
+    ui.document = wb.attach_expert_evidence(ui.path, first_evidence, expected_revision=ui.document['revision'])
+    later = copy.deepcopy(first)
+    later.id = 'b' * 32
+    later.workdir = project.run_store / later.id
+    shutil.copytree(first.workdir, later.workdir)
+    RunStore(project.run_store).write(later)
+    wb.select_native_run(project, analysis.id, later.id)
+    observed = []
+    def choose_new(dialog):
+        choice = dialog.findChild(QComboBox, 'capture_run_choice')
+        observed.append(choice.currentData().id)
+        assert choice.count() == 2
+        choice.setCurrentIndex(1)
+        return QDialog.Accepted
+    monkeypatch.setattr(QDialog, 'exec', choose_new)
+    ui.capture_run()
+    finish(ui, app)
+    assert observed == [first.id]
+    assert len(ui.document['evidences']) == 2
+    assert ui.document['evidences'][first_evidence['id']]['run_id'] == first.id
+    assert ui.document['evidences'][ui.document['selected_evidence_id']]['run_id'] == later.id
+    assert ui.run_id == first.id
+    ui.close()
+
+
+def test_parent_reopen_missing_store_keeps_graph_and_reports_path(app, tmp_path, monkeypatch):
+    wb = Workbench()
+    monkeypatch.setattr(wb, 'programs', lambda: [])
+    project = wb.new_native_project('보존할 연구')
+    node = project.add_node('analysis', 'calculix')
+    inp = tmp_path / 'source.inp'
+    inp.write_text('** source', encoding='utf-8')
+    project.set_file(node.id, inp)
+    wb.save_native_project(project, tmp_path / 'saved.json')
+    project.run_store.rmdir()  # This test's saved store has no execution records.
+    ui = ProjectWindow(wb)
+    assert ui.open_project(project.path, confirm=False)
+    assert node.id in ui.boxes and ui.project.name == '보존할 연구'
+    assert str(project.run_store) in ui.log.toPlainText()
+    ui.refresh_files()
+    assert '기대 실행 저장소' in ui.log.toPlainText()
+    assert not project.run_store.exists()
     ui._dirty = False
     ui.close()

@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import time
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,11 +78,14 @@ class NativeRun:
 
 
 class RunStore:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, *, expected: bool = False):
         self.root = Path(root).resolve()
+        self.expected = expected
         self._cache = {}
 
     def lease(self):
+        if self.expected and not self.root.is_dir():
+            raise ValueError(f"기대 실행 저장소가 없습니다: {self.root}")
         self.root.mkdir(parents=True, exist_ok=True)
         lease = FileLock(self.root / "controller.lock", timeout=0, thread_local=False)
         try:
@@ -101,19 +105,104 @@ class RunStore:
         cached = self._cache.get(path)
         if cached is None or cached[0] != key:
             data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f'실행 기록 객체가 필요합니다: {path}')
             if data.get("id") != path.parent.name or len(path.parent.name) != 32 or any(c not in "0123456789abcdef" for c in path.parent.name):
                 raise ValueError(f"잘못된 실행 기록 ID: {path}")
             if data.get("state") not in ACTIVE_STATES | TERMINAL_STATES:
                 raise ValueError(f"잘못된 실행 상태: {path}")
             data["workdir"] = path.parent
-            data["log_path"] = str(path.parent / "job.log")
+            data["log_path"] = str(path.parent / "job.log") if data.get('log_path') else ''
             run = NativeRun(**data)
             self._cache[path] = key, run
         return copy.deepcopy(self._cache[path][1])
 
     def runs(self, node_id=None) -> list[NativeRun]:
+        issues = self.integrity_issues()
+        if issues:
+            raise ValueError("실행 기록을 온전히 읽을 수 없습니다: " + "; ".join(issues))
+        return self._records(node_id)
+
+    def _records(self, node_id=None) -> list[NativeRun]:
         runs = [self.read(path) for path in self.root.glob("*/job.json")]
         return sorted((run for run in runs if node_id is None or run.node_id == node_id), key=lambda run: run.created_at)
+
+    def integrity_issues(self) -> list[str]:
+        """Cheap availability checks; missing history is not a new empty project."""
+        if not self.root.is_dir():
+            return [f"기대 실행 저장소가 없습니다: {self.root}"] if self.expected else []
+        issues = []
+        for selection in (self.root / 'selected').glob('*.json'):
+            try:
+                data = json.loads(selection.read_text(encoding='utf-8'))
+                run_id = data['run_id']
+                if not isinstance(run_id, str) or len(run_id) != 32 or any(c not in '0123456789abcdef' for c in run_id):
+                    raise ValueError('실행 ID가 잘못되었습니다.')
+                if not (self.root / run_id / 'job.json').is_file():
+                    issues.append(f"선택한 실행 기록이 없습니다: {self.root / run_id / 'job.json'}")
+                elif self.read(self.root / run_id / 'job.json').node_id != data.get('node_id'):
+                    issues.append(f'선택 실행 기록의 노드가 다릅니다: {selection}')
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                issues.append(f"선택 실행을 읽지 못했습니다 ({selection}): {error}")
+        for folder in self.root.iterdir():
+            if folder.is_dir() and len(folder.name) == 32 and all(c in '0123456789abcdef' for c in folder.name):
+                if not (folder / 'job.json').is_file():
+                    issues.append(f'실행 폴더의 기록이 없습니다: {folder / "job.json"}')
+        try:
+            records = self._records()
+        except (OSError, ValueError, TypeError) as error:
+            return [*issues, f"실행 기록 읽기 실패: {error}"]
+        for run in records:
+            if run.state in ACTIVE_STATES or run.parse_state == 'reading':
+                continue
+            if not isinstance(run.snapshot, dict):
+                issues.append(f'실행 manifest 자료 형식이 잘못되었습니다: {run.id}')
+                continue
+            expected = set()
+            for key in ('outputs', 'artifacts'):
+                entries = run.snapshot.get(key, {})
+                if not isinstance(entries, dict):
+                    issues.append(f'{run.id}.snapshot.{key}: 상대 경로와 해시의 객체가 필요합니다.')
+                    continue
+                for relative, digest in entries.items():
+                    if not isinstance(relative, str) or not relative.strip() or '\x00' in relative:
+                        issues.append(f'{run.id}.snapshot.{key}: 파일 경로 문자열이 잘못되었습니다.')
+                        continue
+                    if not isinstance(digest, str):
+                        issues.append(f'{run.id}.snapshot.{key}.{relative}: 해시 문자열이 필요합니다.')
+                    expected.add(relative)
+            for list_key in ('files', 'prerequisites'):
+                files = run.snapshot.get(list_key, [])
+                if not isinstance(files, list):
+                    issues.append(f'{run.id}.snapshot.{list_key}: 파일 기록 목록이 필요합니다.')
+                    continue
+                for index, item in enumerate(files):
+                    location = f'{run.id}.snapshot.{list_key}[{index}]'
+                    if not isinstance(item, dict):
+                        issues.append(f'{location}: 파일 기록 객체가 필요합니다.')
+                        continue
+                    keys = ('source_path', 'source_copy', 'execution_path') if list_key == 'files' else ('source_path',)
+                    for key in keys:
+                        relative = item.get(key)
+                        if not isinstance(relative, str) or not relative.strip() or '\x00' in relative:
+                            issues.append(f'{location}.{key}: 파일 경로 문자열이 필요합니다.')
+                        elif key != 'source_path':
+                            expected.add(relative)
+                    if not isinstance(item.get('stat'), dict):
+                        issues.append(f'{location}.stat: 파일 상태 객체가 필요합니다.')
+            if run.log_path:
+                expected.add('job.log')
+            for relative in expected:
+                try:
+                    path = Path(relative)
+                    target = (run.workdir / path).resolve()
+                    if path.is_absolute() or '..' in path.parts or not target.is_relative_to(run.workdir.resolve()):
+                        issues.append(f"실행 파일 참조가 소유 폴더 밖입니다: {run.id}: {relative}")
+                    elif not target.is_file():
+                        issues.append(f"기록된 실행 파일이 없습니다: {target}")
+                except (OSError, ValueError, RuntimeError) as error:
+                    issues.append(f'{run.id}: 실행 파일 경로를 읽지 못했습니다 ({relative}): {error}')
+        return issues
 
     def _selection_path(self, node_id):
         return self.root / "selected" / (hashlib.sha256(node_id.encode()).hexdigest() + ".json")
@@ -133,7 +222,7 @@ class RunStore:
         return data["run_id"]
 
     def recover_unlocked(self):
-        for run in self.runs():
+        for run in self._records():
             if run.state in ACTIVE_STATES:
                 run.state = "interrupted"
                 run.finished_at = utc_now()
@@ -157,19 +246,73 @@ class RunStore:
             lease.release()
 
     def copy_to(self, destination: Path) -> None:
+        destination = Path(destination).resolve()
+        if destination == self.root or self.root in destination.parents:
+            raise ValueError('실행 저장소 안으로 자기 복사를 할 수 없습니다.')
         lease = self.lease()
         created = False
         try:
             self.recover_unlocked()
-            destination.mkdir(parents=True, exist_ok=False)
-            created = True
-            shutil.copytree(self.root, destination, dirs_exist_ok=True, ignore=shutil.ignore_patterns("controller.lock", "*.tmp"))
-            copied = RunStore(destination)
-            for run in copied.runs():
-                copied.write(run)  # workdir/log paths belong to the new store
+            issues = self.integrity_issues()
+            if issues:
+                raise ValueError('; '.join(issues))
+            documents = self._discussion_paths()
+            with ExitStack() as locks:
+                try:
+                    for path in documents:
+                        locks.enter_context(FileLock(str(path) + '.request.lock', timeout=0))
+                        locks.enter_context(FileLock(str(path) + '.lock', timeout=0))
+                except Timeout as error:
+                    raise ValueError('대화 질문/저장이 진행 중입니다. 완료 후 다른 이름으로 저장하세요.') from error
+                before = self._inventory()
+                if documents != self._discussion_paths():
+                    raise ValueError('복사 준비 중 대화 목록이 변경되었습니다. 다시 저장하세요.')
+                destination.mkdir(parents=True, exist_ok=False)
+                created = True
+                shutil.copytree(self.root, destination, dirs_exist_ok=True, ignore=shutil.ignore_patterns('*.lock'))
+                copied = RunStore(destination, expected=True)
+                if before != self._inventory() or before != copied._inventory() or documents != self._discussion_paths():
+                    raise ValueError('복사 중 실행/대화/자산 파일이 변경되었습니다. 다시 저장하세요.')
+                from .evidence import verify_evidence
+                for path in documents:
+                    document = json.loads(path.read_text(encoding='utf-8'))
+                    if not isinstance(document, dict):
+                        raise ValueError(f'대화 폴더의 JSON 자료 형식이 잘못되었습니다: {path}')
+                    for evidence in document.get('evidences', {}).values():
+                        problems = verify_evidence(evidence, destination / path.parent.relative_to(self.root) / 'assets')
+                        if problems:
+                            raise ValueError('대화 근거 자산이 온전하지 않습니다: ' + '; '.join(problems))
+                for run in copied.runs():
+                    copied.write(run)  # workdir/log paths belong to the new store
         except Exception:
             if created:
                 shutil.rmtree(destination)
             raise
         finally:
             lease.release()
+
+    def _discussion_paths(self):
+        return sorted(path for path in (self.root / 'discussions').rglob('*.json')
+                      if 'assets' not in path.relative_to(self.root / 'discussions').parts)
+
+    def _inventory(self):
+        inventory = {}
+        for path in sorted(self.root.rglob('*')):
+            if path.name.endswith('.lock'):
+                continue
+            if path.is_symlink():
+                raise ValueError(f'저장소의 symbolic link는 복사하지 않습니다: {path}')
+            relative = path.relative_to(self.root).as_posix()
+            if path.is_dir():
+                inventory[relative + '/'] = None
+                continue
+            from .input_snapshot import fingerprint
+            before = fingerprint(path)
+            digest = hashlib.sha256()
+            with path.open('rb') as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    digest.update(chunk)
+            if fingerprint(path) != before:
+                raise ValueError(f'검사 중 저장소 파일이 변경되었습니다: {path}')
+            inventory[relative] = digest.hexdigest()
+        return inventory

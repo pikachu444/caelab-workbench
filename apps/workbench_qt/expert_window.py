@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
     QTabWidget, QTextBrowser, QToolBar, QVBoxLayout, QWidget,
 )
@@ -83,6 +83,11 @@ class ExpertWindow(QMainWindow):
         self.status = QLabel('자료를 불러온 뒤 질문의 근거를 선택하세요.')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.asset_warning = QLabel()
+        self.asset_warning.setWordWrap(True)
+        self.asset_warning.setStyleSheet('color: #8a3d11;')
+        self.asset_warning.hide()
+        layout.addWidget(self.asset_warning)
         split = QSplitter(Qt.Horizontal)
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -96,7 +101,7 @@ class ExpertWindow(QMainWindow):
         self.use_source = QPushButton('질문의 근거로 사용')
         self.use_source.clicked.connect(self.select_evidence)
         left_layout.addWidget(self.use_source)
-        self.capture = QPushButton('선택 실행 가져오기')
+        self.capture = QPushButton('실행 가져오기…')
         self.capture.setVisible(bool(project_path))
         self.capture.clicked.connect(self.capture_run)
         left_layout.addWidget(self.capture)
@@ -119,10 +124,30 @@ class ExpertWindow(QMainWindow):
         tabs.addTab(self.transcript, '대화')
         self.proposals = QPlainTextEdit()
         self.proposals.setReadOnly(True)
-        tabs.addTab(self.proposals, '변경 제안')
+        proposal_tab = QWidget()
+        proposal_layout = QVBoxLayout(proposal_tab)
+        proposal_layout.setContentsMargins(0, 0, 0, 0)
+        self.proposal_choice = QComboBox()
+        self.proposal_choice.setAccessibleName('검토할 제안')
+        self.proposal_choice.currentIndexChanged.connect(self.preview_proposal)
+        proposal_layout.addWidget(self.proposal_choice)
+        proposal_layout.addWidget(self.proposals, 1)
+        proposal_actions = QHBoxLayout()
+        self.check_proposal = QPushButton('원본 개정 확인')
+        self.check_proposal.clicked.connect(self.check_selected_proposal)
+        proposal_actions.addWidget(self.check_proposal)
+        self.reject_proposal = QPushButton('제안 거절')
+        self.reject_proposal.clicked.connect(self.reject_selected_proposal)
+        proposal_actions.addWidget(self.reject_proposal)
+        proposal_actions.addStretch()
+        proposal_layout.addLayout(proposal_actions)
+        tabs.addTab(proposal_tab, '변경 제안')
         self.request_details = QPlainTextEdit()
         self.request_details.setReadOnly(True)
         tabs.addTab(self.request_details, '요청 근거')
+        self.asset_details = QPlainTextEdit()
+        self.asset_details.setReadOnly(True)
+        tabs.addTab(self.asset_details, '파일 확인')
         right_layout.addWidget(tabs, 1)
         self.basis = QLabel('이번 질문의 근거: 선택하지 않음')
         self.basis.setObjectName('basis')
@@ -176,7 +201,7 @@ class ExpertWindow(QMainWindow):
         if discussion_path:
             self._load(Path(discussion_path), create=True)
             if run_id:
-                self.status.setText(f'실행 {run_id[:8]}을 전달받았습니다. 선택 실행 가져오기로 근거를 보존하세요.')
+                self.status.setText(f'실행 {run_id[:8]}을 전달받았습니다. 실행 가져오기에서 근거를 보존하세요.')
         else:
             self.render()
 
@@ -194,6 +219,11 @@ class ExpertWindow(QMainWindow):
         self.question.setPlainText(document.get('draft_question', ''))
         self.render()
         self.status.setText(f'대화 파일: {self.path}')
+        problems = self.workbench.expert_discussion_issues(self.path, document)
+        self.asset_warning.setText(f'자료 확인 안내 {len(problems)}개 — 원본 변경·누락 등의 상세 내용은 파일 확인 탭을 보세요.')
+        self.asset_warning.setToolTip('\n'.join(problems))
+        self.asset_warning.setVisible(bool(problems))
+        self.asset_details.setPlainText('\n'.join(problems) or '불러온 대화의 보존 파일에서 누락이나 해시 불일치를 찾지 못했습니다.')
 
     def _ensure_document(self):
         if self.path:
@@ -297,14 +327,16 @@ class ExpertWindow(QMainWindow):
         self.transcript.setHtml(''.join(fragments) or
             '<h3>근거를 확인하고 질문하세요</h3><p>입력 조건, 계산 로그, 결과를 불러오면 여기에 대화가 쌓입니다.</p>'
             '<p>이전 대화를 열어도 모델을 자동 호출하지 않습니다.</p>')
-        proposal_text = []
+        proposal_id = self.proposal_choice.currentData()
+        self.proposal_choice.blockSignals(True)
+        self.proposal_choice.clear()
         for item in self.document.get('proposals', []):
-            proposal_text.append(f"미적용 — {item.get('target_file')} / {item.get('location')}\n"
-                                 f"실행 {item.get('run_id')} / 근거 {item.get('evidence_id')}\n"
-                                 f"변경 전: {item.get('before')}\n변경 후: {item.get('after')}\n"
-                                 f"이유: {item.get('reason')}")
-        self.proposals.setPlainText('\n\n'.join(proposal_text) or
-                                   '아직 변경 제안이 없습니다. 제안은 원본을 변경하지 않으며, 전용 프로그램에서 검토 후 수정합니다.')
+            if not isinstance(item, dict) or not isinstance(item.get('id'), str):
+                continue
+            self.proposal_choice.addItem(f"{Path(str(item.get('target_file', ''))).name} / {item.get('location')}", item.get('id'))
+        self.proposal_choice.setCurrentIndex(max(0, self.proposal_choice.findData(proposal_id)))
+        self.proposal_choice.blockSignals(False)
+        self.preview_proposal()
         requests = [{key: turn.get(key) for key in ('id', 'question', 'template_id', 'provider_id',
                      'evidence_id', 'run_id', 'input_revision', 'frame_index', 'evidence_sources',
                      'provided_materials', 'knowledge_status', 'knowledge_error', 'citations')}
@@ -314,6 +346,59 @@ class ExpertWindow(QMainWindow):
         self.heading.setText(self.document.get('title', '결과를 근거로 이어가는 대화'))
         self.refresh_provider()
         self._set_busy(bool(self._operation))
+
+    def preview_proposal(self, *_):
+        item = next((item for item in self.document.get('proposals', [])
+                     if isinstance(item, dict) and item.get('id') == self.proposal_choice.currentData()), None)
+        if item is None:
+            self.proposals.setPlainText('아직 변경 제안이 없습니다. 제안은 전용 프로그램에서 검토 후 수정합니다.')
+            return
+        labels = {'unapplied': '미적용', 'manual_required': '전용 프로그램에서 수정 필요 · 미적용',
+                  'blocked': '검토 중단 · 미적용', 'rejected': '거절 · 미적용'}
+        reviews = [review for review in (item.get('review_history') if isinstance(item.get('review_history'), list) else [])
+                   if isinstance(review, dict)]
+        latest_reason = item.get('review_reason') or (reviews[-1].get('reason', '') if reviews else '')
+        self.proposals.setPlainText(
+            f"{labels.get(str(item.get('status')), '미확인 · 미적용')}\n\n"
+            + (f"검토: {latest_reason}\n\n" if latest_reason else '') +
+            f"대상: {item.get('target_file')}\n위치: {item.get('location')}\n"
+            f"변경 전: {item.get('before')}\n변경 후: {item.get('after')}\n"
+            f"이유: {item.get('reason')}\n\n"
+            f"실행: {item.get('run_id') or '직접 불러온 자료'}\n"
+            f"근거: {item.get('evidence_id')}\n입력 개정: {item.get('input_revision')}\n"
+            f"대상 파일 SHA256: {item.get('target_sha256') or '원본 개정 확인 시 대조'}\n\n"
+            '이 변경은 자동 적용을 지원하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 수정하세요. '
+            '재계산은 해석 창에서 별도로 실행한 뒤 새 결과를 이 대화로 가져오세요.\n\n'
+            + '\n'.join(f"{review.get('reviewed_at', '')}: {review.get('reason', '')}" for review in reviews[:-1]))
+
+    def check_selected_proposal(self):
+        self.review_proposal('check')
+
+    def reject_selected_proposal(self):
+        self.review_proposal('reject')
+
+    def review_proposal(self, decision):
+        proposal_id = self.proposal_choice.currentData()
+        if self._operation or not proposal_id:
+            return
+        reason = ''
+        if decision == 'reject':
+            reason, accepted = QInputDialog.getMultiLineText(self, '제안 거절', '다음 논의에 남길 이유')
+            if not accepted:
+                return
+            if not reason.strip():
+                self._error('제안을 거절하는 이유를 입력하세요.')
+                return
+        if not self.save_document():
+            return
+        try:
+            self.document = self.workbench.review_expert_proposal(
+                self.path, proposal_id, expected_revision=self.document['revision'],
+                decision=decision, reason=reason)
+            self.render()
+            self.status.setText('제안 검토를 저장했습니다. 원본 파일은 변경하지 않았습니다.')
+        except Exception as error:
+            self._error(error)
 
     def preview_evidence(self, *_):
         item = self.sources.currentItem()
@@ -340,6 +425,8 @@ class ExpertWindow(QMainWindow):
             action.setEnabled(not busy)
         for widget in (self.use_source, self.capture, self.role, self.settings, self.recheck):
             widget.setEnabled(not busy and not live)
+        for widget in (self.check_proposal, self.reject_proposal):
+            widget.setEnabled(not busy and not live and bool(self.proposal_choice.currentData()))
         self.question.setReadOnly(busy or live)
         self.ask_button.setEnabled(not busy and not live and bool(self.document.get('selected_evidence_id'))
                                    and getattr(self, '_provider_available', False))
@@ -461,32 +548,55 @@ class ExpertWindow(QMainWindow):
             self._start('attach', lambda: self.workbench.import_expert_files(
                 assets, files=files, solver_id=solver_id, units=units))
 
-    def capture_run(self):
+    def capture_run(self, _checked=False):
         if not self._ensure_document() or not self.save_document():
             return
         try:
             project = self.workbench.open_native_project(self.project_path)
-            run = self.workbench.expert_evidence_run(project, self.node_id, self.run_id)
-            if run is None:
+            current_run = self.workbench.expert_evidence_run(project, self.node_id)
+            pinned_run = None
+            if self.run_id:
+                try:
+                    pinned_run = self.workbench.expert_evidence_run(project, self.node_id, self.run_id)
+                except ValueError:
+                    pass  # Show the missing pinned choice; never substitute a new run silently.
+            dialog = QDialog(self)
+            dialog.setWindowTitle('가져올 실행과 결과 프레임')
+            layout = QFormLayout(dialog)
+            runs, frames = QComboBox(), QComboBox()
+            runs.setObjectName('capture_run_choice')
+            frames.setObjectName('capture_frame_choice')
+            if self.run_id:
+                runs.addItem(f'전달받은 실행 {self.run_id[:8]}' + (' (기록 없음)' if pinned_run is None else ''), pinned_run)
+            if current_run and (pinned_run is None or current_run.id != pinned_run.id):
+                runs.addItem(f'프로젝트에 저장된 선택 실행 {current_run.id[:8]}', current_run)
+            if not runs.count():
                 raise ValueError('연결된 선택 실행이 없습니다. 해석 창에서 실행을 선택하거나 자료를 직접 불러오세요.')
-            frames = (run.result or {}).get('frames', [])
-            frame_index = None
-            if frames:
-                dialog = QDialog(self)
-                dialog.setWindowTitle('질문에 사용할 결과 프레임')
-                layout = QFormLayout(dialog)
-                choice = QComboBox()
-                for frame in frames:
-                    choice.addItem(f"단계 {frame.get('step')} / 증분 {frame.get('increment')} / 값 {frame.get('value')}", frame['index'])
-                choice.setCurrentIndex(max(0, choice.findData((run.result or {}).get('summary', {}).get('frame_index'))))
-                layout.addRow('프레임', choice)
-                buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                buttons.accepted.connect(dialog.accept)
-                buttons.rejected.connect(dialog.reject)
-                layout.addRow(buttons)
-                if dialog.exec() != QDialog.Accepted:
-                    return
-                frame_index = choice.currentData()
+            layout.addRow('실행', runs)
+            layout.addRow('프레임', frames)
+            buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            layout.addRow(buttons)
+
+            def update_frames():
+                run = runs.currentData()
+                frames.clear()
+                for frame in ((run.result or {}).get('frames', []) if run else []):
+                    frames.addItem(f"단계 {frame.get('step')} / 증분 {frame.get('increment')} / 값 {frame.get('value')}", frame['index'])
+                if not frames.count():
+                    frames.addItem('판독한 결과 프레임 없음 — 입력과 로그 가져오기', None)
+                elif run:
+                    frames.setCurrentIndex(max(0, frames.findData((run.result or {}).get('summary', {}).get('frame_index'))))
+                buttons.button(QDialogButtonBox.Ok).setEnabled(run is not None)
+
+            runs.currentIndexChanged.connect(update_frames)
+            update_frames()
+            if dialog.exec() != QDialog.Accepted:
+                return
+            run, frame_index = runs.currentData(), frames.currentData()
+            if run is None:
+                return
             assets = self.assets
             self._start('attach', lambda: self.workbench.capture_expert_run(run, assets, frame_index=frame_index))
         except Exception as error:

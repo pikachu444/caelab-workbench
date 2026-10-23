@@ -465,3 +465,191 @@ def test_corrupt_document_fails_without_replacing_original(tmp_path):
     with pytest.raises(service.DiscussionFormatError):
         service.load_discussion(path)
     assert path.read_bytes() == original
+
+
+def reviewed_document(tmp_path, monkeypatch, *, include_target=False):
+    from caelab.native.evidence import import_file_evidence, verify_evidence
+    source = tmp_path / "source"
+    source.mkdir()
+    model = source / "model.inp"
+    include = source / "material.inc"
+    model.write_bytes(b"*HEADING\nreview input\n*INCLUDE,INPUT=material.inc\n")
+    include.write_bytes(b"*MATERIAL,NAME=M\n*ELASTIC\n1000,0.25\n")
+    path = tmp_path / "conversation.json"
+    doc = service.create_discussion(path)
+    value = import_file_evidence(path.parent / "assets", files={"input": model}, solver_id="calculix")
+    monkeypatch.setattr(service, "verify_evidence", verify_evidence)
+    target = include if include_target else model
+    reply = '```proposals\n' + json.dumps([{
+        "target_file": str(target), "location": "*ELASTIC" if include_target else "*HEADING",
+        "before": "1000" if include_target else "review input", "after": "900" if include_target else "reviewed input",
+        "reason": "사용자 검토를 위한 제안", "target_sha256": "0" * 64, "status": "applied", "run_id": "invented",
+    }]) + '\n```'
+    provider = Provider(reply)
+    monkeypatch.setattr(experts, "get_provider", lambda *args: provider)
+    doc = service.attach_evidence(path, value, expected_revision=doc["revision"])
+    doc = service.ask_discussion(path, "입력 수정안을 제안해 주세요", evidence_id=value["id"],
+                                 template_id="convergence", expected_revision=doc["revision"])
+    assert doc["turns"][-1]["status"] == "completed", doc["turns"][-1]
+    assert len(doc["proposals"]) == 1
+    return path, doc, model, include, provider
+
+
+def test_review_records_manual_required_from_captured_target_hash_without_writes(tmp_path, monkeypatch):
+    path, doc, model, include, provider = reviewed_document(tmp_path, monkeypatch, include_target=True)
+    proposal = copy.deepcopy(doc["proposals"][0])
+    include_hash = hashlib.sha256(include.read_bytes()).hexdigest()
+    assert proposal["status"] == "unapplied" and proposal["target_sha256"] == include_hash
+    assert proposal["target_sha256"] != proposal["input_revision"]  # target and full input origin are separate
+    assert proposal["run_id"] is None  # provider-supplied provenance was discarded
+    originals = {file: file.read_bytes() for file in (model, include)}
+    provider_calls = len(provider.prompts)
+    doc = service.review_proposal(path, proposal["id"], expected_revision=doc["revision"])
+    checked = doc["proposals"][0]
+    assert checked["status"] == "manual_required" and "전용 프로그램" in checked["review_reason"]
+    assert checked["review_history"][-1]["status"] == "manual_required"
+    assert checked["review_history"][-1]["issues"] == [] and checked["reviewed_at"]
+    for key in ("target_file", "target_sha256", "location", "before", "after", "reason", "evidence_id", "input_revision"):
+        assert checked[key] == proposal[key]
+    assert originals == {file: file.read_bytes() for file in originals}
+    assert len(provider.prompts) == provider_calls
+    assert service.load_discussion(path)["proposals"] == doc["proposals"]
+    assert service.discussion_issues(path) == []
+
+
+@pytest.mark.parametrize("changed", ["input", "include", "missing_input", "missing_include", "moved"])
+def test_review_blocks_when_any_original_input_changed_or_is_missing(tmp_path, monkeypatch, changed):
+    path, doc, model, include, _ = reviewed_document(tmp_path, monkeypatch)
+    proposal = copy.deepcopy(doc["proposals"][0])
+    target = include if "include" in changed else model
+    if changed.startswith("missing"):
+        target.unlink()
+    elif changed == "moved":
+        destination = tmp_path / "moved"
+        destination.mkdir()
+        model.rename(destination / model.name)  # same basename must not be guessed
+    else:
+        target.write_bytes(target.read_bytes() + b"** user change\n")
+    existing = {file: file.read_bytes() for file in (model, include) if file.exists()}
+    doc = service.review_proposal(path, proposal["id"], expected_revision=doc["revision"])
+    checked = doc["proposals"][0]
+    assert checked["status"] == "blocked" and str(target) in checked["review_reason"]
+    assert checked["before"] == proposal["before"] and checked["after"] == proposal["after"] and checked["reason"] == proposal["reason"]
+    assert checked["review_history"][-1]["issues"]
+    assert existing == {file: file.read_bytes() for file in existing}
+
+
+def test_review_reject_is_persistent_context_and_check_cannot_revive_it(tmp_path, monkeypatch):
+    path, doc, _, _, provider = reviewed_document(tmp_path, monkeypatch)
+    identifier = doc["proposals"][0]["id"]
+    doc = service.review_proposal(path, identifier, expected_revision=doc["revision"], decision="reject", reason="규격 시험 때문에 재료 계수를 바꿀 수 없음")
+    assert doc["proposals"][0]["status"] == "rejected"
+    doc = service.review_proposal(path, identifier, expected_revision=doc["revision"])
+    assert doc["proposals"][0]["status"] == "rejected"
+    assert len(doc["proposals"][0]["review_history"]) == 2
+    assert len(doc["failures"]) == 1 and "규격 시험" in doc["failures"][0]["reason"]
+    provider.reply = "사용자 거절 이유를 유지합니다."
+    value = next(iter(doc["evidences"]))
+    doc = service.ask_discussion(path, "다른 방안을 검토하세요", evidence_id=value,
+                                 template_id="interpretation", expected_revision=doc["revision"])
+    assert "규격 시험 때문에" in provider.prompts[-1]
+    assert doc["proposals"][0]["status"] == "rejected"
+    assert all(item["status"] != "applied" for item in doc["proposals"])
+
+
+def test_review_detects_input_change_while_another_include_is_being_checked(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    path, doc, model, include, _ = reviewed_document(tmp_path, monkeypatch)
+    original_open = Path.open
+    @contextmanager
+    def changing_open(file, *args, **kwargs):
+        with original_open(file, *args, **kwargs) as stream:
+            yield stream
+        if file == include and args == ("rb",):
+            model.write_bytes(model.read_bytes() + b"** concurrent user change\n")
+    monkeypatch.setattr(Path, "open", changing_open)
+    doc = service.review_proposal(path, doc["proposals"][0]["id"], expected_revision=doc["revision"])
+    assert doc["proposals"][0]["status"] == "blocked"
+    assert str(model) in doc["proposals"][0]["review_reason"]
+
+
+@pytest.mark.parametrize("malformed", ["no_hash", "wrong_hash", "execution_target", "missing_manifest", "missing_origin",
+                                      "duplicate_include", "unknown_status", "unread_model"])
+def test_legacy_proposals_load_and_review_safely(tmp_path, monkeypatch, malformed):
+    path, doc, model, _, _ = reviewed_document(tmp_path, monkeypatch)
+    value = next(iter(doc["evidences"].values()))
+    proposal = doc["proposals"][0]
+    if malformed == "no_hash":
+        proposal.pop("target_sha256")  # valid P5 legacy: derive from immutable original capture
+    elif malformed == "wrong_hash":
+        proposal["target_sha256"] = "f" * 64
+    elif malformed == "execution_target":
+        # A P5 proposal might refer to a copied execution file. It is not an editable original.
+        proposal["target_file"] = str(tmp_path / "run" / "model.inp")
+        item = {**value["files"][0], "role": "execution_input", "source_path": proposal["target_file"]}
+        value["files"].append(item)
+    elif malformed == "missing_manifest":
+        value["input_manifest"] = {}
+    elif malformed == "missing_origin":
+        proposal.pop("request_id")
+    elif malformed == "duplicate_include":
+        value["files"].append(copy.deepcopy(value["files"][1]))
+    elif malformed == "unknown_status":
+        proposal["status"] = "applied"
+    else:
+        doc["turns"][0]["evidence_sources"] = ["result_summary"]
+    atomic_json(path, doc)
+    assert service.load_discussion(path)["proposals"] == doc["proposals"]
+    doc = service.review_proposal(path, proposal["id"], expected_revision=doc["revision"])
+    assert doc["proposals"][0]["status"] == ("manual_required" if malformed == "no_hash" else "blocked")
+    if malformed == "no_hash":
+        assert doc["proposals"][0]["target_sha256"] == hashlib.sha256(model.read_bytes()).hexdigest()
+
+
+def test_provider_cannot_propose_execution_snapshots_as_originals(tmp_path, monkeypatch):
+    path, doc, provider = prepared(tmp_path, monkeypatch)
+    value = evidence("B")
+    value["files"].append({**value["files"][0], "role": "execution_input", "source_path": "/run/model.inp"})
+    doc = service.attach_evidence(path, value, expected_revision=doc["revision"])
+    provider.reply = '```proposals\n[{"target_file":"/run/model.inp","location":"line 1","before":1,"after":2,"reason":"bad target"}]\n```'
+    doc = ask(path, doc, evidence_id="B", template_id="convergence")
+    assert doc["proposals"] == []
+
+
+def test_review_history_cannot_be_changed_by_general_save_and_revision_conflicts(tmp_path, monkeypatch):
+    path, doc, _, _, _ = reviewed_document(tmp_path, monkeypatch)
+    identifier = doc["proposals"][0]["id"]
+    old_revision = doc["revision"]
+    doc = service.review_proposal(path, identifier, expected_revision=old_revision)
+    original = path.read_bytes()
+    with pytest.raises(service.DiscussionConflict):
+        service.review_proposal(path, identifier, expected_revision=old_revision)
+    changed = copy.deepcopy(doc)
+    changed["proposals"][0]["review_history"][0]["reason"] = "fabricated applied status"
+    with pytest.raises(service.DiscussionConflict):
+        service.save_discussion(path, changed, expected_revision=doc["revision"])
+    with FileLock(str(path) + ".request.lock", timeout=0):
+        with pytest.raises(service.DiscussionBusy):
+            service.review_proposal(path, identifier, expected_revision=doc["revision"])
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "missing", "missing_original"])
+def test_discussion_issues_is_read_only_and_reports_assets_and_originals(tmp_path, monkeypatch, failure):
+    path, doc, model, _, provider = reviewed_document(tmp_path, monkeypatch)
+    value = next(iter(doc["evidences"].values()))
+    asset = path.parent / "assets" / value["files"][0]["stored_path"]
+    if failure == "corrupt":
+        asset.write_bytes(b"corrupted")
+    elif failure == "missing":
+        asset.unlink()
+    else:
+        model.unlink()
+    original = path.read_bytes()
+    original_doc = copy.deepcopy(doc)
+    calls = len(provider.prompts)
+    issues = service.discussion_issues(path, doc)
+    assert issues and (str(model) if failure == "missing_original" else value["files"][0]["stored_path"]) in "\n".join(issues)
+    assert service.discussion_issues(path) == issues
+    assert doc == original_doc and path.read_bytes() == original
+    assert len(provider.prompts) == calls

@@ -70,6 +70,8 @@ class NativeProject:
     connections: list[Connection] = field(default_factory=list)
     path: Path | None = None
     run_store: Path | None = None
+    run_store_expected: bool = False
+    issues: list[str] = field(default_factory=list, repr=False, compare=False)
 
     def add_node(self, kind: str, program_id: str, position=(0.0, 0.0)) -> ProgramNode:
         node = ProgramNode(uuid.uuid4().hex, kind, program_id, position=tuple(position))
@@ -156,6 +158,10 @@ class NativeProject:
                     node.state, node.reason = "stale", "입력 파일이 누락되었거나 개정이 변경되었습니다."
             elif node.state not in {"stale", "failed", "opened"}:
                 node.state, node.reason = "ready", ""
+        if self.run_store is not None:
+            from .native.run_store import RunStore
+            issues.extend(RunStore(self.run_store, expected=self.run_store_expected).integrity_issues())
+        self.issues = issues
         return issues
 
 
@@ -211,6 +217,9 @@ def load_native_project(path: str | Path) -> NativeProject:
         if not isinstance(stored, str) or not stored.strip():
             raise ValueError("run_store: 저장소 경로가 잘못되었습니다.")
         project.run_store = (path.parent / stored).resolve()
+        if type(data.get('run_store_expected', False)) is not bool:
+            raise ValueError('run_store_expected: bool 값이 필요합니다.')
+        project.run_store_expected = data.get('run_store_expected', False)
         for key, raw in data["nodes"].items():
             if not isinstance(raw, dict) or not key.strip() or raw.get("id") != key:
                 raise ValueError(f"nodes.{key}: 비어 있거나 일치하지 않는 노드 ID입니다.")
@@ -260,12 +269,16 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
     source_store = project.run_store or (project.path.with_suffix(".runs") if project.path else None)
     saving_as = project.path is not None and destination != project.path
     target_store = destination.with_suffix(".runs") if saving_as or source_store is None else source_store
+    if project.run_store_expected and (source_store is None or not source_store.is_dir()):
+        raise ValueError(f'기대 실행 저장소가 없습니다: {source_store}')
     if source_store and saving_as and (target_store == source_store or source_store in target_store.parents):
         raise ValueError("다른 이름 저장에는 기존 실행 저장소와 분리된 경로가 필요합니다.")
     if saving_as and target_store.exists():
         raise ValueError("다른 이름 저장의 실행 저장소가 이미 있습니다. 기존 기록을 보호하기 위해 다른 이름을 선택하세요.")
     data = {"schema_version": SCHEMA_VERSION, "name": project.name,
-            "run_store": os.path.relpath(target_store, destination.parent),
+            "run_store": (target_store.relative_to(destination.parent).as_posix()
+                          if target_store.is_relative_to(destination.parent) else str(target_store)),
+            "run_store_expected": True,
             "nodes": {key: asdict(node) for key, node in project.nodes.items()},
             "connections": [asdict(edge) for edge in project.connections]}
     rebased = []
@@ -278,14 +291,25 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
                     continue
                 ref["path"] = str(target_store / relative)
                 rebased.append((key, role, ref["path"]))
+    for node in data['nodes'].values():
+        for reference in node['files'].values():
+            absolute = Path(reference['path']).resolve()
+            reference['path'] = (absolute.relative_to(destination.parent).as_posix()
+                                 if absolute.is_relative_to(destination.parent) else str(absolute))
     encoded = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     copied = False
+    created_empty_store = False
     try:
         if saving_as and source_store and source_store.exists():
-            RunStore(source_store).copy_to(target_store)
+            RunStore(source_store, expected=project.run_store_expected).copy_to(target_store)
             copied = True
+        elif not target_store.exists():
+            target_store.mkdir(parents=True, exist_ok=False)
+            created_empty_store = True
+        elif not target_store.is_dir():
+            raise ValueError(f'실행 저장소가 폴더가 아닙니다: {target_store}')
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=destination.parent, prefix=destination.name + ".", suffix=".tmp", delete=False) as stream:
             temporary = Path(stream.name)
             stream.write(encoded)
@@ -295,12 +319,18 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
     except Exception:
         if copied:
             shutil.rmtree(target_store)
+        elif created_empty_store:
+            try:
+                target_store.rmdir()  # never delete files another writer created
+            except OSError:
+                pass
         raise
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     project.path = destination
     project.run_store = target_store
+    project.run_store_expected = True
     for key, role, new_path in rebased:
         project.nodes[key].files[role].path = new_path
     return destination

@@ -71,7 +71,11 @@ class Workbench:
         issues = project.refresh()
         for node in project.nodes.values():
             if node.program_id == "calculix" and project.path:
-                self.selected_native_run(project, node.id)
+                try:
+                    self.selected_native_run(project, node.id)
+                except (OSError, ValueError) as error:
+                    node.state, node.reason = 'failed', str(error)
+                    issues.append(str(error))
         return issues
 
     def _run_store(self, project: NativeProject) -> RunStore:
@@ -79,7 +83,9 @@ class Workbench:
             raise ValueError("계산 전에 프로젝트를 저장하세요.")
         root = (project.run_store or project.path.with_suffix(".runs")).resolve()
         if root not in self._run_stores:
-            self._run_stores[root] = RunStore(root)
+            self._run_stores[root] = RunStore(root, expected=project.run_store_expected)
+        else:
+            self._run_stores[root].expected = project.run_store_expected
         return self._run_stores[root]
 
     def submit_native(self, project: NativeProject, node_id: str, timeout=3600) -> NativeRun:
@@ -240,6 +246,14 @@ class Workbench:
     def ask_expert_discussion(self, path, question, **kwargs):
         from .assist.discussions import ask_discussion
         return ask_discussion(path, question, **kwargs)
+
+    def review_expert_proposal(self, path, proposal_id, **kwargs):
+        from .assist.discussions import review_proposal
+        return review_proposal(path, proposal_id, **kwargs)
+
+    def expert_discussion_issues(self, path, document=None):
+        from .assist.discussions import discussion_issues
+        return discussion_issues(path, document)
 
     def expert_evidence_run(self, project, node_id, run_id=None):
         if not run_id:
