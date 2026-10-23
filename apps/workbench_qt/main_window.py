@@ -308,6 +308,12 @@ class MainWindow(QMainWindow):
     def set_model(self, model: StructuralModel, folder: Path | None = None) -> None:
         self.model = model
         self.project_folder = folder
+        self._last_result = None
+        self._issue_target = None
+        self.btn_goto.setEnabled(False)
+        self.legend_label.clear()
+        self.statusBar().clearMessage()
+        self.log.clear()
         self._path_items.clear()
         self._group_items.clear()
         self.tree.clear()
@@ -505,6 +511,13 @@ class MainWindow(QMainWindow):
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
             return
+        self._last_result = None
+        self.results_item.takeChildren()
+        self._path_items.pop("result", None)
+        self.legend_label.clear()
+        self.viewport.show_model(self.model)
+        self._set_flow(2)
+        self.statusBar().clearMessage()
         workdir = Path(tempfile.mkdtemp(prefix="caelab-run-"))
         job = self.workbench.run(self.model, "calculix", workdir)
         if job.result is None:

@@ -137,6 +137,8 @@ class Viewport(QWidget):
 
     # -- content -------------------------------------------------------------
     def show_model(self, model: StructuralModel) -> None:
+        self._last_model, self._last_result = None, None
+        self._base_scale = None
         if not self.available:
             return
         self._grid, self._node_ids = build_grid(model)
