@@ -485,6 +485,9 @@ U,RF
     run = wait_run(wb, project, submitted.id, timeout=35)
     assert run.state == "completed", run.error
     assert run.returncode == 0 and run.input_revision == file_revision(source)
+    assert run.parse_state == "readable", run.error or run.result
+    assert run.result["frames"] and run.result["exchange_files"]
+    assert all((run.workdir / relative).is_file() for relative in run.result["exchange_files"])
     assert (run.workdir / "model.dat").read_bytes() == (source.parent / "direct.dat").read_bytes()
     assert (run.workdir / "model.frd").is_file()
     assert b"CalculiX Version" in Path(run.log_path).read_bytes()
