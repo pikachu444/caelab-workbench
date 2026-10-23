@@ -16,9 +16,9 @@ from caelab.workbench import Workbench
 def app():
     return QApplication.instance() or QApplication([])
 
-def test_empty_project_and_expert_never_start_analysis_solver_or_llm(app, monkeypatch):
+def test_empty_project_and_expert_never_start_analysis_solver_or_llm(app, monkeypatch, tmp_path):
     def forbidden(*args, **kwargs):
-        pytest.fail("Opening a project or the unimplemented expert must not run another program")
+        pytest.fail("Opening a project or expert must not run analysis, solver or LLM")
     workbench = Workbench()
     monkeypatch.setattr(workbench, "run", forbidden)
     monkeypatch.setattr(subprocess, "Popen", forbidden)
@@ -28,16 +28,26 @@ def test_empty_project_and_expert_never_start_analysis_solver_or_llm(app, monkey
     window = ProjectWindow(workbench)
     assert window.boxes == {}
     box = window.add_box("expert")
+    assert window.save_project(tmp_path / "연구.json")
+    launches = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs:
+                        launches.append((command, kwargs)) or SimpleNamespace(pid=732))
     windows = set(app.topLevelWidgets())
     event = SimpleNamespace(scenePos=lambda: box.pos() + QPointF(20, 20))
     window._scene_double_click(event)
     assert set(app.topLevelWidgets()) == windows
-    assert box.state == "unavailable"
-    assert "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다" in window.status.text()
+    assert len(launches) == 1
+    command, options = launches[0]
+    assert command[:3] == [sys.executable, "-m", "apps.workbench_qt.expert_window"]
+    assert command[command.index("--node") + 1] == box.node_id
+    assert "--discussion" in command and "--project" in command
+    assert "cwd" in options and "env" in options
+    assert box.state != "done"
+    assert "열기 요청" in window.status.text()
     assert not hasattr(window, "_workspace")
     window.run_chain()
     assert "CalculiX 상자를 하나 선택" in window.status.text()
-    assert box.state == "unavailable"
+    assert len(launches) == 1
     window._dirty = False
     window.close()
 
@@ -65,11 +75,12 @@ def test_analysis_opens_independent_process_with_project_and_node(app, monkeypat
     assert "열기 요청" in window.status.text()
     window.close()
 
-def test_unsaved_analysis_open_can_be_cancelled(app, monkeypatch):
+@pytest.mark.parametrize("kind", ["analysis", "expert"])
+def test_unsaved_independent_window_open_can_be_cancelled(app, monkeypatch, kind):
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.Cancel)
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: pytest.fail("cancelled open launched"))
     window = ProjectWindow()
-    box = window.add_box("analysis")
+    box = window.add_box(kind)
     project = window.project
     window.open_box(box)
     assert window.project is project
