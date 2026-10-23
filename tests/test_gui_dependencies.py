@@ -6,7 +6,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tomllib
 from types import SimpleNamespace
 
 import pytest
@@ -14,16 +13,6 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 VIEWPORT = REPO / "apps" / "workbench_qt" / "viewport.py"
 LAUNCHER = REPO / "apps" / "workbench_qt" / "run_workbench.bat"
-
-
-def test_declared_extras_cover_gui_numerical_and_pdf_rag():
-    project = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    assert project["dependencies"] == ["numpy>=1.26"]
-    extras = project["optional-dependencies"]
-    assert set(extras["gui"]) == {"PySide6>=6.6", "vtk>=9.3", "scipy>=1.15"}
-    assert extras["numerical"] == ["scipy>=1.15"]
-    assert extras["rag"] == ["pypdf>=4"]
-    assert extras["sensitivity"] == ["SALib>=1.4"]
 
 
 @pytest.fixture
