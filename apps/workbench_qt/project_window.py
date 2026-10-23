@@ -50,7 +50,7 @@ SYSTEM_KINDS = [
     ("mesh", "메시", "메시 보기"),
     ("analysis", "CalculiX", "네이티브 계산"),
     ("results", "결과", "ParaView에서 열기"),
-    ("expert", "전문가 논의", "독립 프로그램 연결"),
+    ("expert", "전문가 논의", "별도 대화창에서 열기"),
 ]
 STATE_COLORS = {
     "unavailable": "#c9ced4",
@@ -520,7 +520,7 @@ class ProjectWindow(QMainWindow):
                       f"발견 경로: {program.source}", f"설명: {program.reason}",
                       f"추가 환경 변수: {', '.join(program.runtime_env) or '없음'}"]
         else:
-            lines += ["", "독립 전문가 프로그램 연결은 아직 구현되지 않았습니다."
+            lines += ["", "독립 전문가 창에서 자료를 불러오고 저장된 대화를 이어갑니다."
                       if node.kind == "expert" else f"{node.program_id} 프로그램을 찾지 못했습니다."]
         if node.kind == "analysis" and self.project.path is not None:
             from .native_analysis import _PARSE_LABELS, _RUN_LABELS
@@ -675,7 +675,7 @@ class ProjectWindow(QMainWindow):
             node = self.project.nodes[node_id]
             program = statuses.get(node.program_id)
             box.subtitle = (f"{program.spec.name} — {'설치됨' if program.available else '미설치'}"
-                            if program else "독립 프로그램 연결 미구현")
+                            if program else "별도 대화창에서 열기" if node.kind == "expert" else "독립 프로그램 연결 미구현")
             self._reflect_node(node_id)
         self._poll_runs()
 
@@ -686,7 +686,7 @@ class ProjectWindow(QMainWindow):
         identifying_file = reference or node.files.get("output")
         box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
         box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
-        box.set_state("unavailable" if node.kind == "expert" else node.state, node.reason)
+        box.set_state(node.state, node.reason)
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
                        f"{self._display_reason(node.reason)}")
 
@@ -736,19 +736,21 @@ class ProjectWindow(QMainWindow):
             self.open_box(selected[0])
 
     def open_box(self, box: SystemBox) -> None:
-        if box.kind == "expert":
-            box.set_state("unavailable")
-            self._message("독립 전문가 프로그램 연결은 아직 구현되지 않았습니다.")
-            return
-        if box.kind == "analysis" and (self._dirty or self.project.path is None):
+        if box.kind in {"analysis", "expert"} and (self._dirty or self.project.path is None):
             answer = QMessageBox.question(
-                self, "별도 해석창 열기", "프로젝트를 저장한 뒤 별도 해석창을 엽니다.",
+                self, "별도 프로그램 열기", "프로젝트를 저장한 뒤 별도 프로그램을 엽니다.",
                 QMessageBox.Save | QMessageBox.Cancel, QMessageBox.Save)
             if answer != QMessageBox.Save or not self.save_project():
                 return
         try:
-            launch = (self.workbench.open_native_analysis(self.project, box.node_id)
-                      if box.kind == "analysis" else self.workbench.open_program(self.project, box.node_id))
+            if box.kind == "analysis":
+                launch = self.workbench.open_native_analysis(self.project, box.node_id)
+            elif box.kind == "expert":
+                launch = self.workbench.open_native_expert(self.project, box.node_id)
+            elif box.kind == "results" and self.workbench.resolve_evidence_run(self.project, box.node_id):
+                launch = self.workbench.open_native_results(self.project, box.node_id)
+            else:
+                launch = self.workbench.open_program(self.project, box.node_id)
         except Exception as error:
             self._mark_dirty()
             self._reflect_programs()
