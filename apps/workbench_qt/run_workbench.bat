@@ -22,6 +22,13 @@ echo Synchronizing Workbench packages...
 .venv\Scripts\python.exe -m pip install -e ".[gui,rag]"
 if errorlevel 1 goto :fail
 
+echo Checking installed package consistency...
+.venv\Scripts\python.exe -m pip check
+if errorlevel 1 (
+    echo Installed packages are inconsistent. Repair or recreate the Workbench environment before starting.
+    goto :fail
+)
+
 .venv\Scripts\python.exe -m apps.workbench_qt
 if errorlevel 1 goto :fail
 exit /b 0

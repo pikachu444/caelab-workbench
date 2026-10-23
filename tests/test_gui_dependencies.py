@@ -108,7 +108,11 @@ def prepare_launcher_project(tmp_path, existing_venv):
     (tmp_path / "pip.py").write_text(
         "import json, os, sys\nfrom pathlib import Path\n"
         "with Path('pip-calls').open('a') as log: log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "raise SystemExit(int(os.environ.get('TEST_PIP_EXIT', '0')))\n"
+        "checking = sys.argv[1:] == ['check']\n"
+        "exit_code = int(os.environ.get('TEST_PIP_CHECK_EXIT' if checking else 'TEST_PIP_EXIT', '0'))\n"
+        "if checking and exit_code:\n"
+        "    print('PySide6-WebEngine 6.12.0 requires PySide6==6.12.0, but PySide6 6.11.0 is installed.', file=sys.stderr)\n"
+        "raise SystemExit(exit_code)\n"
     )
     launcher = app / "run_workbench.bat"
     shutil.copyfile(LAUNCHER, launcher)
@@ -128,15 +132,22 @@ def test_launcher_syncs_declared_extras_on_every_run(tmp_path, existing_venv):
         assert process.returncode == 0, process.stdout + process.stderr
     assert (tmp_path / "app-called").exists()
     calls = [json.loads(line) for line in (tmp_path / "pip-calls").read_text().splitlines()]
-    assert calls == [["install", "-e", ".[gui,rag]"]] * 2
+    assert calls == [["install", "-e", ".[gui,rag]"], ["check"]] * 2
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Exercises the Windows batch launcher with cmd.exe")
-@pytest.mark.parametrize("failure", ["PIP", "APP"])
+@pytest.mark.parametrize("failure", ["PIP", "PIP_CHECK", "APP"])
 def test_launcher_stops_and_returns_failure(tmp_path, failure):
+    import json
     launcher = prepare_launcher_project(tmp_path, existing_venv=True)
     environment = dict(os.environ, **{f"TEST_{failure}_EXIT": "7"})
     process = subprocess.run(["cmd.exe", "/d", "/c", str(launcher)], cwd=tmp_path, env=environment,
                              input="\n", text=True, capture_output=True, timeout=90)
     assert process.returncode == 1, process.stdout + process.stderr
     assert (tmp_path / "app-called").exists() is (failure == "APP")
+    calls = [json.loads(line) for line in (tmp_path / "pip-calls").read_text().splitlines()]
+    assert calls == [["install", "-e", ".[gui,rag]"]] + ([] if failure == "PIP" else [["check"]])
+    if failure == "PIP_CHECK":
+        assert "PySide6-WebEngine 6.12.0 requires PySide6==6.12.0" in process.stderr
+        assert "PySide6 6.11.0 is installed" in process.stderr
+        assert "Repair or recreate the Workbench environment" in process.stdout
