@@ -1,5 +1,7 @@
 # 병합 요청 — 전문가 토론 패널 (004 → 통합 채팅)
 
+> **과거 인계 기록:** 아래 내용은 당시 작업 환경의 요청·보고를 보존한 것이다. 채팅 번호·개인 경로·반영/완료 표현을 현재 작업 지시나 원격 main 상태로 사용하지 않는다. 현재 운영은 [루트 AGENTS](../../AGENTS.md), 구현 상태는 [CURRENT_STATE](../../CURRENT_STATE.md)를 따른다.
+
 소유 범위 안에서 끝낸 것: 토론 모듈 `caelab/assist/`(experts·knowledge),
 패널 `apps/workbench_qt/expert_panel.py`, 테스트
 `tests/test_assist_experts.py`·`tests/test_assist_knowledge.py`·

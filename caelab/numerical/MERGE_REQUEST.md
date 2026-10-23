@@ -1,5 +1,7 @@
 # 병합 요청 — 수치 엔진·최적화 (통합 채팅 담당자께)
 
+> **과거 인계 기록:** 아래 내용은 당시 작업 환경의 요청·보고를 보존한 것이다. 채팅 번호·개인 경로·반영/완료 표현을 현재 작업 지시나 원격 main 상태로 사용하지 않는다. 현재 운영은 [루트 AGENTS](../../AGENTS.md), 구현 상태는 [CURRENT_STATE](../../CURRENT_STATE.md)를 따른다.
+
 이 채팅(002 수치 엔진·최적화)의 소관 파일만 추가했습니다:
 `caelab/numerical/`(신규 패키지: `core·variables·fit·analysis·uq·
 sensitivity·events·model_binding`), 테스트 3개
