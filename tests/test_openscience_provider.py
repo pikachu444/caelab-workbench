@@ -51,10 +51,11 @@ class NativeProcess:
     def communicate(self, *, input=None, timeout=None):
         self.input = input or self.input
         self.entered.set()
-        if self.blocked:
+        if self.blocked and self.returncode is None:
             time.sleep(.002)
             raise subprocess.TimeoutExpired("owned fake", timeout)
-        self.returncode = 0
+        if self.returncode is None:
+            self.returncode = 0
         return self.output, "private account diagnostic must not escape"
 
     def poll(self):
@@ -85,13 +86,14 @@ def test_subscription_prompt_only_preserves_profile_and_only_returns_completed_f
         assert not any(config["harness"].values())
         assert kwargs["env"]["OPENSCIENCE_DATA_DIR"] == str(profile / "data")
         assert kwargs["cwd"] == profile
+        assert kwargs["stdin"].read() == "민감 질문".encode("utf-8")
         return child
     monkeypatch.setattr(transport.subprocess, "Popen", launch)
     provider = OpenScienceProvider()
     assert provider.availability()[0]
     assert "질문 시" in provider.availability()[1] and calls == []
     assert provider.discuss("민감 질문") == "실제 공급자 대신 모의 응답"
-    assert child.input == "민감 질문" and len(calls) == 1
+    assert child.input is None and len(calls) == 1
     assert (profile / "config/openscience.json").read_bytes() == original
     assert list((profile / "temp").iterdir()) == []
 
@@ -117,6 +119,23 @@ def test_cancel_before_start_never_launches(configured, monkeypatch):
     monkeypatch.setattr(transport.subprocess, "Popen", lambda *a, **k: pytest.fail("cancelled before start"))
     with pytest.raises(RuntimeError, match="중단"):
         provider.discuss("question")
+
+
+def test_cancel_while_preparing_long_input_never_launches_and_removes_file(configured, monkeypatch):
+    profile, _ = configured
+    provider = OpenScienceProvider()
+    original = provider.transport._checkpoint
+    checks = []
+    def checkpoint(deadline):
+        checks.append(None)
+        if len(checks) == 3:  # First input chunk written; next chunk not yet written.
+            provider.cancel()
+        original(deadline)
+    monkeypatch.setattr(provider.transport, "_checkpoint", checkpoint)
+    monkeypatch.setattr(transport.subprocess, "Popen", lambda *a, **k: pytest.fail("input cancelled"))
+    with pytest.raises(RuntimeError, match="중단"):
+        provider.discuss("x" * (1024 * 1024))
+    assert list((profile / "temp").iterdir()) == []
 
 
 @pytest.mark.parametrize("stop", ["cancel", "timeout"])
@@ -179,3 +198,63 @@ def test_windows_stop_terminates_only_this_native_child_tree():
     finally:
         if process.poll() is None:
             transport.SubscriptionTransport()._stop(process)
+
+
+def test_real_child_receives_complete_utf8_file_stdin_and_eof(configured, monkeypatch):
+    _, binary = configured
+    actual_popen = subprocess.Popen
+    code = ("import sys,json,hashlib;data=sys.stdin.buffer.read();"
+            "print(json.dumps({'type':'text','part':{'text':hashlib.sha256(data).hexdigest()}}));"
+            "print(json.dumps({'type':'done','status':'completed'}))")
+    def launch(command, **kwargs):
+        assert command[0] == str(binary)
+        return actual_popen([sys.executable, "-c", code], **kwargs)
+    monkeypatch.setattr(transport.subprocess, "Popen", launch)
+    prompt = "긴 근거\r\n다음 줄\n" * 20000
+    assert OpenScienceProvider().discuss(prompt) == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows communicate pipe-write cancellation regression")
+@pytest.mark.parametrize("stop", ["cancel", "timeout"])
+def test_large_prompt_stops_real_windows_child_that_never_reads_stdin(configured, monkeypatch, stop):
+    profile, binary = configured
+    actual_popen = subprocess.Popen
+    children, input_paths = [], []
+    created = threading.Event()
+    def launch(command, **kwargs):
+        if command[0] == str(binary):
+            input_paths.append(Path(kwargs["stdin"].name))
+            command = [sys.executable, "-c", "import time;time.sleep(30)"]
+            child = actual_popen(command, **kwargs)
+            children.append(child)
+            created.set()
+            return child
+        return actual_popen(command, **kwargs)  # Owned taskkill only.
+    monkeypatch.setattr(transport.subprocess, "Popen", launch)
+    provider = OpenScienceProvider()
+    provider.transport.timeout_seconds = .2 if stop == "timeout" else 3
+    errors = []
+    def invoke():
+        try:
+            provider.discuss("x" * (8 * 1024 * 1024))
+        except Exception as error:
+            errors.append(error)
+    worker = threading.Thread(target=invoke)
+    began = time.monotonic()
+    worker.start()
+    try:
+        assert created.wait(2)
+        if stop == "cancel":
+            provider.cancel()
+        worker.join(2)
+        assert not worker.is_alive(), "Long stdin must not block the deadline/cancel poll"
+        assert len(errors) == 1 and isinstance(errors[0], TimeoutError if stop == "timeout" else RuntimeError)
+        assert children[0].poll() is not None
+        assert not children[0].stdout_thread.is_alive() and not children[0].stderr_thread.is_alive()
+        assert all(not p.exists() for p in input_paths)
+        assert list((profile / "temp").iterdir()) == []
+        assert time.monotonic() - began < 2.5
+    finally:
+        if children and children[0].poll() is None:
+            provider.transport._stop(children[0])
+        worker.join(3)

@@ -92,14 +92,14 @@ class SubscriptionTransport:
             raise TimeoutError("OpenScience 요청 제한 시간이 지났습니다.")
 
     def _stop(self, process):
-        if process.poll() is not None:
-            return
         # This Popen retains the Windows process handle, so its PID cannot be
         # reused while terminating only this invocation's native child tree.
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                       capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if process.poll() is None:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         try:
             process.wait(timeout=5)
+            process.communicate(timeout=2)  # Join Windows stdout/stderr readers.
         except subprocess.TimeoutExpired as error:
             raise RuntimeError("OpenScience 소유 프로세스 정리를 확인하지 못했습니다.") from error
 
@@ -130,19 +130,27 @@ class SubscriptionTransport:
             command = [str(binary), "run", "--format", "json", "--workspace", "isolated", "--delegation", "off",
                        "--deny-prompts", "--model", self.model, "--variant", "low",
                        "--deadline", str(max(1, int(deadline - time.monotonic()))), "--"]
+            # Windows communicate(input=...) writes to a pipe synchronously,
+            # before its timeout polling. A child that never reads would block
+            # cancellation. File stdin needs no input worker or pipe write.
+            prompt_path = Path(temporary) / "prompt.txt"
+            with prompt_path.open("wb") as stream:
+                for offset in range(0, len(prompt), 65536):
+                    self._checkpoint(deadline)
+                    stream.write(prompt[offset:offset + 65536].encode("utf-8"))
             self._checkpoint(deadline)
-            process = subprocess.Popen(command, cwd=self.profile, env=env, stdin=subprocess.PIPE,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            with prompt_path.open("rb") as standard_input:
+                process = subprocess.Popen(command, cwd=self.profile, env=env, stdin=standard_input,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             try:
-                first = True
                 while True:
                     self._checkpoint(deadline)
                     try:
-                        stdout, _stderr = process.communicate(input=prompt if first else None, timeout=.05)
+                        stdout, _stderr = process.communicate(timeout=.05)
                         break
                     except subprocess.TimeoutExpired:
-                        first = False
+                        pass
                 self._checkpoint(deadline)
                 events = []
                 for line in stdout.splitlines():
