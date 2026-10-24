@@ -160,11 +160,8 @@ class NativeAnalysisWindow(QMainWindow):
         self.timer.timeout.connect(self.refresh_runs)
         self.timer.start()
 
-    def refresh_input(self) -> None:
-        self.workbench.refresh_native_project(self.project)
+    def _render_input_status(self) -> None:
         node = self.project.nodes[self.node_id]
-        reference = self.workbench.input_file(self.project, self.node_id)
-        program = next((p for p in self.workbench.programs() if p.spec.id == node.program_id), None)
         state = _STATE_LABELS.get(node.state, node.state)
         reason = node.reason
         for node_id, owner in self.project.nodes.items():
@@ -174,6 +171,13 @@ class NativeAnalysisWindow(QMainWindow):
             reason = reason.replace(f": {source_state} —", f": {_STATE_LABELS[source_state]} —")
         reason = reason.replace(".files.input", " 입력 파일").replace(".files.output", " 출력 파일")
         self.status.setText(f"입력 상태: {state}" + (f" — {reason}" if reason else ""))
+
+    def refresh_input(self) -> None:
+        self.workbench.refresh_native_project(self.project)
+        node = self.project.nodes[self.node_id]
+        reference = self.workbench.input_file(self.project, self.node_id)
+        program = next((p for p in self.workbench.programs() if p.spec.id == node.program_id), None)
+        self._render_input_status()
         lines = [f"프로젝트: {self.project.path}"]
         self.source.clear()
         if reference is None:
@@ -277,6 +281,7 @@ class NativeAnalysisWindow(QMainWindow):
                 self.run_selector.setItemText(index, label)
         self.run_selector.setCurrentIndex(self.run_selector.findData(selected_id))
         self.run_selector.blockSignals(False)
+        self._render_input_status()
         self._update_actions()
         if selected is None:
             self.run_status.setText("아직 선택한 실행이 없습니다.")

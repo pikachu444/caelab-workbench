@@ -243,3 +243,60 @@ def test_parent_updates_connected_result_when_other_window_selects_failed_run(ap
     finally:
         window._dirty = False
         window.close()
+
+
+@pytest.mark.parametrize("current_state", ["completed", "failed", "cancelled"])
+def test_input_status_follows_polled_and_selected_run_without_reading_deck(
+        app, tmp_path, monkeypatch, current_state):
+    from caelab.native.run_store import NativeRun, RunStore
+    from caelab.project import file_revision
+
+    wb = Workbench()
+    project = wb.new_native_project("입력 B와 저장 실행 A/B")
+    node = wb.add_program_node(project, "analysis", "calculix")
+    deck = tmp_path / "B.inp"
+    deck.write_text("*HEADING\ncurrent B\n", encoding="utf-8")
+    wb.set_node_file(project, node.id, deck, units={"length": "mm"})
+    wb.save_native_project(project, tmp_path / "project.json")
+    store = RunStore(project.run_store)
+    old = NativeRun("a" * 32, node.id, store.root / ("a" * 32),
+                    state="completed", parse_state="readable",
+                    input_path=str(tmp_path / "A.inp"), units={"length": "mm"},
+                    unit_source="user")
+    current = NativeRun("b" * 32, node.id, store.root / ("b" * 32),
+                        state=current_state, parse_state="readable" if current_state == "completed" else "failed",
+                        input_path=str(deck), input_revision=file_revision(deck),
+                        units={"length": "mm"}, unit_source="user",
+                        error="" if current_state == "completed" else "current run stopped")
+    store.write(old)
+    store.write(current)
+    store.select(node.id, old.id)
+    window = NativeAnalysisWindow(project.path, node.id, wb)
+    try:
+        assert "입력 상태: 오래됨" in window.status.text()
+        preview = window.source.toPlainText()
+        original_open = Path.open
+        def forbid_deck_read(path, *args, **kwargs):
+            if path == deck:
+                pytest.fail("Run polling/selection must not reread the input preview")
+            return original_open(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "open", forbid_deck_read)
+
+        # A completed/failed receipt can replace the previously viewed A on disk.
+        store.select(node.id, current.id)
+        window.refresh_runs()
+        expected = "입력 준비" if current_state == "completed" else "실패"
+        assert window.project.nodes[node.id].state == ("ready" if current_state == "completed" else "failed")
+        assert f"입력 상태: {expected}" in window.status.text()
+        if current_state != "completed":
+            assert "current run stopped" in window.status.text()
+
+        window.run_selector.setCurrentIndex(window.run_selector.findData(old.id))
+        assert "입력 상태: 오래됨" in window.status.text()
+        assert "현재 선택 입력" in window.status.text()
+        window.run_selector.setCurrentIndex(window.run_selector.findData(current.id))
+        assert f"입력 상태: {expected}" in window.status.text()
+        assert window.source.toPlainText() == preview
+        assert not window._owned_run_ids
+    finally:
+        window.close()
