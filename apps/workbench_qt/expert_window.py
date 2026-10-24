@@ -51,6 +51,8 @@ class ExpertWindow(QMainWindow):
             QPlainTextEdit#composer { background: white; border: 1px solid #b9c2cb;
                 border-radius: 10px; padding: 10px; font-size: 15px; }
             QLabel#basis { color: #526476; font-size: 12px; }
+            QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
+                background: #e1e6eb; border-color: #d5dce3; color: #5d6b78; }
             QPushButton:focus, QComboBox:focus { border: 2px solid #1668b4; }
         """)
         self._edit_actions = []

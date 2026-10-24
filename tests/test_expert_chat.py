@@ -133,3 +133,14 @@ def test_malformed_proposal_status_does_not_crash_or_claim_approval(app):
                 reason='값을 확인하세요.', status=[])
     assert '미확인' in proposal_brief(item)
     assert '미확인' in proposal_text(item)
+
+
+def test_mathematical_minus_in_actual_engineering_values_is_preserved(app):
+    original = 'SXX: −471.078 MPa\n\nEXX: −0.00198642'
+    body, malformed = markdown_body(original)
+    browser = ChatBrowser()
+    browser.setHtml(body)
+    assert not malformed
+    assert '−471.078' in browser.toPlainText()
+    assert '−0.00198642' in browser.toPlainText()
+    assert browser.toPlainText().count('−') == 2

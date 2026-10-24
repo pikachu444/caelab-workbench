@@ -544,3 +544,25 @@ def test_attachment_preview_names_original_retained_input_and_omits_derived_file
     assert '원본 입력:' in text and '보존 실행 입력: model.inp' in text
     assert 'frame-000001.vtu' not in text and 'a'*32 not in text
     assert '다음 질문' in ui.role.toolTip() and '이전 답변' in ui.role.toolTip()
+
+
+def test_send_button_visibly_distinguishes_enabled_waiting_and_unconfigured(window, app, tmp_path):
+    ui, provider = window
+    attach(ui, tmp_path, '** input')
+    ui.show(); app.processEvents()
+    def background():
+        button = ui.ask_button
+        return button.grab().toImage().pixelColor(button.width() - 8, button.height() // 2)
+    assert ui.ask_button.isEnabled()
+    enabled = background()
+    ui._set_busy(True)
+    app.processEvents()
+    assert not ui.ask_button.isEnabled()
+    waiting = background()
+    assert waiting != enabled and waiting.lightness() > enabled.lightness() + 40
+    ui._set_busy(False)
+    ui._provider_available = False
+    ui._set_busy(False)
+    app.processEvents()
+    assert not ui.ask_button.isEnabled()
+    assert background() == waiting
