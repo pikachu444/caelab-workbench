@@ -103,6 +103,57 @@ def test_program_missing_and_input_ready_are_shown_separately(window, tmp_path, 
     assert "설정 경로에 실행 파일이 없습니다" in window.properties.toPlainText()
 
 
+def test_parent_summary_separates_current_cad_from_stale_deck_and_keeps_details(window, tmp_path, app):
+    box = window.add_box("geometry")
+    cad = _file(tmp_path, "B 작업 사본.FCStd")
+    deck = _file(tmp_path, "A 작성 입력.inp")
+    window.register_file(box.node_id, cad, units={"length": "mm"})
+    window.register_file(box.node_id, deck, "output", {"force": "N"})
+    window.project.nodes[box.node_id].files["output"].stale = True
+    _select(window, box)
+    window._selection_changed()
+    window.show()
+    app.processEvents()
+    assert "B 작업 사본.FCStd" in window.input_summary.text()
+    assert "준비됨" in window.input_summary.text()
+    assert "길이: mm" in window.input_summary.text()
+    assert "A 작성 입력.inp" in window.output_summary.text()
+    assert "오래됨" in window.output_summary.text()
+    assert "힘: N" in window.output_summary.text()
+    assert "출력 파일" in window.next_action.text()
+    assert str(tmp_path) not in window.input_summary.text() + window.output_summary.text()
+    assert not window.properties.isVisible()
+    window.details_toggle.click()
+    app.processEvents()
+    assert window.properties.isVisible()
+    assert str(cad) in window.properties.toPlainText() and str(deck) in window.properties.toPlainText()
+    window.details_toggle.click()
+    assert not window.properties.isVisible()
+    cad.write_text("changed CAD")
+    window.refresh_files()
+    assert "원본 변경됨" in window.input_summary.text()
+    cad.unlink()
+    window.refresh_files()
+    assert "파일 누락" in window.input_summary.text()
+    assert "누락" in window.next_action.text()
+
+
+def test_parent_task_history_is_collapsed_without_hiding_current_failure(window, app):
+    window.show()
+    app.processEvents()
+    window._message("첫 작업")
+    window._message("파일을 읽지 못했습니다: 누락된 입력입니다")
+    assert "누락된 입력" in window.status.text()
+    assert not window.log.isVisible()
+    window.history_toggle.click()
+    app.processEvents()
+    assert window.log.isVisible()
+    assert "첫 작업" in window.log.toPlainText()
+    assert "누락된 입력" in window.log.toPlainText()
+    window.history_toggle.click()
+    assert not window.log.isVisible()
+
+
 def test_fcstd_to_authored_inp_to_calculix_survives_save_and_save_as(window, tmp_path):
     geometry, other = window.add_box("geometry"), window.add_box("geometry")
     analysis = window.add_box("analysis")
