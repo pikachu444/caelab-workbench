@@ -144,3 +144,12 @@ def test_mathematical_minus_in_actual_engineering_values_is_preserved(app):
     assert '−471.078' in browser.toPlainText()
     assert '−0.00198642' in browser.toPlainText()
     assert browser.toPlainText().count('−') == 2
+
+
+@pytest.mark.parametrize('bad', [dict(target_file=None, location='force', before=0, after=None, reason='확인'),
+                               dict(target_file='a.inp', location='', before=0, after=None, reason='확인'),
+                               dict(target_file='a.inp', location='force', before=float('nan'), after=None, reason='확인')])
+def test_proposal_fields_follow_core_type_and_finite_value_requirements(app, bad):
+    import json
+    body, malformed = markdown_body('답변\n```proposals\n' + json.dumps([bad]) + '\n```')
+    assert malformed and 'target_file' not in body

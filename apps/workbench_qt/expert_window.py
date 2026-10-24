@@ -4,13 +4,15 @@ from __future__ import annotations
 import argparse
 import copy
 import html
+import hashlib
+import os
 import queue
 import sys
 import threading
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings, QPoint
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
@@ -29,9 +31,11 @@ def _evidence_name(evidence):
 
 class ExpertWindow(QMainWindow):
     def __init__(self, discussion_path=None, *, project_path=None, node_id=None,
-                 run_id=None, workbench=None):
+                 run_id=None, workbench=None, view_settings=None):
         super().__init__()
         self.workbench = workbench or Workbench()
+        self.view_settings = view_settings if view_settings is not None else QSettings(QSettings.defaultFormat(), QSettings.UserScope, 'CAELAB', 'ExpertChat')
+        self._pending_view = None
         self.path = None
         self.document = {}
         self.project_path, self.node_id, self.run_id = project_path, node_id, run_id
@@ -226,6 +230,7 @@ class ExpertWindow(QMainWindow):
         self.proposals_dialog.show()
 
     def _load(self, path, *, create=False):
+        self._save_view_state()
         document = self.workbench.open_expert_discussion(path, create=create)
         self.path, self.document = Path(path).resolve(), document
         self._pending_message = None
@@ -238,6 +243,7 @@ class ExpertWindow(QMainWindow):
                                    if any('제안' in problem for problem in problems) else
                                    '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.') if problems else '')
         self.asset_warning.setVisible(bool(problems))
+        self._read_view_state()
 
     def _ensure_document(self):
         if self.path:
@@ -254,7 +260,8 @@ class ExpertWindow(QMainWindow):
         try:
             path = Path(name)
             if path.exists():
-                raise ValueError('이미 있는 대화는 열기를 사용하세요. 새 대화로 덮어쓰지 않습니다.')
+                self._notice('이미 있는 대화는 열기를 사용하세요. 새 대화로 덮어쓰지 않습니다.')
+                return
             self._load(path, create=True)
         except Exception as error:
             self._error(error)
@@ -290,6 +297,7 @@ class ExpertWindow(QMainWindow):
             candidate['draft_question'] = self.question.toPlainText()
             self.document = self.workbench.save_expert_discussion(
                 self.path, candidate, expected_revision=self.document['revision'])
+            self._save_view_state()
             self.statusBar().showMessage('대화를 저장했습니다.', 3000)
             return True
         except Exception as error:
@@ -298,6 +306,7 @@ class ExpertWindow(QMainWindow):
 
     def render(self):
         bar = self.transcript.verticalScrollBar()
+        self.transcript.restored_anchor = None
         old_position, follow = bar.value(), bar.maximum() - bar.value() <= 32
         self.transcript.follow_tail = follow
         preview = self.sources.currentItem()
@@ -338,7 +347,9 @@ class ExpertWindow(QMainWindow):
             fragments += [f"<p style='color:#526476; margin-top:26px'>나 · {html.escape(source_label)}</p>",
                           f"<table width='100%' bgcolor='#edf2f5' cellpadding='14'><tr><td>{question}</td></tr></table>",
                           f"<p style='color:#24557b; margin-top:22px'><b>{html.escape(human_text(turn.get('role') or '전문가'))}</b></p>"]
-            reply, malformed = markdown_body(turn.get('reply') or '')
+            proposals = [p for p in self.document.get('proposals', []) if isinstance(p, dict) and
+                         p.get('request_id') == turn.get('id') and turn.get('id')]
+            reply, malformed = markdown_body(turn.get('reply') or '', accepted_proposals=proposals)
             fragments.append(reply)
             status = labels.get(turn.get('status'), '응답 상태를 확인할 수 없습니다.')
             if status:
@@ -394,7 +405,7 @@ class ExpertWindow(QMainWindow):
             if not accepted:
                 return
             if not reason.strip():
-                self._error('제안을 거절하는 이유를 입력하세요.')
+                self._notice('제안을 거절하는 이유를 입력하세요.')
                 return
         if not self.save_document():
             return
@@ -513,7 +524,8 @@ class ExpertWindow(QMainWindow):
         layout.addWidget(QLabel('실패 이유 추가'))
         layout.addWidget(failures)
         history = QPlainTextEdit('\n'.join(
-            str(item.get('reason', item)) if isinstance(item, dict) else str(item)
+            user_error(item.get('reason', '')) if isinstance(item, dict) and 'request_id' in item
+            else str(item.get('reason', item)) if isinstance(item, dict) else str(item)
             for item in self.document.get('failures', [])))
         history.setReadOnly(True)
         history.setMaximumHeight(90)
@@ -541,7 +553,7 @@ class ExpertWindow(QMainWindow):
         for name in names:
             role = {'.inp': 'input', '.frd': 'frd', '.dat': 'dat', '.log': 'log', '.txt': 'log'}.get(Path(name).suffix.lower(), 'raw')
             if role in files:
-                self._error('같은 종류의 파일은 한 번에 하나씩 불러오세요. 서로 다른 실행은 별도 근거로 보존합니다.')
+                self._notice('같은 종류의 파일은 한 번에 하나씩 불러오세요. 서로 다른 실행은 별도 근거로 보존합니다.')
                 return
             files[role] = Path(name)
         dialog = QDialog(self)
@@ -595,7 +607,8 @@ class ExpertWindow(QMainWindow):
             if current_run and (pinned_run is None or current_run.id != pinned_run.id):
                 runs.addItem('현재 선택 · ' + source_name(current_run.input_path) + ' · ' + current_run.created_at[:16], current_run)
             if not runs.count():
-                raise ValueError('연결된 선택 실행이 없습니다. 해석 창에서 실행을 선택하거나 자료를 직접 불러오세요.')
+                self._notice('연결된 선택 실행이 없습니다. 해석 창에서 실행을 선택하거나 자료를 직접 불러오세요.')
+                return
             layout.addRow('실행', runs)
             layout.addRow('프레임', frames)
             buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -700,6 +713,47 @@ class ExpertWindow(QMainWindow):
         if self._close_after:
             self._close_after = False
             self.close()
+
+    def _view_key(self):
+        path = os.path.normcase(str(self.path.resolve()))
+        return 'documents/' + hashlib.sha256(path.encode('utf-8')).hexdigest()
+
+    def _save_view_state(self):
+        if self.path is None or not self.isVisible():
+            return
+        try:
+            cursor = self.transcript.cursorForPosition(QPoint(0, 0))
+            bar = self.transcript.verticalScrollBar()
+            key = self._view_key()
+            self.view_settings.setValue(key + '/anchor', cursor.position())
+            self.view_settings.setValue(key + '/offset', self.transcript.cursorRect(cursor).top())
+            self.view_settings.setValue(key + '/follow', bar.maximum() - bar.value() <= 32)
+            self.view_settings.sync()
+        except (OSError, ValueError, TypeError):
+            pass  # View preferences must never prevent saving the conversation.
+
+    def _read_view_state(self):
+        self._pending_view = (0, 0, True)
+        try:
+            key = self._view_key()
+            if self.view_settings.contains(key + '/anchor'):
+                self._pending_view = (self.view_settings.value(key + '/anchor', 0, type=int),
+                                      self.view_settings.value(key + '/offset', 0, type=int),
+                                      self.view_settings.value(key + '/follow', False, type=bool))
+                self.transcript.follow_tail = self._pending_view[2]
+                if self.isVisible():
+                    QTimer.singleShot(0, self._restore_view_state)
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _restore_view_state(self):
+        if self._pending_view is not None:
+            self.transcript.restore_anchor(*self._pending_view)
+            self._pending_view = None
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        QTimer.singleShot(0, self._restore_view_state)
 
     def closeEvent(self, event):  # noqa: N802
         if self._operation:

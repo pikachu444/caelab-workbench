@@ -6,7 +6,7 @@ from pathlib import PureWindowsPath
 import re
 
 from PySide6.QtCore import QByteArray, Qt, Signal
-from PySide6.QtGui import QTextDocument
+from PySide6.QtGui import QTextDocument, QTextCursor
 from PySide6.QtWidgets import QPlainTextEdit, QTextBrowser
 
 
@@ -46,7 +46,13 @@ def evidence_name(evidence) -> str:
     manifest = evidence.get('input_manifest') or {}
     path = manifest.get('input_path') or next((f.get('source_path') for f in evidence.get('files', [])
                                              if f.get('role') == 'input'), None)
-    name = source_name(path) if path else '입력 출처 미확인'
+    if path:
+        name = source_name(path)
+    else:
+        roles = {'frd': '결과', 'dat': '수치 출력', 'log': '로그', 'raw': '파일', 'include': '추가 입력'}
+        names = [f"{roles.get(item.get('role'), '파일')} {source_name(item.get('source_path'))}"
+                 for item in evidence.get('files', []) if item.get('source_path')]
+        name = ' · '.join(names) if names else '입력 출처 미확인'
     # This is the preserved capture time, not an invented solver completion time.
     stamp = evidence.get('created_at', '')
     try:
@@ -69,33 +75,60 @@ class ChatBrowser(QTextBrowser):
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.follow_tail = True
+        self.restored_anchor = None
         bar = self.verticalScrollBar()
         bar.rangeChanged.connect(self._follow_range)
         bar.actionTriggered.connect(self._manual_scroll)
 
     def _follow_range(self, minimum, maximum):
-        if self.follow_tail:
+        if self.restored_anchor is not None:
+            self._apply_restored_anchor()
+        elif self.follow_tail:
             self.verticalScrollBar().setValue(maximum)
 
     def _manual_scroll(self, *_):
+        self.restored_anchor = None
         self.follow_tail = False
 
     def wheelEvent(self, event):  # noqa: N802
-        self.follow_tail = False
+        self._manual_scroll()
         super().wheelEvent(event)
 
     def keyPressEvent(self, event):  # noqa: N802
         if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End):
-            self.follow_tail = False
+            self._manual_scroll()
         super().keyPressEvent(event)
+
+    def restore_anchor(self, position, offset, follow):
+        self.follow_tail = follow
+        self.restored_anchor = None if follow else (position, offset)
+        if follow:
+            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+        else:
+            self._apply_restored_anchor()
+
+    def _apply_restored_anchor(self):
+        if self.restored_anchor is None:
+            return
+        position, offset = self.restored_anchor
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(min(max(0, position), self.document().characterCount() - 1))
+        bar = self.verticalScrollBar()
+        bar.setValue(bar.value() + self.cursorRect(cursor).top() - offset)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, 'restored_anchor'):
+            self._apply_restored_anchor()
 
     def loadResource(self, resource_type, name):  # noqa: N802
         return QByteArray()
 
 
-def markdown_body(text: str) -> tuple[str, bool]:
+def markdown_body(text: str, *, accepted_proposals=None) -> tuple[str, bool]:
     """Render ordinary Markdown; strip only internal fenced proposal payloads."""
     malformed = False
+    protocol_items = []
     lines, kept = text.splitlines(), []
     index = 0
     in_code = False
@@ -111,9 +144,16 @@ def markdown_body(text: str) -> tuple[str, bool]:
                 index += 1
             try:
                 raw = json.loads('\n'.join(payload))
-                if index == len(lines) or not isinstance(raw, list) or any(not isinstance(p, dict) or
-                        not all(k in p for k in ('target_file', 'location', 'before', 'after', 'reason')) for p in raw):
+                if index == len(lines) or not isinstance(raw, list):
                     malformed = True
+                else:
+                    for item in raw:
+                        if not isinstance(item, dict) or not all(key in item for key in ('target_file', 'location', 'before', 'after', 'reason')) or any(
+                                not isinstance(item[key], str) or not item[key].strip() for key in ('target_file', 'location', 'reason')):
+                            malformed = True
+                            continue
+                        json.dumps(item, allow_nan=False)
+                        protocol_items.append({key: item[key] for key in ('target_file', 'location', 'before', 'after', 'reason')})
             except (ValueError, TypeError):
                 malformed = True
         else:
@@ -124,6 +164,9 @@ def markdown_body(text: str) -> tuple[str, bool]:
                 elif match[1][0] == fence_marker[0] and len(match[1]) >= len(fence_marker) and not match[2].strip():
                     in_code = False
         index += 1
+    if accepted_proposals is not None:
+        saved = [{key: item.get(key) for key in ('target_file', 'location', 'before', 'after', 'reason')} for item in accepted_proposals]
+        malformed = malformed or protocol_items != saved
     document = LocalDocument()
     document.setMarkdown(human_text('\n'.join(kept)), QTextDocument.MarkdownDialectGitHub | QTextDocument.MarkdownNoHTML)
     # Links remain readable text, but cannot act as navigation or carry active URLs.

@@ -13,13 +13,22 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import pytest
 
 pytest.importorskip('PySide6')
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings, QPoint
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from apps.workbench_qt.expert_window import ExpertWindow
 from apps.workbench_qt.project_window import ProjectWindow
 from caelab.assist import experts
 from caelab.workbench import Workbench
+
+
+@pytest.fixture(autouse=True)
+def isolated_view_preferences(tmp_path):
+    previous = QSettings.defaultFormat()
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path / 'view-preferences'))
+    yield
+    QSettings.setDefaultFormat(previous)
 
 
 @pytest.fixture(scope='module')
@@ -566,3 +575,115 @@ def test_send_button_visibly_distinguishes_enabled_waiting_and_unconfigured(wind
     app.processEvents()
     assert not ui.ask_button.isEnabled()
     assert background() == waiting
+
+
+def test_log_only_attachments_and_ui_validation_messages_are_specific(window, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QDialog, QInputDialog
+    ui, provider = window
+    for folder in ('A', 'B'):
+        directory = tmp_path / folder
+        directory.mkdir()
+        source = directory / 'same.log'
+        source.write_text('log only', encoding='utf-8')
+        evidence = ui.workbench.import_expert_files(ui.assets, files={'log': source}, solver_id='calculix')
+        ui.document = ui.workbench.attach_expert_evidence(ui.path, evidence, expected_revision=ui.document['revision'])
+    ui.render()
+    labels = [ui.sources.item(i).text() for i in range(ui.sources.count())]
+    assert '로그 A/same.log' in labels[0] and '로그 B/same.log' in labels[1]
+    assert not any('입력 출처 미확인' in label for label in labels)
+    for name in ('first.inp', 'second.inp'):
+        (tmp_path / name).write_text('** input')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames', lambda *args: ([str(tmp_path/'first.inp'), str(tmp_path/'second.inp')], ''))
+    ui.import_files()
+    assert '같은 종류의 파일은 한 번에 하나씩' in ui.status.text()
+    ui.proposal_choice.addItem('모의 제안', 'item')
+    monkeypatch.setattr(QInputDialog, 'getMultiLineText', lambda *args: ('', True))
+    ui.review_proposal('reject')
+    assert ui.status.text() == '제안을 거절하는 이유를 입력하세요.'
+    assert provider.prompts == []
+
+
+def test_reopen_restores_document_specific_reading_anchor_and_tail(window, app, tmp_path):
+    from PySide6.QtCore import QSettings
+    ui, provider = window
+    attach(ui, tmp_path, '** input')
+    provider.discuss = lambda prompt: '길게 읽는 답변입니다.\n\n' * 45
+    ui.show(); ui.resize(850, 700); app.processEvents()
+    for index in range(3):
+        ui.question.setPlainText(f'실제 저장되는 모의 질문 {index}')
+        ui.ask(); finish(ui, app)
+    ui.transcript.follow_tail = False
+    ui.transcript.verticalScrollBar().setValue(350)
+    app.processEvents()
+    ui.question.setPlainText('읽으면서 작성하던 후속 질문')
+    assert ui.save_document()
+    anchor = ui.transcript.cursorForPosition(QPoint(0,0)).position()
+    settings_path = ui.view_settings.fileName()
+    original_turns = copy.deepcopy(ui.document['turns'])
+    ui.close()
+    saved_bytes = ui.path.read_bytes()
+    reopened = ExpertWindow(ui.path, view_settings=QSettings(settings_path, QSettings.IniFormat))
+    reopened.resize(850,700); reopened.show(); app.processEvents(); app.processEvents()
+    assert reopened.transcript.cursorForPosition(QPoint(0,0)).position() == anchor
+    assert reopened.transcript.verticalScrollBar().value() < reopened.transcript.verticalScrollBar().maximum()
+    assert reopened.question.toPlainText() == '읽으면서 작성하던 후속 질문'
+    assert reopened.document['turns'] == original_turns
+    assert reopened.path.read_bytes() == saved_bytes
+    other = tmp_path / 'different' / 'discussion.json'
+    other.parent.mkdir()
+    shutil.copy2(ui.path, other)
+    different = ExpertWindow(other, view_settings=QSettings(settings_path, QSettings.IniFormat))
+    different.resize(850,700); different.show(); app.processEvents(); app.processEvents()
+    assert different.transcript.verticalScrollBar().value() == different.transcript.verticalScrollBar().maximum()
+    different.close()
+    reopened.transcript.restored_anchor = None
+    reopened.transcript.follow_tail = True
+    reopened.transcript.verticalScrollBar().setValue(reopened.transcript.verticalScrollBar().maximum())
+    reopened.close()
+    following = ExpertWindow(ui.path, view_settings=QSettings(settings_path, QSettings.IniFormat))
+    following.resize(850,700); following.show(); app.processEvents(); app.processEvents()
+    assert following.transcript.verticalScrollBar().value() == following.transcript.verticalScrollBar().maximum()
+    following.close()
+    ui.reload_document()
+
+
+@pytest.mark.parametrize('target', [None, '', '/not-a-captured-input.inp'])
+def test_rejected_protocol_proposals_are_explained_next_to_real_mock_answer(window, app, tmp_path, monkeypatch, target):
+    from caelab.assist.knowledge import KnowledgeSearchResult
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** input')
+    ui.role.setCurrentIndex(ui.role.findData('convergence'))
+    monkeypatch.setattr(experts, 'search_knowledge_result', lambda *a, **k: KnowledgeSearchResult('no_material', [], 'calculix'))
+    provider.discuss = lambda prompt: '답변은 읽을 수 있습니다.\n```proposals\n' + json.dumps([dict(
+        target_file=target, location='force', before=0, after=None, reason='대상을 확인하세요.')]) + '\n```'
+    ui.question.setPlainText('제안이 거부될 경우도 알려 주세요.')
+    ui.ask(); finish(ui, app)
+    assert ui.document['turns'][-1]['status'] == 'completed'
+    assert ui.document['proposals'] == []
+    assert '답변은 읽을 수 있습니다.' in ui.transcript.toPlainText()
+    assert '제안 형식을 읽지 못했습니다' in ui.transcript.toPlainText()
+    assert 'target_file' not in ui.transcript.toPlainText()
+    assert target is None or target not in ui.transcript.toPlainText() or target == ''
+    assert '```proposals' in ui.document['turns'][-1]['reply']
+
+
+def test_context_keeps_user_notes_but_hides_automatic_failure_diagnostics(window, monkeypatch):
+    from PySide6.QtWidgets import QDialog, QPlainTextEdit
+    ui, provider = window
+    secret = 'request_id=' + 'a'*32 + ' SHA256=' + 'b'*64
+    ui.document['constraints'] = ['사용자가 작성한 제약']
+    ui.document['failures'] = [dict(request_id='automatic-request', reason=secret),
+                               dict(proposal_id='user-rejection', reason='사용자가 작성한 거절 이유'),
+                               '사용자가 직접 작성한 실패 메모']
+    before = copy.deepcopy(ui.document)
+    observed = []
+    def inspect(dialog):
+        observed.extend(edit.toPlainText() for edit in dialog.findChildren(QPlainTextEdit))
+        return QDialog.Rejected
+    monkeypatch.setattr(QDialog, 'exec', inspect)
+    ui.edit_context()
+    shown = '\n'.join(observed)
+    assert '사용자가 작성한 제약' in shown
+    assert '사용자가 작성한 거절 이유' in shown and '사용자가 직접 작성한 실패 메모' in shown
+    assert 'a'*32 not in shown and 'b'*64 not in shown and 'request_id' not in shown
+    assert ui.document == before
