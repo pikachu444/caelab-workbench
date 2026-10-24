@@ -353,7 +353,10 @@ class ExpertWindow(QMainWindow):
         if item is None:
             self.proposals.setPlainText('아직 변경 제안이 없습니다. 제안은 전용 프로그램에서 검토 후 수정합니다.')
             return
-        labels = {'unapplied': '미적용', 'manual_required': '전용 프로그램에서 수정 필요 · 미적용',
+        check_only = item.get('after') is None
+        labels = {'unapplied': '미적용',
+                  'manual_required': ('전용 프로그램에서 확인 필요 · 미적용' if check_only
+                                      else '전용 프로그램에서 수정 필요 · 미적용'),
                   'blocked': '검토 중단 · 미적용', 'rejected': '거절 · 미적용'}
         reviews = [review for review in (item.get('review_history') if isinstance(item.get('review_history'), list) else [])
                    if isinstance(review, dict)]
@@ -367,7 +370,9 @@ class ExpertWindow(QMainWindow):
             f"실행: {item.get('run_id') or '직접 불러온 자료'}\n"
             f"근거: {item.get('evidence_id')}\n입력 개정: {item.get('input_revision')}\n"
             f"대상 파일 SHA256: {item.get('target_sha256') or '원본 개정 확인 시 대조'}\n\n"
-            '이 변경은 자동 적용을 지원하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 수정하세요. '
+            + ('이 점검은 자동 변경을 수행하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 설정을 확인하세요. '
+               if check_only else
+               '이 변경은 자동 적용을 지원하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 수정하세요. ') +
             '재계산은 해석 창에서 별도로 실행한 뒤 새 결과를 이 대화로 가져오세요.\n\n'
             + '\n'.join(f"{review.get('reviewed_at', '')}: {review.get('reason', '')}" for review in reviews[:-1]))
 
