@@ -21,7 +21,6 @@ import os
 import re
 import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from .knowledge import (KnowledgeSearchResult, citation_id, infer_solver,
                         search_knowledge_result, verify_citations)
@@ -138,6 +137,9 @@ class ExpertProvider:
     def discuss(self, prompt: str) -> str:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def cancel(self) -> None:
+        """Stop waiting when supported; default does not stop a remote model."""
+
 
 class UnavailableProvider(ExpertProvider):
     id = "none"
@@ -154,38 +156,24 @@ class UnavailableProvider(ExpertProvider):
 
 
 class OpenScienceProvider(ExpertProvider):
-    """Reserved subscription route; the host transport is not implemented.
-
-    A profile is configuration evidence, not an executable provider.
-    Keep this unavailable until a real transport can send the prompt.
-    """
+    """Prompt-only use of the operator's existing signed-in Windows CLI."""
 
     id = "openscience"
     name = "OpenScience (ChatGPT 구독)"
 
-    def _profile_root(self) -> Path | None:
-        local = os.environ.get("LOCALAPPDATA")
-        if not local:
-            return None
-        base = Path(local) / "AutonomousCAELab" / "profiles"
-        if not base.is_dir():
-            return None
-        for child in sorted(base.iterdir()):
-            if (child / "caelab-profile-owner.json").is_file():
-                return child
-        return None
+    def __init__(self):
+        from .openscience import SubscriptionTransport
+        self.transport = SubscriptionTransport()
+        self.model = self.transport.model
 
     def availability(self) -> tuple[bool, str]:
-        if self._profile_root() is not None:
-            return False, "OpenScience 프로필은 있지만 구독 실행 연결은 아직 구현되지 않았습니다."
-        return False, (
-            "OpenScience 구독 실행 연결은 아직 구현되지 않았습니다. "
-            "이 컴퓨터에서는 연결 프로필도 찾을 수 없습니다."
-        )
+        return self.transport.availability()
 
     def discuss(self, prompt: str) -> str:
-        _ok, reason = self.availability()
-        raise RuntimeError(reason)
+        return self.transport.discuss(prompt)
+
+    def cancel(self) -> None:
+        self.transport.cancel()
 
 
 class OpenAICompatibleProvider(ExpertProvider):

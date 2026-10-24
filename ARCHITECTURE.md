@@ -29,7 +29,7 @@
 ## 아직 없는 것
 
 - 사용자 네이티브 입력부터 결과 열기·토론·저장/재개까지의 본선 연결은 진행 중입니다. 개별 프로그램 설치·연기 테스트를 전체 연결 완료로 세지 않습니다.
-- 기존 `autonomous-cae-lab/apps/research/expert_window.py`와 대화 문서의 진입점·저장·늦은 응답 처리 방식을 조사했습니다. 기존 MaterialDocuments/CoSTORM/Client 서비스 전체를 복사하지 않고 이 저장소의 Discussion·공급자·검색·atomic_json·FileLock을 재사용해 독립 창을 연결했습니다. 실제 로컬 OpenAI 호환 LLM 요청은 60초 제한으로 답변 없이 종료됐고, 실패 기록의 저장·재개를 확인했습니다. OpenScience.discuss는 전송 미구현 상태입니다. 실제 구독 연구팀 흐름과 공학적 답변 품질을 구현·모의 검사로 대체하지 않습니다.
+- 기존 `autonomous-cae-lab/apps/research/expert_window.py`와 대화 문서의 진입점·저장·늦은 응답 처리 방식을 조사했습니다. 기존 MaterialDocuments/CoSTORM/Client 서비스 전체를 복사하지 않고 이 저장소의 Discussion·공급자·검색·atomic_json·FileLock을 재사용해 독립 창을 연결했습니다. 실제 로컬 OpenAI 호환 LLM 요청은 60초 제한으로 답변 없이 종료됐고, 실패 기록의 저장·재개를 확인했습니다. OpenScience 공급자는 원본 host의 실행 방식을 재사용해 기존 Windows 로그인·고정 실행 파일을 읽고, 도구를 허용하지 않는 임시 설정에서 질문만 전송합니다. 원본 설정과 인증 파일은 변경하지 않으며, 요청별 취소 훅을 통해 소유 CLI를 정리합니다. 기존 구독의 짧은 연결 응답은 확인했으나 실제 계산 근거의 연구 흐름과 공학적 답변 품질은 아직 미확인입니다.
 - Windows 실화면 검증 여부는 별도로 기록합니다. 아래 플랫폼 정보와 Linux 개발 환경 기록만으로 Windows 사용 가능 또는 전체 GUI 완료를 선언하지 않습니다.
 
 ## 플랫폼별 실행 전제

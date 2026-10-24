@@ -229,7 +229,8 @@ def test_parent_routes_expert_and_selected_result_to_new_services(app, tmp_path,
     ui.close()
 
 
-def test_proposal_review_reject_and_reopen_preserve_original(window, app, tmp_path, monkeypatch):
+@pytest.mark.parametrize('after', [None, '** revised'])
+def test_proposal_review_reject_and_reopen_preserve_original(window, app, tmp_path, monkeypatch, after):
     from PySide6.QtWidgets import QInputDialog
     from caelab.assist.knowledge import KnowledgeSearchResult
     from test_native_evidence import make_run
@@ -242,7 +243,7 @@ def test_proposal_review_reject_and_reopen_preserve_original(window, app, tmp_pa
     monkeypatch.setattr(experts, 'search_knowledge_result', lambda *a, **kw: KnowledgeSearchResult('no_material', [], 'calculix'))
     provider.discuss = lambda prompt: '```proposals\n' + json.dumps([{
         'target_file': str(source), 'location': 'comment', 'before': '** native original',
-        'after': '** revised', 'reason': '검토용 모의 제안'}]) + '\n```'
+        'after': after, 'reason': '검토용 모의 제안'}]) + '\n```'
     ui.role.setCurrentIndex(ui.role.findData('convergence'))
     ui.render()
     ui.question.setPlainText('변경 제안을 검토합니다.')
@@ -251,7 +252,12 @@ def test_proposal_review_reject_and_reopen_preserve_original(window, app, tmp_pa
     assert ui.proposal_choice.count() == 1
     ui.check_proposal.click()
     assert ui.document['proposals'][0]['status'] == 'manual_required'
-    assert '전용 프로그램에서 수정' in ui.proposals.toPlainText()
+    if after is None:
+        assert ui.proposals.toPlainText().startswith('전용 프로그램에서 확인 필요 · 미적용')
+        assert '전용 프로그램에서 설정을 확인하세요.' in ui.proposals.toPlainText()
+    else:
+        assert ui.proposals.toPlainText().startswith('전용 프로그램에서 수정 필요 · 미적용')
+        assert '전용 프로그램에서 수정하세요.' in ui.proposals.toPlainText()
     source.write_bytes(original + b'** edited externally\n')
     ui.check_proposal.click()
     assert ui.document['proposals'][0]['status'] == 'blocked'

@@ -62,7 +62,7 @@ CalculiX 상자를 열면 현재 INP를 확인하고 계산할 수 있습니다.
 
 다른 이름으로 저장하면 실행 기록과 대화·보존 자산은 새 실행 폴더에 복사하며, CAD·INP 문서는 기존 원본을 계속 참조합니다. 질문이나 계산이 진행 중인 기록의 복사는 거부합니다. 프로젝트 폴더를 옮길 때 내부 파일과 `.runs` 폴더도 함께 옮기세요. 외부 파일의 위치는 그대로 유지해야 합니다. 대화를 다시 열면 누락·손상된 보존 파일을 `파일 확인` 탭에 표시합니다.
 
-전문가 창의 `공급자 설정` 또는 `CAELAB_EXPERT_PROVIDER=openai_compatible`, `CAELAB_EXPERT_ENDPOINT`, `CAELAB_EXPERT_MODEL`로 기존 로컬 OpenAI 호환 서버를 지정할 수 있습니다. 필요한 경우 `CAELAB_EXPERT_API_KEY`를 설정합니다. 창에서 입력한 주소·모델·키는 해당 프로세스 동안만 유지하며 키는 대화 파일에 저장하지 않습니다. 공급자 설정 확인은 실제 호출 성공을 뜻하지 않으며, 질문 보내기 전에는 호출하지 않습니다. OpenScience 구독 전송은 아직 미구현입니다. 응답 대기는 60초로 제한하고 대기 중단·실패 시 질문 초안을 보존합니다. 제안은 미적용 상태로 표시되며 원본이나 계산을 자동 변경하지 않습니다.
+전문가 창의 `공급자 설정` 또는 `CAELAB_EXPERT_PROVIDER=openai_compatible`, `CAELAB_EXPERT_ENDPOINT`, `CAELAB_EXPERT_MODEL`로 기존 로컬 OpenAI 호환 서버를 지정할 수 있습니다. 필요한 경우 `CAELAB_EXPERT_API_KEY`를 설정합니다. 창에서 입력한 주소·모델·키는 해당 프로세스 동안만 유지하며 키는 대화 파일에 저장하지 않습니다. OpenScience 구독은 기존 Windows의 로그인 프로필과 고정 버전 2.0.146 설치 설정을 사용합니다. 공급자를 OpenScience로 선택하고 모델을 비우면 기존 설치의 모델 선택을 사용하며, 별도 엔드포인트·API 키를 입력하지 않습니다. 공급자 설정 확인은 실제 로그인·응답 성공을 뜻하지 않으며, 질문 보내기 전에는 호출하지 않습니다. 응답 대기는 60초로 제한하고 대기 중단·실패 시 질문 초안을 보존합니다. 제안은 미적용 상태로 표시되며 원본이나 계산을 자동 변경하지 않습니다.
 
 설치 도우미가 만든 레지스트리는 `CAELAB_INSTALL_REGISTRY`에 `caelab-install-registry.json` 경로를 지정하면 읽습니다. `CAELAB_FREECAD`, `CAELAB_GMSH`, `CAELAB_PARAVIEW`처럼 명시한 실행 파일이 우선하며 잘못된 경로를 다른 프로그램으로 대체하지 않습니다. FreeCAD 창을 열 때는 `FreeCADCmd` 대신 GUI 실행 파일을 지정해야 합니다. Windows에서 Linux·WSL 실행을 자동 연결하지 않으며, 미지원 환경은 이유를 표시합니다.
 

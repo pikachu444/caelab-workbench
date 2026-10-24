@@ -102,6 +102,169 @@ def _text(asset_root, items, limit, *, tail=False):
     return combined
 
 
+def _input_blocks(lines):
+    """Lexical boundaries only: no interpretation of conditions or set membership."""
+    start = 0
+    for index, line in enumerate(lines):
+        stripped = line.lstrip(' \t')
+        if stripped.startswith('*') and not stripped.startswith('**'):
+            if index > start:
+                yield start, lines[start:index]
+            start = index
+    if start < len(lines):
+        yield start, lines[start:]
+
+
+def _line_excerpt(start, lines):
+    return f'[원문 L{start + 1}-L{start + len(lines)}]\n' + ''.join(lines) + '\n'
+
+
+def _header_end(lines):
+    """Retain comma-adjacent raw lines; this does not validate solver syntax."""
+    end = 1
+    pending = lines[0].rstrip().endswith(',')
+    while pending and end < len(lines):
+        line = lines[end].lstrip(' \t')
+        if not line.strip() or line.startswith('**'):
+            end += 1
+            continue
+        if line.startswith('*'):
+            break
+        end += 1
+        pending = line.rstrip().endswith(',')
+    return end
+
+
+def _input_block_views(start, lines, *, compact_lists=True):
+    header = lines[0].lstrip(' \t')
+    keyword = ''.join(header.split(',', 1)[0].split()).upper() if header.startswith('*') else ''
+    header_end = _header_end(lines) if header.startswith('*') and not header.startswith('**') else 1
+    full = _line_excerpt(start, lines)
+    # Exact names matter: NODE FILE and SURFACE INTERACTION are not large lists.
+    data_size = sum(len(line) for line in lines[header_end:] if not line.lstrip(' \t').startswith('**'))
+    if compact_lists and keyword in {'*NODE', '*ELEMENT', '*NSET', '*ELSET', '*SURFACE'} and data_size > 2048:
+        pieces = [_line_excerpt(start, lines[:header_end])]
+        omitted = None
+        for offset, line in enumerate(lines[header_end:], header_end):
+            if line.lstrip(' \t').startswith('**'):
+                if omitted is not None:
+                    pieces.append(f'[대량 목록 미제공: 원문 L{start + omitted + 1}-L{start + offset}]\n')
+                    omitted = None
+                pieces.append(_line_excerpt(start + offset, [line]))
+            elif omitted is None:
+                omitted = offset
+        if omitted is not None:
+            pieces.append(f'[대량 목록 미제공: 원문 L{start + omitted + 1}-L{start + len(lines)}]\n')
+        pieces.append('[목록 생략: 절점/요소 membership·연결·면 side/normal·적용 위치는 이 발췌로 확인 불가]\n')
+        full = ''.join(pieces)
+    if header.startswith('*') and not header.startswith('**'):
+        minimal = _line_excerpt(start, lines[:header_end])
+        if len(lines) > header_end:
+            minimal += f'[예산 제한: 원문 L{start + header_end + 1}-L{start + len(lines)} 본문 미제공]\n'
+    else:
+        minimal = f'[예산 제한: 원문 L{start + 1}-L{start + len(lines)} 미제공]\n'
+    return full, minimal, (start + 1, start + len(lines))
+
+
+def _fit_input_blocks(views, budget):
+    full = ''.join(view[0] for view in views)
+    if len(full) <= budget:
+        return full
+    # Keep the ordered header outline before spending remaining space on bodies.
+    minimal = ''.join(view[1] for view in views)
+    if len(minimal) <= budget:
+        remaining = budget - len(minimal)
+        parts = []
+        for complete, short, _ in views:
+            if len(complete) - len(short) <= remaining:
+                parts.append(complete)
+                remaining -= len(complete) - len(short)
+            else:
+                parts.append(short)
+        return ''.join(parts)
+    # Even the outline may exceed the budget. Never cut through raw data/markers.
+    parts = []
+    used = 0
+    for _, short, bounds in views:
+        marker = f'[예산 제한: 원문 L{bounds[0]}-L{views[-1][2][1]} 블록 전체 미제공; 보존 파일 참조]\n'
+        next_marker = f'[예산 제한: 원문 L{bounds[1] + 1}-L{views[-1][2][1]} 블록 전체 미제공; 보존 파일 참조]\n'
+        if used + len(short) + len(next_marker) > budget:
+            break
+        parts.append(short)
+        used += len(short)
+    else:
+        return ''.join(parts)
+    return ''.join(parts) + marker if len(marker) <= budget else ''
+
+
+def _model_text(asset_root, items, limit=40000):
+    """Bounded source excerpts, not a reconstructed executable CalculiX deck."""
+    groups = {}
+    for index, item in enumerate(items):
+        if item['role'] not in {'input', 'include', 'execution_input', 'execution_include'}:
+            continue
+        # All copies remain assets. Identical bytes need only one displayed body.
+        groups.setdefault(item['sha256'], []).append((index, item))
+    if not groups:
+        return ''
+    sections = []
+    for aliases in groups.values():
+        item = aliases[0][1]
+        with _inside(asset_root, item['stored_path']).open('r', encoding='utf-8', errors='replace', newline='') as stream:
+            lines = stream.readlines()
+        header = '\n--- 별도 입력 파일 / 동일 SHA256 자료 ---\n' + '\n'.join(
+            f"files[{index}] {alias['role']}: {alias['source_path']}" for index, alias in aliases)
+        header += f"\nSHA256={item['sha256']}\n"
+        if len(aliases) > 1:
+            header += '[동일 bytes: 위 출처/역할의 본문을 한 번만 제공; INCLUDE 호출 순서는 각 파일 원문 참조]\n'
+        header += f'[파일 원문 범위: L1-L{len(lines)}]\n' if lines else '[빈 파일]\n'
+        compact = Path(item['source_path']).suffix.lower() in {'.inp', '.inc'}
+        views = [_input_block_views(start, block, compact_lists=compact) for start, block in _input_blocks(lines)]
+        raw = _line_excerpt(0, lines) if lines else ''
+        sections.append((header, raw, views))
+    notice = ('[입력 자료 발췌: 각 파일은 독립 자료이며 이어 붙인 실행 덱이 아닙니다. '
+              'L은 해당 파일 원문 행입니다. 대괄호 설명은 발췌 메모입니다. '
+              '원문 보존과 실제 제공 범위를 구분하세요. 미제공 범위의 조건/개수/총량은 추정하지 마세요.]\n')
+    footer = '[끝: 생략된 본문/파일은 보존 자산과 manifest 참조; 이 발췌로 모델 완전성을 판정하지 마세요.]\n'
+    omission = '[미제공 파일: 위에 files[n] 출처 섹션이 없는 모든 입력/include/execution 항목은 경로·본문 전체 미제공; 보존 files 목록 참조]\n'
+    available = max(0, limit - len(notice) - len(footer) - len(omission))
+    sizes = [len(header) + len(raw) for header, raw, _ in sections]
+    # Water-fill the file budgets so original/execution duplicates and many small
+    # INCLUDEs cannot consume everything before a later file gets a share.
+    budgets = [0] * len(sections)
+    pending = set(range(len(sections)))
+    while pending:
+        share = available // len(pending)
+        small = {index for index in pending if sizes[index] <= share}
+        if not small:
+            for index in pending:
+                budgets[index] = share
+            break
+        for index in small:
+            budgets[index] = sizes[index]
+            available -= sizes[index]
+        pending -= small
+    parts = [notice]
+    missing = []
+    for (header, raw, views), budget, aliases in zip(sections, budgets, groups.values()):
+        body_budget = budget - len(header)
+        body = ''
+        if len(raw) <= body_budget:
+            body = raw
+        elif body_budget >= 0:
+            body = _fit_input_blocks(views, body_budget)
+        if not body and views:
+            missing.extend(index for index, _ in aliases)
+        elif len(header) <= budget:
+            parts.append(header + body)
+        else:
+            missing.extend(index for index, _ in aliases)
+    if missing:
+        # A bounded marker still identifies omissions if even all paths won't fit.
+        parts.append(omission)
+    return ''.join(parts) + footer
+
+
 def _finish(evidence, asset_root, frame_index):
     scratch = asset_root / evidence['id'] / '_parse'
     scratch.mkdir()
@@ -128,8 +291,10 @@ def _finish(evidence, asset_root, frame_index):
     else:
         evidence['frame_index'] = frame_index if frame_index is not None else frames[-1]['index'] if frames else None
     evidence['warnings'].extend(result.get('warnings', []))
-    evidence['model_text'] = _text(asset_root, [item for item in evidence['files'] if item['role'] in
-                                  {'input', 'include', 'execution_input', 'execution_include'}], 40000)
+    input_items = [item for item in evidence['files'] if item['role'] in
+                   {'input', 'include', 'execution_input', 'execution_include'}]
+    evidence['model_text'] = (_model_text(asset_root, evidence['files']) if evidence['solver_id'] == 'calculix'
+                              else _text(asset_root, input_items, 40000))
     evidence['log_text'] = _text(asset_root, [item for item in evidence['files'] if item['role'] == 'log'], 24000, tail=True)
     evidence['summary_text'] = format_native_evidence(evidence, finite_summary(result))
     # Reject accidental non-JSON metadata before handing it to a saved discussion.
