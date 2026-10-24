@@ -687,3 +687,47 @@ def test_context_keeps_user_notes_but_hides_automatic_failure_diagnostics(window
     assert '사용자가 작성한 거절 이유' in shown and '사용자가 직접 작성한 실패 메모' in shown
     assert 'a'*32 not in shown and 'b'*64 not in shown and 'request_id' not in shown
     assert ui.document == before
+
+
+def test_opening_an_unvisited_document_resets_view_without_losing_previous_reading_position(
+        window, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    ui, provider = window
+    attach(ui, tmp_path, '** input')
+    provider.discuss = lambda prompt: '문답을 읽던 위치를 확인할 긴 답변입니다.\n\n' * 45
+    ui.resize(850, 700)
+    ui.show()
+    app.processEvents()
+    ui.question.setPlainText('A 문답을 읽습니다.')
+    ui.ask()
+    finish(ui, app)
+    bar = ui.transcript.verticalScrollBar()
+    assert bar.maximum() > 350
+    bar.setValue(350)
+    ui.transcript.follow_tail = False
+    ui.question.setPlainText('읽으면서 적어 둔 후속 질문')
+    assert ui.save_document()
+    original = ui.path
+    other = tmp_path / 'unvisited' / 'discussion.json'
+    other.parent.mkdir()
+    shutil.copy2(original, other)
+    shutil.copytree(ui.assets, other.parent / 'assets')
+    selected = [other]
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(selected[0]), ''))
+
+    ui.open_document()
+    app.processEvents()
+    app.processEvents()
+    assert ui.path == other.resolve()
+    assert bar.value() == bar.maximum()
+    assert ui.transcript.follow_tail
+    assert ui.question.toPlainText() == '읽으면서 적어 둔 후속 질문'
+
+    selected[0] = original
+    ui.open_document()
+    app.processEvents()
+    app.processEvents()
+    assert ui.path == original
+    assert bar.value() == 350
+    assert not ui.transcript.follow_tail
+    assert ui.question.toPlainText() == '읽으면서 적어 둔 후속 질문'

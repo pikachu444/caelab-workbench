@@ -740,11 +740,11 @@ class ExpertWindow(QMainWindow):
                 self._pending_view = (self.view_settings.value(key + '/anchor', 0, type=int),
                                       self.view_settings.value(key + '/offset', 0, type=int),
                                       self.view_settings.value(key + '/follow', False, type=bool))
-                self.transcript.follow_tail = self._pending_view[2]
-                if self.isVisible():
-                    QTimer.singleShot(0, self._restore_view_state)
         except (OSError, ValueError, TypeError):
             pass
+        self.transcript.follow_tail = self._pending_view[2]
+        if self.isVisible():
+            QTimer.singleShot(0, self._restore_view_state)
 
     def _restore_view_state(self):
         if self._pending_view is not None:
