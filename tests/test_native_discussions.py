@@ -63,6 +63,43 @@ def prepared(tmp_path, monkeypatch, provider=None):
     return path, doc, provider
 
 
+@pytest.mark.parametrize('template_id,reads_input', [('convergence', True), ('material', True), ('interpretation', False)])
+def test_large_native_input_tail_excerpt_reaches_only_allowed_role_and_stays_frozen(tmp_path, monkeypatch,
+                                                                                   template_id, reads_input):
+    from caelab.native.evidence import import_file_evidence, verify_evidence
+    from test_native_evidence import large_input
+
+    path = tmp_path / 'conversation.json'
+    doc = service.create_discussion(path)
+    source = tmp_path / 'large.inp'
+    raw = large_input().encode('ascii')
+    source.write_bytes(raw)
+    value = import_file_evidence(tmp_path / 'assets', files={'input': source}, solver_id='calculix')
+    value['log_text'] = 'LOG_SECRET_EXCLUDED_FROM_MATERIAL'
+    assert verify_evidence(value, tmp_path / 'assets') == []
+    doc = service.attach_evidence(path, value, expected_revision=doc['revision'])
+    provider = Provider()
+    monkeypatch.setattr(experts, 'get_provider', lambda provider_id=None: provider)
+    doc = service.ask_discussion(path, '입력 원문에서 확인되는 조건만 검토하세요.', evidence_id=value['id'],
+                                 template_id=template_id, expected_revision=doc['revision'])
+    prompt = provider.prompts[0]
+    assert ('*MATERIAL,NAME=Steel' in prompt) is reads_input
+    assert ('*SURFACE BEHAVIOR' in prompt) is reads_input
+    assert ('*CLOAD,OP=MOD' in prompt) is reads_input
+    provided = doc['turns'][0]['provided_materials']
+    model = [item for item in provided if item.get('text_field') == 'model_text']
+    assert bool(model) is reads_input
+    if model:
+        assert model[0]['text_sha256'] == hashlib.sha256(value['model_text'].encode()).hexdigest()
+    if template_id == 'material':
+        assert 'LOG_SECRET_EXCLUDED_FROM_MATERIAL' not in prompt
+    # Existing saved evidence is not silently reformatted when its source changes.
+    source.write_bytes(b'** today is different\n')
+    reopened = service.load_discussion(path)
+    assert reopened['evidences'][value['id']]['model_text'] == value['model_text']
+    assert reopened['turns'] == doc['turns'] and len(provider.prompts) == 1
+
+
 def ask(path, doc, question="질문", **kwargs):
     return service.ask_discussion(path, question, evidence_id=kwargs.pop("evidence_id", "A"),
                                   template_id=kwargs.pop("template_id", "interpretation"),

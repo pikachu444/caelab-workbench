@@ -53,6 +53,8 @@ def test_capture_preserves_saved_source_and_exchange_bytes_and_selected_frame(tm
     assert evidence['process_state'] == 'completed' and evidence['parse_state'] == 'readable'
     assert 'LOG SECRET' not in evidence['summary_text'] and 'INPUT SECRET' not in evidence['summary_text']
     assert 'LOG SECRET' in evidence['log_text'] and 'INPUT SECRET' in evidence['model_text']
+    assert '*INCLUDE,INPUT=loads.inc' in evidence['model_text']
+    assert '*INCLUDE,INPUT=includes/000001.inp' in evidence['model_text']
     assert '"max_displacement": 1.0' in evidence['summary_text']
     assert '"analysis_type"' in evidence['summary_text'] and '"kode"' in evidence['summary_text']
     assert 'coverage=' in evidence['summary_text'] and '유한값 범위' in evidence['summary_text']
@@ -215,3 +217,141 @@ def test_excerpt_truncation_preserves_complete_bytes_and_summaries_are_finite(tm
     assert (tmp_path / 'assets' / item['stored_path']).read_bytes() == b'L' * 30000
     assert finite_summary({'x': float('nan'), 'y': [float('inf'), -float('inf')]}) == {'x': None, 'y': [None, None]}
     assert 'Infinity' not in json.dumps(finite_summary({'x': float('inf')}), allow_nan=False)
+
+
+def large_input():
+    return ('** original heading\r\n*NODE,NSET=ALL\r\n'
+            + ''.join(f'{node}, {node}.0, 0, 0\r\n' for node in range(1, 4001))
+            + '** mesh comment retained\r\n*ELEMENT,TYPE=S20,ELSET=BODY\r\n'
+              '1,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,\r\n'
+              ',16,17,18,19,20\r\n'
+              '*NSET,NSET=SHORT,GENERATE\r\n1,4000,2\r\n'
+              '*ELSET,ELSET=BODY\r\nOTHER_SET\r\n'
+              '*SURFACE,NAME=ShortSide,TYPE=ELEMENT\r\nBODY,SNEG\r\n'
+              '*MATERIAL,NAME=Steel\r\n*ELASTIC\r\n210000,0.3\r\n'
+              '*PLASTIC\r\n240,0\r\n270,0.025\r\n'
+              '*SURFACE INTERACTION,NAME=Contact\r\n*SURFACE BEHAVIOR\r\n1000000\r\n'
+              '*STEP,NLGEOM\r\n*STATIC\r\n0.1,1\r\n'
+              '*BOUNDARY,OP=NEW\r\nSHORT,1,3\r\n*CLOAD,AMPLITUDE=Ramp\r\nSHORT,3,9\r\n'
+              '*NODE FILE\r\nU\r\n*ELEMENT OUTPUT\r\nS\r\n*END STEP\r\n'
+              '*STEP\r\n*STATIC\r\n1,1\r\n*CLOAD,OP=MOD\r\nSHORT,3,-9\r\n*END STEP\r\n')
+
+
+def test_large_inp_tail_conditions_keep_original_order_lines_comments_and_bytes(tmp_path):
+    inp = tmp_path / 'large.inp'
+    raw = large_input().encode('ascii')
+    inp.write_bytes(raw)
+    assets = tmp_path / 'assets'
+    value = import_file_evidence(assets, files={'input': inp}, solver_id='calculix')
+    text = value['model_text']
+    assert len(text) <= 40000 and str(inp) in text
+    assert '대량 목록 미제공: 원문 L3-L4002' in text
+    assert '4000, 4000.0, 0, 0' not in text
+    assert '** mesh comment retained\r\n' in text
+    for block in ('*NSET,NSET=SHORT,GENERATE\r\n1,4000,2', '*ELSET,ELSET=BODY\r\nOTHER_SET',
+                  ',16,17,18,19,20', '*PLASTIC\r\n240,0\r\n270,0.025',
+                  '*SURFACE,NAME=ShortSide,TYPE=ELEMENT\r\nBODY,SNEG',
+                  '*SURFACE BEHAVIOR\r\n1000000', '*NODE FILE\r\nU', '*ELEMENT OUTPUT\r\nS'):
+        assert block in text
+    assert text.index('*MATERIAL') < text.index('*SURFACE INTERACTION') < text.index('*STEP,NLGEOM')
+    assert text.index('*CLOAD,AMPLITUDE=Ramp') < text.index('*CLOAD,OP=MOD')
+    assert text.count('*END STEP') == 2
+    assert 'membership' in text and 'side/normal' in text and '실행 덱이 아닙니다' in text
+    assert inp.read_bytes() == raw
+    assert (assets / value['files'][0]['stored_path']).read_bytes() == raw
+    assert value['files'][0]['sha256'] == file_revision(inp)
+    assert verify_evidence(value, assets) == []
+
+
+@pytest.mark.parametrize('keyword', ['NODE', 'ELEMENT', 'NSET', 'ELSET', 'SURFACE'])
+def test_only_large_exact_list_keyword_data_is_omitted(tmp_path, keyword):
+    inp = tmp_path / 'lists.inp'
+    inp.write_text(f'*{keyword},NAME=Long\n' + '123, S2\n' * 800
+                   + '** comment after list\n*SURFACE INTERACTION,NAME=Contact\n'
+                     '*SURFACE BEHAVIOR\n1000000\n*NODE PRINT,NSET=ALL\nU\n', encoding='ascii', newline='')
+    text = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')['model_text']
+    assert '123, S2' not in text and f'*{keyword},NAME=Long' in text
+    assert '** comment after list' in text
+    assert '*SURFACE BEHAVIOR\n1000000' in text and '*NODE PRINT,NSET=ALL\nU' in text
+
+
+def test_comments_do_not_turn_short_generated_or_referenced_sets_into_large_lists(tmp_path):
+    inp = tmp_path / 'comments.inp'
+    inp.write_text('*NSET,NSET=SHORT,GENERATE\n1,4000,2\n' + '** original comment\n' * 150
+                   + '*ELSET,ELSET=BODY\nOTHER_SET\n', encoding='ascii', newline='')
+    text = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')['model_text']
+    assert '*NSET,NSET=SHORT,GENERATE\n1,4000,2' in text and 'OTHER_SET' in text
+    assert text.count('** original comment') == 150 and '대량 목록 미제공' not in text
+
+
+def test_duplicate_original_execution_bodies_do_not_spend_budget_twice(tmp_path):
+    run = make_run(tmp_path)
+    raw = large_input().encode('ascii')
+    source = Path(run.input_path)
+    source.write_bytes(raw)
+    run.snapshot.update(snapshot_input(source, run.workdir))
+    assets = tmp_path / 'assets'
+    value = capture_run_evidence(run, assets)
+    text = value['model_text']
+    assert text.count('*MATERIAL,NAME=Steel') == 1
+    assert 'input:' in text and 'execution_input:' in text and '동일 bytes' in text
+    assert len([item for item in value['files'] if item['role'] in {'input', 'execution_input'}]) == 2
+    assert value['input_manifest'] == run.snapshot and verify_evidence(value, assets) == []
+
+
+def test_include_files_keep_call_positions_and_later_conditions_with_many_small_files(tmp_path):
+    inp = tmp_path / 'main.inp'
+    children = []
+    for index in range(35):
+        child = tmp_path / f'part{index}.inc'
+        child.write_text(f'** include {index}\n*MATERIAL,NAME=M{index}\n*ELASTIC\n{100 + index},0.3\n', encoding='ascii', newline='')
+        children.append(child)
+    inp.write_text(large_input() + ''.join(f'*INCLUDE,INPUT={child.name}\n' for child in children), encoding='ascii', newline='')
+    assets = tmp_path / 'assets'
+    value = import_file_evidence(assets, files={'input': inp}, solver_id='calculix')
+    text = value['model_text']
+    assert len(text) <= 40000
+    assert '*INCLUDE,INPUT=part0.inc' in text and '*INCLUDE,INPUT=part34.inc' in text
+    assert '*MATERIAL,NAME=Steel' in text and '*MATERIAL,NAME=M34\n' in text
+    assert str(children[-1]) in text
+    assert len(value['input_manifest']['includes']) == 35
+    assert verify_evidence(value, assets) == []
+
+
+def test_budget_overflow_marks_missing_bodies_and_never_cuts_a_table_as_complete(tmp_path):
+    inp = tmp_path / 'tables.inp'
+    inp.write_text('*MATERIAL,NAME=LongTable\n*PLASTIC\n' + '100,0.1\n' * 10000
+                   + '*STEP\n*STATIC\n0.1,1\n*CLOAD\nTIP,3,1\n*END STEP\n', encoding='ascii', newline='')
+    value = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')
+    text = value['model_text']
+    assert len(text) <= 40000 and '*PLASTIC' in text
+    assert '원문 L3-L10002 본문 미제공' in text and '100,0.1' not in text
+    assert '*CLOAD\nTIP,3,1' in text and '*STEP' in text
+    assert '모델 완전성을 판정하지 마세요' in text
+
+
+def test_too_many_blocks_and_files_report_unprovided_ranges_without_overflow(tmp_path):
+    from caelab.native.evidence import _model_text
+    inp = tmp_path / 'blocks.inp'
+    inp.write_text('*STEP\n*STATIC\n0.1,1\n*END STEP\n' * 3000, encoding='ascii', newline='')
+    value = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')
+    text = value['model_text']
+    assert len(text) <= 40000 and '블록 전체 미제공' in text and '-L12000' in text
+    # A pathological file index cannot fit all paths. The omission remains explicit.
+    items = [dict(value['files'][0], sha256=str(index), source_path='x' * 500) for index in range(200)]
+    text = _model_text(tmp_path / 'assets', items)
+    assert len(text) <= 40000 and '미제공 파일' in text and 'files[' in text
+
+
+def test_small_and_non_inp_direct_inputs_are_not_reinterpreted(tmp_path):
+    inp = tmp_path / 'small.inp'
+    raw = b'** original\r\n*NODE\r\n1,0,0,0\r\n*MATERIAL,NAME=X\r\n*ELASTIC\r\n1,.3\r\n'
+    inp.write_bytes(raw)
+    value = import_file_evidence(tmp_path / 'a', files={'input': inp}, solver_id='calculix')
+    assert '*NODE\r\n1,0,0,0\r\n' in value['model_text'] and '미제공:' not in value['model_text']
+    other = tmp_path / 'native.txt'
+    other.write_text('*NODE\n' + '1,2,3,4\n' * 500, encoding='ascii', newline='')
+    value = import_file_evidence(tmp_path / 'b', files={'input': other}, solver_id='calculix')
+    assert value['model_text'].count('1,2,3,4') == 500
+    value = import_file_evidence(tmp_path / 'c', files={'input': other}, solver_id='other_solver')
+    assert value['model_text'].count('1,2,3,4') == 500
