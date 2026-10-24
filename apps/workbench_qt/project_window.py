@@ -10,7 +10,10 @@ execution window; recorded runs can be inspected from this project.
 
 from __future__ import annotations
 
+from html import escape
+from os.path import relpath
 from pathlib import Path
+import re
 
 from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence, QPainterPath, QPen
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
     QGraphicsPathItem,
     QGraphicsScene,
     QGraphicsView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -298,6 +302,12 @@ class ProjectWindow(QMainWindow):
         refresh.triggered.connect(self.refresh_files)
         fit = toolbar.addAction("도식 맞춤")
         fit.triggered.connect(self.fit_schematic)
+        self.zoom_in_action = toolbar.addAction("도식 확대")
+        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
+        self.zoom_in_action.triggered.connect(lambda: self.view.scale(1.2, 1.2))
+        self.zoom_out_action = toolbar.addAction("도식 축소")
+        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
+        self.zoom_out_action.triggered.connect(lambda: self.view.scale(1 / 1.2, 1 / 1.2))
         original = toolbar.addAction("도식 100%")
         original.triggered.connect(self.reset_view)
         run = toolbar.addAction("해석창 열기")
@@ -351,24 +361,29 @@ class ProjectWindow(QMainWindow):
         self.properties.setMinimumWidth(220)
         self.properties.setMinimumHeight(180)
         self.input_button = QPushButton("입력 파일 선택…")
-        self.output_button = QPushButton("출력 파일 등록…")
+        self.output_button = QPushButton("작성한 출력 등록…")
         self.open_button = QPushButton("프로그램 열기")
-        for button, callback in ((self.input_button, lambda: self.choose_file("input")),
+        self.open_button.setObjectName("primary")
+        for button, callback in ((self.open_button, self.open_selected),
                                  (self.output_button, lambda: self.choose_file("output")),
-                                 (self.open_button, self.open_selected)):
+                                 (self.input_button, lambda: self.choose_file("input"))):
             button.clicked.connect(callback)
             props_layout.addWidget(button)
         self.details_toggle = QToolButton()
-        self.details_toggle.setText("상세 정보")
+        self.details_toggle.setText("상세 정보…")
         self.details_toggle.setCheckable(True)
-        self.details_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.details_toggle.setArrowType(Qt.RightArrow)
-        self.details_toggle.toggled.connect(lambda shown: (
-            self.properties.setVisible(shown),
-            self.details_toggle.setArrowType(Qt.DownArrow if shown else Qt.RightArrow)))
+        self.details_dialog = QDialog(self)
+        self.details_dialog.setWindowTitle("선택한 프로그램 상세 정보")
+        self.details_dialog.resize(650, 550)
+        detail_layout = QVBoxLayout(self.details_dialog)
+        detail_layout.addWidget(self.properties)
+        detail_close = QDialogButtonBox(QDialogButtonBox.Close)
+        detail_close.button(QDialogButtonBox.Close).setText("닫기")
+        detail_close.rejected.connect(self.details_dialog.reject)
+        detail_layout.addWidget(detail_close)
+        self.details_dialog.finished.connect(lambda _: self.details_toggle.setChecked(False))
+        self.details_toggle.toggled.connect(self.details_dialog.setVisible)
         props_layout.addWidget(self.details_toggle)
-        props_layout.addWidget(self.properties)
-        self.properties.hide()
         props_layout.addStretch()
         props_scroll = QScrollArea()
         props_scroll.setWidgetResizable(True)
@@ -383,22 +398,25 @@ class ProjectWindow(QMainWindow):
         bottom = QWidget()
         bottom.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout = QVBoxLayout(bottom)
+        current_row = QHBoxLayout()
         self.status = QLabel()
-        self.status.setWordWrap(True)
-        self.status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        layout.addWidget(self.status)
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        current_row.addWidget(self.status, 1)
         self.history_toggle = QToolButton()
         self.history_toggle.setText("이력 보기")
         self.history_toggle.setCheckable(True)
         self.history_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.history_toggle.setArrowType(Qt.RightArrow)
-        layout.addWidget(self.history_toggle)
+        current_row.addWidget(self.history_toggle)
+        layout.addLayout(current_row)
         self.log = QTextEdit()
         self.log.setObjectName("logView")
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(90)
         layout.addWidget(self.log)
         self.log.hide()
+        self._collapsed_history_height = bottom.sizeHint().height()
+        bottom.setMaximumHeight(self._collapsed_history_height)
         self.history_toggle.toggled.connect(self._show_history)
         messages = QDockWidget("작업 기록", self)
         messages.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
@@ -410,6 +428,7 @@ class ProjectWindow(QMainWindow):
     def _show_history(self, shown: bool) -> None:
         self.log.setVisible(shown)
         self.history_toggle.setArrowType(Qt.DownArrow if shown else Qt.RightArrow)
+        self.history_dock.widget().setMaximumHeight(16777215 if shown else self._collapsed_history_height)
         self.resizeDocks([self.history_dock],
                          [self.history_dock.widget().sizeHint().height() + 24], Qt.Vertical)
 
@@ -424,16 +443,61 @@ class ProjectWindow(QMainWindow):
             self._title()
 
     def _message(self, text: str) -> None:
-        current = text
+        first, *following = text.splitlines()
+        current = first
         for prefix in ("프로젝트를 열었습니다: ", "프로젝트를 저장했습니다: ",
                        "입력 파일을 등록했습니다: ", "출력 파일을 등록했습니다: "):
             if text.startswith(prefix):
-                first, *following = text.splitlines()
-                current = "\n".join([prefix + Path(first[len(prefix):]).name] + following)
+                current = prefix + self._short_path(first[len(prefix):])
                 break
-        self.status.setText(current)
+        current = re.sub(r" \(PID \d+\)", "", current)
+        if following:
+            current += " — " + next((line for line in following if line.strip()), "추가 내용 확인")
+        self._current_message = current
+        self._render_current_message()
         self.status.setToolTip(text)
         self.log.append(text)
+
+    def _render_current_message(self) -> None:
+        text = getattr(self, "_current_message", "")
+        self.status.setText(self.status.fontMetrics().elidedText(
+            text, Qt.ElideRight, max(50, self.status.width())) if self.isVisible() else text)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "status"):
+            QTimer.singleShot(0, self._render_current_message)
+
+    def _short_path(self, path: str) -> str:
+        base = self.project.path.parent if self.project.path else Path.cwd()
+        try:
+            return Path(relpath(path, base)).as_posix()
+        except ValueError:  # Different Windows drives cannot have a relative path.
+            return str(path)
+
+    def _summary_file_name(self, path: str) -> tuple[str, str]:
+        root = self.project.run_store
+        if root is None and self.project.path is not None:
+            root = self.project.path.with_suffix(".runs")
+        if root is None or not Path(path).resolve().is_relative_to(root.resolve()):
+            return self._short_path(path), ""
+        # Match the file's own receipt, never the currently selected execution.
+        relative = Path(path).resolve().relative_to(root.resolve())
+        try:
+            from caelab.native.run_store import RunStore
+            if len(relative.parts) < 2:
+                raise ValueError("실행 파일 위치 미확인")
+            cached = getattr(self, "_summary_run_store", None)
+            if cached is None or cached.root != root.resolve():
+                cached = self._summary_run_store = RunStore(root)
+            run = cached.read(root / relative.parts[0] / "job.json")
+            if not run.created_at or not run.input_path:
+                raise ValueError("실행 출처 미확인")
+            source = Path(run.input_path)
+            source_name = source.name if source.resolve().is_relative_to(root.resolve()) else self._short_path(run.input_path)
+            return Path(path).name, f"실행: {run.created_at}\n기준 입력: {source_name}"
+        except (OSError, ValueError, TypeError):
+            return Path(path).name, "실행 출처 미확인"
 
     def _error(self, text: str, error: Exception) -> None:
         message = f"{text}: {error}"
@@ -575,6 +639,11 @@ class ProjectWindow(QMainWindow):
             return
         box = selected[0]
         node = self.project.nodes[box.node_id]
+        self.open_button.setText({"geometry": "FreeCAD 열기", "mesh": "Gmsh 열기",
+                                  "analysis": "CalculiX 해석창 열기", "results": "ParaView 열기",
+                                  "expert": "전문가 창 열기"}.get(node.kind, "프로그램 열기"))
+        self.input_button.setVisible(node.kind != "expert")
+        self.output_button.setVisible(node.kind != "expert")
         statuses = {status.spec.id: status for status in self.workbench.programs()}
         program = statuses.get(node.program_id)
         reference = self.workbench.input_file(self.project, node.id)
@@ -598,7 +667,8 @@ class ProjectWindow(QMainWindow):
                 lines.append("파일 없음")
             else:
                 source = {"user": "사용자 선언", "unknown": "미확인"}.get(ref.unit_source, ref.unit_source)
-                lines += [ref.path, f"파일 상태: {STATE_LABELS.get(ref.status, ref.status)}",
+                status = self._file_status(ref)
+                lines += [ref.path, f"파일 상태: {STATE_LABELS.get(status, status)}",
                           f"단위: {_unit_text(ref.units)}", f"단위 출처: {source or '미확인'}"]
         if program:
             lines += ["", f"프로그램: {program.spec.name}",
@@ -625,40 +695,44 @@ class ProjectWindow(QMainWindow):
             except (OSError, ValueError, RuntimeError) as error:
                 lines.append(f"실행 기록을 읽지 못했습니다: {error}")
         self.properties.setPlainText("\n".join(lines))
-        self._selection_summary(node, program, reference, state_label, reason)
+        self._selection_summary(node, program, reference, reason)
 
-    def _selection_summary(self, node, program, reference, state_label, reason):
+    def _selection_summary(self, node, program, reference, reason):
         name = program.spec.name if program else "전문가 논의" if node.kind == "expert" else node.program_id
         self.selection_name.setText(name)
         installation = ("프로그램 발견됨" if program.available else "프로그램을 찾지 못함") if program else "별도 대화창에서 열기"
-        self.program_summary.setText(f"{installation}\n입력 상태: {state_label}"
-                                     + (f"\n{reason}" if reason else ""))
+        issue = reason if node.state in {"failed", "stale"} else ""
+        self.program_summary.setText(installation + (f"\n{issue}" if issue else ""))
+        self.output_summary.setVisible(node.kind != "expert" or "output" in node.files)
         input_title = "연결 입력" if any(c.target_id == node.id for c in self.project.connections) else "입력 파일"
         for label, title, ref in ((self.input_summary, input_title, reference),
                                   (self.output_summary, "등록한 출력", node.files.get("output"))):
             if ref is None:
-                label.setText(f"{title}\n선택 파일 없음")
+                label.setTextFormat(Qt.RichText)
+                label.setText(f"<b>{title}</b><br>선택 파일 없음")
             else:
                 source = {"user": "사용자 선언", "unknown": "미확인", "": "미확인"}.get(ref.unit_source, ref.unit_source)
-                status = ref.status
-                label.setText(f"{title} — {STATE_LABELS.get(status, status)}\n{Path(ref.path).name}\n"
-                              f"단위: {_unit_text(ref.units)} ({source})")
-        status = reference.status if reference else "needs_input"
-        output = node.files.get("output")
-        if status == "missing":
+                status = self._file_status(ref)
+                file_name, provenance = self._summary_file_name(ref.path)
+                provenance_html = escape(provenance).replace("\n", "<br>") + "<br>" if provenance else ""
+                label.setTextFormat(Qt.RichText)
+                label.setText(f"<b>{title}</b> — {escape(STATE_LABELS.get(status, status))}<br>"
+                              f"<b>{escape(file_name)}</b><br>{provenance_html}"
+                              f"단위: {escape(_unit_text(ref.units))} ({escape(source)})")
+                label.setToolTip(ref.path)
+        status = self._file_status(reference) if reference else "needs_input"
+        if node.kind == "expert":
+            action = "전문가 창에서 실행 출처를 확인하고 사용할 근거를 가져오세요."
+        elif status == "missing":
             action = "누락된 입력 파일을 다시 선택하세요."
         elif status in {"stale", "changed"}:
             action = "입력의 변경 내용을 확인하세요. 상위 프로그램에서 새 파일을 작성한 뒤 다시 등록하세요."
         elif reference is None:
             action = "전달할 실행 자료를 연결하세요." if node.kind == "expert" else "사용할 입력 파일을 선택하세요."
         elif node.kind == "geometry":
-            action = "FreeCAD에서 입력을 확인하고 덱을 작성한 뒤 출력 파일을 등록하세요."
-            if output and output.status != "ready":
-                action = "FreeCAD에서 새 덱을 작성한 뒤 출력 파일을 다시 등록하세요."
+            action = "FreeCAD에서 입력을 확인하세요. 이미 작성한 최신 덱은 출력 파일로 등록할 수 있습니다."
         elif node.kind == "analysis":
             action = "해석창에서 입력과 실행 기록을 확인하세요. 계산은 해석창에서 시작합니다."
-        elif node.kind == "expert":
-            action = "전문가 창에서 사용할 실행 근거를 가져오고 질문하세요."
         else:
             action = "전용 프로그램에서 선택한 파일을 열고 실제 표시를 확인하세요."
         if program and not program.available:

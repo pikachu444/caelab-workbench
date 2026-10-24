@@ -105,8 +105,12 @@ def test_program_missing_and_input_ready_are_shown_separately(window, tmp_path, 
 
 def test_parent_summary_separates_current_cad_from_stale_deck_and_keeps_details(window, tmp_path, app):
     box = window.add_box("geometry")
-    cad = _file(tmp_path, "B 작업 사본.FCStd")
-    deck = _file(tmp_path, "A 작성 입력.inp")
+    (tmp_path / "A").mkdir()
+    (tmp_path / "B").mkdir()
+    window.save_project(tmp_path / "project.json")
+    cad = _file(tmp_path / "B", "작업 사본.FCStd")
+    deck = _file(tmp_path / "A", "FEMMeshGmsh.inp")
+    new_deck = _file(tmp_path / "B", "FEMMeshGmsh.inp")
     window.register_file(box.node_id, cad, units={"length": "mm"})
     window.register_file(box.node_id, deck, "output", {"force": "N"})
     window.project.nodes[box.node_id].files["output"].stale = True
@@ -114,21 +118,29 @@ def test_parent_summary_separates_current_cad_from_stale_deck_and_keeps_details(
     window._selection_changed()
     window.show()
     app.processEvents()
-    assert "B 작업 사본.FCStd" in window.input_summary.text()
+    assert "B/작업 사본.FCStd" in window.input_summary.text()
     assert "준비됨" in window.input_summary.text()
     assert "길이: mm" in window.input_summary.text()
-    assert "A 작성 입력.inp" in window.output_summary.text()
+    assert "A/FEMMeshGmsh.inp" in window.output_summary.text()
     assert "오래됨" in window.output_summary.text()
     assert "힘: N" in window.output_summary.text()
     assert "출력 파일" in window.next_action.text()
+    assert "이미 작성" in window.next_action.text()
+    assert window.open_button.text() == "FreeCAD 열기"
+    assert "입력 상태: 준비됨" not in window.program_summary.text()
     assert str(tmp_path) not in window.input_summary.text() + window.output_summary.text()
     assert not window.properties.isVisible()
     window.details_toggle.click()
     app.processEvents()
     assert window.properties.isVisible()
+    assert window.properties.window() is window.details_dialog
+    assert window.properties.height() > 250
     assert str(cad) in window.properties.toPlainText() and str(deck) in window.properties.toPlainText()
     window.details_toggle.click()
     assert not window.properties.isVisible()
+    window.register_file(box.node_id, new_deck, "output", {"force": "N"})
+    assert "B/FEMMeshGmsh.inp" in window.output_summary.text()
+    assert "A/FEMMeshGmsh.inp" not in window.output_summary.text()
     cad.write_text("changed CAD")
     window.refresh_files()
     assert "원본 변경됨" in window.input_summary.text()
@@ -145,13 +157,43 @@ def test_parent_task_history_is_collapsed_without_hiding_current_failure(window,
     window._message("파일을 읽지 못했습니다: 누락된 입력입니다")
     assert "누락된 입력" in window.status.text()
     assert not window.log.isVisible()
+    window._message("CalculiX 프로그램 열기 요청을 보냈습니다 (PID 12345).")
+    assert "PID" not in window.status.text()
+    assert "PID 12345" in window.log.toPlainText()
+    window.resize(1800, 1100)
+    app.processEvents()
+    assert window.history_dock.height() <= 100
     window.history_toggle.click()
     app.processEvents()
     assert window.log.isVisible()
     assert "첫 작업" in window.log.toPlainText()
     assert "누락된 입력" in window.log.toPlainText()
     window.history_toggle.click()
+    app.processEvents()
     assert not window.log.isVisible()
+    assert window.history_dock.height() <= 100
+
+
+def test_parent_zoom_controls_change_schematic_scale(window):
+    initial = window.view.transform().m11()
+    window.zoom_in_action.trigger()
+    assert window.view.transform().m11() > initial
+    window.zoom_out_action.trigger()
+    assert window.view.transform().m11() == pytest.approx(initial)
+    window.zoom_in_action.trigger()
+    window.reset_view()
+    assert window.view.transform().m11() == 1
+
+
+def test_parent_reuses_file_status_cache_while_rereading_selection(window, tmp_path, monkeypatch):
+    import caelab.project as project_module
+    box = window.add_box("geometry")
+    window.register_file(box.node_id, _file(tmp_path, "large.FCStd"))
+    _select(window, box)
+    window._selection_changed()
+    monkeypatch.setattr(project_module, "file_revision", lambda path: pytest.fail("rehashed unchanged input"))
+    window._selection_changed()
+    window._selection_changed()
 
 
 def test_fcstd_to_authored_inp_to_calculix_survives_save_and_save_as(window, tmp_path):
@@ -342,3 +384,33 @@ def test_cli_project_argument_reaches_project_window(monkeypatch):
     monkeypatch.setattr(entry, "ProjectWindow", Window)
     assert entry.main(["연구 프로젝트.json"]) == 27
     assert calls == ["연구 프로젝트.json"]
+
+
+@pytest.mark.parametrize("kind", ["results", "expert"])
+def test_internal_result_summary_uses_its_receipt_without_diagnostic_id(window, tmp_path, kind):
+    from caelab.native.run_store import NativeRun, RunStore
+    box = window.add_box(kind)
+    assert window.save_project(tmp_path / "project.json")
+    run_id = "a" * 32
+    folder = window.project.run_store / run_id
+    folder.mkdir()
+    result = _file(folder, "model.frd")
+    source = tmp_path / "A" / "FEMMeshGmsh.inp"
+    source.parent.mkdir()
+    source.write_text("native input")
+    RunStore(window.project.run_store).write(NativeRun(
+        id=run_id, node_id="other-analysis", workdir=folder, state="completed",
+        input_path=str(source), created_at="2026-10-24T09:18:36Z"))
+    assert window.register_file(box.node_id, result)
+    _select(window, box)
+    window._selection_changed()
+    text = window.input_summary.text()
+    assert "model.frd" in text and "A/FEMMeshGmsh.inp" in text
+    assert "2026-10-24T09:18:36Z" in text
+    assert run_id not in text and "project.runs" not in text
+    assert str(result) in window.properties.toPlainText()
+    (folder / "job.json").unlink()
+    window._selection_changed()
+    assert "실행 출처 미확인" in window.input_summary.text()
+    assert "A/FEMMeshGmsh.inp" not in window.input_summary.text()
+    assert run_id not in window.input_summary.text()
