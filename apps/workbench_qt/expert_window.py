@@ -4,10 +4,10 @@ from __future__ import annotations
 import argparse
 import copy
 import html
-import json
 import queue
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -15,24 +15,16 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
-    QTabWidget, QTextBrowser, QToolBar, QVBoxLayout, QWidget,
+    QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from caelab.workbench import Workbench
 from .theme import THEME
+from .expert_chat import ChatBrowser, QuestionEdit, evidence_name, human_text, markdown_body, proposal_text, source_name, evidence_cautions, proposal_brief, user_error
 
 
-def _text(value) -> str:
-    return html.escape(str(value))
-
-
-def _evidence_name(evidence) -> str:
-    names = [Path(item['source_path']).name for item in evidence.get('files', [])
-             if item['role'] in {'input', 'frd', 'dat'}]
-    name = names[0] if names else evidence.get('solver_id', '자료')
-    run = evidence.get('run_id')
-    return f"{name} / 실행 {run[:8]}" if run else f"{name} / 직접 불러온 자료 {evidence.get('id', '')[:6]}"
+def _evidence_name(evidence):
+    return evidence_name(evidence)
 
 
 class ExpertWindow(QMainWindow):
@@ -47,161 +39,170 @@ class ExpertWindow(QMainWindow):
         self._mailbox = queue.Queue()
         self._cancel = threading.Event()
         self._close_after = False
+        self._pending_message = None
+        self._asset_issues = []
         self.setWindowTitle('전문가 논의')
-        self.resize(1100, 780)
-        self.setMinimumSize(760, 580)
+        self.resize(1100, 850)
+        self.setMinimumSize(680, 580)
         self.setStyleSheet(THEME + """
-            QLabel#heading { font-size: 16px; font-weight: bold; color: #20374d; }
-            QLabel#basis { background: #e3eef8; padding: 8px; color: #173b5e; }
-            QPlainTextEdit, QTextBrowser, QListWidget { background: white; border: 1px solid #cfd6dd; }
-            QPushButton#primary:disabled { background: #dbe3eb; color: #647383; border-color: #c4cdd6; }
+            QMainWindow, QWidget#chatRoot { background: #fafaf9; }
+            QLabel#heading { font-size: 19px; font-weight: 600; color: #202d39; }
+            QTextBrowser#conversation { background: #fafaf9; border: none; font-size: 16px; }
+            QPlainTextEdit#composer { background: white; border: 1px solid #b9c2cb;
+                border-radius: 10px; padding: 10px; font-size: 15px; }
+            QLabel#basis { color: #526476; font-size: 12px; }
             QPushButton:focus, QComboBox:focus { border: 2px solid #1668b4; }
         """)
-        toolbar = QToolBar('대화 파일', self)
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
         self._edit_actions = []
+        menu = self.menuBar().addMenu('대화')
         for label, slot, shortcut in (
             ('새 대화', self.new_document, QKeySequence.New),
-            ('열기', self.open_document, QKeySequence.Open),
+            ('열기…', self.open_document, QKeySequence.Open),
             ('저장', self.save_document, QKeySequence.Save),
             ('다시 읽기', self.reload_document, QKeySequence.Refresh),
-            ('자료 불러오기', self.import_files, None),
-            ('제약과 실패 기록', self.edit_context, None),
+            ('제약과 실패 기록…', self.edit_context, None),
         ):
-            action = toolbar.addAction(label)
+            action = menu.addAction(label)
             action.triggered.connect(slot)
             if shortcut:
                 action.setShortcut(shortcut)
             self._edit_actions.append(action)
         root = QWidget()
-        layout = QVBoxLayout(root)
-        layout.setContentsMargins(14, 12, 14, 10)
-        self.heading = QLabel('결과를 근거로 이어가는 대화')
+        root.setObjectName('chatRoot')
+        outer = QHBoxLayout(root)
+        outer.setContentsMargins(18, 12, 18, 14)
+        outer.addStretch()
+        column = QWidget()
+        column.setMaximumWidth(900)
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        top = QHBoxLayout()
+        self.heading = QLabel('새 대화')
+        self.heading.setWordWrap(True)
         self.heading.setObjectName('heading')
-        layout.addWidget(self.heading)
-        self.status = QLabel('자료를 불러온 뒤 질문의 근거를 선택하세요.')
+        top.addWidget(self.heading, 1)
+        self.settings = QPushButton('연결 설정')
+        self.settings.clicked.connect(self.configure_provider)
+        top.addWidget(self.settings)
+        layout.addLayout(top)
+        self.status = QLabel()
         self.status.setWordWrap(True)
+        self.status.hide()
         layout.addWidget(self.status)
         self.asset_warning = QLabel()
         self.asset_warning.setWordWrap(True)
         self.asset_warning.setStyleSheet('color: #8a3d11;')
         self.asset_warning.hide()
         layout.addWidget(self.asset_warning)
-        split = QSplitter(Qt.Horizontal)
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(QLabel('보존된 근거'))
+        self.transcript = ChatBrowser()
+        self.transcript.setObjectName('conversation')
+        self.transcript.document().setDefaultStyleSheet(
+            'p { margin-top: 8px; margin-bottom: 12px; line-height: 150%; } '
+            'pre { background-color: #eef0f2; white-space: pre-wrap; } '
+            'td, th { padding: 6px; }')
+        layout.addWidget(self.transcript, 1)
+        controls = QHBoxLayout()
+        self.attachments_button = QPushButton('첨부 자료')
+        self.attachments_button.clicked.connect(self.show_attachments)
+        controls.addWidget(self.attachments_button)
+        self.proposals_button = QPushButton('제안 검토')
+        self.proposals_button.clicked.connect(self.show_proposals)
+        controls.addWidget(self.proposals_button)
+        controls.addWidget(QLabel('다음 역할'))
+        self.role = QComboBox()
+        self.role.setAccessibleName('이번 질문의 전문가 역할')
+        self.role.setToolTip('지금 작성하는 다음 질문에 적용됩니다. 이전 답변의 역할은 바뀌지 않습니다.')
+        self.role.setMaximumWidth(190)
+        for template in self.workbench.expert_templates():
+            self.role.addItem(template.name, template.id)
+        controls.addWidget(self.role)
+        self.basis = QLabel('이번 질문의 첨부: 선택하지 않음')
+        self.basis.setObjectName('basis')
+        self.basis.setWordWrap(True)
+        layout.addWidget(self.basis)
+        self.question = QuestionEdit()
+        self.question.setObjectName('composer')
+        self.question.setPlaceholderText('질문을 적으세요… Enter 보내기 · Shift+Enter 줄바꿈')
+        self.question.setToolTip('Enter 또는 Ctrl+Enter로 보내기 · Shift+Enter로 줄바꿈. 한글 조합 중에는 보내지 않습니다.')
+        self.question.submitted.connect(self.ask)
+        layout.addWidget(self.question)
+        send_line = controls
+        self.wait_label = QLabel('')
+        self.wait_label.setMaximumWidth(110)
+        self.wait_label.setWordWrap(True)
+        send_line.addWidget(self.wait_label, 1)
+        self.stop = QPushButton('중단')
+        self.stop.clicked.connect(self.cancel_request)
+        self.stop.setEnabled(False)
+        send_line.addWidget(self.stop)
+        self.ask_button = QPushButton('보내기')
+        self.ask_button.setObjectName('primary')
+        self.ask_button.clicked.connect(self.ask)
+        send_line.addWidget(self.ask_button)
+        layout.addLayout(send_line)
+        outer.addWidget(column, 1)
+        outer.addStretch()
+        self.setCentralWidget(root)
+
+        self.attachments_dialog = QDialog(self)
+        self.attachments_dialog.setWindowTitle('대화의 첨부 자료')
+        self.attachments_dialog.resize(680, 520)
+        self.attachments_dialog.setStyleSheet('QWidget { font-size: 14px; } QPlainTextEdit { padding: 8px; }')
+        attachment_layout = QVBoxLayout(self.attachments_dialog)
+        attachment_layout.addWidget(QLabel('목록 선택은 미리보기입니다. 이번 질문에 쓸 자료는 아래에서 선택하세요.'))
         self.sources = QListWidget()
-        self.sources.setMinimumHeight(90)
         self.sources.setWordWrap(True)
         self.sources.currentItemChanged.connect(self.preview_evidence)
-        left_layout.addWidget(self.sources, 2)
-        self.use_source = QPushButton('질문의 근거로 사용')
+        attachment_layout.addWidget(self.sources, 1)
+        self.attachment_preview = QPlainTextEdit()
+        self.attachment_preview.setReadOnly(True)
+        attachment_layout.addWidget(self.attachment_preview, 1)
+        attachment_actions = QHBoxLayout()
+        self.use_source = QPushButton('이번 질문에 첨부')
         self.use_source.clicked.connect(self.select_evidence)
-        left_layout.addWidget(self.use_source)
-        self.capture = QPushButton('실행 가져오기…')
+        attachment_actions.addWidget(self.use_source)
+        self.capture = QPushButton('계산 결과 가져오기…')
         self.capture.setVisible(bool(project_path))
         self.capture.clicked.connect(self.capture_run)
-        left_layout.addWidget(self.capture)
-        detail_tabs = QTabWidget()
-        self.details = {}
-        for key, label in (('summary_text', '요약'), ('model_text', '입력'),
-                           ('log_text', '로그'), ('provenance', '출처')):
-            view = QPlainTextEdit()
-            view.setReadOnly(True)
-            detail_tabs.addTab(view, label)
-            self.details[key] = view
-        left_layout.addWidget(detail_tabs, 3)
-        split.addWidget(left)
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(8, 0, 0, 0)
-        tabs = QTabWidget()
-        self.transcript = QTextBrowser()
-        self.transcript.setOpenExternalLinks(False)
-        tabs.addTab(self.transcript, '대화')
-        self.proposals = QPlainTextEdit()
-        self.proposals.setReadOnly(True)
-        proposal_tab = QWidget()
-        proposal_layout = QVBoxLayout(proposal_tab)
-        proposal_layout.setContentsMargins(0, 0, 0, 0)
+        attachment_actions.addWidget(self.capture)
+        self.import_button = QPushButton('파일 첨부…')
+        self.import_button.clicked.connect(self.import_files)
+        attachment_actions.addWidget(self.import_button)
+        attachment_layout.addLayout(attachment_actions)
+        self.proposals_dialog = QDialog(self)
+        self.proposals_dialog.setWindowTitle('미적용 제안 검토')
+        self.proposals_dialog.resize(680, 570)
+        self.proposals_dialog.setStyleSheet('QWidget { font-size: 14px; } QPlainTextEdit { padding: 8px; }')
+        proposal_layout = QVBoxLayout(self.proposals_dialog)
         self.proposal_choice = QComboBox()
         self.proposal_choice.setAccessibleName('검토할 제안')
         self.proposal_choice.currentIndexChanged.connect(self.preview_proposal)
         proposal_layout.addWidget(self.proposal_choice)
+        self.proposals = QPlainTextEdit()
+        self.proposals.setReadOnly(True)
         proposal_layout.addWidget(self.proposals, 1)
         proposal_actions = QHBoxLayout()
-        self.check_proposal = QPushButton('원본 개정 확인')
+        self.check_proposal = QPushButton('원본 변경 여부 확인')
         self.check_proposal.clicked.connect(self.check_selected_proposal)
         proposal_actions.addWidget(self.check_proposal)
         self.reject_proposal = QPushButton('제안 거절')
         self.reject_proposal.clicked.connect(self.reject_selected_proposal)
         proposal_actions.addWidget(self.reject_proposal)
-        proposal_actions.addStretch()
         proposal_layout.addLayout(proposal_actions)
-        tabs.addTab(proposal_tab, '변경 제안')
-        self.request_details = QPlainTextEdit()
-        self.request_details.setReadOnly(True)
-        tabs.addTab(self.request_details, '요청 근거')
-        self.asset_details = QPlainTextEdit()
-        self.asset_details.setReadOnly(True)
-        tabs.addTab(self.asset_details, '파일 확인')
-        right_layout.addWidget(tabs, 1)
-        self.basis = QLabel('이번 질문의 근거: 선택하지 않음')
-        self.basis.setObjectName('basis')
-        self.basis.setWordWrap(True)
-        right_layout.addWidget(self.basis)
-        role_line = QHBoxLayout()
-        role_line.addWidget(QLabel('역할'))
-        self.role = QComboBox()
-        for template in self.workbench.expert_templates():
-            self.role.addItem(template.name, template.id)
-            self.role.setItemData(self.role.count() - 1,
-                                  '읽는 자료: ' + ', '.join(template.allowed_tools), Qt.ToolTipRole)
-        role_line.addWidget(self.role, 1)
-        self.settings = QPushButton('공급자 설정')
-        self.settings.clicked.connect(self.configure_provider)
-        role_line.addWidget(self.settings)
-        self.recheck = QPushButton('다시 확인')
+        # Configuration remains available; lengthy transport diagnostics are not conversation content.
+        self.provider = QLabel(self)
+        self.provider.hide()
+        self.recheck = QPushButton('설정 다시 확인', self)
+        self.recheck.hide()
         self.recheck.clicked.connect(self.refresh_provider)
-        role_line.addWidget(self.recheck)
-        right_layout.addLayout(role_line)
-        self.provider = QLabel()
-        self.provider.setWordWrap(True)
-        right_layout.addWidget(self.provider)
-        self.question = QPlainTextEdit()
-        self.question.setPlaceholderText('확인할 점이나 이전 답변에 대한 반론을 적으세요. Ctrl+Enter로 질문합니다.')
-        self.question.setMaximumHeight(110)
-        self.question.setMinimumHeight(65)
-        right_layout.addWidget(self.question)
-        send_line = QHBoxLayout()
-        self.wait_label = QLabel('질문을 보내기 전에는 모델을 호출하지 않습니다.')
-        self.wait_label.setWordWrap(True)
-        send_line.addWidget(self.wait_label, 1)
-        self.stop = QPushButton('대기 중단')
-        self.stop.clicked.connect(self.cancel_request)
-        self.stop.setEnabled(False)
-        send_line.addWidget(self.stop)
-        self.ask_button = QPushButton('질문 보내기')
-        self.ask_button.setObjectName('primary')
-        self.ask_button.setShortcut('Ctrl+Return')
-        self.ask_button.clicked.connect(self.ask)
-        send_line.addWidget(self.ask_button)
-        right_layout.addLayout(send_line)
-        split.addWidget(right)
-        split.setSizes([330, 740])
-        split.setStretchFactor(1, 1)
-        layout.addWidget(split, 1)
-        self.setCentralWidget(root)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._poll)
         self.timer.start(50)
         if discussion_path:
             self._load(Path(discussion_path), create=True)
             if run_id:
-                self.status.setText(f'실행 {run_id[:8]}을 전달받았습니다. 실행 가져오기에서 근거를 보존하세요.')
+                self._notice('프로젝트의 계산 결과가 전달되었습니다. 첨부 자료에서 가져올 결과를 확인하세요.')
         else:
             self.render()
 
@@ -209,21 +210,32 @@ class ExpertWindow(QMainWindow):
     def assets(self):
         return self.path.parent / 'assets'
 
+    def _notice(self, text):
+        self.status.setText(human_text(text))
+        self.status.setVisible(bool(text))
+
     def _error(self, error):
-        self.status.setText(str(error))
-        self.statusBar().showMessage(str(error))
+        self._notice(user_error(error))
+
+    def show_attachments(self):
+        self.attachments_dialog.show()
+
+    def show_proposals(self):
+        self.proposals_dialog.show()
 
     def _load(self, path, *, create=False):
         document = self.workbench.open_expert_discussion(path, create=create)
         self.path, self.document = Path(path).resolve(), document
+        self._pending_message = None
         self.question.setPlainText(document.get('draft_question', ''))
+        self._asset_issues = self.workbench.expert_discussion_issues(self.path, document)
         self.render()
-        self.status.setText(f'대화 파일: {self.path}')
-        problems = self.workbench.expert_discussion_issues(self.path, document)
-        self.asset_warning.setText(f'자료 확인 안내 {len(problems)}개 — 원본 변경·누락 등의 상세 내용은 파일 확인 탭을 보세요.')
-        self.asset_warning.setToolTip('\n'.join(problems))
+        self._notice('')
+        problems = self._asset_issues
+        self.asset_warning.setText(('보존된 제안의 내용이나 출처를 확인할 수 없습니다. 대화는 읽을 수 있지만 제안은 다시 확인해 주세요.'
+                                   if any('제안' in problem for problem in problems) else
+                                   '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.') if problems else '')
         self.asset_warning.setVisible(bool(problems))
-        self.asset_details.setPlainText('\n'.join(problems) or '불러온 대화의 보존 파일에서 누락이나 해시 불일치를 찾지 못했습니다.')
 
     def _ensure_document(self):
         if self.path:
@@ -276,105 +288,93 @@ class ExpertWindow(QMainWindow):
             candidate['draft_question'] = self.question.toPlainText()
             self.document = self.workbench.save_expert_discussion(
                 self.path, candidate, expected_revision=self.document['revision'])
-            self.statusBar().showMessage(f'저장됨: {self.path}', 4000)
+            self.statusBar().showMessage('대화를 저장했습니다.', 3000)
             return True
         except Exception as error:
             self._error(error)
             return False
 
     def render(self):
+        bar = self.transcript.verticalScrollBar()
+        old_position, follow = bar.value(), bar.maximum() - bar.value() <= 32
+        self.transcript.follow_tail = follow
         preview = self.sources.currentItem()
         preview_id = preview.data(Qt.UserRole) if preview else None
+        selected = self.document.get('selected_evidence_id')
+        if preview_id not in self.document.get('evidences', {}):
+            preview_id = selected
         self.sources.blockSignals(True)
         self.sources.clear()
-        selected = self.document.get('selected_evidence_id')
         for evidence_id, evidence in self.document.get('evidences', {}).items():
-            frame = evidence.get('frame_index')
-            label = _evidence_name(evidence).replace(' / ', '\n', 1)
-            item = QListWidgetItem(label + (f' / 프레임 {frame}' if frame is not None else ''))
+            label = _evidence_name(evidence)
+            cautions = self._cautions(evidence)
+            if cautions:
+                label += '\n' + ' · '.join(cautions)
+            item = QListWidgetItem(label + (' · 이번 질문에 첨부' if evidence_id == selected else ''))
             item.setData(Qt.UserRole, evidence_id)
-            item.setToolTip(f"근거 {evidence_id}\n프레임 {evidence.get('frame_index')}\n{evidence.get('created_at')}")
             self.sources.addItem(item)
             if evidence_id == (preview_id or selected):
                 self.sources.setCurrentItem(item)
         self.sources.blockSignals(False)
         self.preview_evidence()
         evidence = self.document.get('evidences', {}).get(selected)
-        self.basis.setText('이번 질문의 근거: ' + (
-            f"{_evidence_name(evidence)} / 프레임 {evidence.get('frame_index', '없음')}"
-            if evidence else '선택하지 않음'))
+        self.basis.setText('이번 질문의 첨부: ' + (_evidence_name(evidence) if evidence else '선택하지 않음')
+                           + ('\n' + ' · '.join(self._cautions(evidence)) if evidence and self._cautions(evidence) else ''))
+        self.attachments_button.setText(f"첨부 자료 ({self.sources.count()})")
         fragments = []
-        labels = {'completed': '응답 완료', 'pending': '응답 대기', 'failed': '실패',
-                  'unavailable': '공급자 사용 불가', 'timed_out': '시간 초과',
-                  'cancelled': '대기 중단', 'interrupted': '이전 요청 중단'}
-        for turn in self.document.get('turns', []):
+        labels = {'completed': '', 'pending': '답변을 기다리고 있습니다…', 'failed': '답변을 받지 못했습니다.',
+                  'unavailable': '연결 설정을 확인해 주세요.', 'timed_out': '응답 시간이 초과되었습니다.',
+                  'cancelled': '응답 대기를 중단했습니다.', 'interrupted': '이전 질문의 응답이 중단되었습니다.'}
+        turns = list(self.document.get('turns', []))
+        if self._pending_message:
+            turns.append(self._pending_message)
+        for turn in turns:
             source = self.document.get('evidences', {}).get(turn.get('evidence_id'), {})
-            meta = (f"{turn.get('role', '')} / {turn.get('provider_name', '')} / "
-                    f"{_evidence_name(source)} / 프레임 {turn.get('frame_index')}")
-            fragments.append(f"<p style='color:#526476'>{_text(meta)}</p>"
-                             f"<p><b>질문</b><br>{_text(turn.get('question', '')).replace(chr(10), '<br>')}</p>"
-                             f"<p><b>{_text(labels.get(turn.get('status'), turn.get('status', '')))}</b><br>"
-                             f"{_text(turn.get('reply') or turn.get('error') or '').replace(chr(10), '<br>')}</p>")
-            citations = turn.get('citations', {})
-            if citations:
-                shown, verified, unverified = (citations.get(key, []) for key in ('shown_ids', 'verified', 'unverified'))
-                citation_text = (f'제공 자료 {len(shown)}개 / 일치한 인용 {len(verified)}개 / '
-                                 f'확인되지 않은 인용 {len(unverified)}개')
-                if unverified:
-                    citation_text += ': ' + ', '.join(str(item) for item in unverified)
-                fragments.append(f"<p style='color:#526476'>{_text(citation_text)}<br>인용 일치는 답변의 공학적 타당성을 보증하지 않습니다.</p>")
-            fragments.append('<hr>')
-        self.transcript.setHtml(''.join(fragments) or
-            '<h3>근거를 확인하고 질문하세요</h3><p>입력 조건, 계산 로그, 결과를 불러오면 여기에 대화가 쌓입니다.</p>'
-            '<p>이전 대화를 열어도 모델을 자동 호출하지 않습니다.</p>')
+            question = html.escape(human_text(turn.get('question', ''))).replace('\n', '<br>')
+            cautions = self._cautions(source)
+            source_label = _evidence_name(source) + (' · ' + ' · '.join(cautions) if cautions else '')
+            fragments += [f"<p style='color:#526476; margin-top:26px'>나 · {html.escape(source_label)}</p>",
+                          f"<table width='100%' bgcolor='#edf2f5' cellpadding='14'><tr><td>{question}</td></tr></table>",
+                          f"<p style='color:#24557b; margin-top:22px'><b>{html.escape(human_text(turn.get('role') or '전문가'))}</b></p>"]
+            reply, malformed = markdown_body(turn.get('reply') or '')
+            fragments.append(reply)
+            status = labels.get(turn.get('status'), '응답 상태를 확인할 수 없습니다.')
+            if status:
+                fragments.append(f"<p style='color:#8a3d11'>{status}</p>")
+            if turn.get('error'):
+                fragments.append(f"<p>{html.escape(user_error(turn['error']))}</p>")
+            proposals = [p for p in self.document.get('proposals', []) if isinstance(p, dict) and
+                         p.get('request_id') == turn.get('id') and turn.get('id')]
+            if proposals:
+                fragments.extend(f"<p style='color:#526476'><b>제안</b><br>{html.escape(proposal_brief(proposal)).replace(chr(10), '<br>')}</p>" for proposal in proposals)
+            if malformed:
+                fragments.append('<p style="color:#8a3d11">제안 형식을 읽지 못했습니다. 원문은 보존되어 있습니다. 대상과 내용을 다시 질문해 주세요.</p>')
+        self.transcript.setHtml(''.join(fragments) or '<h2>어떤 점을 함께 살펴볼까요?</h2><p>입력이나 계산 결과를 첨부하고 질문을 적어 주세요.</p>')
+        bar.setValue(bar.maximum() if follow else old_position)
         proposal_id = self.proposal_choice.currentData()
         self.proposal_choice.blockSignals(True)
         self.proposal_choice.clear()
-        for item in self.document.get('proposals', []):
-            if not isinstance(item, dict) or not isinstance(item.get('id'), str):
-                continue
-            self.proposal_choice.addItem(f"{Path(str(item.get('target_file', ''))).name} / {item.get('location')}", item.get('id'))
+        for index, item in enumerate(self.document.get('proposals', [])):
+            if isinstance(item, dict) and isinstance(item.get('id'), str):
+                self.proposal_choice.addItem(f"제안 {index + 1} · {source_name(item.get('target_file'))}", item['id'])
         self.proposal_choice.setCurrentIndex(max(0, self.proposal_choice.findData(proposal_id)))
         self.proposal_choice.blockSignals(False)
         self.preview_proposal()
-        requests = [{key: turn.get(key) for key in ('id', 'question', 'template_id', 'provider_id',
-                     'evidence_id', 'run_id', 'input_revision', 'frame_index', 'evidence_sources',
-                     'provided_materials', 'knowledge_status', 'knowledge_error', 'citations')}
-                    for turn in self.document.get('turns', [])]
-        self.request_details.setPlainText(json.dumps(requests, ensure_ascii=False, indent=2) if requests else
-                                          '질문마다 실제 제공한 자료와 검색 조각, 인용 식별자 검사 결과를 기록합니다.')
-        self.heading.setText(self.document.get('title', '결과를 근거로 이어가는 대화'))
+        self.proposals_button.setText(f"제안 검토 ({len(self.document.get('proposals', []))})")
+        title = self.document.get('title') or '새 대화'
+        if title == '새 대화' and self.document.get('turns'):
+            question_title = ' '.join(self.document['turns'][0].get('question', '').split())
+            title = question_title if len(question_title) <= 36 else question_title[:36].rsplit(' ', 1)[0] + '…'
+        self.heading.setText(human_text(title))
+        self.setWindowTitle(human_text(title) + ' — 전문가 논의')
         self.refresh_provider()
         self._set_busy(bool(self._operation))
 
     def preview_proposal(self, *_):
         item = next((item for item in self.document.get('proposals', [])
                      if isinstance(item, dict) and item.get('id') == self.proposal_choice.currentData()), None)
-        if item is None:
-            self.proposals.setPlainText('아직 변경 제안이 없습니다. 제안은 전용 프로그램에서 검토 후 수정합니다.')
-            return
-        check_only = item.get('after') is None
-        labels = {'unapplied': '미적용',
-                  'manual_required': ('전용 프로그램에서 확인 필요 · 미적용' if check_only
-                                      else '전용 프로그램에서 수정 필요 · 미적용'),
-                  'blocked': '검토 중단 · 미적용', 'rejected': '거절 · 미적용'}
-        reviews = [review for review in (item.get('review_history') if isinstance(item.get('review_history'), list) else [])
-                   if isinstance(review, dict)]
-        latest_reason = item.get('review_reason') or (reviews[-1].get('reason', '') if reviews else '')
-        self.proposals.setPlainText(
-            f"{labels.get(str(item.get('status')), '미확인 · 미적용')}\n\n"
-            + (f"검토: {latest_reason}\n\n" if latest_reason else '') +
-            f"대상: {item.get('target_file')}\n위치: {item.get('location')}\n"
-            f"변경 전: {item.get('before')}\n변경 후: {item.get('after')}\n"
-            f"이유: {item.get('reason')}\n\n"
-            f"실행: {item.get('run_id') or '직접 불러온 자료'}\n"
-            f"근거: {item.get('evidence_id')}\n입력 개정: {item.get('input_revision')}\n"
-            f"대상 파일 SHA256: {item.get('target_sha256') or '원본 개정 확인 시 대조'}\n\n"
-            + ('이 점검은 자동 변경을 수행하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 설정을 확인하세요. '
-               if check_only else
-               '이 변경은 자동 적용을 지원하지 않습니다. 원본 개정을 확인하고 전용 프로그램에서 수정하세요. ') +
-            '재계산은 해석 창에서 별도로 실행한 뒤 새 결과를 이 대화로 가져오세요.\n\n'
-            + '\n'.join(f"{review.get('reviewed_at', '')}: {review.get('reason', '')}" for review in reviews[:-1]))
+        self.proposals.setPlainText(proposal_text(item) if item is not None else
+                                   '아직 제안이 없습니다. 원본 변경과 계산은 전용 프로그램에서 별도로 실행합니다.')
 
     def check_selected_proposal(self):
         self.review_proposal('check')
@@ -401,18 +401,32 @@ class ExpertWindow(QMainWindow):
                 self.path, proposal_id, expected_revision=self.document['revision'],
                 decision=decision, reason=reason)
             self.render()
-            self.status.setText('제안 검토를 저장했습니다. 원본 파일은 변경하지 않았습니다.')
+            self._notice('제안 검토를 저장했습니다. 원본 파일은 변경하지 않았습니다.')
         except Exception as error:
             self._error(error)
 
     def preview_evidence(self, *_):
         item = self.sources.currentItem()
         evidence = self.document.get('evidences', {}).get(item.data(Qt.UserRole), {}) if item else {}
-        for key in ('summary_text', 'model_text', 'log_text'):
-            self.details[key].setPlainText(evidence.get(key, ''))
-        provenance = {key: value for key, value in evidence.items()
-                      if key not in {'summary_text', 'model_text', 'log_text'}}
-        self.details['provenance'].setPlainText(json.dumps(provenance, ensure_ascii=False, indent=2) if provenance else '')
+        roles = {'input': '원본 입력', 'include': '추가 원본 입력', 'execution_input': '보존 실행 입력',
+                 'frd': '결과', 'dat': '수치 출력', 'log': '계산 로그', 'raw': '선택 파일'}
+        lines = [_evidence_name(evidence)] if evidence else ['첨부 자료를 선택하세요.']
+        for file in evidence.get('files', []):
+            if file.get('role') in roles:
+                lines.append(f"{roles[file['role']]}: {source_name(file.get('source_path'))}")
+        units = evidence.get('units') or {}
+        unit_names = {'length': '길이', 'force': '힘', 'time': '시간', 'stress': '응력', 'temperature': '온도'}
+        if evidence:
+            lines += ['', '첨부할 때 보존한 사본을 읽습니다. 원본을 다시 읽어 바꾸지 않습니다.', '단위: ' + (', '.join(f"{label} {units.get(key, '미확인')}" for key, label in unit_names.items()) if units else '미확인'),
+                      '단위 출처: 사용자 선언' if evidence.get('unit_source') == 'user' else '단위 출처: 미확인',
+                      '사용자 선택 자료 · 동일 계산의 파일인지 미확인' if evidence.get('source_kind') == 'manual' else '보존된 계산 자료',
+                      '선택한 보존 결과: ' + str(evidence['frame_index'] + 1) + '번째 프레임' if isinstance(evidence.get('frame_index'), int) else '판독한 결과 단계 없음']
+        lines += self._cautions(evidence) if evidence else []
+        self.attachment_preview.setPlainText('\n'.join(lines))
+
+    def _cautions(self, evidence):
+        related = [issue for issue in self._asset_issues if evidence.get('id') and evidence['id'] in issue]
+        return evidence_cautions(evidence, related)
 
     def select_evidence(self):
         item = self.sources.currentItem()
@@ -428,19 +442,20 @@ class ExpertWindow(QMainWindow):
         live = bool((self.document.get('pending_request') or {}).get('live'))
         for action in self._edit_actions:
             action.setEnabled(not busy)
-        for widget in (self.use_source, self.capture, self.role, self.settings, self.recheck):
+        for widget in (self.use_source, self.capture, self.import_button, self.role, self.settings, self.recheck):
             widget.setEnabled(not busy and not live)
         for widget in (self.check_proposal, self.reject_proposal):
             widget.setEnabled(not busy and not live and bool(self.proposal_choice.currentData()))
         self.question.setReadOnly(busy or live)
         self.ask_button.setEnabled(not busy and not live and bool(self.document.get('selected_evidence_id'))
                                    and getattr(self, '_provider_available', False))
-        self.stop.setEnabled(self._operation == 'ask')
+        self.stop.setEnabled(self._operation == 'ask' and not self._cancel.is_set())
 
     def refresh_provider(self):
         status = self.workbench.expert_provider_status(self.document.get('provider_id'))
         self._provider_available = status['available']
-        self.provider.setText(f"{status['name']}: {status['reason']}")
+        self.provider.setText('공급자 설정 확인됨' if status['available'] else '공급자 설정이 필요합니다.')
+        self.settings.setText('연결 설정' if status['available'] else '연결 설정 필요')
         self.provider.setToolTip('설정 확인이며 실제 호출 성공을 뜻하지 않습니다.')
         self._set_busy(bool(self._operation))
 
@@ -574,9 +589,9 @@ class ExpertWindow(QMainWindow):
             runs.setObjectName('capture_run_choice')
             frames.setObjectName('capture_frame_choice')
             if self.run_id:
-                runs.addItem(f'전달받은 실행 {self.run_id[:8]}' + (' (기록 없음)' if pinned_run is None else ''), pinned_run)
+                runs.addItem('전달받은 계산 · ' + (source_name(pinned_run.input_path) + ' · ' + pinned_run.created_at[:16] if pinned_run else '기록 없음'), pinned_run)
             if current_run and (pinned_run is None or current_run.id != pinned_run.id):
-                runs.addItem(f'프로젝트에 저장된 선택 실행 {current_run.id[:8]}', current_run)
+                runs.addItem('현재 선택 · ' + source_name(current_run.input_path) + ' · ' + current_run.created_at[:16], current_run)
             if not runs.count():
                 raise ValueError('연결된 선택 실행이 없습니다. 해석 창에서 실행을 선택하거나 자료를 직접 불러오세요.')
             layout.addRow('실행', runs)
@@ -611,7 +626,7 @@ class ExpertWindow(QMainWindow):
 
     def ask(self):
         question = self.question.toPlainText().strip()
-        if self._operation or not question or not self.document.get('selected_evidence_id'):
+        if self._operation or not question or not self.document.get('selected_evidence_id') or not getattr(self, '_provider_available', False):
             return
         if not self.save_document():
             return
@@ -621,6 +636,7 @@ class ExpertWindow(QMainWindow):
         def cancelled():
             if self._cancel.is_set():
                 raise RuntimeError('사용자가 응답 대기를 중단했습니다.')
+        self._pending_message = dict(question=question, role=self.role.currentText(), evidence_id=evidence_id, status='pending')
         self._start('ask', lambda: self.workbench.ask_expert_discussion(
             path, question, evidence_id=evidence_id, template_id=role, provider_id=provider,
             expected_revision=revision, check_cancelled=cancelled))
@@ -631,7 +647,11 @@ class ExpertWindow(QMainWindow):
         self._operation = operation
         self._cancel.clear()
         self._set_busy(True)
-        self.wait_label.setText('응답 대기 중 — 최대 60초' if operation == 'ask' else '자료를 읽고 보존하는 중')
+        self.wait_label.setText('답변을 기다리는 중' if operation == 'ask' else '첨부 자료를 보존하는 중')
+        self.render()
+        if operation == 'ask':
+            self.transcript.follow_tail = True
+            self.transcript.verticalScrollBar().setValue(self.transcript.verticalScrollBar().maximum())
         def work():
             try:
                 self._mailbox.put((True, function()))
@@ -642,7 +662,10 @@ class ExpertWindow(QMainWindow):
     def cancel_request(self):
         self._cancel.set()
         self.stop.setEnabled(False)
-        self.wait_label.setText('응답 대기를 중단하고 기록을 정리하는 중')
+        self.wait_label.setText('중단 요청 중…')
+        if self._pending_message:
+            self._pending_message['status'] = 'cancelled'
+        self.render()
 
     def _poll(self):
         if not self._operation:
@@ -658,15 +681,20 @@ class ExpertWindow(QMainWindow):
             if operation == 'attach':
                 self.document = self.workbench.attach_expert_evidence(
                     self.path, value, expected_revision=self.document['revision'])
-                self.status.setText('자료를 보존했습니다. 이번 질문의 근거가 이 자료로 설정되었습니다.')
+                self._asset_issues = self.workbench.expert_discussion_issues(self.path, self.document)
+                self._notice('자료를 첨부했습니다.')
             else:
                 self.document = value
+                self._pending_message = None
                 self.question.setPlainText(value.get('draft_question', ''))
             self.render()
         except Exception as error:
             self._error(error)
+            if self._pending_message:
+                self._pending_message.update(status='failed', error=str(error))
+            self.render()
             self._set_busy(False)
-        self.wait_label.setText('질문을 보내기 전에는 모델을 호출하지 않습니다.')
+        self.wait_label.setText('')
         if self._close_after:
             self._close_after = False
             self.close()
@@ -702,7 +730,9 @@ def main(argv=None):
     try:
         window = ExpertWindow(args.discussion, project_path=args.project, node_id=args.node, run_id=args.run_id)
     except Exception as error:
-        QMessageBox.critical(None, '전문가 프로그램을 열지 못했습니다', str(error))
+        traceback.print_exc()
+        QMessageBox.critical(None, '전문가 프로그램을 열지 못했습니다',
+                             user_error(error) + '\n대화 파일을 확인하거나 보존된 다른 대화 파일로 프로그램을 다시 시작해 주세요.')
         return 1
     window.show()
     return app.exec()

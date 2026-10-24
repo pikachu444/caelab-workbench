@@ -76,7 +76,9 @@ def test_preview_is_not_question_basis_and_reopen_never_calls(window, app, tmp_p
     second = attach(ui, tmp_path, '** condition B')
     ui.sources.setCurrentRow(0)
     assert ui.document['selected_evidence_id'] == second['id']
-    assert 'condition A' in ui.details['model_text'].toPlainText()
+    assert ui.sources.currentItem().data(Qt.UserRole) == first['id']
+    assert 'input.inp' in ui.attachment_preview.toPlainText()
+    assert 'condition A' in ui.document['evidences'][first['id']]['model_text']
     ui.select_evidence()
     assert ui.document['selected_evidence_id'] == first['id']
     ui.question.setPlainText('첫 번째 조건을 확인해 주세요.')
@@ -96,7 +98,9 @@ def test_preview_is_not_question_basis_and_reopen_never_calls(window, app, tmp_p
     assert len(provider.prompts) == 1
     assert reopened.document['turns'][0] == original_turn
     assert reopened.document['selected_evidence_id'] == second['id']
-    assert first['id'] in reopened.request_details.toPlainText()
+    assert reopened.document['turns'][0]['evidence_id'] == first['id']
+    assert first['id'] not in reopened.transcript.toPlainText()
+    assert not hasattr(reopened, 'request_details')
     reopened.close()
     ui.reload_document()
 
@@ -128,6 +132,9 @@ def test_cancel_releases_ui_and_discards_late_model_result(window, app, tmp_path
     ui.ask()
     assert started.wait(2)
     ui.cancel_request()
+    ui.render()
+    assert not ui.stop.isEnabled()
+    assert '중단' in ui.transcript.toPlainText()
     finish(ui, app)
     assert ui.document['turns'][-1]['status'] == 'cancelled'
     assert ui.question.toPlainText() == '질문 초안'
@@ -160,7 +167,9 @@ def test_unconfigured_provider_keeps_files_readable_and_explains_setup(app, tmp_
     assert not ui.ask_button.isEnabled()
     assert ui.settings.isEnabled() and ui.recheck.isEnabled()
     assert '공급자' in ui.provider.text()
-    assert 'input only' in ui.details['model_text'].toPlainText()
+    assert 'input.inp' in ui.attachment_preview.toPlainText()
+    assert 'input only' in next(iter(ui.document['evidences'].values()))['model_text']
+    assert not ui.provider.isVisible()
     ui.close()
 
 
@@ -277,8 +286,10 @@ def test_missing_asset_warning_is_visible_on_reopen_without_model(window, tmp_pa
     asset.unlink()
     ui.reload_document()
     assert not ui.asset_warning.isHidden()
-    assert '파일 확인' in ui.asset_warning.text()
-    assert evidence['files'][0]['stored_path'] in ui.asset_details.toPlainText()
+    assert '누락' in ui.asset_warning.text()
+    assert '누락' in ui.attachment_preview.toPlainText()
+    assert evidence['files'][0]['stored_path'] not in ui.attachment_preview.toPlainText()
+    assert not hasattr(ui, 'asset_details')
     assert provider.prompts == []
 
 
@@ -290,8 +301,10 @@ def test_malformed_legacy_proposal_warns_without_hiding_the_discussion(window):
     atomic_json(ui.path, document)
     ui.reload_document()
     assert ui.proposal_choice.count() == 1
-    assert '미확인' in ui.proposals.toPlainText()
-    assert '제안 출처' in ui.asset_details.toPlainText()
+    assert '불완전' in ui.proposals.toPlainText()
+    assert '출처' in ui.asset_warning.text()
+    assert ui.document['proposals'] == document['proposals']
+    assert 'None' not in ui.proposals.toPlainText()
     assert provider.prompts == []
 
 
@@ -347,3 +360,187 @@ def test_parent_reopen_missing_store_keeps_graph_and_reports_path(app, tmp_path,
     assert not project.run_store.exists()
     ui._dirty = False
     ui.close()
+
+
+def test_chat_render_preserves_history_title_draft_and_reading_position(window, app, tmp_path):
+    from PySide6.QtGui import QTextCursor
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** A condition')
+    ui.show()
+    ui.resize(850, 700)
+    ui.document['turns'] = [dict(id=str(index), question=f'질문 {index}', role='재료 모델 선택',
+        evidence_id=evidence['id'], status='completed', reply='읽을 수 있는 **답변**입니다.\n\n' * 15) for index in range(8)]
+    ui.document['title'] = '사용자가 붙인 연구 이름'
+    original = copy.deepcopy(ui.document)
+    ui.question.setPlainText('작성 중인 다음 질문')
+    ui.render()
+    app.processEvents()
+    bar = ui.transcript.verticalScrollBar()
+    assert bar.maximum() > 500
+    bar.setValue(250)
+    ui.render()
+    app.processEvents()
+    assert bar.value() == 250
+    assert ui.question.toPlainText() == '작성 중인 다음 질문'
+    assert ui.heading.text() == '사용자가 붙인 연구 이름'
+    assert ui.document == original
+    bar.setValue(bar.maximum())
+    ui.document['turns'].append(dict(id='last', question='후속 질문', role='수렴·접촉 진단',
+        evidence_id=evidence['id'], status='completed', reply='새로 받은 답변\n\n' * 12))
+    ui.render()
+    app.processEvents()
+    assert bar.value() == bar.maximum()
+    ui.document['title'] = '새 대화'
+    ui.render()
+    assert ui.heading.text() == '질문 0'
+
+
+def test_attachments_keep_past_basis_and_show_human_units_and_failures(window, app, tmp_path):
+    ui, provider = window
+    a_dir, b_dir = tmp_path / 'A', tmp_path / 'B'
+    a_dir.mkdir(); b_dir.mkdir()
+    first = attach(ui, a_dir, '** condition A', 'same.inp')
+    second = attach(ui, b_dir, '** condition B', 'same.inp')
+    second_saved = ui.document['evidences'][second['id']]
+    second_saved.update(units={'length': 'mm', 'force': 'N'}, unit_source='user',
+                        process_state='failed', parse_state='partial', warnings=['오래된 실행'])
+    ui.document['turns'] = [dict(id='old', question='A 질문', reply='A 답변', role='재료 모델 선택',
+                               evidence_id=first['id'], status='completed')]
+    ui.render()
+    assert 'B/same.inp' in ui.basis.text() and 'A/same.inp' in ui.transcript.toPlainText()
+    assert '계산 실패' in ui.basis.text() and '오래된' in ui.basis.text()
+    ui.sources.setCurrentRow(1)
+    assert '길이 mm' in ui.attachment_preview.toPlainText()
+    assert '응력 미확인' in ui.attachment_preview.toPlainText()
+    assert '사용자 선언' in ui.attachment_preview.toPlainText()
+    assert '보존 자료' not in ui.transcript.toPlainText()  # no substituted diagnostic IDs
+    assert provider.prompts == []
+    ui.sources.setCurrentRow(0)
+    assert ui.document['selected_evidence_id'] == second['id']
+    assert ui.document['turns'][0]['evidence_id'] == first['id']
+
+
+def test_question_pending_and_failure_are_next_to_the_question(window, app, tmp_path):
+    ui, provider = window
+    attach(ui, tmp_path, '** condition')
+    entered, release = threading.Event(), threading.Event()
+    def slow_failure(prompt):
+        entered.set()
+        release.wait(3)
+        raise RuntimeError('모의 연결 실패')
+    provider.discuss = slow_failure
+    ui.question.setPlainText('이 질문의 실패를 확인합니다.')
+    ui.ask()
+    assert entered.wait(2)
+    pending = ui.transcript.toPlainText()
+    assert '이 질문의 실패' in pending and '기다리고' in pending
+    release.set()
+    finish(ui, app)
+    assert '이 질문의 실패' in ui.transcript.toPlainText()
+    assert '답변을 받지 못했습니다' in ui.transcript.toPlainText()
+    assert ui.question.toPlainText() == '이 질문의 실패를 확인합니다.'
+
+
+def test_chat_flow_import_select_send_cancel_save_and_reopen(window, app, tmp_path, monkeypatch):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QFileDialog, QDialog, QLineEdit
+    ui, provider = window
+    ui.show(); app.processEvents()
+    a_dir, b_dir = tmp_path / 'A', tmp_path / 'B'
+    a_dir.mkdir(); b_dir.mkdir()
+    a, b = a_dir / 'same.inp', b_dir / 'same.inp'
+    a.write_text('** original A', encoding='utf-8')
+    b.write_text('** changed B', encoding='utf-8')
+    selected = [a]
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames', lambda *args: ([str(selected[0])], ''))
+    monkeypatch.setattr(QDialog, 'exec', lambda *args: QDialog.Accepted)
+    ui.import_button.click()
+    finish(ui, app)
+    first = ui.document['selected_evidence_id']
+    ui.question.setPlainText('A의 결과를 함께 읽어 주세요.')
+    QTest.keyClick(ui.question, Qt.Key_Return, Qt.ControlModifier)
+    finish(ui, app)
+    assert len(provider.prompts) == 1
+    old_turn = copy.deepcopy(ui.document['turns'][0])
+    assert '원문에 없는 수치' in ui.transcript.toPlainText()
+    selected[0] = b
+    ui.import_button.click()
+    finish(ui, app)
+    second = ui.document['selected_evidence_id']
+    assert second != first and 'B/same.inp' in ui.basis.text()
+    ui.attachments_button.click()
+    app.processEvents()
+    assert ui.attachments_dialog.isVisible()
+    ui.sources.setCurrentRow(0)
+    assert ui.document['selected_evidence_id'] == second
+    ui.use_source.click()
+    assert ui.document['selected_evidence_id'] == first
+    ui.sources.setCurrentRow(1)
+    ui.use_source.click()
+    ui.attachments_dialog.hide()
+    assert ui.document['selected_evidence_id'] == second
+    started, release = threading.Event(), threading.Event()
+    def slow(prompt):
+        provider.prompts.append(prompt)
+        started.set()
+        release.wait(4)
+        return '저장되면 안 되는 늦은 답변'
+    provider.discuss = slow
+    ui.question.setPlainText('B와 비교해도 되는지 후속 질문합니다.')
+    QTest.keyClick(ui.question, Qt.Key_Return)
+    assert started.wait(2)
+    assert '기다리고' in ui.transcript.toPlainText()
+    ui.stop.click()
+    ui.render()
+    assert not ui.stop.isEnabled()
+    finish(ui, app)
+    assert ui.document['turns'][0] == old_turn
+    assert ui.document['turns'][-1]['status'] == 'cancelled'
+    assert '중단' in ui.transcript.toPlainText()
+    draft = ui.question.toPlainText()
+    assert draft.startswith('B와 비교')
+    assert ui.save_document()
+    saved = json.loads(ui.path.read_text(encoding='utf-8'))
+    reopened = ExpertWindow(ui.path)
+    assert reopened.document['turns'] == saved['turns']
+    assert reopened.document['selected_evidence_id'] == second
+    assert reopened.question.toPlainText() == draft
+    assert len(provider.prompts) == 2
+    release.set()
+    time.sleep(.1); app.processEvents()
+    assert '늦은 답변' not in reopened.transcript.toPlainText()
+    assert a.read_text() == '** original A' and b.read_text() == '** changed B'
+    reopened.close()
+    ui.reload_document()
+
+
+def test_startup_error_is_readable_without_internal_payload(monkeypatch, capsys):
+    from apps.workbench_qt import expert_window as entry
+    raw = 'invalid JSON C:/private/project.runs/' + 'a' * 32 + '/discussion.json SHA256=' + 'b' * 64
+    class App:
+        def __init__(self, args): pass
+        def setStyle(self, style): pass
+    def broken(*args, **kwargs):
+        raise ValueError(raw)
+    seen = []
+    monkeypatch.setattr(entry, 'QApplication', App)
+    monkeypatch.setattr(entry, 'ExpertWindow', broken)
+    monkeypatch.setattr(QMessageBox, 'critical', lambda parent, title, text: seen.append(text))
+    assert entry.main(['--discussion', 'broken.json']) == 1
+    assert len(seen) == 1
+    assert all(token not in seen[0] for token in ('a' * 32, 'b' * 64, 'JSON', 'SHA256', 'C:/private'))
+    assert '다른 대화 파일' in seen[0]
+    assert raw in capsys.readouterr().err
+
+
+def test_attachment_preview_names_original_retained_input_and_omits_derived_files(window, tmp_path):
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** original')
+    stored = ui.document['evidences'][evidence['id']]
+    stored['files'].extend([dict(role='execution_input', source_path='C:/project/project.runs/' + 'a'*32 + '/model.inp'),
+                            dict(role='exchange', source_path='C:/project/project.runs/' + 'a'*32 + '/results/frame-000001.vtu')])
+    ui.render()
+    text = ui.attachment_preview.toPlainText()
+    assert '원본 입력:' in text and '보존 실행 입력: model.inp' in text
+    assert 'frame-000001.vtu' not in text and 'a'*32 not in text
+    assert '다음 질문' in ui.role.toolTip() and '이전 답변' in ui.role.toolTip()
