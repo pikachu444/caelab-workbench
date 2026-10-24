@@ -512,7 +512,7 @@ class ProjectWindow(QMainWindow):
         state_label = STATE_LABELS.get(node.state, node.state)
         reason = self._display_reason(node.reason)
         if _selection_changed_input(node, reference):
-            status = reference.status
+            status = self._file_status(reference)
             state_label = "연결 입력 준비됨" if status == "ready" else STATE_LABELS.get(status, status)
             reason = "선택 실행이 바뀌어 기존 표시·대화와 다를 수 있습니다. 외부 프로그램의 실제 표시·논의를 확인하세요."
         lines = [box.title, f"입력 상태: {state_label}", f"설명: {reason}"]
@@ -709,9 +709,27 @@ class ProjectWindow(QMainWindow):
         if _selection_changed_input(node, reference):
             # The connected file changed; this does not establish that a viewer
             # displayed it or that a discussion adopted it. Keep the stored state.
-            box.status_label = "선택 실행 변경"
+            status = self._file_status(reference)
+            if status == "ready":
+                box.status_label = "선택 실행 변경"
+            else:
+                box.set_state(status, node.reason)
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
                        f"{self._display_reason(node.reason)}")
+
+    def _file_status(self, reference) -> str:
+        # Polling should not hash an unchanged large result every second.
+        try:
+            stat = Path(reference.path).stat()
+            metadata = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+        except OSError:
+            metadata = None
+        key = (reference.path, reference.revision, reference.stale, metadata)
+        cache = getattr(self, "_file_status_cache", {})
+        if cache.get(reference.path, (None,))[0] != key:
+            cache[reference.path] = (key, reference.status)
+            self._file_status_cache = cache
+        return cache[reference.path][1]
 
     def _poll_runs(self) -> None:
         if self.project.path is None:

@@ -293,10 +293,14 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         assert "입력 상태: 오래됨" in window.properties.toPlainText()
         reference.stale = False
         raw.write_text("externally changed output")
+        window._reflect_node(consumer.id)
         window._selection_changed()
+        assert box.state == "changed" and not box.status_label
         assert "입력 상태: 원본 변경됨" in window.properties.toPlainText()
         raw.unlink()
+        window._reflect_node(consumer.id)
         window._selection_changed()
+        assert box.state == "missing" and not box.status_label
         assert "입력 상태: 파일 누락" in window.properties.toPlainText()
     finally:
         window._dirty = False
