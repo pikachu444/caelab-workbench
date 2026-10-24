@@ -266,13 +266,53 @@ def test_large_inp_tail_conditions_keep_original_order_lines_comments_and_bytes(
 @pytest.mark.parametrize('keyword', ['NODE', 'ELEMENT', 'NSET', 'ELSET', 'SURFACE'])
 def test_only_large_exact_list_keyword_data_is_omitted(tmp_path, keyword):
     inp = tmp_path / 'lists.inp'
-    inp.write_text(f'*{keyword},NAME=Long\n' + '123, S2\n' * 800
+    inp.write_text(f'*{keyword},NAME=Long\n' + '123, S2\n' * 8000
                    + '** comment after list\n*SURFACE INTERACTION,NAME=Contact\n'
                      '*SURFACE BEHAVIOR\n1000000\n*NODE PRINT,NSET=ALL\nU\n', encoding='ascii', newline='')
     text = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')['model_text']
     assert '123, S2' not in text and f'*{keyword},NAME=Long' in text
     assert '** comment after list' in text
     assert '*SURFACE BEHAVIOR\n1000000' in text and '*NODE PRINT,NSET=ALL\nU' in text
+
+
+def test_small_3417_byte_input_is_provided_whole_even_with_more_than_2048_data_chars(tmp_path):
+    inp = tmp_path / 'small-complete.inp'
+    raw = b'*NODE\n' + b'1,0,0,0\n' * 400 + b'*MATERIAL,NAME=Steel\n*ELASTIC\n210000,0.3\n'
+    raw += b'**' + b'x' * (3417 - len(raw) - 3) + b'\n'
+    assert len(raw) == 3417
+    inp.write_bytes(raw)
+    assets = tmp_path / 'assets'
+    value = import_file_evidence(assets, files={'input': inp}, solver_id='calculix')
+    assert raw.decode() in value['model_text']
+    assert '대량 목록 미제공' not in value['model_text']
+    assert '본문 미제공' not in value['model_text']
+    assert '보존 원문 전체가 제공된 것은 아니며' not in value['model_text']
+    assert verify_evidence(value, assets) == [] and inp.read_bytes() == raw
+
+
+@pytest.mark.parametrize('outline', [False, True])
+def test_comma_adjacent_header_lines_remain_verbatim_in_large_and_outline_excerpts(tmp_path, outline):
+    inp = tmp_path / 'continued.inp'
+    header = '*ELEMENT, TYPE=C3D8,\r\n** original comma-adjacent comment\r\n\r\n ELSET=BODY\r\n'
+    comments = '** body comment\r\n' * 4000 if outline else ''
+    raw = (header + '1,1,2,3,4,5,6,7,8\r\n' * 4000 + comments
+           + '*MATERIAL,NAME=Steel\r\n*ELASTIC\r\n210000,0.3\r\n').encode('ascii')
+    inp.write_bytes(raw)
+    text = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')['model_text']
+    assert header in text and '[원문 L1-L4]' in text and len(text) <= 40000
+    assert '*MATERIAL,NAME=Steel' in text and '*ELASTIC\r\n210000,0.3' in text
+    assert ('본문 미제공' in text) is outline
+    assert inp.read_bytes() == raw
+
+
+def test_comma_adjacent_display_group_stops_at_next_keyword_without_syntax_judgment(tmp_path):
+    inp = tmp_path / 'next-keyword.inp'
+    inp.write_bytes(b'*ELEMENT,TYPE=C3D8,\n** preserved comment\n\n'
+                    b'*MATERIAL,NAME=Steel\n*ELASTIC\n' + b'210000,0.3\n' * 10000)
+    text = import_file_evidence(tmp_path / 'assets', files={'input': inp}, solver_id='calculix')['model_text']
+    assert '*ELEMENT,TYPE=C3D8,\n** preserved comment\n\n' in text
+    assert '[원문 L4-L4]\n*MATERIAL,NAME=Steel' in text
+    assert '[원문 L5-L5]\n*ELASTIC' in text
 
 
 def test_comments_do_not_turn_short_generated_or_referenced_sets_into_large_lists(tmp_path):

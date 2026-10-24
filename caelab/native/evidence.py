@@ -119,16 +119,33 @@ def _line_excerpt(start, lines):
     return f'[원문 L{start + 1}-L{start + len(lines)}]\n' + ''.join(lines) + '\n'
 
 
+def _header_end(lines):
+    """Retain comma-adjacent raw lines; this does not validate solver syntax."""
+    end = 1
+    pending = lines[0].rstrip().endswith(',')
+    while pending and end < len(lines):
+        line = lines[end].lstrip(' \t')
+        if not line.strip() or line.startswith('**'):
+            end += 1
+            continue
+        if line.startswith('*'):
+            break
+        end += 1
+        pending = line.rstrip().endswith(',')
+    return end
+
+
 def _input_block_views(start, lines, *, compact_lists=True):
     header = lines[0].lstrip(' \t')
     keyword = ''.join(header.split(',', 1)[0].split()).upper() if header.startswith('*') else ''
+    header_end = _header_end(lines) if header.startswith('*') and not header.startswith('**') else 1
     full = _line_excerpt(start, lines)
     # Exact names matter: NODE FILE and SURFACE INTERACTION are not large lists.
-    data_size = sum(len(line) for line in lines[1:] if not line.lstrip(' \t').startswith('**'))
+    data_size = sum(len(line) for line in lines[header_end:] if not line.lstrip(' \t').startswith('**'))
     if compact_lists and keyword in {'*NODE', '*ELEMENT', '*NSET', '*ELSET', '*SURFACE'} and data_size > 2048:
-        pieces = [_line_excerpt(start, lines[:1])]
+        pieces = [_line_excerpt(start, lines[:header_end])]
         omitted = None
-        for offset, line in enumerate(lines[1:], 1):
+        for offset, line in enumerate(lines[header_end:], header_end):
             if line.lstrip(' \t').startswith('**'):
                 if omitted is not None:
                     pieces.append(f'[대량 목록 미제공: 원문 L{start + omitted + 1}-L{start + offset}]\n')
@@ -141,9 +158,9 @@ def _input_block_views(start, lines, *, compact_lists=True):
         pieces.append('[목록 생략: 절점/요소 membership·연결·면 side/normal·적용 위치는 이 발췌로 확인 불가]\n')
         full = ''.join(pieces)
     if header.startswith('*') and not header.startswith('**'):
-        minimal = _line_excerpt(start, lines[:1])
-        if len(lines) > 1:
-            minimal += f'[예산 제한: 원문 L{start + 2}-L{start + len(lines)} 본문 미제공]\n'
+        minimal = _line_excerpt(start, lines[:header_end])
+        if len(lines) > header_end:
+            minimal += f'[예산 제한: 원문 L{start + header_end + 1}-L{start + len(lines)} 본문 미제공]\n'
     else:
         minimal = f'[예산 제한: 원문 L{start + 1}-L{start + len(lines)} 미제공]\n'
     return full, minimal, (start + 1, start + len(lines))
@@ -203,14 +220,15 @@ def _model_text(asset_root, items, limit=40000):
         header += f'[파일 원문 범위: L1-L{len(lines)}]\n' if lines else '[빈 파일]\n'
         compact = Path(item['source_path']).suffix.lower() in {'.inp', '.inc'}
         views = [_input_block_views(start, block, compact_lists=compact) for start, block in _input_blocks(lines)]
-        sections.append((header, views))
+        raw = _line_excerpt(0, lines) if lines else ''
+        sections.append((header, raw, views))
     notice = ('[입력 자료 발췌: 각 파일은 독립 자료이며 이어 붙인 실행 덱이 아닙니다. '
               'L은 해당 파일 원문 행입니다. 대괄호 설명은 발췌 메모입니다. '
-              '보존 원문 전체가 제공된 것은 아니며 미제공 범위의 조건/개수/총량은 추정하지 마세요.]\n')
+              '원문 보존과 실제 제공 범위를 구분하세요. 미제공 범위의 조건/개수/총량은 추정하지 마세요.]\n')
     footer = '[끝: 생략된 본문/파일은 보존 자산과 manifest 참조; 이 발췌로 모델 완전성을 판정하지 마세요.]\n'
     omission = '[미제공 파일: 위에 files[n] 출처 섹션이 없는 모든 입력/include/execution 항목은 경로·본문 전체 미제공; 보존 files 목록 참조]\n'
     available = max(0, limit - len(notice) - len(footer) - len(omission))
-    sizes = [len(header) + len(''.join(view[0] for view in views)) for header, views in sections]
+    sizes = [len(header) + len(raw) for header, raw, _ in sections]
     # Water-fill the file budgets so original/execution duplicates and many small
     # INCLUDEs cannot consume everything before a later file gets a share.
     budgets = [0] * len(sections)
@@ -228,9 +246,13 @@ def _model_text(asset_root, items, limit=40000):
         pending -= small
     parts = [notice]
     missing = []
-    for (header, views), budget, aliases in zip(sections, budgets, groups.values()):
+    for (header, raw, views), budget, aliases in zip(sections, budgets, groups.values()):
         body_budget = budget - len(header)
-        body = _fit_input_blocks(views, body_budget) if body_budget >= 0 else ''
+        body = ''
+        if len(raw) <= body_budget:
+            body = raw
+        elif body_budget >= 0:
+            body = _fit_input_blocks(views, body_budget)
         if not body and views:
             missing.extend(index for index, _ in aliases)
         elif len(header) <= budget:
