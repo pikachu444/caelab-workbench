@@ -344,6 +344,35 @@ def test_timeout_is_finite_and_late_reply_cannot_overwrite(tmp_path, monkeypatch
         release.set()
 
 
+@pytest.mark.parametrize("stop", ["cancel", "timeout"])
+def test_discussion_requests_provider_cancel_and_keeps_model_origin(tmp_path, monkeypatch, stop):
+    provider = Provider()
+    provider.model = "openai-codex/mock-only"
+    entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+    def blocked(prompt):
+        entered.set()
+        release.wait(2)
+        return "late reply must not be saved"
+    provider.discuss = blocked
+    def cancel_provider():
+        cancelled.set()
+        release.set()
+    provider.cancel = cancel_provider
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", .06 if stop == "timeout" else 2)
+    def check():
+        if stop == "cancel" and entered.is_set():
+            raise RuntimeError("user stopped waiting")
+    try:
+        doc = ask(path, doc, check_cancelled=check)
+        turn = doc["turns"][-1]
+        assert cancelled.is_set() and turn["status"] == ("cancelled" if stop == "cancel" else "timed_out")
+        assert turn["provider_model"] == "openai-codex/mock-only" and turn["reply"] == ""
+        assert doc["draft_question"] == "질문" and doc["pending_request"] is None
+    finally:
+        release.set()
+
+
 @pytest.mark.parametrize("stop", ["timeout", "cancel"])
 def test_slow_retrieval_cannot_start_provider_after_request_has_stopped(tmp_path, monkeypatch, stop):
     entered, release, cancel = threading.Event(), threading.Event(), threading.Event()

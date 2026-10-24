@@ -448,7 +448,7 @@ class ExpertWindow(QMainWindow):
         form = QFormLayout(dialog)
         choice = QComboBox()
         for label, value in [('선택하지 않음', 'none'), ('OpenAI 호환 엔드포인트', 'openai_compatible'),
-                             ('OpenScience 구독 (연결 미구현)', 'openscience')]:
+                             ('OpenScience 구독', 'openscience')]:
             choice.addItem(label, value)
         choice.setCurrentIndex(max(0, choice.findData(self.document.get('provider_id') or configuration['provider_id'])))
         form.addRow('공급자', choice)
@@ -459,7 +459,9 @@ class ExpertWindow(QMainWindow):
                 field.setEchoMode(QLineEdit.Password)
             form.addRow(label, field)
             fields[key] = field
-        hint = QLabel('주소·모델·키는 이 창의 실행 동안만 유지합니다. 공급자 선택은 대화에 저장합니다.\n설정 저장만으로 모델을 호출하지 않습니다.')
+        hint = QLabel('주소·모델·키는 이 창의 실행 동안만 유지합니다. 공급자 선택은 대화에 저장합니다.\n'
+                      'OpenScience는 기존 Windows 로그인·설치 설정을 사용하며, 모델 공란은 기존 선택을 유지합니다.\n'
+                      '설정 저장만으로 모델을 호출하지 않습니다.')
         hint.setWordWrap(True)
         form.addRow(hint)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)

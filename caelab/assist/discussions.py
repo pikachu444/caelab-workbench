@@ -466,7 +466,8 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                 now = utc_now()
                 turn = {"id": request_id, "question": question, "reply": "", "status": "pending", "error": None,
                         "template_id": template.id, "role": template.name, "provider_id": provider.id,
-                        "provider_name": provider.name, **origin, "evidence_sources": [], "provided_materials": [],
+                        "provider_name": provider.name, "provider_model": getattr(provider, "model", None),
+                        **origin, "evidence_sources": [], "provided_materials": [],
                         "constraints": copy.deepcopy(document["constraints"]),
                         "citations": {"shown_ids": [], "unverified": [], "verified": []},
                         "created_at": now, "finished_at": None}
@@ -547,6 +548,11 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
             except queue.Empty:
                 pass
         stopped.set()
+        if status in {"cancelled", "timed_out"}:
+            try:
+                provider.cancel()
+            except Exception as error:
+                error_text += f" 공급자 중단 요청 실패: {type(error).__name__}"
         try:
             with _lock(path):
                 current = _current(path, pending_document["revision"], idle=False)
