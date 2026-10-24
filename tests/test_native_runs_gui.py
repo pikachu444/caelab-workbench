@@ -245,6 +245,64 @@ def test_parent_updates_connected_result_when_other_window_selects_failed_run(ap
         window.close()
 
 
+@pytest.mark.parametrize("kind,program_id", [("results", "paraview"), ("expert", "expert")])
+def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_path, kind, program_id):
+    from apps.workbench_qt.project_window import ProjectWindow
+    from caelab.native.run_store import NativeRun, RunStore
+    from caelab.project import file_revision
+
+    wb = Workbench()
+    project = wb.new_native_project()
+    analysis_node = wb.add_program_node(project, "analysis", "calculix")
+    consumer = wb.add_program_node(project, kind, program_id)
+    deck = tmp_path / "source.inp"
+    deck.write_text("*HEADING\nsource\n")
+    wb.set_node_file(project, analysis_node.id, deck)
+    wb.connect_nodes(project, analysis_node.id, consumer.id)
+    wb.save_native_project(project, tmp_path / "project.json")
+    store = RunStore(project.run_store)
+    window = ProjectWindow(workbench=wb, project_path=project.path)
+    try:
+        run = NativeRun("a" * 32, analysis_node.id, store.root / ("a" * 32),
+                        state="completed", parse_state="readable", input_path=str(deck),
+                        input_revision=file_revision(deck), unit_source="user")
+        run.workdir.mkdir(parents=True)
+        raw = run.workdir / "model.frd"
+        raw.write_text("first selected output")
+        run.snapshot["outputs"] = {"model.frd": file_revision(raw)}
+        store.write(run)
+        store.select(analysis_node.id, run.id)
+        window._poll_runs()
+        box = window.boxes[consumer.id]
+        box.setSelected(True)
+        window._selection_changed()
+        assert box.status_label == "선택 실행 변경"
+        text = window.properties.toPlainText()
+        assert "입력 상태: 연결 입력 준비됨" in text
+        assert "기존 표시·대화와 다를 수 있습니다" in text
+        assert "입력 상태: 오래됨" not in text
+        # Selection never certifies an external display/discussion as completed.
+        assert window.project.nodes[consumer.id].state == "stale"
+        assert not wb.jobs.launches
+
+        reference = wb.input_file(window.project, consumer.id)
+        reference.stale = True
+        window._reflect_node(consumer.id)
+        window._selection_changed()
+        assert not box.status_label
+        assert "입력 상태: 오래됨" in window.properties.toPlainText()
+        reference.stale = False
+        raw.write_text("externally changed output")
+        window._selection_changed()
+        assert "입력 상태: 원본 변경됨" in window.properties.toPlainText()
+        raw.unlink()
+        window._selection_changed()
+        assert "입력 상태: 파일 누락" in window.properties.toPlainText()
+    finally:
+        window._dirty = False
+        window.close()
+
+
 @pytest.mark.parametrize("current_state", ["completed", "failed", "cancelled"])
 def test_input_status_follows_polled_and_selected_run_without_reading_deck(
         app, tmp_path, monkeypatch, current_state):

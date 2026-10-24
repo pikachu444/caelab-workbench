@@ -83,6 +83,12 @@ STATE_LABELS = {
 BOX_W, BOX_H = 210, 98
 
 
+def _selection_changed_input(node, reference) -> bool:
+    return (node.kind in {"results", "expert"} and node.state == "stale"
+            and node.reason == "선택 실행 또는 결과 출처가 변경되었습니다."
+            and reference is not None and not reference.stale)
+
+
 def _box_font(size: int, bold: bool = False) -> QFont:
     """Pick a font whose metrics are reliable for mixed Korean/Latin
     text in graphics items (the empty default family garbles it)."""
@@ -108,6 +114,7 @@ class SystemBox(QGraphicsItem):
         self.title = title
         self.subtitle = subtitle
         self.state = "needs_input"
+        self.status_label = ""
         self.detail = ""
         self.file_label = "선택 파일 없음"
         self.setFlag(QGraphicsItem.ItemIsMovable, True)
@@ -122,6 +129,7 @@ class SystemBox(QGraphicsItem):
 
     def set_state(self, state: str, detail: str = "") -> None:
         self.state = state
+        self.status_label = ""
         self.detail = detail
         self.update()
 
@@ -155,7 +163,7 @@ class SystemBox(QGraphicsItem):
         painter.drawText(QRectF(10, 50, BOX_W - 20, 18), Qt.AlignLeft,
                          painter.fontMetrics().elidedText(self.file_label, Qt.ElideMiddle, BOX_W - 20))
         painter.setPen(QPen(QColor("#5a6672")))
-        status = STATE_LABELS.get(self.state, self.state)
+        status = self.status_label or STATE_LABELS.get(self.state, self.state)
         painter.drawText(QRectF(10, 73, BOX_W - 20, 18), Qt.AlignLeft, status)
 
     def itemChange(self, change, value):
@@ -500,13 +508,18 @@ class ProjectWindow(QMainWindow):
         node = self.project.nodes[box.node_id]
         statuses = {status.spec.id: status for status in self.workbench.programs()}
         program = statuses.get(node.program_id)
-        lines = [box.title, f"입력 상태: {STATE_LABELS.get(node.state, node.state)}",
-                 f"설명: {self._display_reason(node.reason)}"]
+        reference = self.workbench.input_file(self.project, node.id)
+        state_label = STATE_LABELS.get(node.state, node.state)
+        reason = self._display_reason(node.reason)
+        if _selection_changed_input(node, reference):
+            status = reference.status
+            state_label = "연결 입력 준비됨" if status == "ready" else STATE_LABELS.get(status, status)
+            reason = "선택 실행이 바뀌어 기존 표시·대화와 다를 수 있습니다. 외부 프로그램의 실제 표시·논의를 확인하세요."
+        lines = [box.title, f"입력 상태: {state_label}", f"설명: {reason}"]
         incoming = [c for c in self.project.connections if c.target_id == node.id]
         for connection in incoming:
             role = "입력" if connection.source_role == "input" else "출력"
             lines += ["", f"연결 입력: {self.boxes[connection.source_id].title}의 {role} 파일"]
-        reference = self.workbench.input_file(self.project, node.id)
         references = [("사용할 입력", reference)]
         references += [(f"등록한 {'입력' if role == 'input' else '출력'}", ref) for role, ref in node.files.items()
                        if ref is not reference]
@@ -693,6 +706,10 @@ class ProjectWindow(QMainWindow):
         box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
         box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
         box.set_state(node.state, node.reason)
+        if _selection_changed_input(node, reference):
+            # The connected file changed; this does not establish that a viewer
+            # displayed it or that a discussion adopted it. Keep the stored state.
+            box.status_label = "선택 실행 변경"
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
                        f"{self._display_reason(node.reason)}")
 
