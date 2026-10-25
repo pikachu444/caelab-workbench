@@ -256,9 +256,10 @@ def _problem_text(error) -> str:
     missing = '사용할 파일을 찾지 못했습니다. 파일을 다시 선택하거나 연결한 상위 파일을 확인하세요.'
     space = '저장 공간이 부족합니다. 공간을 확보하거나 다른 위치에 저장하세요.'
     # Preserve typed causes even when a project/service boundary wraps an OS error.
-    cause, seen = error, set()
+    cause, seen, causes = error, set(), []
     while isinstance(cause, BaseException) and id(cause) not in seen:
         seen.add(id(cause))
+        causes.append(cause)
         if isinstance(cause, PermissionError) or getattr(cause, 'winerror', None) == 5:
             return permission
         if isinstance(cause, FileNotFoundError) or getattr(cause, 'winerror', None) in {2, 3}:
@@ -266,7 +267,19 @@ def _problem_text(error) -> str:
         if isinstance(cause, OSError) and (cause.errno == errno.ENOSPC or getattr(cause, 'winerror', None) == 112):
             return space
         cause = cause.__cause__
-    text = str(error).strip()
+    # A project-read wrapper must not replace a known version/configuration cause.
+    # Unknown inner causes still fall back to the useful outer service context.
+    for source in reversed(causes or [error]):
+        message = _problem_message(str(source).strip())
+        if message is not None:
+            return message
+    return '문제의 원인을 확인하지 못했습니다. 선택한 파일과 전용 프로그램의 작업 상태를 확인하세요.'
+
+
+def _problem_message(text: str) -> str | None:
+    permission = '파일이나 프로그램에 접근할 권한이 없습니다. 접근 가능한 위치와 실행 권한을 확인하세요.'
+    missing = '사용할 파일을 찾지 못했습니다. 파일을 다시 선택하거나 연결한 상위 파일을 확인하세요.'
+    space = '저장 공간이 부족합니다. 공간을 확보하거나 다른 위치에 저장하세요.'
     # Launch records serialize exceptions. Match the error number at the start,
     # never a path or an incidental token later in the diagnostic.
     serialized = re.match(r'^(?:(?:PermissionError|FileNotFoundError|OSError): )?\[(WinError|Errno) (\d+)\](?: |$)', text)
@@ -285,6 +298,7 @@ def _problem_text(error) -> str:
             text = text[len(prefix):]
             break
     exact = {
+        '설치 레지스트리의 runtime_env 형식이 잘못되었습니다.': '프로그램 연결 설정의 형식이 올바르지 않습니다. 연결 설정을 확인하세요.',
         '프로젝트 저장 경로가 원본 파일과 같습니다.': '프로젝트는 원본 입력 파일과 다른 이름으로 저장하세요.',
         '다른 이름 저장에는 기존 실행 저장소와 분리된 경로가 필요합니다.': '기존 계산·대화 기록 폴더 안에는 다른 이름으로 저장할 수 없습니다. 그 폴더 밖의 새 프로젝트 위치를 선택하세요.',
         '실행 저장소 안으로 자기 복사를 할 수 없습니다.': '기존 계산·대화 기록 폴더 안에는 복사할 수 없습니다. 그 폴더 밖의 새 프로젝트 위치를 선택하세요.',
@@ -337,7 +351,7 @@ def _problem_text(error) -> str:
             return message
     if re.fullmatch(r'(?:FreeCAD|Gmsh|CalculiX|ParaView|Code_Aster|OpenCourant|FEniCSx) 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
         return '프로그램 실행 파일을 찾지 못했거나 사용할 수 없습니다. 설치와 프로그램 연결 설정을 확인하세요.'
-    return '문제의 원인을 확인하지 못했습니다. 선택한 파일과 전용 프로그램의 작업 상태를 확인하세요.'
+    return None
 
 
 def _run_text(run, *, selected: bool = True) -> str:

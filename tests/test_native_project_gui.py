@@ -535,6 +535,40 @@ def test_missing_file_type_wins_over_filename_keywords(window, monkeypatch, file
     assert '기록이 없거나' not in warnings[-1] and '연결 정보를 읽지' not in warnings[-1]
 
 
+def test_invalid_program_connection_configuration_keeps_actionable_cause(window, tmp_path, monkeypatch):
+    from caelab.connections import PROGRAMS, _status
+    executable = tmp_path / 'FreeCAD.exe'
+    executable.write_bytes(b'not executed')
+    monkeypatch.setenv('CAELAB_FREECAD', str(executable))
+    spec = next(program for program in PROGRAMS if program.id == 'freecad')
+    status = _status(spec, {'runtime_env': {'freecad': []}}, '', 'windows')
+    assert not status.available
+    monkeypatch.setattr(window.workbench, 'programs', lambda: [status])
+    box = window.add_box('geometry')
+    assert window.register_file(box.node_id, _file(tmp_path, 'model.FCStd'))
+    for text in (window.program_summary.text(), window.next_action.text()):
+        assert '연결 설정' in text
+        assert 'runtime_env' not in text and str(executable) not in text
+    assert '형식이 올바르지 않습니다' in window.program_summary.text()
+    assert not window.open_button.isEnabled()
+
+
+def test_open_newer_project_preserves_wrapped_version_cause(window, tmp_path, monkeypatch):
+    import json
+    warnings = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args[2]))
+    original = window.project
+    path = tmp_path / 'newer-version.json'
+    source = json.dumps({'schema_version': 999, 'name': 'Different version',
+                         'nodes': {}, 'connections': []}).encode('utf-8')
+    path.write_bytes(source)
+    assert not window.open_project(path, confirm=False)
+    assert window.project is original and path.read_bytes() == source
+    for text in (warnings[-1], window.status.toolTip(), window.log.toPlainText()):
+        assert '호환되는 버전에서 다시 여세요' in text
+        assert 'schema_version' not in text and str(path) not in text
+
+
 def test_results_without_a_file_never_launch_empty_paraview(window):
     box = window.add_box("results")
     window.open_box(box)
