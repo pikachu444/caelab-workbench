@@ -987,3 +987,103 @@ def test_file_warnings_do_not_replace_execution_or_failure_status(window, tmp_pa
     node.files['input'].stale = False
     window._reflect_node(node.id)
     assert box.state == state and not box.status_label
+
+
+
+def _natural_scene_for_dock_boundary(window, app, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    monkeypatch.setattr(window.workbench, 'programs', lambda: [])
+    for kind, pos in zip(('geometry', 'analysis', 'results', 'expert'),
+                         ((40, 40), (300, 40), (560, 40), (300, 240))):
+        window.add_box(kind).setPos(*pos)
+    window.resize(960, 680)
+    window.show()
+    app.processEvents()
+    window.zoom_in_button.click()
+    app.processEvents()
+    bar = window.view.horizontalScrollBar()
+    bar.setFocus()
+    QTest.keyClick(bar, Qt.Key_End)
+    assert bar.value() == bar.maximum() and bar.maximum() > bar.minimum()
+    assert window.scene.sceneRect().width() == 730
+    assert window.view.transform().m11() == pytest.approx(1.2)
+    return bar
+
+
+@pytest.mark.parametrize('closed,restored', [
+    (('toolbox_dock',), ('toolbox_dock',)),
+    (('settings_dock',), ('settings_dock',)),
+    (('toolbox_dock', 'settings_dock'), ('settings_dock', 'toolbox_dock')),
+    (('settings_dock', 'toolbox_dock'), ('toolbox_dock', 'settings_dock')),
+])
+@pytest.mark.parametrize('position', ['end', 'middle'])
+def test_natural_scene_dock_clamp_restores_user_scroll(window, app, monkeypatch, closed, restored, position):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    bar = _natural_scene_for_dock_boundary(window, app, monkeypatch)
+    if position == 'middle':
+        bar.setValue((bar.minimum() + bar.maximum()) // 2)
+    wanted = bar.value()
+    before = window.view.mapToScene(window.view.viewport().rect().center())
+    scene = window.scene.sceneRect()
+    for name in closed:
+        getattr(window, name).close()
+        app.processEvents()
+    for name in restored:
+        getattr(window, name).toggleViewAction().trigger()
+        app.processEvents()
+    assert bar.value() == wanted
+    assert window.view.mapToScene(window.view.viewport().rect().center()) == before
+    assert window.view.transform().m11() == pytest.approx(1.2)
+    assert window.zoom_percent.text() == '120%'
+    assert window.scene.sceneRect() == scene
+
+
+@pytest.mark.parametrize('action', ['pan', 'zoom', 'fit', '100%'])
+def test_explicit_view_action_while_docks_closed_replaces_previous_pan(window, app, monkeypatch, action):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    bar = _natural_scene_for_dock_boundary(window, app, monkeypatch)
+    old = bar.value()
+    window.toolbox_dock.close()
+    app.processEvents()
+    if action == 'pan':
+        bar.setFocus()
+        QTest.keyClick(bar, Qt.Key_Home)
+        wanted = bar.value()
+        assert wanted != old
+    else:
+        window.settings_dock.close()
+        app.processEvents()
+        assert bar.minimum() == bar.maximum()
+        {'zoom': window.zoom_in_button, 'fit': window.fit_button, '100%': window.zoom_percent}[action].click()
+        app.processEvents()
+        wanted = bar.value()
+    scale = window.view.transform().m11()
+    for dock in (window.settings_dock, window.toolbox_dock):
+        if not dock.isVisible():
+            dock.toggleViewAction().trigger()
+            app.processEvents()
+    assert bar.value() == max(bar.minimum(), min(bar.maximum(), wanted))
+    assert bar.value() != old
+    assert window.view.transform().m11() == scale
+
+
+
+def test_real_window_resize_adopts_native_noanchor_clamp_instead_of_old_dock_memory(window, app, monkeypatch):
+    bar = _natural_scene_for_dock_boundary(window, app, monkeypatch)
+    old = bar.value()
+    window.resize(1280, 820)
+    app.processEvents()
+    clamped = bar.value()
+    assert clamped < old
+    window.resize(960, 680)
+    app.processEvents()
+    assert bar.value() == clamped
+    assert window.view.transform().m11() == pytest.approx(1.2)
+    window.toolbox_dock.close()
+    app.processEvents()
+    window.toolbox_dock.toggleViewAction().trigger()
+    app.processEvents()
+    assert bar.value() == clamped

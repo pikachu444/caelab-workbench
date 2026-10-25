@@ -97,20 +97,40 @@ class SchematicView(QGraphicsView):
 
     scaleChanged = Signal()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._layout_scroll = None
+        self._window_size = None
+        self._resizing = False
+        for bar in (self.horizontalScrollBar(), self.verticalScrollBar()):
+            bar.valueChanged.connect(self._remember_scroll)
+
+    def _remember_scroll(self, *_):
+        if not self._resizing:
+            self._layout_scroll = (self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+
     def scale(self, sx, sy):
+        self._layout_scroll = None
         super().scale(sx, sy)
+        self._remember_scroll()
         self.scaleChanged.emit()
 
     def resetTransform(self):
+        self._layout_scroll = None
         super().resetTransform()
+        self._remember_scroll()
         self.scaleChanged.emit()
 
     def setTransform(self, matrix, combine=False):
+        self._layout_scroll = None
         super().setTransform(matrix, combine)
+        self._remember_scroll()
         self.scaleChanged.emit()
 
     def fitInView(self, *args):
+        self._layout_scroll = None
         super().fitInView(*args)
+        self._remember_scroll()
         self.scaleChanged.emit()
 
     def place_controls(self):
@@ -120,7 +140,22 @@ class SchematicView(QGraphicsView):
                                max(0, self.viewport().height() - self.controls.height() - 8))
 
     def resizeEvent(self, event):
-        super().resizeEvent(event)
+        was_resizing = self._resizing
+        window_size = self.window().size()
+        saved = self._layout_scroll if not was_resizing and window_size == self._window_size else None
+        self._window_size = window_size
+        self._resizing = True
+        try:
+            super().resizeEvent(event)
+            if saved is not None:
+                # A dock can make the scene fit and clamp its scrollbars to zero.
+                # Keep the wanted position until the same layout can show it again.
+                for bar, position in zip((self.horizontalScrollBar(), self.verticalScrollBar()), saved):
+                    bar.setValue(position)
+            elif not was_resizing:
+                self._layout_scroll = (self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+        finally:
+            self._resizing = was_resizing
         self.place_controls()
 
 
