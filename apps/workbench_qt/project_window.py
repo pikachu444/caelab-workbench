@@ -15,10 +15,11 @@ from os.path import normcase
 from pathlib import Path
 import math
 import errno
+import heapq
 import re
 
 from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QDockWidget,
     QComboBox,
@@ -282,9 +283,10 @@ class SystemBox(QGraphicsItem):
 
 
 class Connector(QGraphicsPathItem):
-    def __init__(self, src: SystemBox, dst: SystemBox) -> None:
+    def __init__(self, src: SystemBox, dst: SystemBox, boxes=()) -> None:
         super().__init__()
         self.src, self.dst = src, dst
+        self.boxes = boxes
         self.setPen(QPen(QColor("#5b7a99"), 2))
         self.setZValue(-1)
         src._on_move.append(self.refresh)
@@ -294,8 +296,8 @@ class Connector(QGraphicsPathItem):
     def paint(self, painter, option, widget=None):
         super().paint(painter, option, widget)
         path = self.path()
-        end, prior = path.pointAtPercent(1), path.pointAtPercent(.96)
-        angle = math.atan2(end.y() - prior.y(), end.x() - prior.x())
+        end = path.pointAtPercent(1)
+        angle = math.radians(-path.angleAtPercent(1))
         back = QPointF(math.cos(angle) * 11, math.sin(angle) * 11)
         side = QPointF(-math.sin(angle) * 5, math.cos(angle) * 5)
         painter.setBrush(self.pen().color())
@@ -303,6 +305,46 @@ class Connector(QGraphicsPathItem):
 
     def boundingRect(self):
         return super().boundingRect().adjusted(-6, -6, 6, 6)
+
+    @staticmethod
+    def _detour(a, b, obstacles):
+        # Only box boundaries and endpoints form lanes; no node layout is changed.
+        xs = sorted({a.x(), b.x(), *(x for r in obstacles for x in (r.left(), r.right()))})
+        ys = sorted({a.y(), b.y(), *(y for r in obstacles for y in (r.top(), r.bottom()))})
+        start, end = (xs.index(a.x()), ys.index(a.y()), -1), (xs.index(b.x()), ys.index(b.y()))
+        pending, costs, previous = [(0, start)], {start: 0}, {}
+
+        def clear(x1, y1, x2, y2):
+            return not any(
+                (r.top() < y1 < r.bottom() and max(min(x1, x2), r.left()) < min(max(x1, x2), r.right()))
+                if y1 == y2 else
+                (r.left() < x1 < r.right() and max(min(y1, y2), r.top()) < min(max(y1, y2), r.bottom()))
+                for r in obstacles)
+
+        while pending:
+            cost, current = heapq.heappop(pending)
+            if cost != costs[current]:
+                continue
+            x, y, direction = current
+            if (x, y) == end:
+                points = []
+                while current != start:
+                    points.append(QPointF(xs[current[0]], ys[current[1]]))
+                    current = previous[current]
+                path = QPainterPath(a)
+                for point in reversed(points):
+                    path.lineTo(point)
+                return path
+            for nx, ny, axis in ((x - 1, y, 0), (x + 1, y, 0), (x, y - 1, 1), (x, y + 1, 1)):
+                if not (0 <= nx < len(xs) and 0 <= ny < len(ys)) or not clear(xs[x], ys[y], xs[nx], ys[ny]):
+                    continue
+                step = abs(xs[nx] - xs[x]) + abs(ys[ny] - ys[y])
+                candidate = cost + step + (24 if direction not in (-1, axis) else 0)
+                state = nx, ny, axis
+                if candidate < costs.get(state, math.inf):
+                    costs[state], previous[state] = candidate, current
+                    heapq.heappush(pending, (candidate, state))
+        return None
 
     def refresh(self) -> None:
         # Route along the dominant direction between the two boxes.
@@ -330,6 +372,20 @@ class Connector(QGraphicsPathItem):
                 off = QPointF(0, -max(40.0, abs(b.y() - a.y()) / 2))
             path = QPainterPath(a)
             path.cubicTo(a + off, b - off, b)
+        others = [box.sceneBoundingRect().adjusted(-12, -12, 12, 12)
+                  for box in self.boxes if box not in (self.src, self.dst)]
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self.pen().widthF())
+        if any(stroker.createStroke(path).intersects(rect) for rect in others):
+            obstacles = [rect.adjusted(-2, -2, 2, 2) for rect in others]
+            obstacles.extend(box.sceneBoundingRect().adjusted(-12, -12, 12, 12) for box in (self.src, self.dst))
+            normal = QPointF(math.copysign(16, off.x()), 0) if off.x() else QPointF(0, math.copysign(16, off.y()))
+            detour = self._detour(a + normal, b - normal, obstacles)
+            if detour is not None:
+                path = QPainterPath(a)
+                path.lineTo(a + normal)
+                path.connectPath(detour)
+                path.lineTo(b)
         self.setPath(path)
 
 
@@ -990,6 +1046,8 @@ class ProjectWindow(QMainWindow):
         position = (40 + 250 * (len(self.boxes) % 3), 40 + 150 * (len(self.boxes) // 3))
         node = self.workbench.add_program_node(self.project, kind, _PROGRAM_IDS[kind], position)
         box = self._add_node_box(node)
+        for connector in self.connectors:
+            connector.refresh()
         self.empty_hint.setVisible(False)
         self.scene.clearSelection()
         box.setSelected(True)
@@ -1001,6 +1059,9 @@ class ProjectWindow(QMainWindow):
 
     def _position_changed(self, box: SystemBox) -> None:
         self.project.nodes[box.node_id].position = (box.pos().x(), box.pos().y())
+        for connector in self.connectors:
+            if box not in (connector.src, connector.dst):
+                connector.refresh()
         self._mark_dirty()
 
     def _selected_boxes(self) -> list[SystemBox]:
@@ -1267,7 +1328,7 @@ class ProjectWindow(QMainWindow):
             self._draw_connection(connection.source_id, connection.target_id, connection.source_role)
 
     def _draw_connection(self, source_id: str, target_id: str, role: str) -> None:
-        connector = Connector(self.boxes[source_id], self.boxes[target_id])
+        connector = Connector(self.boxes[source_id], self.boxes[target_id], self.boxes.values())
         connector.setToolTip(f"{self.boxes[source_id].title}의 {'입력' if role == 'input' else '출력'} 파일"
                              f" → {self.boxes[target_id].title} 입력")
         self.scene.addItem(connector)

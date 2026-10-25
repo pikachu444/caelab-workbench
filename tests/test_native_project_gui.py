@@ -811,6 +811,66 @@ def test_two_targets_show_connection_context_and_arrow_destination(window, tmp_p
     assert window.workbench.input_file(window.project, second.node_id).path.endswith('A.FCStd')
 
 
+@pytest.mark.parametrize('positions, angle', [
+    (((40, 40), (290, 40), (540, 40)), 0),
+    (((540, 40), (290, 40), (40, 40)), 180),
+    (((40, 40), (40, 190), (40, 340)), 270),
+    (((40, 340), (40, 190), (40, 40)), 90),
+])
+def test_connection_routes_around_unconnected_box_and_keeps_target_direction(window, tmp_path, positions, angle):
+    from PySide6.QtGui import QPainterPathStroker
+    source, obstacle, target = [window.add_box(kind) for kind in ('geometry', 'geometry', 'analysis')]
+    for box, position in zip((source, obstacle, target), positions):
+        box.setPos(*position)
+    window.register_file(source.node_id, _file(tmp_path, 'A.inp'), 'output', {'length': 'mm'})
+    assert window.connect(source.node_id, target.node_id)
+    connector = window.connectors[0]
+    stroke = QPainterPathStroker()
+    stroke.setWidth(2)
+    assert not stroke.createStroke(connector.path()).intersects(obstacle.sceneBoundingRect().adjusted(-12, -12, 12, 12))
+    anchors = {0: (source.right_anchor(), target.left_anchor()),
+               180: (source.left_anchor(), target.right_anchor()),
+               270: (source.bottom_anchor(), target.top_anchor()),
+               90: (source.top_anchor(), target.bottom_anchor())}
+    assert connector.path().pointAtPercent(0) == anchors[angle][0]
+    assert connector.path().pointAtPercent(1) == anchors[angle][1]
+    assert connector.path().angleAtPercent(1) == pytest.approx(angle)
+    assert window.workbench.input_file(window.project, obstacle.node_id) is None
+    assert window.workbench.input_file(window.project, target.node_id).units == {'length': 'mm'}
+    assert [window.project.nodes[b.node_id].position for b in (source, obstacle, target)] == list(positions)
+
+
+def test_connection_rechecks_unrelated_box_add_move_remove_restore(window, tmp_path, monkeypatch):
+    from PySide6.QtGui import QPainterPathStroker
+    source, target = window.add_box('geometry'), window.add_box('analysis')
+    target.setPos(800, 40)
+    window.register_file(source.node_id, _file(tmp_path, 'source.inp'), 'output')
+    assert window.connect(source.node_id, target.node_id)
+    original = window.connectors[0].path()
+    obstacle = window.add_box('geometry')  # Added directly onto the existing link.
+    stroke = QPainterPathStroker()
+    stroke.setWidth(2)
+    def clear():
+        assert not stroke.createStroke(window.connectors[0].path()).intersects(
+            window.boxes[obstacle.node_id].sceneBoundingRect().adjusted(-12, -12, 12, 12))
+    clear()
+    assert window.connectors[0].path() != original
+    obstacle.setPos(430, 0)  # Blocks the first detour above the original row.
+    clear()
+    source.setPos(20, 60)
+    target.setPos(800, 80)
+    clear()
+    _select(window, obstacle)
+    window.remove_selected()
+    assert obstacle.node_id not in window.boxes
+    monkeypatch.setattr(QDialog, 'exec', lambda dialog: QDialog.Accepted)
+    window.restore_program()
+    clear()
+    window.boxes[obstacle.node_id].setPos(400, 350)
+    assert len(window.project.connections) == 1
+    assert window.workbench.input_file(window.project, target.node_id).path.endswith('source.inp')
+
+
 def test_narrow_workspace_docks_can_close_reopen_and_fit(window, app):
     for kind in ('geometry', 'analysis', 'results', 'expert'):
         window.add_box(kind)
