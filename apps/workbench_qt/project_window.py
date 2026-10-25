@@ -11,8 +11,10 @@ execution window; recorded runs can be inspected from this project.
 from __future__ import annotations
 
 from html import escape
-from os.path import relpath
+from os.path import normcase
 from pathlib import Path
+import errno
+import re
 
 from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence, QPainterPath, QPen
@@ -249,57 +251,92 @@ def _unit_text(units: dict) -> str:
 
 
 def _problem_text(error) -> str:
-    """Translate known failure categories; never echo arbitrary service diagnostics."""
-    text = str(error)
-    lowered = text.lower()
-    if isinstance(error, PermissionError) or '권한' in text or 'permission denied' in lowered:
-        return '파일이나 프로그램에 접근할 권한이 없습니다. 접근 가능한 위치와 실행 권한을 확인하세요.'
-    if 'disk full' in lowered or 'no space left' in lowered or '공간' in text and '부족' in text:
-        return '저장 공간이 부족합니다. 공간을 확보하거나 다른 위치에 저장하세요.'
-    if '경로가 원본 파일과 같습니다' in text:
-        return '프로젝트는 원본 입력 파일과 다른 이름으로 저장하세요.'
-    if '이미 있습니다' in text or '이미 존재' in text:
-        return '선택한 저장 위치에 기존 기록이 있습니다. 다른 이름이나 새 폴더를 선택하세요.'
-    if '순환' in text:
-        return '상자를 순환하게 연결할 수 없습니다. 입력이 한 방향으로 전달되도록 연결하세요.'
-    if 'schema_version' in text and '지원하지' in text:
-        return '이 프로그램에서 읽을 수 없는 프로젝트 버전입니다. 호환되는 버전에서 다시 여세요.'
-    if any(part in text for part in ('프로젝트 읽기 실패', '중복 JSON', 'nodes.', 'connections:', '자료 형식')):
-        return '프로젝트의 파일·상자·연결 정보를 읽지 못했습니다. 올바른 프로젝트 파일이나 보관한 사본을 선택하세요.'
-    if '실행 저장소' in text or any(part in text for part in ('실행 기록', 'run_store', 'job.json', 'snapshot')):
-        return '저장된 계산·대화 기록이 없거나 온전히 읽히지 않습니다. 프로젝트와 함께 보관한 기록 폴더를 확인하세요.'
-    if '계산 중' in text or '질문' in text and ('진행 중' in text or '사용 중' in text):
-        return '계산이나 대화 작업이 진행 중입니다. 작업을 마치거나 중단한 뒤 다시 저장하세요.'
-    if 'FreeCAD 문서' in text:
-        return 'FreeCAD 문서(.FCStd)를 입력 파일로 선택하세요.'
-    if any(part in text for part in ('교환 파일', '무결성', '해시 불일치', '변조')):
-        return '선택한 결과 파일의 보존 상태를 확인하지 못했습니다. 해석창에서 다른 보존 실행을 선택하거나 새로 계산하세요.'
-    if '원본 변경' in text or '개정' in text and '변경' in text:
-        return '원본 파일이 바뀌었습니다. 내용을 확인한 뒤 사용할 파일을 다시 등록하세요.'
-    if '현재 선택 입력이 이 실행의 입력과 다릅니다' in text:
-        return '선택한 계산은 현재 입력과 다른 입력으로 실행되었습니다. 해석창에서 사용할 계산을 확인하세요.'
-    if '입력 단위 선언/출처가 변경' in text:
-        return '입력의 단위 선언이 계산 당시와 다릅니다. 해석창에서 단위와 사용할 계산을 확인하세요.'
-    if '실행 원본 또는 INCLUDE 파일이 변경/누락' in text:
-        return '계산에 사용한 입력이나 포함 파일이 바뀌었거나 없습니다. 해석창에서 입력 파일을 확인하세요.'
-    if '선택 실행에 사용할 수 있는 최신 결과가 없습니다' in text:
-        return '선택한 계산에 사용할 수 있는 결과가 없습니다. 해석창에서 종료 상태와 결과 읽기 상태를 확인하세요.'
-    if '상위 변경' in text or '오래' in text:
-        return '상위 입력이 바뀌어 이전 출력이 오래되었습니다. 새로 작성한 출력을 등록하세요.'
-    if '연결된 해석' in text or '선택 실행이 없습니다' in text:
-        return '해석 상자를 연결하고 해석창에서 사용할 계산을 선택하세요.'
-    if any(part in text for part in ('실행 환경', '네이티브 실행 파일이 아닙니다', '다른 호스트', '미구현', '구현되지')):
-        return '현재 환경에서는 이 프로그램 연결을 사용할 수 없습니다. 지원되는 운영체제와 프로그램을 확인하세요.'
-    if 'freecadcmd' in lowered or 'pvpython' in lowered or 'pvbatch' in lowered:
-        return '화면이 있는 전용 프로그램을 연결하세요. 명령행 도구로는 이 파일을 표시할 수 없습니다.'
-    if '실행 파일' in text:
+    """Recognize OS failures and actual service messages, never filename keywords."""
+    permission = '파일이나 프로그램에 접근할 권한이 없습니다. 접근 가능한 위치와 실행 권한을 확인하세요.'
+    missing = '사용할 파일을 찾지 못했습니다. 파일을 다시 선택하거나 연결한 상위 파일을 확인하세요.'
+    space = '저장 공간이 부족합니다. 공간을 확보하거나 다른 위치에 저장하세요.'
+    # Preserve typed causes even when a project/service boundary wraps an OS error.
+    cause, seen = error, set()
+    while isinstance(cause, BaseException) and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, PermissionError) or getattr(cause, 'winerror', None) == 5:
+            return permission
+        if isinstance(cause, FileNotFoundError) or getattr(cause, 'winerror', None) in {2, 3}:
+            return missing
+        if isinstance(cause, OSError) and (cause.errno == errno.ENOSPC or getattr(cause, 'winerror', None) == 112):
+            return space
+        cause = cause.__cause__
+    text = str(error).strip()
+    # Launch records serialize exceptions. Match the error number at the start,
+    # never a path or an incidental token later in the diagnostic.
+    serialized = re.match(r'^(?:(?:PermissionError|FileNotFoundError|OSError): )?\[(WinError|Errno) (\d+)\](?: |$)', text)
+    if serialized:
+        family, code = serialized.group(1), int(serialized.group(2))
+        if (family, code) in {('WinError', 5), ('Errno', errno.EACCES), ('Errno', errno.EPERM)}:
+            return permission
+        if (family, code) in {('WinError', 2), ('WinError', 3), ('Errno', errno.ENOENT)}:
+            return missing
+        if (family, code) in {('WinError', 112), ('Errno', errno.ENOSPC)}:
+            return space
+    if text.lower() in {'disk full', 'no space left on device'}:
+        return space
+    for prefix in ('ValueError: ', 'RuntimeError: '):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    exact = {
+        '프로젝트 저장 경로가 원본 파일과 같습니다.': '프로젝트는 원본 입력 파일과 다른 이름으로 저장하세요.',
+        '다른 이름 저장에는 기존 실행 저장소와 분리된 경로가 필요합니다.': '기존 계산·대화 기록 폴더 안에는 다른 이름으로 저장할 수 없습니다. 그 폴더 밖의 새 프로젝트 위치를 선택하세요.',
+        '실행 저장소 안으로 자기 복사를 할 수 없습니다.': '기존 계산·대화 기록 폴더 안에는 복사할 수 없습니다. 그 폴더 밖의 새 프로젝트 위치를 선택하세요.',
+        '다른 이름 저장의 실행 저장소가 이미 있습니다. 기존 기록을 보호하기 위해 다른 이름을 선택하세요.': '선택한 저장 위치에 기존 기록이 있습니다. 다른 이름이나 새 폴더를 선택하세요.',
+        '복사 준비 중 대화 목록이 변경되었습니다. 다시 저장하세요.': '저장 준비 중 대화 목록이 바뀌었습니다. 대화 작업을 마친 뒤 다시 저장하세요.',
+        '복사 중 실행/대화/자산 파일이 변경되었습니다. 다시 저장하세요.': '저장 중 계산이나 대화 자료가 바뀌었습니다. 관련 작업을 마친 뒤 다시 저장하세요.',
+        '대화 질문/저장이 진행 중입니다. 완료 후 다른 이름으로 저장하세요.': '대화 작업이 진행 중입니다. 작업을 마치거나 중단한 뒤 다시 저장하세요.',
+        '이 프로젝트의 다른 창/세션에서 계산 중입니다. 해당 계산을 끝내거나 취소하세요.': '다른 해석창에서 계산 중입니다. 해당 계산을 끝내거나 취소하세요.',
+        'connections: 순환 연결은 지원하지 않습니다.': '상자를 순환하게 연결할 수 없습니다. 입력이 한 방향으로 전달되도록 연결하세요.',
+        '실행 근거 연결이 순환합니다.': '상자를 순환하게 연결할 수 없습니다. 입력이 한 방향으로 전달되도록 연결하세요.',
+        'FreeCAD 문서(.FCStd)를 선택하세요.': 'FreeCAD 문서(.FCStd)를 입력 파일로 선택하세요.',
+        '연결된 해석 노드에서 실행을 선택하세요.': '해석 상자를 연결하고 해석창에서 사용할 계산을 선택하세요.',
+        '현재 선택 입력이 이 실행의 입력과 다릅니다.': '선택한 계산은 현재 입력과 다른 입력으로 실행되었습니다. 해석창에서 사용할 계산을 확인하세요.',
+        '입력 단위 선언/출처가 변경되었습니다.': '입력의 단위 선언이 계산 당시와 다릅니다. 해석창에서 단위와 사용할 계산을 확인하세요.',
+        '실행 원본 또는 INCLUDE 파일이 변경/누락되었습니다.': '계산에 사용한 입력이나 포함 파일이 바뀌었거나 없습니다. 해석창에서 입력 파일을 확인하세요.',
+        '상위 변경으로 현재 입력 덱이 오래되었습니다.': '상위 입력이 바뀌어 이전 출력이 오래되었습니다. 새로 작성한 출력을 등록하세요.',
+        '선택 실행에 사용할 수 있는 최신 결과가 없습니다.': '선택한 계산에 사용할 수 있는 결과가 없습니다. 해석창에서 종료 상태와 결과 읽기 상태를 확인하세요.',
+        '선택하거나 연결한 입력 파일이 없습니다. 파일 경로를 확인하세요.': missing,
+        '연결된 입력 파일이 없습니다.': missing,
+        '선택하거나 연결한 INP 파일이 없습니다.': missing,
+        '입력 확인 창을 열기 전에 프로젝트를 저장하세요.': '프로젝트를 먼저 저장한 뒤 프로그램을 여세요.',
+        '프로젝트를 저장하고 전문가 상자를 선택하세요.': '프로젝트를 저장하고 전문가 상자를 선택하세요.',
+        'FreeCAD GUI에는 freecadcmd를 사용할 수 없습니다. GUI 실행 파일을 지정하세요.': '화면이 있는 FreeCAD 프로그램을 연결하세요. 명령행 도구로는 파일을 표시할 수 없습니다.',
+        'ParaView GUI에는 pvpython/pvbatch를 사용할 수 없습니다. paraview 실행 파일을 지정하세요.': '화면이 있는 ParaView 프로그램을 연결하세요. 명령행 도구로는 파일을 표시할 수 없습니다.',
+        '선택 실행에 열 수 있는 PVD/VTU 결과 파일이 없습니다.': '선택한 계산에 ParaView에서 열 수 있는 결과 파일이 없습니다. 해석창에서 결과 읽기 상태를 확인하거나 다른 계산을 선택하세요.',
+        '교환 파일 무결성을 확인할 수 없습니다. 새로 계산한 실행을 선택하세요.': '결과 파일의 보존 상태를 확인할 수 없습니다. 새로 계산한 실행을 선택하세요.',
+    }
+    if text in exact:
+        return exact[text]
+    groups = (
+        (('검사 중 저장소 파일이 변경되었습니다: ',), '저장 자료를 확인하는 동안 파일이 바뀌었습니다. 관련 작업을 마친 뒤 다시 저장하세요.'),
+        (('기대 실행 저장소가 없습니다: ', '실행 저장소가 폴더가 아닙니다: ', '실행 기록을 온전히 읽을 수 없습니다: ',
+          '실행 기록 객체가 필요합니다: ', '잘못된 실행 기록 ID: ', '잘못된 실행 상태: ', '선택한 실행 기록이 없습니다: ',
+          '실행 폴더의 기록이 없습니다: ', '실행 기록 읽기 실패: ', '대화 근거 자산이 온전하지 않습니다: '),
+         '저장된 계산·대화 기록이 없거나 온전히 읽히지 않습니다. 프로젝트와 함께 보관한 기록 폴더를 확인하세요.'),
+        (('지원하지 않는 프로젝트 schema_version: ',), '이 프로그램에서 읽을 수 없는 프로젝트 버전입니다. 호환되는 버전에서 다시 여세요.'),
+        (('프로젝트 읽기 실패 (',), '프로젝트의 파일·상자·연결 정보를 읽지 못했습니다. 올바른 프로젝트 파일이나 보관한 사본을 선택하세요.'),
+        (('입력 파일이 없습니다: ',), missing),
+        (('실행 권한이 없습니다: ',), permission),
+        (('실행 파일이 없거나 일반 파일이 아닙니다: ',), '프로그램 실행 파일을 찾지 못했거나 사용할 수 없습니다. 설치와 프로그램 연결 설정을 확인하세요.'),
+        (('교환 파일이 없습니다: ', '교환 파일 해시가 일치하지 않습니다: ', 'PVD를 읽을 수 없습니다: '),
+         '결과 파일이 없거나 온전히 읽히지 않습니다. 해석창에서 다른 보존 실행을 선택하거나 새로 계산하세요.'),
+        (('Windows 네이티브 실행 파일이 아닙니다. WSL/스크립트 연결은 미구현입니다: ',), '현재 환경에서 사용할 수 있는 Windows 프로그램을 연결하세요.'),
+        (('설치 레지스트리를 읽을 수 없습니다: ', '설치 root가 없어 레지스트리 상대경로를 해석할 수 없습니다: ',
+          '설치 root 접두부와 맞지 않는 레지스트리 상대경로입니다: ', '다른 호스트의 설치 레지스트리입니다: '),
+         '프로그램 연결 설정을 읽지 못했습니다. 설치와 연결 설정을 확인하세요.'),
+    )
+    for prefixes, message in groups:
+        if text.startswith(prefixes):
+            return message
+    if re.fullmatch(r'(?:FreeCAD|Gmsh|CalculiX|ParaView|Code_Aster|OpenCourant|FEniCSx) 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
         return '프로그램 실행 파일을 찾지 못했거나 사용할 수 없습니다. 설치와 프로그램 연결 설정을 확인하세요.'
-    if any(part in text for part in ('레지스트리', 'runtime_env', '환경 변수', 'PATH')):
-        return '프로그램 연결 설정을 읽지 못했습니다. 설치와 연결 설정을 확인하세요.'
-    if isinstance(error, FileNotFoundError) or any(part in text for part in ('입력 파일이 없습니다', '입력 파일이 누락', 'No such file')):
-        return '사용할 파일을 찾지 못했습니다. 파일을 다시 선택하거나 연결한 상위 파일을 확인하세요.'
-    if '저장' in text and ('전에' in text or '먼저' in text):
-        return '프로젝트를 먼저 저장한 뒤 프로그램을 여세요.'
     return '문제의 원인을 확인하지 못했습니다. 선택한 파일과 전용 프로그램의 작업 상태를 확인하세요.'
 
 
@@ -521,15 +558,31 @@ class ProjectWindow(QMainWindow):
             QTimer.singleShot(0, self._render_current_message)
 
     def _short_path(self, path: str) -> str:
-        base = self.project.path.parent if self.project.path else Path.cwd()
-        try:
-            relative = Path(relpath(path, base))
-            if '..' not in relative.parts:
-                return relative.as_posix()
-        except ValueError:
-            pass
-        selected = Path(path)
-        return f'{selected.parent.name}/{selected.name}'
+        base = (self.project.path.parent if self.project.path else Path.cwd()).resolve()
+        selected = Path(path).resolve()
+        if selected.is_relative_to(base):
+            return selected.relative_to(base).as_posix()
+        root = self.project.run_store
+        references = {Path(ref.path).resolve() for node in self.project.nodes.values()
+                      for ref in node.files.values()
+                      if root is None or not Path(ref.path).resolve().is_relative_to(root.resolve())}
+        # Past receipt inputs may no longer be registered. Do not invent a short
+        # context for them; the exact source remains more useful than ambiguity.
+        if selected not in references:
+            return str(selected)
+        internal_names = {normcase(other.relative_to(base).as_posix())
+                          for other in references if other.is_relative_to(base)}
+        for count in range(2, len(selected.parts) + 1):
+            candidate = Path(*selected.parts[-count:]).as_posix()
+            other_names = {normcase(Path(*other.parts[-count:]).as_posix())
+                           for other in references if other != selected and not other.is_relative_to(base)}
+            if normcase(candidate) not in internal_names | other_names:
+                return candidate
+        return str(selected)
+
+    def _file_tooltip(self, path: str) -> str:
+        name, provenance = self._summary_file_name(path)
+        return name + '\n' + provenance if provenance else str(Path(path).resolve())
 
     def _summary_file_name(self, path: str) -> tuple[str, str]:
         root = self.project.run_store
@@ -755,7 +808,7 @@ class ProjectWindow(QMainWindow):
                 label.setText(f"<b>{title}</b> — {escape(STATE_LABELS.get(status, "상태 미확인"))}<br>"
                               f"<b>{escape(file_name)}</b><br>{provenance_html}"
                               f"단위: {escape(_unit_text(ref.units))} ({escape(source)})")
-                label.setToolTip(file_name + ("\n" + provenance if provenance else ""))
+                label.setToolTip(self._file_tooltip(ref.path))
         status = self._file_status(reference) if reference else "needs_input"
         if node.kind == "expert":
             action = "전문가 창에서 실행 출처를 확인하고 사용할 근거를 가져오세요."
@@ -881,6 +934,7 @@ class ProjectWindow(QMainWindow):
                          if role.currentData() == "input" else
                          self.project.nodes[source.currentData()].files.get("output"))
             file_path.setText("\n".join(part for part in self._summary_file_name(reference.path) if part) if reference else "파일 미등록 — 연결은 입력 필요 상태로 남습니다.")
+            file_path.setToolTip(self._file_tooltip(reference.path) if reference else '')
         source.currentIndexChanged.connect(describe)
         role.currentIndexChanged.connect(describe)
         layout.addRow("보내는 상자", source)
@@ -922,7 +976,7 @@ class ProjectWindow(QMainWindow):
         title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), "프로그램")
         identifying_file = reference or node.files.get("output")
         box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
-        box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
+        box.file_label = self._summary_file_name(reference.path)[0] if reference else "선택 파일 없음"
         box.set_state(node.state, self._node_note(node, reference))
         if _selection_changed_input(node, reference):
             # The connected file changed; this does not establish that a viewer
@@ -932,7 +986,7 @@ class ProjectWindow(QMainWindow):
                 box.status_label = "선택 실행 변경"
             else:
                 box.set_state(status, self._node_note(node, reference))
-        file_label = "\n".join(part for part in self._summary_file_name(reference.path) if part) if reference else "입력 파일 없음"
+        file_label = self._file_tooltip(reference.path) if reference else "입력 파일 없음"
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{file_label}\n{self._node_note(node, reference)}")
 
     def _file_status(self, reference) -> str:
@@ -1029,7 +1083,7 @@ class ProjectWindow(QMainWindow):
         if launch.state == "failed":
             self._error("프로그램을 열지 못했습니다", launch.error)
         else:
-            self._message(f"{box.title} 열기를 요청했습니다. 실제 파일 표시는 전용 프로그램에서 확인하세요.")
+            self._message(f"{box.title} 열기 요청을 보냈습니다. 실제 파일 표시는 전용 프로그램에서 확인하세요.")
         self._reflect_programs()
         self._selection_changed()
 

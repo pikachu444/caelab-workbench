@@ -1,5 +1,6 @@
 """Native file selection, persistence, transitions and read-only inspection."""
 import os
+import errno
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pathlib import Path
@@ -108,7 +109,7 @@ def test_selected_boxes_connect_the_file_shown_in_the_dialog(window, tmp_path, m
 def test_program_missing_and_input_ready_are_shown_separately(window, tmp_path, monkeypatch):
     monkeypatch.setattr(window.workbench, "programs", lambda: [SimpleNamespace(
         spec=SimpleNamespace(id="freecad", name="FreeCAD"), available=False, path=None,
-        source="environment", reason="설정 경로에 실행 파일이 없습니다", runtime_env={})])
+        source="environment", reason="실행 파일이 없거나 일반 파일이 아닙니다: C:/private/FreeCAD.exe", runtime_env={})])
     box = window.add_box("geometry")
     window.register_file(box.node_id, _file(tmp_path, "document.FCStd"))
     assert box.state == "ready"
@@ -171,7 +172,7 @@ def test_parent_task_history_is_collapsed_without_hiding_current_failure(window,
     monkeypatch.setattr(window.workbench, "open_program", lambda *args: SimpleNamespace(
         state="opened", pid=12345, error=""))
     window.open_box(box)
-    assert "열기를 요청" in window.status.toolTip()
+    assert "열기 요청" in window.status.toolTip()
     assert "실제 파일 표시" in window.status.toolTip()
     assert "PID" not in window.status.toolTip() + window.log.toPlainText()
     window.resize(1800, 1100)
@@ -359,7 +360,7 @@ def test_file_open_passes_actual_file_to_workbench_process(window, tmp_path, mon
     assert isinstance(kwargs["env"], dict)
     assert "PID" not in _parent_text(window)
     assert str(exe) not in _parent_text(window)
-    assert "열기를 요청" in _parent_text(window)
+    assert "열기 요청" in _parent_text(window)
 
 
 def test_parent_translates_service_failures_without_moving_dumps_to_secondary_ui(
@@ -367,7 +368,7 @@ def test_parent_translates_service_failures_without_moving_dumps_to_secondary_ui
     diagnostic = "request_id=internal-123 SHA256=" + "9" * 64 + " PID 654321 CAELAB_FREECAD=C:/private/tool.exe"
     monkeypatch.setattr(window.workbench, "programs", lambda: [SimpleNamespace(
         spec=SimpleNamespace(id="freecad", name="FreeCAD"), available=False,
-        path="C:/private/tool.exe", source="environment", reason="실행 파일이 없습니다: " + diagnostic)])
+        path="C:/private/tool.exe", source="environment", reason="실행 파일이 없거나 일반 파일이 아닙니다: " + diagnostic)])
     box = window.add_box("geometry")
     # A user filename is not an internal identifier and must remain intact.
     filename = "9" * 64 + ".FCStd"
@@ -396,8 +397,8 @@ def test_parent_translates_service_failures_without_moving_dumps_to_secondary_ui
 
 @pytest.mark.parametrize("error,action", [
     (PermissionError("C:/private SHA256=123"), "접근할 권한"),
-    (OSError("disk full /private/state.json"), "저장 공간이 부족"),
-    (ValueError("connections: 순환 연결은 지원하지 않습니다. internal-id"), "한 방향"),
+    (OSError(errno.ENOSPC, "No space left on device", "/private/state.json"), "저장 공간이 부족"),
+    (ValueError("connections: 순환 연결은 지원하지 않습니다."), "한 방향"),
     (ValueError("지원하지 않는 프로젝트 schema_version: {'secret': 'dump'}"), "호환되는 버전"),
     (ValueError("기대 실행 저장소가 없습니다: /private/internal-id.runs"), "기록 폴더"),
     (FileNotFoundError("/private/input.inp"), "파일을 다시 선택"),
@@ -420,6 +421,118 @@ def test_deselection_clears_file_tooltips(window, tmp_path):
     assert not window.input_summary.toolTip()
     window.scene.clearSelection()
     assert not window.input_summary.toolTip() and not window.output_summary.toolTip()
+
+
+def test_external_sources_remain_distinct_in_summary_tooltip_and_connection(window, tmp_path, monkeypatch):
+    project_dir = tmp_path / 'project'
+    project_dir.mkdir()
+    assert window.save_project(project_dir / 'research.json')
+    sources = []
+    boxes = []
+    for variant in ('Variant-A', 'Variant-B'):
+        folder = tmp_path / 'Study' / variant / 'one' / 'two' / 'CAD'
+        folder.mkdir(parents=True)
+        path = _file(folder, 'model.FCStd')
+        box = window.add_box('geometry')
+        assert window.register_file(box.node_id, path)
+        sources.append(path)
+        boxes.append(box)
+    for box, path in zip(boxes, sources):
+        _select(window, box)
+        assert f'{path.parts[-5]}/one/two/CAD/model.FCStd' in window.input_summary.text()
+        assert window.input_summary.toolTip() == str(path)
+        assert str(path) in box.toolTip()
+        assert window.project.nodes[box.node_id].files['input'].path == str(path)
+    assert 'Variant-A/one/two/CAD/model.FCStd' in boxes[0].file_label
+    assert 'Variant-B/one/two/CAD/model.FCStd' in boxes[1].file_label
+    # Referencing the exact same file again is not a naming collision.
+    duplicate = window.add_box('geometry')
+    window.register_file(duplicate.node_id, sources[0])
+    assert window._short_path(str(sources[0])) == 'Variant-A/one/two/CAD/model.FCStd'
+    target = window.add_box('analysis')
+    window.scene.clearSelection()
+    boxes[0].setSelected(True)
+    target.setSelected(True)
+    def accept(dialog):
+        source, role = dialog.findChildren(QComboBox)
+        source.setCurrentIndex(source.findData(boxes[0].node_id))
+        role.setCurrentIndex(role.findData('input'))
+        assert any(label.text() == 'Variant-A/one/two/CAD/model.FCStd'
+                   and label.toolTip() == str(sources[0]) for label in dialog.findChildren(QLabel))
+        return QDialog.Accepted
+    monkeypatch.setattr(QDialog, 'exec', accept)
+    window.connect_selected()
+    assert window.workbench.input_file(window.project, target.node_id).path == str(sources[0])
+    assert 'Variant-B/one/two/CAD/model.FCStd' in window.log.toPlainText()
+
+
+def test_external_suffix_does_not_collide_with_project_relative_file(window, tmp_path):
+    root = tmp_path / 'project'
+    (root / 'CAD').mkdir(parents=True)
+    (tmp_path / 'Study' / 'CAD').mkdir(parents=True)
+    window.save_project(root / 'project.json')
+    inside = _file(root / 'CAD', 'model.FCStd')
+    outside = _file(tmp_path / 'Study' / 'CAD', 'model.FCStd')
+    for path in (inside, outside):
+        box = window.add_box('geometry')
+        window.register_file(box.node_id, path)
+    assert window._short_path(str(inside)) == 'CAD/model.FCStd'
+    assert window._short_path(str(outside)) == 'Study/CAD/model.FCStd'
+    past = tmp_path / 'unregistered' / 'CAD' / 'model.FCStd'
+    assert window._short_path(str(past)) == str(past)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows drive letters are not Linux path components')
+def test_external_sources_on_different_drives_are_distinct(window, tmp_path):
+    from caelab.project import FileReference
+    window.save_project(tmp_path / 'project.json')
+    paths = ['R:/Study/CAD/model.FCStd', 'S:/Study/CAD/model.FCStd']
+    for path in paths:
+        box = window.add_box('geometry')
+        window.project.nodes[box.node_id].files['input'] = FileReference(path)
+    assert window._short_path(paths[0]) == paths[0]
+    assert window._short_path(paths[1]) == paths[1]
+
+
+def test_save_as_inside_records_explains_destination_without_claiming_missing_history(window, tmp_path, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args[2]))
+    original = tmp_path / 'research.json'
+    assert window.save_project(original)
+    saved = original.read_bytes()
+    target = tmp_path / 'research.runs' / 'nested.json'
+    assert not window.save_project(target)
+    for text in (warnings[-1], window.status.toolTip(), window.log.toPlainText()):
+        assert '폴더 밖의 새 프로젝트 위치' in text
+        assert '없거나 온전히' not in text
+    assert window.project.path == original and original.read_bytes() == saved
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('source,action', [
+    ('복사 준비 중 대화 목록이 변경되었습니다. 다시 저장하세요.', '대화 목록이 바뀌었습니다'),
+    ('복사 중 실행/대화/자산 파일이 변경되었습니다. 다시 저장하세요.', '자료가 바뀌었습니다'),
+    ('검사 중 저장소 파일이 변경되었습니다: C:/private/research.runs/job.json', '확인하는 동안 파일이 바뀌었습니다'),
+    ('[WinError 5] 액세스가 거부되었습니다', '접근할 권한'),
+    ('PermissionError: [WinError 5] Access is denied: C:/private/snapshot.FCStd', '접근할 권한'),
+])
+def test_exact_service_and_serialized_os_errors_keep_recovery(window, monkeypatch, source, action):
+    warnings = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args[2]))
+    window._error('작업을 마치지 못했습니다', source)
+    for text in (warnings[-1], window.status.toolTip(), window.log.toPlainText()):
+        assert action in text
+        assert 'C:/private' not in text and 'WinError' not in text and 'job.json' not in text
+
+
+@pytest.mark.parametrize('filename', ['input.FCStd', 'snapshot.FCStd', 'nodes.input.FCStd'])
+def test_missing_file_type_wins_over_filename_keywords(window, monkeypatch, filename):
+    warnings = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args[2]))
+    error = FileNotFoundError(errno.ENOENT, 'No such file or directory', filename)
+    window._error('입력 파일을 열지 못했습니다', error)
+    assert '파일을 다시 선택' in warnings[-1]
+    assert '기록이 없거나' not in warnings[-1] and '연결 정보를 읽지' not in warnings[-1]
 
 
 def test_results_without_a_file_never_launch_empty_paraview(window):
