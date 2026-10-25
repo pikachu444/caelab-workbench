@@ -688,6 +688,91 @@ def test_native_request_passes_cwd_environment_and_argv(tmp_path, monkeypatch):
     assert wb.close()
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows pythonw standard-handle propagation')
+@pytest.mark.parametrize('parent_name', ['python.exe', 'pythonw.exe'])
+@pytest.mark.parametrize('returncode', [0, 7])
+def test_windows_gui_parent_preserves_solver_streams_and_evidence(tmp_path, parent_name, returncode):
+    """Use a real JobManager/gated child; only the solver is a console probe."""
+    parent = Path(sys.executable).with_name(parent_name)
+    console = Path(sys.executable).with_name('python.exe')
+    if not parent.is_file() or not console.is_file():
+        pytest.skip(f'Interpreter companion missing: {parent}')
+    driver = tmp_path / 'stdio_driver.py'
+    driver.write_text('''
+import hashlib, json, os, sys, time, traceback
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, sys.argv[2])
+report = root / 'driver-report.json'
+wb = None
+try:
+    from caelab.workbench import Workbench
+    from caelab.connections import LaunchRequest, ProgramStatus, PROGRAMS
+    import caelab.connections as connections
+    from caelab.native.evidence import verify_evidence
+    wb = Workbench()
+    project = wb.new_native_project('stdio probe')
+    node = wb.add_program_node(project, 'analysis', 'calculix')
+    source = root / 'native.inp'
+    source.write_text('*HEADING\\nstdio probe\\n')
+    wb.set_node_file(project, node.id, source)
+    wb.save_native_project(project, root / 'project.json')
+    spec = next(item for item in PROGRAMS if item.id == 'calculix')
+    status = ProgramStatus(spec, sys.argv[3], source='console probe')
+    wb.programs = lambda: [status]
+    probe = "import sys; print('native-stdout-marker',flush=True); print('native-stderr-marker',file=sys.stderr,flush=True); raise SystemExit(int(sys.argv[1]))"
+    connections.calculix_run_request = lambda found, cwd: LaunchRequest(
+        [sys.argv[3], '-c', probe, sys.argv[4]], cwd, dict(os.environ), 'calculix')
+    submitted = wb.submit_native(project, node.id, timeout=20)
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        run = wb.jobs.native_snapshot(submitted.id)
+        if run.finished_at:
+            break
+        time.sleep(.02)
+    else:
+        raise AssertionError('Native probe did not reach a terminal receipt')
+    if not wb.close():
+        raise AssertionError('Owned native work did not close')
+    data = Path(run.log_path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    evidence = wb.capture_native_evidence(project, node.id, root / 'assets')
+    log = next(item for item in evidence['files'] if item['role'] == 'log')
+    preserved = (root / 'assets' / log['stored_path']).read_bytes()
+    report.write_text(json.dumps({
+        'parent':sys.executable, 'state':run.state, 'returncode':run.returncode,
+        'finished_at':run.finished_at, 'log':data.decode('utf-8'),
+        'artifact':run.snapshot['artifacts']['job.log'], 'actual_sha256':digest,
+        'evidence_sha256':log['sha256'], 'evidence_verification':log['verification'],
+        'evidence_bytes_equal':preserved == data,
+        'evidence_log_text':evidence['log_text'],
+        'evidence_issues':verify_evidence(evidence, root / 'assets'),
+    }), encoding='utf-8')
+except Exception:
+    report.write_text(json.dumps({'error':traceback.format_exc()}), encoding='utf-8')
+    raise
+finally:
+    if wb is not None:
+        wb.close()
+''', encoding='utf-8')
+    process = subprocess.run([str(parent), str(driver), str(tmp_path),
+                              str(Path(__file__).resolve().parents[1]), str(console), str(returncode)],
+                             capture_output=True, timeout=35, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert process.returncode == 0, process.stderr.decode(errors='replace')
+    report = json.loads((tmp_path / 'driver-report.json').read_text(encoding='utf-8'))
+    assert 'error' not in report, report.get('error')
+    assert Path(report['parent']).name.lower() == parent_name
+    assert report['returncode'] == returncode
+    assert report['state'] == ('completed' if returncode == 0 else 'failed')
+    assert report['finished_at']
+    for marker in ('native-stdout-marker', 'native-stderr-marker'):
+        assert marker in report['log']
+        assert marker in report['evidence_log_text']
+    assert report['artifact'] == report['actual_sha256'] == report['evidence_sha256']
+    assert report['evidence_verification'] == 'recorded_match'
+    assert report['evidence_bytes_equal'] and report['evidence_issues'] == []
+
+
 def test_actual_ccx_direct_and_service_keep_physics_and_outputs(tmp_path, monkeypatch):
     """Actual configured solver, independent raw DAT comparison; no auxiliary model."""
     import shutil

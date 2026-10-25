@@ -232,7 +232,9 @@ class JobManager:
                         "import json,subprocess,sys,time; from pathlib import Path; "
                         "gate=Path(sys.argv[1]); deadline=time.monotonic()+30; "
                         "exec('while not gate.exists():\\n if time.monotonic()>deadline: raise SystemExit(125)\\n time.sleep(.02)'); "
-                        "raise SystemExit(subprocess.Popen(json.loads(sys.argv[2]),shell=False).wait())"
+                        # pythonw's all-default Popen path does not forward the redirected log handles.
+                        "raise SystemExit(subprocess.Popen(json.loads(sys.argv[2]),stdin=subprocess.DEVNULL,"
+                        "stdout=sys.stdout,stderr=subprocess.STDOUT,shell=False).wait())"
                     )
                     process = subprocess.Popen([sys.executable, "-c", script, str(gate), json.dumps(request.argv)],
                                                cwd=request.cwd, env=request.env, stdout=log, stderr=subprocess.STDOUT,
