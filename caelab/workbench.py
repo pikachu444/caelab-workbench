@@ -64,6 +64,10 @@ class Workbench:
     def connect_nodes(self, project: NativeProject, source_id: str, target_id: str, source_role="output"):
         return project.connect(source_id, target_id, source_role)
 
+    def set_node_file_units(self, project: NativeProject, node_id: str,
+                            units: dict[str, str], role="input") -> FileReference:
+        return project.set_file_units(node_id, units, role)
+
     def input_file(self, project: NativeProject, node_id: str) -> FileReference | None:
         return project.input_file(node_id)
 

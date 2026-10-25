@@ -136,6 +136,31 @@ class NativeProject:
         self.refresh()
         return edge
 
+    def set_file_units(self, node_id: str, units: dict[str, str], role="input") -> FileReference:
+        if role not in {"input", "output"}:
+            raise ValueError("지원하지 않는 파일 역할입니다.")
+        if not isinstance(units, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str) for key, value in units.items()
+        ):
+            raise ValueError("단위는 이름과 값으로 지정하세요.")
+        if role == "input" and any(edge.target_id == node_id for edge in self.connections):
+            raise ValueError("연결된 입력의 단위는 상위 파일에서 수정하세요.")
+        reference = self.nodes[node_id].files.get(role)
+        if reference is None:
+            raise ValueError("먼저 파일을 지정하세요.")
+        root = self.run_store or (self.path.with_suffix(".runs") if self.path else None)
+        if root is not None and Path(reference.path).resolve().is_relative_to(root.resolve()):
+            raise ValueError("보존된 계산 파일의 단위는 수정할 수 없습니다.")
+        if reference.units == units:
+            return reference
+        # Editing a declaration must not accept a changed file or renew an old output.
+        was_stale = reference.stale
+        reference.units = dict(units)
+        reference.unit_source = "user" if units else "unknown"
+        self.invalidate(node_id, "파일의 단위 설정이 변경되었습니다.")
+        reference.stale = was_stale
+        return reference
+
     def refresh(self) -> list[str]:
         issues = []
         for node in self.nodes.values():

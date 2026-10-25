@@ -69,6 +69,84 @@ def test_connections_select_input_and_reselection_invalidates_old_results(tmp_pa
     assert old.read_bytes() == b"old result"
 
 
+@pytest.mark.parametrize("stale", [False, True])
+def test_unit_edit_preserves_changed_file_revision_connections_and_stale(tmp_path, stale):
+    wb, project, first, second, result, source = graph(tmp_path)
+    wb.connect_nodes(project, first.id, second.id, "input")
+    wb.connect_nodes(project, second.id, result.id, "input")
+    reference = first.files["input"]
+    reference.stale = stale
+    revision, connections = reference.revision, list(project.connections)
+    source.write_bytes(b"changed externally; not accepted")
+    wb.set_node_file_units(project, first.id, {"length": "m"})
+    assert reference.revision == revision
+    assert reference.path == str(source.resolve())
+    assert reference.stale is stale
+    assert reference.status == "changed"
+    assert reference.units == {"length": "m"} and reference.unit_source == "user"
+    assert project.connections == connections
+    assert second.state == result.state == "stale"
+    assert source.read_bytes() == b"changed externally; not accepted"
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_output_unit_edit_invalidates_dependents_without_renewing_output(tmp_path, stale):
+    wb, project, first, second, result, source = graph(tmp_path)
+    output = source.with_suffix(".inp")
+    output.write_bytes(b"native deck")
+    reference = wb.set_node_file(project, first.id, output, "output", {"length": "mm"})
+    wb.connect_nodes(project, first.id, second.id)
+    wb.connect_nodes(project, second.id, result.id, "input")
+    reference.stale = stale
+    revision = reference.revision
+    wb.set_node_file_units(project, first.id, {}, role="output")
+    assert reference.stale is stale and reference.revision == revision
+    assert reference.units == {} and reference.unit_source == "unknown"
+    assert second.state == result.state == "stale"
+    assert wb.input_file(project, result.id) is reference
+    assert output.read_bytes() == b"native deck"
+
+
+def test_unchanged_units_preserve_declaration_source_and_entire_graph(tmp_path):
+    from copy import deepcopy
+    wb, project, first, second, _, _ = graph(tmp_path)
+    wb.connect_nodes(project, first.id, second.id, "input")
+    before = deepcopy(project)
+    wb.set_node_file_units(project, first.id, {"length": "mm"})
+    assert project == before
+    assert first.files["input"].unit_source == "user declaration"
+
+
+@pytest.mark.parametrize("case", ["connected", "absent", "role", "invalid", "stored", "default_store"])
+def test_rejected_unit_edits_leave_entire_graph_unchanged(tmp_path, case):
+    from copy import deepcopy
+    wb, project, first, second, _, source = graph(tmp_path)
+    node_id, role, units = first.id, "input", {"length": "m"}
+    if case == "connected":
+        wb.connect_nodes(project, first.id, second.id, "input")
+        node_id = second.id
+    elif case == "absent":
+        node_id = second.id
+    elif case == "role":
+        role = "unknown"
+    elif case == "invalid":
+        units = {"length": 123}
+    else:
+        project.path = tmp_path / "project.json"
+        root = tmp_path / "custom-runs" if case == "stored" else project.path.with_suffix(".runs")
+        if case == "stored":
+            project.run_store = root
+        root.mkdir()
+        preserved = root / "result.frd"
+        preserved.write_bytes(b"preserved calculation")
+        wb.set_node_file(project, first.id, preserved, "output")
+        role = "output"
+    before = deepcopy(project)
+    with pytest.raises(ValueError):
+        wb.set_node_file_units(project, node_id, units, role)
+    assert project == before
+
+
 def test_refresh_retains_recorded_revision_and_propagates_change_missing_and_failure(tmp_path):
     wb, project, first, second, result, source = graph(tmp_path)
     wb.connect_nodes(project, first.id, second.id, source_role="input")
