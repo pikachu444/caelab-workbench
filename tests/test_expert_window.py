@@ -350,7 +350,7 @@ def test_explicit_new_run_capture_keeps_same_discussion_and_old_basis(app, tmp_p
     ui.close()
 
 
-def test_parent_reopen_missing_store_keeps_graph_and_reports_path(app, tmp_path, monkeypatch):
+def test_parent_reopen_missing_store_keeps_graph_and_reports_missing_records(app, tmp_path, monkeypatch):
     wb = Workbench()
     monkeypatch.setattr(wb, 'programs', lambda: [])
     project = wb.new_native_project('보존할 연구')
@@ -363,9 +363,14 @@ def test_parent_reopen_missing_store_keeps_graph_and_reports_path(app, tmp_path,
     ui = ProjectWindow(wb)
     assert ui.open_project(project.path, confirm=False)
     assert node.id in ui.boxes and ui.project.name == '보존할 연구'
-    assert str(project.run_store) in ui.log.toPlainText()
+    assert ui.project.run_store == project.run_store and ui.project.run_store_expected
+    for shown in (ui.status.text(), ui.status.toolTip(), ui.log.toPlainText()):
+        assert '계산·대화 기록' in shown and '기록 폴더' in shown
+        assert str(project.run_store) not in shown
     ui.refresh_files()
-    assert '기대 실행 저장소' in ui.log.toPlainText()
+    for shown in (ui.status.text(), ui.status.toolTip(), ui.log.toPlainText()):
+        assert '계산·대화 기록' in shown and '기록 폴더' in shown
+        assert str(project.run_store) not in shown
     assert not project.run_store.exists()
     ui._dirty = False
     ui.close()
