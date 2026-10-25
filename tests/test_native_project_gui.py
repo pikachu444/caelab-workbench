@@ -863,12 +863,37 @@ def test_connection_rechecks_unrelated_box_add_move_remove_restore(window, tmp_p
     _select(window, obstacle)
     window.remove_selected()
     assert obstacle.node_id not in window.boxes
+    removed_path = window.connectors[0].path()
+    source.setPos(21, 60)
+    source.setPos(20, 60)
+    assert window.connectors[0].path() == removed_path
     monkeypatch.setattr(QDialog, 'exec', lambda dialog: QDialog.Accepted)
     window.restore_program()
     clear()
     window.boxes[obstacle.node_id].setPos(400, 350)
     assert len(window.project.connections) == 1
     assert window.workbench.input_file(window.project, target.node_id).path.endswith('source.inp')
+
+
+@pytest.mark.parametrize('gap', [5, 10, 15, 20])
+@pytest.mark.parametrize('near_target', [False, True])
+def test_separate_boxes_with_narrow_gap_do_not_hide_link_or_arrow(window, tmp_path, gap, near_target):
+    from PySide6.QtGui import QPainterPath, QPainterPathStroker
+    source, obstacle, target = [window.add_box(kind) for kind in ('geometry', 'geometry', 'analysis')]
+    obstacle.setPos(540 - 210 - gap if near_target else 40 + 210 + gap, 40)
+    window.register_file(source.node_id, _file(tmp_path, 'source.inp'), 'output')
+    assert window.connect(source.node_id, target.node_id)
+    connector = window.connectors[0]
+    stroke = QPainterPathStroker()
+    stroke.setWidth(connector.pen().widthF())
+    assert not stroke.createStroke(connector.path()).intersects(obstacle.sceneBoundingRect())
+    arrow = QPainterPath()
+    arrow.addPolygon(connector._arrow_polygon())
+    assert not arrow.intersects(obstacle.sceneBoundingRect())
+    assert connector.path().pointAtPercent(0) == source.right_anchor()
+    assert connector.path().pointAtPercent(1) == target.left_anchor()
+    assert connector.path().angleAtPercent(1) == pytest.approx(0)
+    assert connector.arrow_length == pytest.approx(min(11, gap * .48) if near_target else 11)
 
 
 def test_narrow_workspace_docks_can_close_reopen_and_fit(window, app):

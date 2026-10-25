@@ -295,13 +295,16 @@ class Connector(QGraphicsPathItem):
 
     def paint(self, painter, option, widget=None):
         super().paint(painter, option, widget)
+        painter.setBrush(self.pen().color())
+        painter.drawPolygon(self._arrow_polygon())
+
+    def _arrow_polygon(self):
         path = self.path()
         end = path.pointAtPercent(1)
         angle = math.radians(-path.angleAtPercent(1))
-        back = QPointF(math.cos(angle) * 11, math.sin(angle) * 11)
-        side = QPointF(-math.sin(angle) * 5, math.cos(angle) * 5)
-        painter.setBrush(self.pen().color())
-        painter.drawPolygon(QPolygonF([end, end - back + side, end - back - side]))
+        back = QPointF(math.cos(angle), math.sin(angle)) * self.arrow_length
+        side = QPointF(-math.sin(angle), math.cos(angle)) * (self.arrow_length * 5 / 11)
+        return QPolygonF([end, end - back + side, end - back - side])
 
     def boundingRect(self):
         return super().boundingRect().adjusted(-6, -6, 6, 6)
@@ -372,18 +375,29 @@ class Connector(QGraphicsPathItem):
                 off = QPointF(0, -max(40.0, abs(b.y() - a.y()) / 2))
             path = QPainterPath(a)
             path.cubicTo(a + off, b - off, b)
-        others = [box.sceneBoundingRect().adjusted(-12, -12, 12, 12)
-                  for box in self.boxes if box not in (self.src, self.dst)]
+        self.arrow_length = 11
+        others = [box.sceneBoundingRect() for box in self.boxes if box not in (self.src, self.dst)]
         stroker = QPainterPathStroker()
         stroker.setWidth(self.pen().widthF())
-        if any(stroker.createStroke(path).intersects(rect) for rect in others):
-            obstacles = [rect.adjusted(-2, -2, 2, 2) for rect in others]
-            obstacles.extend(box.sceneBoundingRect().adjusted(-12, -12, 12, 12) for box in (self.src, self.dst))
-            normal = QPointF(math.copysign(16, off.x()), 0) if off.x() else QPointF(0, math.copysign(16, off.y()))
-            detour = self._detour(a + normal, b - normal, obstacles)
+        if any(stroker.createStroke(path).intersects(rect.adjusted(-12, -12, 12, 12)) for rect in others):
+            def separation(r, s):
+                return math.hypot(max(r.left() - s.right(), s.left() - r.right(), 0),
+                                  max(r.top() - s.bottom(), s.top() - r.bottom(), 0))
+            source_rect, target_rect = (box.sceneBoundingRect() for box in (self.src, self.dst))
+            rectangles = others + [source_rect, target_rect]
+            gaps = [separation(r, s) for i, r in enumerate(rectangles) for s in rectangles[i + 1:]]
+            gap = min((value for value in gaps if value > 0), default=math.inf)
+            # Fixed margins can close a real, narrow gap between separate boxes.
+            margin = min(14, gap * .4)
+            start_stub = min(16, min(separation(source_rect, r) for r in others + [target_rect]) * .48)
+            end_stub = min(16, min(separation(target_rect, r) for r in others + [source_rect]) * .48)
+            obstacles = [rect.adjusted(-margin, -margin, margin, margin) for rect in rectangles]
+            normal = QPointF(math.copysign(1, off.x()), 0) if off.x() else QPointF(0, math.copysign(1, off.y()))
+            detour = self._detour(a + normal * start_stub, b - normal * end_stub, obstacles)
             if detour is not None:
+                self.arrow_length = min(11, end_stub)
                 path = QPainterPath(a)
-                path.lineTo(a + normal)
+                path.lineTo(a + normal * start_stub)
                 path.connectPath(detour)
                 path.lineTo(b)
         self.setPath(path)
@@ -1040,14 +1054,14 @@ class ProjectWindow(QMainWindow):
         box._on_move.append(lambda: self._position_changed(box))
         self.boxes[node.id] = box
         self.scene.addItem(box)
+        for connector in self.connectors:
+            connector.refresh()
         return box
 
     def add_box(self, kind: str) -> SystemBox:
         position = (40 + 250 * (len(self.boxes) % 3), 40 + 150 * (len(self.boxes) // 3))
         node = self.workbench.add_program_node(self.project, kind, _PROGRAM_IDS[kind], position)
         box = self._add_node_box(node)
-        for connector in self.connectors:
-            connector.refresh()
         self.empty_hint.setVisible(False)
         self.scene.clearSelection()
         box.setSelected(True)
@@ -1448,9 +1462,9 @@ class ProjectWindow(QMainWindow):
         except Exception as error:
             self._error('프로그램을 제거하지 못했습니다', error)
             return False
-        self._sync_connections()
         self.boxes.pop(node.id)
         self.scene.removeItem(box)
+        self._sync_connections()
         self.empty_hint.setVisible(not self.boxes)
         self._mark_dirty()
         self._reflect_programs()
