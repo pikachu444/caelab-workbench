@@ -399,3 +399,41 @@ def test_removed_programs_are_validated_like_active_programs(tmp_path):
     path.write_text(json.dumps(data), encoding='utf-8')
     with pytest.raises(ValueError, match='제거한 프로그램'):
         wb.open_native_project(path)
+
+
+@pytest.mark.parametrize('operation', ['disconnect', 'remove', 'restore'])
+def test_graph_edit_file_read_failure_leaves_every_live_object_unchanged(tmp_path, monkeypatch, operation):
+    from copy import deepcopy
+    import caelab.project as project_module
+    wb, project, first, second, result, source = graph(tmp_path)
+    wb.set_node_file(project, second.id, source)
+    wb.set_node_file(project, second.id, source, 'output')
+    wb.set_node_file(project, result.id, source)
+    wb.connect_nodes(project, first.id, second.id, 'input')
+    wb.connect_nodes(project, first.id, result.id, 'input')
+    if operation == 'restore':
+        wb.remove_program_node(project, first.id)
+    before = deepcopy(project)
+    objects = {node.id: (node, deepcopy(node)) for node in (first, second, result)}
+    def denied(path):
+        raise PermissionError('file temporarily unavailable')
+    monkeypatch.setattr(project_module, 'file_revision', denied)
+    with pytest.raises(PermissionError):
+        if operation == 'disconnect':
+            wb.disconnect_node_input(project, second.id)
+        elif operation == 'remove':
+            wb.remove_program_node(project, first.id)
+        else:
+            wb.restore_program_node(project, first.id)
+    assert project == before
+    assert all(original == snapshot for original, snapshot in objects.values())
+    assert source.read_bytes() == b'original native file'
+
+
+def test_current_save_format_preserves_archive_by_rejecting_legacy_writers(tmp_path):
+    wb, project, first, *_ = graph(tmp_path)
+    wb.remove_program_node(project, first.id)
+    path = wb.save_native_project(project, tmp_path / 'project.json')
+    data = json.loads(path.read_text(encoding='utf-8'))
+    assert data['schema_version'] == 2  # Version-1 loaders explicitly reject this.
+    assert first.id in wb.open_native_project(path).removed_nodes

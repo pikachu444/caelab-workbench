@@ -86,9 +86,7 @@ class Workbench:
     def restore_program_node(self, project: NativeProject, node_id: str):
         if node_id not in project.removed_nodes:
             raise ValueError("복원할 프로그램이 없습니다.")
-        node = project.restore_node(node_id)
-        self.refresh_native_project(project)
-        return node
+        return project.restore_node(node_id)
 
     def set_node_file_units(self, project: NativeProject, node_id: str,
                             units: dict[str, str], role="input") -> FileReference:

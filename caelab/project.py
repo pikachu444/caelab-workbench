@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -11,7 +12,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PROJECT_FILENAME = "project.json"
 NODE_STATES = {"needs_input", "ready", "changed", "missing", "stale", "opened", "failed"}
 
@@ -163,6 +164,15 @@ class NativeProject:
         return reference
 
     def disconnect_input(self, node_id: str) -> None:
+        if node_id not in self.nodes:
+            raise ValueError("연결을 해제할 프로그램이 없습니다.")
+        if not any(edge.target_id == node_id for edge in self.connections):
+            return
+        candidate = copy.deepcopy(self)
+        candidate._disconnect_input(node_id)
+        self._commit_graph_edit(candidate)
+
+    def _disconnect_input(self, node_id: str) -> None:
         node = self.nodes[node_id]
         if not any(edge.target_id == node_id for edge in self.connections):
             return
@@ -170,25 +180,39 @@ class NativeProject:
         self.connections = [edge for edge in self.connections if edge.target_id != node_id]
         # An inactive local input must not silently replace the disconnected file.
         node.files.pop("input", None)
-        self.refresh()
 
     def remove_node(self, node_id: str) -> ProgramNode:
-        node = self.nodes[node_id]
-        self.disconnect_input(node_id)
-        targets = [edge.target_id for edge in self.connections if edge.source_id == node_id]
+        candidate = copy.deepcopy(self)
+        candidate._disconnect_input(node_id)
+        targets = [edge.target_id for edge in candidate.connections if edge.source_id == node_id]
         for target_id in targets:
-            self.disconnect_input(target_id)
-        self.removed_nodes[node_id] = self.nodes.pop(node_id)
-        self.refresh()
-        return node
+            candidate._disconnect_input(target_id)
+        candidate.removed_nodes[node_id] = candidate.nodes.pop(node_id)
+        self._commit_graph_edit(candidate)
+        return self.removed_nodes[node_id]
 
     def restore_node(self, node_id: str) -> ProgramNode:
         if node_id in self.nodes:
             raise ValueError("이미 프로젝트에 있는 프로그램입니다.")
-        node = self.removed_nodes.pop(node_id)
-        self.nodes[node_id] = node
-        self.refresh()
-        return node
+        candidate = copy.deepcopy(self)
+        candidate.nodes[node_id] = candidate.removed_nodes.pop(node_id)
+        self._commit_graph_edit(candidate)
+        return self.nodes[node_id]
+
+    def _commit_graph_edit(self, candidate: NativeProject) -> None:
+        # File reads can fail. Validate the entire edit before changing live objects.
+        candidate.refresh()
+        originals = {**self.nodes, **self.removed_nodes}
+        for node_id, edited in {**candidate.nodes, **candidate.removed_nodes}.items():
+            node = originals[node_id]
+            node.files = {role: node.files[role] for role in edited.files}
+            for role, reference in edited.files.items():
+                node.files[role].stale = reference.stale
+            node.state, node.reason = edited.state, edited.reason
+        self.nodes = {key: originals[key] for key in candidate.nodes}
+        self.removed_nodes = {key: originals[key] for key in candidate.removed_nodes}
+        self.connections = candidate.connections
+        self.issues = candidate.issues
 
     def refresh(self) -> list[str]:
         issues = []
@@ -262,7 +286,7 @@ def load_native_project(path: str | Path) -> NativeProject:
         path /= PROJECT_FILENAME
     try:
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-        if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
+        if not isinstance(data, dict) or data.get("schema_version") not in (1, SCHEMA_VERSION):
             raise ValueError(f"지원하지 않는 프로젝트 schema_version: {data.get('schema_version') if isinstance(data, dict) else None}")
         if not isinstance(data.get("name"), str) or not isinstance(data.get("nodes"), dict) or not isinstance(data.get("connections"), list):
             raise ValueError("name/nodes/connections 자료 형식이 잘못되었습니다.")
