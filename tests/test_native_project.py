@@ -358,6 +358,8 @@ def test_remove_source_clears_direct_targets_and_restore_preserves_direct_source
     assert project.input_file(second.id) is None
     assert project.input_file(result.id) is None
     assert second.state == result.state == 'needs_input'
+    with pytest.raises(ValueError, match='원본 파일'):
+        wb.save_native_project(project, source)
     restored = wb.restore_program_node(project, first.id)
     assert restored.files['input'].path == str(source.resolve())
     assert project.input_file(second.id) is None
