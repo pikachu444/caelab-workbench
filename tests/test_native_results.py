@@ -203,6 +203,97 @@ def test_geometry_or_binary_limit_retains_originals_without_exchange(tmp_path, c
     assert before == {name: hashlib.sha256((tmp_path / name).read_bytes()).hexdigest() for name in before}
 
 
+def _expanded_geometry(declared=1):
+    ids = tuple(range(1, 21))
+    text = _geometry(ids=ids, topology=4, connectivity=ids)
+    lines = text.splitlines(keepends=True)
+    header = next(i for i, line in enumerate(lines) if line.startswith("    3C"))
+    lines[header] = lines[header][:24] + f"{declared:12d}" + lines[header][36:]
+    second = f" -1{732:10d}{4:5d}{4:5d}{10:5d}\n"
+    for start in range(0, len(ids), 8):
+        second += " -2" + "".join(f"{node:10d}" for node in ids[start:start + 8]) + "\n"
+    lines.insert(len(lines) - 1, second)
+    return "".join(lines)
+
+
+_CCX_222_HEADERS = f"    {'1UPGM':20}CalculiX\n    {'1UVERSION':20}Version 2.22\n"
+
+
+@pytest.mark.parametrize("declared", [1, 2])
+def test_ccx_222_complete_excess_elements_are_preserved_with_count_warning(tmp_path, declared):
+    rows = [(n, [n, 0, 0]) for n in range(1, 21)]
+    text = _CCX_222_HEADERS + _expanded_geometry(declared) + _field(rows)
+    result = _collect(tmp_path, text)
+    assert result["status"] == ("partial" if declared == 1 else "readable")
+    assert len(result["warnings"]) == (1 if declared == 1 else 0)
+    if declared == 1:
+        assert "선언 수 1" in result["warnings"][0] and "레코드 수 2" in result["warnings"][0]
+    root, arrays = _arrays(tmp_path / result["frames"][0]["vtu_file"])
+    assert root.find(".//Piece").get("NumberOfCells") == "2"
+    assert arrays["NativeElementId"][1] == [731, 732]
+    assert arrays["NativeMaterial"][1] == [9, 10]
+    assert arrays["types"][1] == [25, 25]
+    assert arrays["connectivity"][1][:20] == arrays["connectivity"][1][20:]
+    assert arrays["DISP"][1] == [value for n in range(1, 21) for value in (n, 0, 0)]
+    assert (tmp_path / "model.frd").read_text(encoding="ascii") == text + " 9999\n"
+
+
+@pytest.mark.parametrize("damage", [
+    "missing_version", "other_program", "other_version", "version_suffix", "bad_prefix",
+    "repeated_program", "conflicting_version", "late_program", "trailing_program", "fewer_records",
+    "zero_count", "negative_count", "missing_block_end", "duplicate_id", "zero_id",
+    "unknown_node", "short_connectivity", "unsupported_cell",
+])
+def test_ccx_222_count_exception_does_not_accept_ambiguous_producer_or_bad_geometry(tmp_path, damage):
+    headers = _CCX_222_HEADERS
+    declared = {"fewer_records": 3, "zero_count": 0, "negative_count": -1}.get(damage, 1)
+    geometry = _expanded_geometry(declared)
+    if damage == "missing_version":
+        headers = headers.splitlines(keepends=True)[0]
+    if damage == "other_program":
+        headers = headers.replace("CalculiX", "Other")
+    if damage == "other_version":
+        headers = headers.replace("2.22", "2.21")
+    if damage == "version_suffix":
+        headers = headers.replace("2.22", "2.220")
+    if damage == "bad_prefix":
+        headers = headers.replace("    1UPGM", "xxxx1UPGM")
+    if damage == "repeated_program":
+        headers += headers.splitlines(keepends=True)[0]
+    if damage == "conflicting_version":
+        headers = headers.replace("Version 2.22\n", "Version 2.21\n") + _CCX_222_HEADERS
+    if damage == "missing_block_end":
+        geometry = geometry[:-4]
+    if damage in {"duplicate_id", "zero_id"}:
+        geometry = geometry.replace(f" -1{732:10d}", f" -1{731 if damage == 'duplicate_id' else 0:10d}")
+    if damage == "unknown_node":
+        geometry = geometry.replace(f"{20:10d}\n", f"{99:10d}\n", 1)
+    if damage == "short_connectivity":
+        geometry = geometry.replace(f"{20:10d}\n", "\n", 1)
+    if damage == "unsupported_cell":
+        geometry = geometry.replace(f" -1{732:10d}{4:5d}", f" -1{732:10d}{13:5d}")
+    text = headers + geometry + _field([(n, [n, 0, 0]) for n in range(1, 21)])
+    if damage == "late_program":
+        text += _CCX_222_HEADERS
+    original = text + " 9999\n" + (_CCX_222_HEADERS if damage == "trailing_program" else "")
+    (tmp_path / "model.frd").write_text(original, encoding="ascii")
+    result = collect_results(tmp_path)
+    assert result["status"] in {"failed", "unsupported"}
+    assert result["exchange_files"] == []
+    assert (tmp_path / "model.frd").read_text(encoding="ascii") == original
+
+
+@pytest.mark.parametrize("placement", ["repeated", "late", "after_end"])
+def test_matching_element_count_keeps_existing_metadata_tolerance(tmp_path, placement):
+    text = _CCX_222_HEADERS + (_CCX_222_HEADERS if placement == "repeated" else "")
+    text += _expanded_geometry(2) + _field([(n, [n, 0, 0]) for n in range(1, 21)])
+    text += " 9999\n" if placement == "after_end" else ""
+    text += _CCX_222_HEADERS if placement != "repeated" else ""
+    result = _collect(tmp_path, text)
+    assert result["status"] == ("partial" if placement == "after_end" else "readable")
+    assert result["exchange_files"]
+
+
 def test_missing_output_and_exchange_write_failure_are_distinct(tmp_path):
     assert collect_results(tmp_path)["status"] == "missing"
     (tmp_path / "results").write_text("a file obstructs the output directory")

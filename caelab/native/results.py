@@ -95,6 +95,8 @@ class _Reader:
         self.step = self.increment = self.dataset_counter = None
         self.parameters = {}
         self.ended = False
+        self.producer = {}
+        self.expanded_element_count = False
 
     def _next(self):
         if self.line_number % 1024 == 0:
@@ -160,8 +162,17 @@ class _Reader:
             else:
                 raise ValueError("FRD 요소 연결 레코드가 손상되었습니다.")
         finish()
-        if count < 0 or len(self.elements) != count:
-            raise ValueError("FRD geometry 요소 수가 헤더와 다릅니다.")
+        if len(self.elements) != count or count <= 0:
+            # CalculiX 2.22 frd.c counts parent elements, then emits each LC layer.
+            # https://www.dhondt.de/ccx_2.22.src.tar.bz2 (frd.c:305-430, 619-644)
+            if (0 < count < len(self.elements)
+                    and self.producer == {"1UPGM": "CalculiX", "1UVERSION": "Version 2.22"}):
+                self.warnings.append(
+                    f"CalculiX 2.22 FRD: 요소 선언 수 {count}보다 실제 레코드 수 {len(self.elements)}가 "
+                    "많습니다. 헤더 불일치를 알리고 모든 요소를 보존했습니다.")
+                self.expanded_element_count = True
+            else:
+                raise ValueError("FRD geometry 요소 수가 헤더와 다릅니다.")
 
     def _frame(self, line):
         metadata = {"step": self.step, "increment": self.increment,
@@ -244,9 +255,20 @@ class _Reader:
                 break
             if not line.strip():
                 continue
+            producer_key = line[4:24].strip() if line.startswith("    1U") else ""
             if self.ended:
+                if self.expanded_element_count and producer_key in {"1UPGM", "1UVERSION"}:
+                    raise _Unsupported("FRD producer 헤더가 불명확해 요소 수 호환 예외를 적용할 수 없습니다.")
                 raise ValueError("FRD 종료 표식 뒤에 데이터가 있습니다.")
-            if line.startswith("    2C"):
+            if producer_key in {"1UPGM", "1UVERSION"}:
+                if self.producer is not None:
+                    if self.nodes or producer_key in self.producer:
+                        self.producer = None
+                    else:
+                        self.producer[producer_key] = line[24:].strip()
+                if self.expanded_element_count and self.producer is None:
+                    raise _Unsupported("FRD producer 헤더가 불명확해 요소 수 호환 예외를 적용할 수 없습니다.")
+            elif line.startswith("    2C"):
                 self._nodes(line)
             elif line.startswith("    3C"):
                 self._elements(line)
