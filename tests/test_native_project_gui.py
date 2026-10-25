@@ -856,6 +856,9 @@ def test_canvas_controls_stay_fixed_and_show_real_scale_for_all_commands(window,
     assert not hasattr(panel, 'scene')
     bounds = window.scene.itemsBoundingRect()
     panel_size = panel.size()
+    buttons = (window.zoom_out_button, window.zoom_percent, window.zoom_in_button, window.fit_button)
+    button_sizes = [button.size() for button in buttons]
+    assert window.zoom_percent.minimumWidth() == window.zoom_percent.maximumWidth() == 60
     assert [a.text() for a in window.view_menu.actions() if a in (
         window.zoom_in_action, window.zoom_out_action, window.fit_action, window.reset_view_action
     )] == ['확대', '축소', '화면에 맞추기', '100%로 보기']
@@ -886,6 +889,7 @@ def test_canvas_controls_stay_fixed_and_show_real_scale_for_all_commands(window,
     assert float(window.zoom_percent.text()[:-1]) == pytest.approx(window.view.transform().m11()*100, abs=.051)
     assert window.view.transform().m11() < 1
     assert window.scene.itemsBoundingRect() == bounds
+    assert [button.size() for button in buttons] == button_sizes
     assert panel.size() == panel_size and window.view.viewport().rect().contains(panel.geometry())
     QTest.mouseClick(window.zoom_percent, Qt.LeftButton)
     assert window.zoom_percent.text() == '100%' and window.view.transform().m11() == 1

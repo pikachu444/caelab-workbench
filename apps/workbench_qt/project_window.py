@@ -552,6 +552,7 @@ class ProjectWindow(QMainWindow):
         controls.setStyleSheet('''
             QWidget#canvasControls { background: #f8fafc; border: 1px solid #bdc7d1; border-radius: 4px; }
             QToolButton { min-width: 24px; min-height: 24px; padding: 2px 4px; }
+            QToolButton#zoomPercentage { min-width: 50px; max-width: 50px; }
         ''')
         control_row = QHBoxLayout(controls)
         control_row.setContentsMargins(3, 3, 3, 3)
@@ -560,7 +561,7 @@ class ProjectWindow(QMainWindow):
         self.zoom_out_button.setDefaultAction(self.zoom_out_action)
         self.zoom_out_button.setText('−')
         self.zoom_percent = QToolButton()
-        self.zoom_percent.setFixedWidth(60)
+        self.zoom_percent.setObjectName('zoomPercentage')
         self.zoom_percent.setToolTip('100%로 보기')
         self.zoom_percent.setAccessibleName('현재 배율, 누르면 100%로 보기')
         self.zoom_percent.clicked.connect(self.reset_view)
