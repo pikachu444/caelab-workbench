@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog,
-                               QLabel, QLineEdit, QMessageBox)
+                               QLabel, QLineEdit, QMessageBox, QTextEdit, QWidget)
 
 from apps.workbench_qt.project_window import ProjectWindow
 from apps.workbench_qt.native_analysis import NativeAnalysisWindow
@@ -45,6 +45,20 @@ def _select(window, box):
     box.setSelected(True)
 
 
+def _parent_text(window):
+    """Include secondary UI surfaces, not only the visible summary."""
+    texts = [window.windowTitle(), window.statusBar().currentMessage()]
+    for widget in window.findChildren(QWidget):
+        texts.extend((widget.toolTip(), widget.statusTip(), widget.whatsThis()))
+        if isinstance(widget, QLabel):
+            texts.append(widget.text())
+        elif isinstance(widget, QTextEdit):
+            texts.append(widget.toPlainText())
+    for box in window.boxes.values():
+        texts.extend((box.title, box.subtitle, box.file_label, box.detail, box.toolTip()))
+    return "\n".join(texts)
+
+
 def test_start_is_empty_and_file_commands_exist(window):
     assert window.project.nodes == {}
     assert window.boxes == {}
@@ -64,8 +78,8 @@ def test_multiple_same_kind_keep_distinct_files(window, tmp_path):
     assert window.project.nodes[first.node_id].files["input"].path == str(a)
     assert window.project.nodes[second.node_id].files["input"].path == str(b)
     _select(window, first)
-    assert str(a) in window.properties.toPlainText()
-    assert str(b) not in window.properties.toPlainText()
+    assert a.name in window.input_summary.text()
+    assert b.name not in window.input_summary.text()
 
 
 def test_selected_boxes_connect_the_file_shown_in_the_dialog(window, tmp_path, monkeypatch):
@@ -79,7 +93,7 @@ def test_selected_boxes_connect_the_file_shown_in_the_dialog(window, tmp_path, m
         source, role = dialog.findChildren(QComboBox)
         source.setCurrentIndex(source.findData(geometry.node_id))
         role.setCurrentIndex(role.findData("output"))
-        assert any(label.text() == str(deck) for label in dialog.findChildren(QLabel))
+        assert any(deck.name in label.text() for label in dialog.findChildren(QLabel))
         return QDialog.Accepted
     monkeypatch.setattr(QDialog, "exec", accept)
     window.connect_selected()
@@ -98,12 +112,14 @@ def test_program_missing_and_input_ready_are_shown_separately(window, tmp_path, 
     box = window.add_box("geometry")
     window.register_file(box.node_id, _file(tmp_path, "document.FCStd"))
     assert box.state == "ready"
-    assert "미설치" in box.subtitle
-    assert "입력 상태: 준비됨" in window.properties.toPlainText()
-    assert "설정 경로에 실행 파일이 없습니다" in window.properties.toPlainText()
+    assert "연결 확인 필요" in box.subtitle
+    assert "준비됨" in window.input_summary.text()
+    assert "실행 파일을 찾지 못했거나" in window.program_summary.text()
+    assert "연결 설정" in window.next_action.text()
+    assert not window.open_button.isEnabled()
 
 
-def test_parent_summary_separates_current_cad_from_stale_deck_and_keeps_details(window, tmp_path, app):
+def test_parent_summary_keeps_sources_states_and_actions_without_raw_details(window, tmp_path, app):
     box = window.add_box("geometry")
     (tmp_path / "A").mkdir()
     (tmp_path / "B").mkdir()
@@ -129,15 +145,8 @@ def test_parent_summary_separates_current_cad_from_stale_deck_and_keeps_details(
     assert window.open_button.text() == "FreeCAD 열기"
     assert "입력 상태: 준비됨" not in window.program_summary.text()
     assert str(tmp_path) not in window.input_summary.text() + window.output_summary.text()
-    assert not window.properties.isVisible()
-    window.details_toggle.click()
-    app.processEvents()
-    assert window.properties.isVisible()
-    assert window.properties.window() is window.details_dialog
-    assert window.properties.height() > 250
-    assert str(cad) in window.properties.toPlainText() and str(deck) in window.properties.toPlainText()
-    window.details_toggle.click()
-    assert not window.properties.isVisible()
+    assert not any(hasattr(window, name) for name in ("properties", "details_dialog", "details_toggle"))
+    assert window.input_button.isEnabled() and window.output_button.isEnabled()
     window.register_file(box.node_id, new_deck, "output", {"force": "N"})
     assert "B/FEMMeshGmsh.inp" in window.output_summary.text()
     assert "A/FEMMeshGmsh.inp" not in window.output_summary.text()
@@ -150,16 +159,21 @@ def test_parent_summary_separates_current_cad_from_stale_deck_and_keeps_details(
     assert "누락" in window.next_action.text()
 
 
-def test_parent_task_history_is_collapsed_without_hiding_current_failure(window, app):
+def test_parent_task_history_is_collapsed_without_hiding_current_failure(window, app, tmp_path, monkeypatch):
     window.show()
     app.processEvents()
     window._message("첫 작업")
     window._message("파일을 읽지 못했습니다: 누락된 입력입니다")
     assert "누락된 입력" in window.status.text()
     assert not window.log.isVisible()
-    window._message("CalculiX 프로그램 열기 요청을 보냈습니다 (PID 12345).")
-    assert "PID" not in window.status.text()
-    assert "PID 12345" in window.log.toPlainText()
+    box = window.add_box("geometry")
+    window.register_file(box.node_id, _file(tmp_path, "model.FCStd"))
+    monkeypatch.setattr(window.workbench, "open_program", lambda *args: SimpleNamespace(
+        state="opened", pid=12345, error=""))
+    window.open_box(box)
+    assert "열기를 요청" in window.status.toolTip()
+    assert "실제 파일 표시" in window.status.toolTip()
+    assert "PID" not in window.status.toolTip() + window.log.toPlainText()
     window.resize(1800, 1100)
     app.processEvents()
     assert window.history_dock.height() <= 100
@@ -223,10 +237,10 @@ def test_fcstd_to_authored_inp_to_calculix_survives_save_and_save_as(window, tmp
     assert window.open_project(destination / "다른 이름.json")
     assert window.workbench.input_file(window.project, analysis.node_id).path == str(deck)
     _select(window, window.boxes[analysis.node_id])
-    assert "단위 출처: 사용자 선언" in window.properties.toPlainText()
-    assert analysis.node_id not in window.properties.toPlainText()
-    assert reference.revision not in window.properties.toPlainText()
-    assert str(deck) in window.properties.toPlainText()
+    text = window.input_summary.text()
+    assert "사용자 선언" in text and "길이: mm" in text and "힘: N" in text
+    assert "연결 입력" in text and deck.name in text
+    assert analysis.node_id not in text and reference.revision not in text
     assert cad.read_text(encoding="utf-8") == "external native document"
 
 
@@ -244,7 +258,7 @@ def test_changed_or_missing_file_marks_downstream_stale(window, tmp_path):
     assert window.boxes[analysis.node_id].state == "stale"
     assert window.project.nodes[geometry.node_id].files["input"].revision == revision
     _select(window, window.boxes[analysis.node_id])
-    assert "오래됨" in window.properties.toPlainText()
+    assert "오래됨" in window.input_summary.text()
     cad.unlink()
     window.refresh_files()
     assert window.boxes[geometry.node_id].state == "missing"
@@ -291,7 +305,8 @@ def test_broken_open_and_failed_save_preserve_project_selection_and_dirty_state(
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.Save)
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(tmp_path / "save.json"), ""))
     assert not window.new_project()
-    assert "disk full" in window.log.toPlainText()
+    assert "저장 공간이 부족" in window.log.toPlainText()
+    assert "disk full" not in window.log.toPlainText()
 
 
 def test_file_units_are_entered_in_named_fields_and_empty_fields_stay_unknown(window, tmp_path, monkeypatch):
@@ -307,8 +322,10 @@ def test_file_units_are_entered_in_named_fields_and_empty_fields_stay_unknown(wi
     assert window.choose_file()
     reference = window.workbench.input_file(window.project, box.node_id)
     assert reference.units == {"length": "mm", "force": "N"}
-    assert "길이: mm" in window.properties.toPlainText()
-    assert "사용자 선언" in window.properties.toPlainText()
+    assert "길이: mm" in window.input_summary.text()
+    assert "사용자 선언" in window.input_summary.text()
+    assert "힘: N" in window.input_summary.text()
+    assert "응력:" not in window.input_summary.text()
 
 
 def test_default_view_keeps_original_scale_in_a_small_window(window, app):
@@ -340,6 +357,69 @@ def test_file_open_passes_actual_file_to_workbench_process(window, tmp_path, mon
     assert str(cad) in command and str(exe) == command[0]
     assert Path(kwargs["cwd"]) == tmp_path
     assert isinstance(kwargs["env"], dict)
+    assert "PID" not in _parent_text(window)
+    assert str(exe) not in _parent_text(window)
+    assert "열기를 요청" in _parent_text(window)
+
+
+def test_parent_translates_service_failures_without_moving_dumps_to_secondary_ui(
+        window, tmp_path, monkeypatch):
+    diagnostic = "request_id=internal-123 SHA256=" + "9" * 64 + " PID 654321 CAELAB_FREECAD=C:/private/tool.exe"
+    monkeypatch.setattr(window.workbench, "programs", lambda: [SimpleNamespace(
+        spec=SimpleNamespace(id="freecad", name="FreeCAD"), available=False,
+        path="C:/private/tool.exe", source="environment", reason="실행 파일이 없습니다: " + diagnostic)])
+    box = window.add_box("geometry")
+    # A user filename is not an internal identifier and must remain intact.
+    filename = "9" * 64 + ".FCStd"
+    cad = _file(tmp_path, filename)
+    window.register_file(box.node_id, cad)
+    node = window.project.nodes[box.node_id]
+    node.state, node.reason = "failed", diagnostic
+    window.project.issues[:] = [diagnostic]
+    window._reflect_node(node.id)
+    window._selection_changed()
+    window._message("프로젝트 확인\n" + "\n".join(window._project_notes()))
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))
+    monkeypatch.setattr(window.workbench, "open_program", lambda *args: SimpleNamespace(
+        state="failed", error=diagnostic))
+    window.open_box(box)
+    text = _parent_text(window) + "\n" + "\n".join(warnings)
+    assert filename in text
+    for internal in ("request_id", "internal-123", "SHA256=", "PID", "654321", "CAELAB_FREECAD", "C:/private"):
+        assert internal not in text
+    assert "원인을 확인하지 못했습니다" in text
+    assert "설치와 프로그램 연결 설정" in text
+    assert node.reason == diagnostic and window.project.issues == [diagnostic]
+    assert warnings
+
+
+@pytest.mark.parametrize("error,action", [
+    (PermissionError("C:/private SHA256=123"), "접근할 권한"),
+    (OSError("disk full /private/state.json"), "저장 공간이 부족"),
+    (ValueError("connections: 순환 연결은 지원하지 않습니다. internal-id"), "한 방향"),
+    (ValueError("지원하지 않는 프로젝트 schema_version: {'secret': 'dump'}"), "호환되는 버전"),
+    (ValueError("기대 실행 저장소가 없습니다: /private/internal-id.runs"), "기록 폴더"),
+    (FileNotFoundError("/private/input.inp"), "파일을 다시 선택"),
+])
+def test_known_problem_keeps_corrective_action_without_raw_details(window, monkeypatch, error, action):
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))
+    window._error("선택한 작업을 마치지 못했습니다", error)
+    assert action in warnings[0] and action in window.status.toolTip()
+    assert str(error) not in warnings[0]
+
+
+def test_deselection_clears_file_tooltips(window, tmp_path):
+    first, second = window.add_box("geometry"), window.add_box("geometry")
+    window.register_file(first.node_id, _file(tmp_path, "first.FCStd"))
+    _select(window, first)
+    assert "first.FCStd" in window.input_summary.toolTip()
+    _select(window, second)
+    assert "선택 파일 없음" in window.input_summary.text()
+    assert not window.input_summary.toolTip()
+    window.scene.clearSelection()
+    assert not window.input_summary.toolTip() and not window.output_summary.toolTip()
 
 
 def test_results_without_a_file_never_launch_empty_paraview(window):
@@ -406,9 +486,12 @@ def test_internal_result_summary_uses_its_receipt_without_diagnostic_id(window, 
     window._selection_changed()
     text = window.input_summary.text()
     assert "model.frd" in text and "A/FEMMeshGmsh.inp" in text
-    assert "2026-10-24T09:18:36Z" in text
+    from apps.workbench_qt.project_window import _request_time
+    assert _request_time("2026-10-24T09:18:36Z") in text
     assert run_id not in text and "project.runs" not in text
-    assert str(result) in window.properties.toPlainText()
+    assert window.workbench.input_file(window.project, box.node_id).path == str(result)
+    assert run_id not in window.input_summary.toolTip()
+    assert "이 파일의 계산" in text and "선택한 계산:" not in text
     (folder / "job.json").unlink()
     window._selection_changed()
     assert "실행 출처 미확인" in window.input_summary.text()

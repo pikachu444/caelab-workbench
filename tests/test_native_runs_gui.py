@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -277,10 +278,10 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         box.setSelected(True)
         window._selection_changed()
         assert box.status_label == "선택 실행 변경"
-        text = window.properties.toPlainText()
-        assert "입력 상태: 연결 입력 준비됨" in text
-        assert "기존 표시·대화와 다를 수 있습니다" in text
-        assert "입력 상태: 오래됨" not in text
+        text = window.input_summary.text() + window.program_summary.text()
+        assert "연결 입력" in text and "준비됨" in text
+        assert "기존 표시·대화와 다를 수" in text
+        assert "오래됨" not in window.input_summary.text()
         # Selection never certifies an external display/discussion as completed.
         assert window.project.nodes[consumer.id].state == "stale"
         assert not wb.jobs.launches
@@ -290,18 +291,62 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         window._reflect_node(consumer.id)
         window._selection_changed()
         assert not box.status_label
-        assert "입력 상태: 오래됨" in window.properties.toPlainText()
+        assert "오래됨" in window.input_summary.text()
         reference.stale = False
         raw.write_text("externally changed output")
         window._reflect_node(consumer.id)
         window._selection_changed()
         assert box.state == "changed" and not box.status_label
-        assert "입력 상태: 원본 변경됨" in window.properties.toPlainText()
+        assert "원본 변경됨" in window.input_summary.text()
         raw.unlink()
         window._reflect_node(consumer.id)
         window._selection_changed()
         assert box.state == "missing" and not box.status_label
-        assert "입력 상태: 파일 누락" in window.properties.toPlainText()
+        assert "파일 누락" in window.input_summary.text()
+    finally:
+        window._dirty = False
+        window.close()
+
+
+@pytest.mark.parametrize("state,process_label", [
+    ("completed", "프로세스 정상 종료"), ("failed", "실패"), ("cancelled", "취소"),
+])
+def test_parent_keeps_input_process_and_readability_separate(app, tmp_path, monkeypatch, state, process_label):
+    from apps.workbench_qt.project_window import ProjectWindow
+    from caelab.native.run_store import NativeRun, RunStore
+    from caelab.project import file_revision
+
+    wb = Workbench()
+    project = wb.new_native_project()
+    node = wb.add_program_node(project, "analysis", "calculix")
+    deck = tmp_path / "current.inp"
+    deck.write_text("*HEADING\nnative input\n")
+    wb.set_node_file(project, node.id, deck, units={"length": "mm"})
+    wb.save_native_project(project, tmp_path / "project.json")
+    store = RunStore(project.run_store)
+    run = NativeRun("c" * 32, node.id, store.root / ("c" * 32), state=state,
+                    parse_state="failed", input_path=str(deck), input_revision=file_revision(deck),
+                    error="request_id=private PID 12345 SHA256=internal", units={"length": "mm"},
+                    unit_source="user")
+    store.write(run)
+    store.select(node.id, run.id)
+    receipt = (run.workdir / "job.json").read_bytes()
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: pytest.fail("unexpected process"))
+    window = ProjectWindow(workbench=wb, project_path=project.path)
+    try:
+        box = window.boxes[node.id]
+        box.setSelected(True)
+        window._poll_runs()
+        window._selection_changed()
+        assert "준비됨" in window.input_summary.text()
+        assert "길이: mm" in window.input_summary.text()
+        assert process_label in window.run_summary.text()
+        assert "결과 읽기: 판독 실패" in window.run_summary.text()
+        text = (window.program_summary.text() + window.run_summary.text() + box.toolTip()
+                + box.detail + window.log.toPlainText() + window.status.toolTip())
+        assert not any(token in text for token in ("request_id", "PID", "SHA256", run.id))
+        assert (run.workdir / "job.json").read_bytes() == receipt
+        assert not wb.jobs.launches
     finally:
         window._dirty = False
         window.close()

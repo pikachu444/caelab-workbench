@@ -13,7 +13,6 @@ from __future__ import annotations
 from html import escape
 from os.path import relpath
 from pathlib import Path
-import re
 
 from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence, QPainterPath, QPen
@@ -83,7 +82,7 @@ STATE_LABELS = {
     "changed": "원본 변경됨",
     "missing": "파일 누락",
     "stale": "오래됨",
-    "opened": "프로그램 열림",
+    "opened": "열기 요청 전달",
     "queued": "대기", "preparing": "입력 보존 중", "completed": "프로세스 종료",
     "cancelled": "취소됨", "interrupted": "중단됨",
 }
@@ -170,7 +169,7 @@ class SystemBox(QGraphicsItem):
         painter.drawText(QRectF(10, 50, BOX_W - 20, 18), Qt.AlignLeft,
                          painter.fontMetrics().elidedText(self.file_label, Qt.ElideMiddle, BOX_W - 20))
         painter.setPen(QPen(QColor("#5a6672")))
-        status = self.status_label or STATE_LABELS.get(self.state, self.state)
+        status = self.status_label or STATE_LABELS.get(self.state, "상태 미확인")
         painter.drawText(QRectF(10, 73, BOX_W - 20, 18), Qt.AlignLeft, status)
 
     def itemChange(self, change, value):
@@ -249,6 +248,79 @@ def _unit_text(units: dict) -> str:
         or "미확인 — 사용자 선언 필요"
 
 
+def _problem_text(error) -> str:
+    """Translate known failure categories; never echo arbitrary service diagnostics."""
+    text = str(error)
+    lowered = text.lower()
+    if isinstance(error, PermissionError) or '권한' in text or 'permission denied' in lowered:
+        return '파일이나 프로그램에 접근할 권한이 없습니다. 접근 가능한 위치와 실행 권한을 확인하세요.'
+    if 'disk full' in lowered or 'no space left' in lowered or '공간' in text and '부족' in text:
+        return '저장 공간이 부족합니다. 공간을 확보하거나 다른 위치에 저장하세요.'
+    if '경로가 원본 파일과 같습니다' in text:
+        return '프로젝트는 원본 입력 파일과 다른 이름으로 저장하세요.'
+    if '이미 있습니다' in text or '이미 존재' in text:
+        return '선택한 저장 위치에 기존 기록이 있습니다. 다른 이름이나 새 폴더를 선택하세요.'
+    if '순환' in text:
+        return '상자를 순환하게 연결할 수 없습니다. 입력이 한 방향으로 전달되도록 연결하세요.'
+    if 'schema_version' in text and '지원하지' in text:
+        return '이 프로그램에서 읽을 수 없는 프로젝트 버전입니다. 호환되는 버전에서 다시 여세요.'
+    if any(part in text for part in ('프로젝트 읽기 실패', '중복 JSON', 'nodes.', 'connections:', '자료 형식')):
+        return '프로젝트의 파일·상자·연결 정보를 읽지 못했습니다. 올바른 프로젝트 파일이나 보관한 사본을 선택하세요.'
+    if '실행 저장소' in text or any(part in text for part in ('실행 기록', 'run_store', 'job.json', 'snapshot')):
+        return '저장된 계산·대화 기록이 없거나 온전히 읽히지 않습니다. 프로젝트와 함께 보관한 기록 폴더를 확인하세요.'
+    if '계산 중' in text or '질문' in text and ('진행 중' in text or '사용 중' in text):
+        return '계산이나 대화 작업이 진행 중입니다. 작업을 마치거나 중단한 뒤 다시 저장하세요.'
+    if 'FreeCAD 문서' in text:
+        return 'FreeCAD 문서(.FCStd)를 입력 파일로 선택하세요.'
+    if any(part in text for part in ('교환 파일', '무결성', '해시 불일치', '변조')):
+        return '선택한 결과 파일의 보존 상태를 확인하지 못했습니다. 해석창에서 다른 보존 실행을 선택하거나 새로 계산하세요.'
+    if '원본 변경' in text or '개정' in text and '변경' in text:
+        return '원본 파일이 바뀌었습니다. 내용을 확인한 뒤 사용할 파일을 다시 등록하세요.'
+    if '현재 선택 입력이 이 실행의 입력과 다릅니다' in text:
+        return '선택한 계산은 현재 입력과 다른 입력으로 실행되었습니다. 해석창에서 사용할 계산을 확인하세요.'
+    if '입력 단위 선언/출처가 변경' in text:
+        return '입력의 단위 선언이 계산 당시와 다릅니다. 해석창에서 단위와 사용할 계산을 확인하세요.'
+    if '실행 원본 또는 INCLUDE 파일이 변경/누락' in text:
+        return '계산에 사용한 입력이나 포함 파일이 바뀌었거나 없습니다. 해석창에서 입력 파일을 확인하세요.'
+    if '선택 실행에 사용할 수 있는 최신 결과가 없습니다' in text:
+        return '선택한 계산에 사용할 수 있는 결과가 없습니다. 해석창에서 종료 상태와 결과 읽기 상태를 확인하세요.'
+    if '상위 변경' in text or '오래' in text:
+        return '상위 입력이 바뀌어 이전 출력이 오래되었습니다. 새로 작성한 출력을 등록하세요.'
+    if '연결된 해석' in text or '선택 실행이 없습니다' in text:
+        return '해석 상자를 연결하고 해석창에서 사용할 계산을 선택하세요.'
+    if any(part in text for part in ('실행 환경', '네이티브 실행 파일이 아닙니다', '다른 호스트', '미구현', '구현되지')):
+        return '현재 환경에서는 이 프로그램 연결을 사용할 수 없습니다. 지원되는 운영체제와 프로그램을 확인하세요.'
+    if 'freecadcmd' in lowered or 'pvpython' in lowered or 'pvbatch' in lowered:
+        return '화면이 있는 전용 프로그램을 연결하세요. 명령행 도구로는 이 파일을 표시할 수 없습니다.'
+    if '실행 파일' in text:
+        return '프로그램 실행 파일을 찾지 못했거나 사용할 수 없습니다. 설치와 프로그램 연결 설정을 확인하세요.'
+    if any(part in text for part in ('레지스트리', 'runtime_env', '환경 변수', 'PATH')):
+        return '프로그램 연결 설정을 읽지 못했습니다. 설치와 연결 설정을 확인하세요.'
+    if isinstance(error, FileNotFoundError) or any(part in text for part in ('입력 파일이 없습니다', '입력 파일이 누락', 'No such file')):
+        return '사용할 파일을 찾지 못했습니다. 파일을 다시 선택하거나 연결한 상위 파일을 확인하세요.'
+    if '저장' in text and ('전에' in text or '먼저' in text):
+        return '프로젝트를 먼저 저장한 뒤 프로그램을 여세요.'
+    return '문제의 원인을 확인하지 못했습니다. 선택한 파일과 전용 프로그램의 작업 상태를 확인하세요.'
+
+
+def _run_text(run, *, selected: bool = True) -> str:
+    from .native_analysis import _RUN_LABELS, _PARSE_LABELS
+    state = _RUN_LABELS.get(run.state, '미확인')
+    parsed = _PARSE_LABELS.get(run.parse_state, '미확인')
+    text = f"{'선택한 계산' if selected else '이 파일의 계산'}: {state}\n결과 읽기: {parsed}"
+    if run.stale:
+        text += '\n현재 입력과 다른 이전 결과입니다.'
+    return text
+
+
+def _request_time(value) -> str:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone().strftime('%Y-%m-%d %H:%M:%S')
+    except (ValueError, TypeError, AttributeError):
+        return '미확인'
+
+
 class ProjectWindow(QMainWindow):
     def __init__(self, workbench: Workbench | None = None,
                  project_path: str | Path | None = None) -> None:
@@ -260,7 +332,10 @@ class ProjectWindow(QMainWindow):
         self._dirty = False
         self._loading = False
         self.resize(1280, 820)
-        self.setStyleSheet(THEME)
+        self.setStyleSheet(THEME + '''
+            QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
+                background: #e1e6eb; border-color: #d5dce3; color: #5d6b78; }
+        ''')
         self._build_ui()
         self._show_project()
         if project_path is not None:
@@ -348,18 +423,15 @@ class ProjectWindow(QMainWindow):
         self.program_summary = QLabel()
         self.input_summary = QLabel()
         self.output_summary = QLabel()
+        self.run_summary = QLabel()
         self.next_action = QLabel()
         for label in (self.selection_name, self.program_summary, self.input_summary,
-                      self.output_summary, self.next_action):
+                      self.output_summary, self.run_summary, self.next_action):
             label.setTextFormat(Qt.PlainText)
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             props_layout.addWidget(label)
-        self.properties = QTextEdit()
-        self.properties.setReadOnly(True)
-        self.properties.setMinimumWidth(220)
-        self.properties.setMinimumHeight(180)
         self.input_button = QPushButton("입력 파일 선택…")
         self.output_button = QPushButton("작성한 출력 등록…")
         self.open_button = QPushButton("프로그램 열기")
@@ -369,21 +441,6 @@ class ProjectWindow(QMainWindow):
                                  (self.input_button, lambda: self.choose_file("input"))):
             button.clicked.connect(callback)
             props_layout.addWidget(button)
-        self.details_toggle = QToolButton()
-        self.details_toggle.setText("상세 정보…")
-        self.details_toggle.setCheckable(True)
-        self.details_dialog = QDialog(self)
-        self.details_dialog.setWindowTitle("선택한 프로그램 상세 정보")
-        self.details_dialog.resize(650, 550)
-        detail_layout = QVBoxLayout(self.details_dialog)
-        detail_layout.addWidget(self.properties)
-        detail_close = QDialogButtonBox(QDialogButtonBox.Close)
-        detail_close.button(QDialogButtonBox.Close).setText("닫기")
-        detail_close.rejected.connect(self.details_dialog.reject)
-        detail_layout.addWidget(detail_close)
-        self.details_dialog.finished.connect(lambda _: self.details_toggle.setChecked(False))
-        self.details_toggle.toggled.connect(self.details_dialog.setVisible)
-        props_layout.addWidget(self.details_toggle)
         props_layout.addStretch()
         props_scroll = QScrollArea()
         props_scroll.setWidgetResizable(True)
@@ -435,7 +492,7 @@ class ProjectWindow(QMainWindow):
     def _title(self) -> None:
         path = str(self.project.path) if self.project.path else "아직 저장하지 않음"
         self.setWindowTitle(f"{self.project.name}{' *' if self._dirty else ''} — CAELAB Workbench")
-        self.statusBar().showMessage(path)
+        self.statusBar().showMessage(f"프로젝트: {self.project.path.parent.name}/{self.project.path.name}" if self.project.path else path)
 
     def _mark_dirty(self) -> None:
         if not self._loading:
@@ -443,20 +500,15 @@ class ProjectWindow(QMainWindow):
             self._title()
 
     def _message(self, text: str) -> None:
+        # Only compose user-facing action text here; service diagnostics are translated at their boundary.
         first, *following = text.splitlines()
-        current = first
-        for prefix in ("프로젝트를 열었습니다: ", "프로젝트를 저장했습니다: ",
-                       "입력 파일을 등록했습니다: ", "출력 파일을 등록했습니다: "):
-            if text.startswith(prefix):
-                current = prefix + self._short_path(first[len(prefix):])
-                break
-        current = re.sub(r" \(PID \d+\)", "", current)
-        if following:
-            current += " — " + next((line for line in following if line.strip()), "추가 내용 확인")
-        self._current_message = current
+        self._current_message = first + (' — ' + following[0] if following else '')
         self._render_current_message()
         self.status.setToolTip(text)
-        self.log.append(text)
+        self.log.moveCursor(self.log.textCursor().MoveOperation.End)
+        if self.log.toPlainText():
+            self.log.insertPlainText('\n')
+        self.log.insertPlainText(text)
 
     def _render_current_message(self) -> None:
         text = getattr(self, "_current_message", "")
@@ -471,9 +523,13 @@ class ProjectWindow(QMainWindow):
     def _short_path(self, path: str) -> str:
         base = self.project.path.parent if self.project.path else Path.cwd()
         try:
-            return Path(relpath(path, base)).as_posix()
-        except ValueError:  # Different Windows drives cannot have a relative path.
-            return str(path)
+            relative = Path(relpath(path, base))
+            if '..' not in relative.parts:
+                return relative.as_posix()
+        except ValueError:
+            pass
+        selected = Path(path)
+        return f'{selected.parent.name}/{selected.name}'
 
     def _summary_file_name(self, path: str) -> tuple[str, str]:
         root = self.project.run_store
@@ -495,12 +551,12 @@ class ProjectWindow(QMainWindow):
                 raise ValueError("실행 출처 미확인")
             source = Path(run.input_path)
             source_name = source.name if source.resolve().is_relative_to(root.resolve()) else self._short_path(run.input_path)
-            return Path(path).name, f"실행: {run.created_at}\n기준 입력: {source_name}"
+            return Path(path).name, f"기준 입력: {source_name}\n계산 요청: {_request_time(run.created_at)}\n{_run_text(run, selected=False)}"
         except (OSError, ValueError, TypeError):
             return Path(path).name, "실행 출처 미확인"
 
     def _error(self, text: str, error: Exception) -> None:
-        message = f"{text}: {error}"
+        message = f"{text}. {_problem_text(error)}"
         self._message(message)
         QMessageBox.warning(self, text, message)
 
@@ -535,8 +591,8 @@ class ProjectWindow(QMainWindow):
         self.project = project
         self._dirty = False
         self._show_project()
-        self._message(f"프로젝트를 열었습니다: {self.project.path}" +
-                      ('\n확인 필요:\n' + '\n'.join(project.issues) if project.issues else ''))
+        self._message(f"프로젝트를 열었습니다: {self._short_path(self.project.path)}" +
+                      ('\n' + '\n'.join(self._project_notes()) if project.issues else ''))
         return True
 
     def save_project(self, path: str | Path | None = None) -> bool:
@@ -550,7 +606,7 @@ class ProjectWindow(QMainWindow):
             return False
         self._dirty = False
         self._title()
-        message = f"프로젝트를 저장했습니다: {self.project.path}"
+        message = f"프로젝트를 저장했습니다: {self._short_path(self.project.path)}"
         if previous_path and previous_path != self.project.path:
             message += "\n실행 기록과 대화는 복사했습니다. CAD·INP 원본은 기존 파일을 계속 참조합니다."
         self._message(message)
@@ -624,102 +680,82 @@ class ProjectWindow(QMainWindow):
     def _selection_changed(self) -> None:
         selected = self._selected_boxes()
         self.connect_action.setEnabled(len(selected) == 2)
-        editable = len(selected) == 1 and selected[0].kind != "expert"
+        editable = len(selected) == 1 and selected[0].kind != 'expert'
+        self.input_button.setVisible(editable)
+        self.output_button.setVisible(editable)
         self.input_button.setEnabled(editable)
         self.output_button.setEnabled(editable)
         self.open_button.setEnabled(len(selected) == 1)
+        self.run_summary.clear()
+        self.input_summary.setToolTip('')
+        self.output_summary.setToolTip('')
         if len(selected) != 1:
-            self.selection_name.setText("프로그램을 선택하세요")
+            self.selection_name.setText('프로그램을 선택하세요')
             self.program_summary.clear()
             self.input_summary.clear()
             self.output_summary.clear()
-            self.next_action.setText("상자 하나를 선택해 파일 상태와 다음 행동을 확인하세요.")
-            self.properties.setPlainText("상자를 선택해 파일과 프로그램 상태를 확인하세요.\n\n"
-                                         "상자 두 개를 Ctrl로 선택하면 연결할 수 있습니다.")
+            self.next_action.setText('상자 하나를 선택해 파일 상태와 다음 행동을 확인하세요.')
             return
         box = selected[0]
         node = self.project.nodes[box.node_id]
-        self.open_button.setText({"geometry": "FreeCAD 열기", "mesh": "Gmsh 열기",
-                                  "analysis": "CalculiX 해석창 열기", "results": "ParaView 열기",
-                                  "expert": "전문가 창 열기"}.get(node.kind, "프로그램 열기"))
-        self.input_button.setVisible(node.kind != "expert")
-        self.output_button.setVisible(node.kind != "expert")
+        self.open_button.setText({'geometry': 'FreeCAD 열기', 'mesh': 'Gmsh 열기',
+                                  'analysis': 'CalculiX 해석창 열기', 'results': 'ParaView 열기',
+                                  'expert': '전문가 창 열기'}.get(node.kind, '프로그램 열기'))
         statuses = {status.spec.id: status for status in self.workbench.programs()}
         program = statuses.get(node.program_id)
         reference = self.workbench.input_file(self.project, node.id)
-        state_label = STATE_LABELS.get(node.state, node.state)
-        reason = self._display_reason(node.reason)
-        if _selection_changed_input(node, reference):
-            status = self._file_status(reference)
-            state_label = "연결 입력 준비됨" if status == "ready" else STATE_LABELS.get(status, status)
-            reason = "선택 실행이 바뀌어 기존 표시·대화와 다를 수 있습니다. 외부 프로그램의 실제 표시·논의를 확인하세요."
-        lines = [box.title, f"입력 상태: {state_label}", f"설명: {reason}"]
-        incoming = [c for c in self.project.connections if c.target_id == node.id]
-        for connection in incoming:
-            role = "입력" if connection.source_role == "input" else "출력"
-            lines += ["", f"연결 입력: {self.boxes[connection.source_id].title}의 {role} 파일"]
-        references = [("사용할 입력", reference)]
-        references += [(f"등록한 {'입력' if role == 'input' else '출력'}", ref) for role, ref in node.files.items()
-                       if ref is not reference]
-        for role, ref in references:
-            lines += ["", f"{role}:"]
-            if ref is None:
-                lines.append("파일 없음")
-            else:
-                source = {"user": "사용자 선언", "unknown": "미확인"}.get(ref.unit_source, ref.unit_source)
-                status = self._file_status(ref)
-                lines += [ref.path, f"파일 상태: {STATE_LABELS.get(status, status)}",
-                          f"단위: {_unit_text(ref.units)}", f"단위 출처: {source or '미확인'}"]
-        if program:
-            lines += ["", f"프로그램: {program.spec.name}",
-                      f"설치: {'발견됨' if program.available else '찾지 못함'}",
-                      f"실행 파일: {program.path or '없음'}",
-                      f"발견 경로: {program.source}", f"설명: {program.reason}",
-                      f"추가 환경 변수: {', '.join(program.runtime_env) or '없음'}"]
-        else:
-            lines += ["", "독립 전문가 창에서 자료를 불러오고 저장된 대화를 이어갑니다."
-                      if node.kind == "expert" else f"{node.program_id} 프로그램을 찾지 못했습니다."]
-        if node.kind == "analysis" and self.project.path is not None:
-            from .native_analysis import _PARSE_LABELS, _RUN_LABELS
+        if node.kind == 'analysis' and self.project.path is not None:
             try:
                 run = self.workbench.selected_native_run(self.project, node.id)
-                if run is not None:
-                    lines += ["", f"선택한 실행: {run.created_at}",
-                              f"실행 상태: {_RUN_LABELS.get(run.state, run.state)}",
-                              f"결과 판독: {_PARSE_LABELS.get(run.parse_state, run.parse_state)}",
-                              f"실행 입력: {run.input_path}", f"보존 위치: {run.workdir}"]
-                    if run.error:
-                        lines.append(run.error)
-                    if run.stale:
-                        lines.append(f"오래된 입력의 결과: {run.stale_reason}")
+                self.run_summary.setText(_run_text(run) if run else '선택한 계산 없음')
             except (OSError, ValueError, RuntimeError) as error:
-                lines.append(f"실행 기록을 읽지 못했습니다: {error}")
-        self.properties.setPlainText("\n".join(lines))
-        self._selection_summary(node, program, reference, reason)
+                self.run_summary.setText(_problem_text(error))
+        self._selection_summary(node, program, reference, self._node_note(node, reference))
+        if node.kind not in {'analysis', 'expert'}:
+            self.open_button.setEnabled(bool(program and program.available and reference and self._file_status(reference) != 'missing'))
+
+    def _node_note(self, node, reference) -> str:
+        if _selection_changed_input(node, reference) and self._file_status(reference) == 'ready':
+            return '선택한 계산이 바뀌었습니다. 기존 표시·대화와 다를 수 있으니 전용 프로그램에서 확인하세요.'
+        status = self._file_status(reference) if reference else 'needs_input'
+        if status == 'missing':
+            return '입력 파일이 없습니다. 파일을 다시 선택하거나 연결한 상위 파일을 확인하세요.'
+        if status == 'changed':
+            return '입력 파일이 외부에서 변경되었습니다. 내용을 확인한 뒤 사용할 파일을 다시 등록하세요.'
+        if status == 'stale':
+            return '현재 입력에 맞는 최신 파일인지 확인하세요. 새로 작성한 파일이 있다면 다시 등록하세요.'
+        if node.state in {'failed', 'stale'} and node.reason:
+            return _problem_text(node.reason)
+        return ''
 
     def _selection_summary(self, node, program, reference, reason):
-        name = program.spec.name if program else "전문가 논의" if node.kind == "expert" else node.program_id
+        name = program.spec.name if program else "전문가 논의" if node.kind == "expert" else "전용 프로그램"
         self.selection_name.setText(name)
-        installation = ("프로그램 발견됨" if program.available else "프로그램을 찾지 못함") if program else "별도 대화창에서 열기"
-        issue = reason if node.state in {"failed", "stale"} else ""
+        installation = ("프로그램 연결 준비" if program.available else _problem_text(program.reason)) if program else "별도 대화창에서 열기" if node.kind == "expert" else "프로그램 연결이 필요합니다."
+        issue = reason
         self.program_summary.setText(installation + (f"\n{issue}" if issue else ""))
         self.output_summary.setVisible(node.kind != "expert" or "output" in node.files)
-        input_title = "연결 입력" if any(c.target_id == node.id for c in self.project.connections) else "입력 파일"
+        incoming = next((edge for edge in self.project.connections if edge.target_id == node.id), None)
+        input_title = '입력 파일'
+        if incoming:
+            source = self.project.nodes[incoming.source_id]
+            source_label = next((title for kind, title, sub in SYSTEM_KINDS if kind == source.kind), '상위 프로그램')
+            input_title = f"연결 입력 ({source_label}의 {'입력' if incoming.source_role == 'input' else '등록 출력'})"
         for label, title, ref in ((self.input_summary, input_title, reference),
                                   (self.output_summary, "등록한 출력", node.files.get("output"))):
             if ref is None:
                 label.setTextFormat(Qt.RichText)
                 label.setText(f"<b>{title}</b><br>선택 파일 없음")
             else:
-                source = {"user": "사용자 선언", "unknown": "미확인", "": "미확인"}.get(ref.unit_source, ref.unit_source)
+                source = {"user": "사용자 선언", "unknown": "미확인", "": "미확인"}.get(ref.unit_source, "출처 미확인")
                 status = self._file_status(ref)
                 file_name, provenance = self._summary_file_name(ref.path)
                 provenance_html = escape(provenance).replace("\n", "<br>") + "<br>" if provenance else ""
                 label.setTextFormat(Qt.RichText)
-                label.setText(f"<b>{title}</b> — {escape(STATE_LABELS.get(status, status))}<br>"
+                label.setText(f"<b>{title}</b> — {escape(STATE_LABELS.get(status, "상태 미확인"))}<br>"
                               f"<b>{escape(file_name)}</b><br>{provenance_html}"
                               f"단위: {escape(_unit_text(ref.units))} ({escape(source)})")
-                label.setToolTip(ref.path)
+                label.setToolTip(file_name + ("\n" + provenance if provenance else ""))
         status = self._file_status(reference) if reference else "needs_input"
         if node.kind == "expert":
             action = "전문가 창에서 실행 출처를 확인하고 사용할 근거를 가져오세요."
@@ -736,7 +772,7 @@ class ProjectWindow(QMainWindow):
         else:
             action = "전용 프로그램에서 선택한 파일을 열고 실제 표시를 확인하세요."
         if program and not program.available:
-            action = f"{program.spec.name} 연결 경로를 확인하세요.\n{action}"
+            action = f"{program.spec.name} 설치와 프로그램 연결 설정을 확인하세요.\n{action}"
         self.next_action.setText(f"다음 행동\n{action}")
 
     def choose_file(self, role: str = "input") -> bool:
@@ -783,13 +819,13 @@ class ProjectWindow(QMainWindow):
             self.workbench.set_node_file(self.project, node_id, path, role=role,
                                          units=units, unit_source="user" if units else "unknown")
         except Exception as error:
-            self._error("파일을 등록하지 못했습니다", error)
+            self._error(f"파일을 등록하지 못했습니다 ({self._summary_file_name(str(path))[0]})", error)
             return False
         self._mark_dirty()
         self._sync_connections()
         self._reflect_programs()
         self._selection_changed()
-        self._message(f"{'입력' if role == 'input' else '출력'} 파일을 등록했습니다: {path}")
+        self._message(f"{'입력' if role == 'input' else '출력'} 파일을 등록했습니다: {self._summary_file_name(str(path))[0]}")
         return True
 
     def _sync_connections(self) -> None:
@@ -844,7 +880,7 @@ class ProjectWindow(QMainWindow):
             reference = (self.workbench.input_file(self.project, source.currentData())
                          if role.currentData() == "input" else
                          self.project.nodes[source.currentData()].files.get("output"))
-            file_path.setText(reference.path if reference else "파일 미등록 — 연결은 입력 필요 상태로 남습니다.")
+            file_path.setText("\n".join(part for part in self._summary_file_name(reference.path) if part) if reference else "파일 미등록 — 연결은 입력 필요 상태로 남습니다.")
         source.currentIndexChanged.connect(describe)
         role.currentIndexChanged.connect(describe)
         layout.addRow("보내는 상자", source)
@@ -868,14 +904,14 @@ class ProjectWindow(QMainWindow):
         self._reflect_programs()
         self._selection_changed()
         self._message("파일 상태를 다시 확인했습니다. 변경된 원본과 오래된 연결을 확인하세요." +
-                      ('\n' + '\n'.join(issues) if issues else ''))
+                      ('\n' + '\n'.join(self._project_notes()) if issues else ''))
 
     def _reflect_programs(self) -> None:
         statuses = {status.spec.id: status for status in self.workbench.programs()}
         for node_id, box in self.boxes.items():
             node = self.project.nodes[node_id]
             program = statuses.get(node.program_id)
-            box.subtitle = (f"{program.spec.name} — {'설치됨' if program.available else '미설치'}"
+            box.subtitle = (f"{program.spec.name} — {'연결 준비' if program.available else '연결 확인 필요'}"
                             if program else "별도 대화창에서 열기" if node.kind == "expert" else "독립 프로그램 연결 미구현")
             self._reflect_node(node_id)
         self._poll_runs()
@@ -883,11 +919,11 @@ class ProjectWindow(QMainWindow):
     def _reflect_node(self, node_id: str) -> None:
         node, box = self.project.nodes[node_id], self.boxes[node_id]
         reference = self.workbench.input_file(self.project, node_id)
-        title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), node.kind)
+        title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), "프로그램")
         identifying_file = reference or node.files.get("output")
         box.title = f"{title} — {Path(identifying_file.path).name}" if identifying_file else title
         box.file_label = Path(reference.path).name if reference else "선택 파일 없음"
-        box.set_state(node.state, node.reason)
+        box.set_state(node.state, self._node_note(node, reference))
         if _selection_changed_input(node, reference):
             # The connected file changed; this does not establish that a viewer
             # displayed it or that a discussion adopted it. Keep the stored state.
@@ -895,9 +931,9 @@ class ProjectWindow(QMainWindow):
             if status == "ready":
                 box.status_label = "선택 실행 변경"
             else:
-                box.set_state(status, node.reason)
-        box.setToolTip(f"{box.title}\n{box.subtitle}\n{reference.path if reference else '입력 파일 없음'}\n"
-                       f"{self._display_reason(node.reason)}")
+                box.set_state(status, self._node_note(node, reference))
+        file_label = "\n".join(part for part in self._summary_file_name(reference.path) if part) if reference else "입력 파일 없음"
+        box.setToolTip(f"{box.title}\n{box.subtitle}\n{file_label}\n{self._node_note(node, reference)}")
 
     def _file_status(self, reference) -> str:
         # Polling should not hash an unchanged large result every second.
@@ -926,10 +962,10 @@ class ProjectWindow(QMainWindow):
                 if run is None:
                     continue
                 state = "stale" if run.stale and run.state == "completed" else run.state
-                run_states[node_id] = (state, run.error or run.stale_reason)
+                run_states[node_id] = (state, _run_text(run))
                 signature.append((node_id, run.id, run.state, run.parse_state, run.stale, run.error))
             except (OSError, ValueError, RuntimeError) as error:
-                run_states[node_id] = ("failed", f"실행 기록을 읽지 못했습니다: {error}")
+                run_states[node_id] = ("failed", _problem_text(error))
                 signature.append((node_id, str(error)))
         # Selecting a run can replace/remove outputs and invalidate downstream nodes.
         for node_id in self.boxes:
@@ -941,12 +977,20 @@ class ProjectWindow(QMainWindow):
             self._run_signature = signature
             self._selection_changed()
 
-    def _display_reason(self, reason: str) -> str:
-        for node_id, box in self.boxes.items():
-            reason = reason.replace(node_id, box.title)
-        for state in ("changed", "missing", "stale"):
-            reason = reason.replace(f": {state} —", f": {STATE_LABELS[state]} —")
-        return reason.replace(".files.input", " 입력 파일").replace(".files.output", " 출력 파일")
+    def _project_notes(self) -> list[str]:
+        notes = []
+        for issue in self.project.issues:
+            matched = False
+            for node in self.project.nodes.values():
+                for role, reference in node.files.items():
+                    if issue.startswith(f'{node.id}.files.{role}:'):
+                        label = self._summary_file_name(reference.path)[0]
+                        state = STATE_LABELS.get(self._file_status(reference), '상태 미확인')
+                        notes.append(f'{label}: {state}. 사용할 파일을 다시 확인하세요.')
+                        matched = True
+            if not matched:
+                notes.append(_problem_text(issue))
+        return list(dict.fromkeys(notes))
 
     def _scene_double_click(self, event) -> None:
         item = self.scene.itemAt(event.scenePos(), self.view.transform())
@@ -983,9 +1027,9 @@ class ProjectWindow(QMainWindow):
         if box.kind != "analysis" or launch.state == "failed":
             self._mark_dirty()
         if launch.state == "failed":
-            self._message(f"프로그램을 열지 못했습니다: {launch.error}")
+            self._error("프로그램을 열지 못했습니다", launch.error)
         else:
-            self._message(f"{box.title} 프로그램 열기 요청을 보냈습니다 (PID {launch.pid}).")
+            self._message(f"{box.title} 열기를 요청했습니다. 실제 파일 표시는 전용 프로그램에서 확인하세요.")
         self._reflect_programs()
         self._selection_changed()
 
