@@ -64,6 +64,32 @@ class Workbench:
     def connect_nodes(self, project: NativeProject, source_id: str, target_id: str, source_role="output"):
         return project.connect(source_id, target_id, source_role)
 
+    def disconnect_node_input(self, project: NativeProject, node_id: str) -> None:
+        project.disconnect_input(node_id)
+
+    def remove_program_node(self, project: NativeProject, node_id: str):
+        if node_id not in project.nodes:
+            raise ValueError("제거할 프로그램이 없습니다.")
+        if project.path is None:
+            return project.remove_node(node_id)
+        store = self._run_store(project)
+        # The controller holds this lease through result reading, in every window.
+        lease = store.lease()
+        try:
+            if any(run.state in {"queued", "preparing", "running"} or run.parse_state == "reading"
+                   for run in store.runs()):
+                raise ValueError("계산 또는 결과 판독을 끝낸 뒤 프로그램을 제거하세요.")
+            return project.remove_node(node_id)
+        finally:
+            lease.release()
+
+    def restore_program_node(self, project: NativeProject, node_id: str):
+        if node_id not in project.removed_nodes:
+            raise ValueError("복원할 프로그램이 없습니다.")
+        node = project.restore_node(node_id)
+        self.refresh_native_project(project)
+        return node
+
     def set_node_file_units(self, project: NativeProject, node_id: str,
                             units: dict[str, str], role="input") -> FileReference:
         return project.set_file_units(node_id, units, role)

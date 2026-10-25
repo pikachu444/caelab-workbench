@@ -72,6 +72,7 @@ class NativeProject:
     run_store: Path | None = None
     run_store_expected: bool = False
     issues: list[str] = field(default_factory=list, repr=False, compare=False)
+    removed_nodes: dict[str, ProgramNode] = field(default_factory=dict)
 
     def add_node(self, kind: str, program_id: str, position=(0.0, 0.0)) -> ProgramNode:
         node = ProgramNode(uuid.uuid4().hex, kind, program_id, position=tuple(position))
@@ -161,6 +162,34 @@ class NativeProject:
         reference.stale = was_stale
         return reference
 
+    def disconnect_input(self, node_id: str) -> None:
+        node = self.nodes[node_id]
+        if not any(edge.target_id == node_id for edge in self.connections):
+            return
+        self.invalidate(node_id, "입력 연결을 해제했습니다.", include_self=True)
+        self.connections = [edge for edge in self.connections if edge.target_id != node_id]
+        # An inactive local input must not silently replace the disconnected file.
+        node.files.pop("input", None)
+        self.refresh()
+
+    def remove_node(self, node_id: str) -> ProgramNode:
+        node = self.nodes[node_id]
+        self.disconnect_input(node_id)
+        targets = [edge.target_id for edge in self.connections if edge.source_id == node_id]
+        for target_id in targets:
+            self.disconnect_input(target_id)
+        self.removed_nodes[node_id] = self.nodes.pop(node_id)
+        self.refresh()
+        return node
+
+    def restore_node(self, node_id: str) -> ProgramNode:
+        if node_id in self.nodes:
+            raise ValueError("이미 프로젝트에 있는 프로그램입니다.")
+        node = self.removed_nodes.pop(node_id)
+        self.nodes[node_id] = node
+        self.refresh()
+        return node
+
     def refresh(self) -> list[str]:
         issues = []
         for node in self.nodes.values():
@@ -245,7 +274,10 @@ def load_native_project(path: str | Path) -> NativeProject:
         if type(data.get('run_store_expected', False)) is not bool:
             raise ValueError('run_store_expected: bool 값이 필요합니다.')
         project.run_store_expected = data.get('run_store_expected', False)
-        for key, raw in data["nodes"].items():
+        removed = data.get("removed_nodes", {})
+        if not isinstance(removed, dict) or set(removed) & set(data["nodes"]):
+            raise ValueError("제거한 프로그램 목록이 잘못되었습니다.")
+        for key, raw in {**data["nodes"], **removed}.items():
             if not isinstance(raw, dict) or not key.strip() or raw.get("id") != key:
                 raise ValueError(f"nodes.{key}: 비어 있거나 일치하지 않는 노드 ID입니다.")
             if any(not isinstance(raw.get(name), str) or not raw[name].strip() for name in ("kind", "program_id")):
@@ -273,7 +305,7 @@ def load_native_project(path: str | Path) -> NativeProject:
                 if not file_path.is_absolute():
                     file_path = path.parent / file_path
                 node.files[role] = FileReference(str(file_path.resolve()), revision, dict(ref.get("units", {})), ref.get("unit_source", ""), ref.get("stale", False))
-            project.nodes[key] = node
+            (project.removed_nodes if key in removed else project.nodes)[key] = node
         project.connections = [Connection(**edge) for edge in data["connections"]]
         _check_connections(project.nodes, project.connections)
         project.refresh()
@@ -288,7 +320,10 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
     destination = Path(path or project.path or PROJECT_FILENAME).expanduser().resolve()
     if destination.is_dir():
         destination /= PROJECT_FILENAME
-    if any(destination == Path(ref.path).resolve() for node in project.nodes.values() for ref in node.files.values()):
+    all_nodes = {**project.nodes, **project.removed_nodes}
+    if set(project.nodes) & set(project.removed_nodes):
+        raise ValueError("프로그램과 제거한 프로그램의 식별자가 중복됩니다.")
+    if any(destination == Path(ref.path).resolve() for node in all_nodes.values() for ref in node.files.values()):
         raise ValueError("프로젝트 저장 경로가 원본 파일과 같습니다.")
     _check_connections(project.nodes, project.connections)
     source_store = project.run_store or (project.path.with_suffix(".runs") if project.path else None)
@@ -305,10 +340,12 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
                           if target_store.is_relative_to(destination.parent) else str(target_store)),
             "run_store_expected": True,
             "nodes": {key: asdict(node) for key, node in project.nodes.items()},
+            "removed_nodes": {key: asdict(node) for key, node in project.removed_nodes.items()},
             "connections": [asdict(edge) for edge in project.connections]}
+    serialized_nodes = {**data["nodes"], **data["removed_nodes"]}
     rebased = []
     if saving_as and source_store:
-        for key, node in data["nodes"].items():
+        for key, node in serialized_nodes.items():
             for role, ref in node["files"].items():
                 try:
                     relative = Path(ref["path"]).relative_to(source_store)
@@ -316,7 +353,7 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
                     continue
                 ref["path"] = str(target_store / relative)
                 rebased.append((key, role, ref["path"]))
-    for node in data['nodes'].values():
+    for node in serialized_nodes.values():
         for reference in node['files'].values():
             absolute = Path(reference['path']).resolve()
             reference['path'] = (absolute.relative_to(destination.parent).as_posix()
@@ -357,5 +394,5 @@ def save_native_project(project: NativeProject, path: str | Path | None = None) 
     project.run_store = target_store
     project.run_store_expected = True
     for key, role, new_path in rebased:
-        project.nodes[key].files[role].path = new_path
+        all_nodes[key].files[role].path = new_path
     return destination

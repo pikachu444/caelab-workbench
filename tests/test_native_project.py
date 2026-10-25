@@ -293,3 +293,107 @@ def test_reopen_recomputes_opened_status_without_restoring_a_live_program(tmp_pa
     assert reopened_workbench.jobs.launches == {}
     assert loaded.nodes[first.id].state == current_state
     assert "과거 프로그램 열기" not in loaded.nodes[first.id].reason
+
+
+def test_disconnect_clears_hidden_input_and_invalidates_downstream_without_touching_files(tmp_path):
+    wb, project, first, second, result, source = graph(tmp_path)
+    old = source.with_suffix('.vtk')
+    old.write_bytes(b'previous output')
+    wb.set_node_file(project, second.id, source)
+    wb.set_node_file(project, second.id, old, 'output')
+    wb.connect_nodes(project, first.id, second.id, 'input')
+    wb.connect_nodes(project, second.id, result.id)
+    wb.disconnect_node_input(project, second.id)
+    assert wb.input_file(project, second.id) is None
+    assert second.state == 'needs_input'
+    assert second.files['output'].stale and result.state == 'stale'
+    assert source.read_bytes() == b'original native file'
+    assert old.read_bytes() == b'previous output'
+    path = wb.save_native_project(project, tmp_path / 'project.json')
+    loaded = wb.open_native_project(path)
+    assert loaded.input_file(second.id) is None
+    # Calling disconnect on a direct input is a no-op, not a file removal.
+    wb.disconnect_node_input(loaded, first.id)
+    assert loaded.input_file(first.id).path == str(source.resolve())
+
+
+def test_remove_restore_keeps_history_after_save_as_and_does_not_revive_hidden_input(tmp_path):
+    from test_project_resume import research
+    from caelab.native.run_store import RunStore
+    wb, project, analysis, run, discussion, document, _ = research(tmp_path)
+    geometry = wb.add_program_node(project, 'geometry', 'freecad')
+    upstream = tmp_path / 'replacement.inp'
+    upstream.write_bytes(b'new input')
+    wb.set_node_file(project, geometry.id, upstream, 'output')
+    wb.connect_nodes(project, geometry.id, analysis.id)
+    original_input = Path(run.input_path).read_bytes()
+    run_bytes = (run.workdir / 'job.json').read_bytes()
+    discussion_bytes = discussion.read_bytes()
+    old_root = project.run_store
+    output_relative = Path(analysis.files['output'].path).relative_to(old_root)
+    wb.remove_program_node(project, analysis.id)
+    assert analysis.id not in project.nodes
+    assert 'input' not in project.removed_nodes[analysis.id].files
+    copied = wb.save_native_project(project, tmp_path / 'copy' / 'project.json')
+    loaded = wb.open_native_project(copied)
+    assert loaded.removed_nodes[analysis.id].files['output'].path == str(loaded.run_store / output_relative)
+    restored = wb.restore_program_node(loaded, analysis.id)
+    assert restored.id == analysis.id and loaded.input_file(analysis.id) is None
+    assert not loaded.connections
+    assert wb.selected_native_run(loaded, analysis.id).id == run.id
+    assert RunStore(loaded.run_store).selected_id(analysis.id) == run.id
+    assert (loaded.run_store / discussion.relative_to(old_root)).read_bytes() == discussion_bytes
+    assert (run.workdir / 'job.json').read_bytes() == run_bytes
+    assert discussion.read_bytes() == discussion_bytes
+    assert Path(run.input_path).read_bytes() == original_input
+    assert upstream.read_bytes() == b'new input'
+
+
+def test_remove_source_clears_direct_targets_and_restore_preserves_direct_source(tmp_path):
+    wb, project, first, second, result, source = graph(tmp_path)
+    wb.set_node_file(project, second.id, source)
+    wb.connect_nodes(project, first.id, second.id, 'input')
+    wb.connect_nodes(project, second.id, result.id, 'input')
+    wb.remove_program_node(project, first.id)
+    assert project.input_file(second.id) is None
+    assert project.input_file(result.id) is None
+    assert second.state == result.state == 'needs_input'
+    restored = wb.restore_program_node(project, first.id)
+    assert restored.files['input'].path == str(source.resolve())
+    assert project.input_file(second.id) is None
+    assert source.read_bytes() == b'original native file'
+
+
+@pytest.mark.parametrize('busy', ['lease', 'running', 'reading'])
+def test_remove_rejects_active_work_without_mutation_and_releases_own_lock(tmp_path, busy):
+    from copy import deepcopy
+    from caelab.native.run_store import NativeRun, RunStore
+    wb, project, first, *_ = graph(tmp_path)
+    wb.save_native_project(project, tmp_path / 'project.json')
+    store = RunStore(project.run_store)
+    run = NativeRun('a' * 32, first.id, store.root / ('a' * 32),
+                    state='running' if busy == 'running' else 'completed',
+                    parse_state='reading' if busy == 'reading' else 'unparsed')
+    store.write(run)
+    lease = store.lease() if busy == 'lease' else None
+    before = deepcopy(project)
+    try:
+        with pytest.raises(ValueError):
+            wb.remove_program_node(project, first.id)
+        assert project == before
+    finally:
+        if lease is not None:
+            lease.release()
+    check = store.lease()
+    check.release()
+
+
+def test_removed_programs_are_validated_like_active_programs(tmp_path):
+    wb, project, first, *_ = graph(tmp_path)
+    wb.remove_program_node(project, first.id)
+    path = wb.save_native_project(project, tmp_path / 'project.json')
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['nodes'][first.id] = data['removed_nodes'][first.id]
+    path.write_text(json.dumps(data), encoding='utf-8')
+    with pytest.raises(ValueError, match='제거한 프로그램'):
+        wb.open_native_project(path)
