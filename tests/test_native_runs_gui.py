@@ -279,7 +279,8 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         window._selection_changed()
         assert box.status_label == "선택 자료 변경"
         text = (window.input_summary.text() + window.input_value.text()) + window.program_summary.text()
-        assert "연결 입력" in text and "준비됨" in text
+        assert window.input_summary.text() == "입력 파일"
+        assert "준비됨" not in text and "연결 입력" not in text
         assert "기존 표시·대화" not in text
         assert "오래됨" not in (window.input_summary.text() + window.input_value.text())
         # Selection never certifies an external display/discussion as completed.
@@ -290,19 +291,19 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         reference.stale = True
         window._reflect_node(consumer.id)
         window._selection_changed()
-        assert not box.status_label
-        assert "오래됨" in (window.input_summary.text() + window.input_value.text())
+        assert box.status_label == "이전 입력의 결과"
+        assert "이전 입력의 결과" in window.input_summary.text()
         reference.stale = False
         raw.write_text("externally changed output")
         window._reflect_node(consumer.id)
         window._selection_changed()
-        assert box.state == "changed" and not box.status_label
-        assert "원본 변경됨" in (window.input_summary.text() + window.input_value.text())
+        assert box.state == "changed" and box.status_label == "입력 파일 변경됨"
+        assert window.input_summary.text() == "입력 파일 변경됨"
         raw.unlink()
         window._reflect_node(consumer.id)
         window._selection_changed()
-        assert box.state == "missing" and not box.status_label
-        assert "파일 누락" in (window.input_summary.text() + window.input_value.text())
+        assert box.state == "missing" and box.status_label == "입력 파일 누락"
+        assert window.input_summary.text() == "입력 파일 누락"
     finally:
         window._dirty = False
         window.close()
@@ -338,7 +339,7 @@ def test_parent_keeps_input_process_and_readability_separate(app, tmp_path, monk
         box.setSelected(True)
         window._poll_runs()
         window._selection_changed()
-        assert "준비됨" in (window.input_summary.text() + window.input_value.text())
+        assert window.input_summary.text() == "입력 파일"
         assert window.input_units_button.isEnabled()
         assert process_label in window.output_summary.text()
         assert not window.run_summary.text()

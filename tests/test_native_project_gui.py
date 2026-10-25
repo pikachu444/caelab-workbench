@@ -118,7 +118,7 @@ def test_program_missing_and_input_ready_are_shown_separately(window, tmp_path, 
     window.register_file(box.node_id, _file(tmp_path, "document.FCStd"))
     assert box.state == "ready"
     assert "프로그램 연결 필요" in box.subtitle
-    assert "준비됨" in _input_text(window)
+    assert window.input_summary.text() == "입력 파일"
     assert "실행 파일을 찾지 못했거나" in window.program_summary.text()
     assert not window.open_button.isEnabled()
 
@@ -131,20 +131,22 @@ def test_parent_summary_keeps_sources_states_and_actions_without_raw_details(win
     (tmp_path / "B").mkdir()
     window.save_project(tmp_path / "project.json")
     cad = _file(tmp_path / "B", "작업 사본.FCStd")
+    original_cad = _file(tmp_path / "A", "원본.FCStd")
     deck = _file(tmp_path / "A", "FEMMeshGmsh.inp")
     new_deck = _file(tmp_path / "B", "FEMMeshGmsh.inp")
-    window.register_file(box.node_id, cad, units={"length": "mm"})
+    window.register_file(box.node_id, original_cad, units={"length": "mm"})
     window.register_file(box.node_id, deck, "output", {"force": "N"})
-    window.project.nodes[box.node_id].files["output"].stale = True
+    window.register_file(box.node_id, cad, units={"length": "mm"})
     _select(window, box)
     window._selection_changed()
     window.show()
     app.processEvents()
     assert "B/작업 사본.FCStd" in _input_text(window)
-    assert "준비됨" in _input_text(window)
+    assert window.input_summary.text() == "입력 파일"
     assert window.input_units_button.text() == "단위…"
     assert "A/FEMMeshGmsh.inp" in (window.output_summary.text() + window.output_value.text())
-    assert "오래됨" in (window.output_summary.text() + window.output_value.text())
+    assert window.output_summary.text() == "출력 파일 갱신 필요"
+    assert box.status_label == "출력 파일 갱신 필요"
     assert window.output_units_button.text() == "단위…"
     assert window.output_button.isVisible() and window.output_button.isEnabled()
     assert window.open_button.text() == "FreeCAD 열기"
@@ -157,10 +159,10 @@ def test_parent_summary_keeps_sources_states_and_actions_without_raw_details(win
     assert "A/FEMMeshGmsh.inp" not in (window.output_summary.text() + window.output_value.text())
     cad.write_text("changed CAD")
     window.refresh_files()
-    assert "원본 변경됨" in _input_text(window)
+    assert window.input_summary.text() == "입력 파일 변경됨"
     cad.unlink()
     window.refresh_files()
-    assert "파일 누락" in _input_text(window)
+    assert window.input_summary.text() == "입력 파일 누락"
     assert window.open_button.text() == "입력 파일 지정…"
 
 
@@ -193,12 +195,17 @@ def test_parent_task_history_is_collapsed_without_hiding_current_failure(window,
     assert window.history_dock.height() <= 100
 
 
-def test_parent_zoom_controls_change_schematic_scale(window):
+def test_parent_zoom_controls_change_schematic_scale(window, app):
+    window.show()
+    app.processEvents()
+    assert window.zoom_percent.text() == '100%'
     initial = window.view.transform().m11()
     window.zoom_in_action.trigger()
     assert window.view.transform().m11() > initial
+    assert window.zoom_percent.text() == '120%'
     window.zoom_out_action.trigger()
     assert window.view.transform().m11() == pytest.approx(initial)
+    assert window.zoom_percent.text() == '100%'
     window.zoom_in_action.trigger()
     window.reset_view()
     assert window.view.transform().m11() == 1
@@ -245,7 +252,7 @@ def test_fcstd_to_authored_inp_to_calculix_survives_save_and_save_as(window, tmp
     text = _input_text(window)
     assert "사용자 선언" not in text and "길이: mm" not in text
     assert window.input_units_button.isEnabled()
-    assert "연결 입력" in text and deck.name in text
+    assert window.input_summary.text() == "입력 파일" and deck.name in text
     assert analysis.node_id not in text and reference.revision not in text
     assert cad.read_text(encoding="utf-8") == "external native document"
 
@@ -264,7 +271,7 @@ def test_changed_or_missing_file_marks_downstream_stale(window, tmp_path):
     assert window.boxes[analysis.node_id].state == "stale"
     assert window.project.nodes[geometry.node_id].files["input"].revision == revision
     _select(window, window.boxes[analysis.node_id])
-    assert "오래됨" in _input_text(window)
+    assert window.input_summary.text() == "입력 파일 갱신 필요"
     cad.unlink()
     window.refresh_files()
     assert window.boxes[geometry.node_id].state == "missing"
@@ -710,6 +717,7 @@ def test_connected_file_commands_follow_final_owner_and_units_preserve_edges(win
     deck.write_text('external change not adopted')
     _select(window, last)
     assert window.owner_button.isHidden() is False
+    assert window.owner_button.text() == 'FreeCAD 출력으로 이동'
     assert window.input_button.text() == '직접 파일로…'
     window.select_input_owner()
     assert window.boxes[first.node_id].isSelected()
@@ -829,3 +837,153 @@ def test_recorded_calculation_output_is_not_a_manual_output_setting(window, tmp_
     assert not window.choose_file('output')
     assert window.open_button.text() == '해석창 열기'
     assert window.project.nodes[box.node_id].files['output'].path == str(output)
+
+
+
+def test_canvas_controls_stay_fixed_and_show_real_scale_for_all_commands(window, app):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeySequence, QTransform
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QToolBar
+    for kind in ('geometry', 'analysis', 'results', 'expert'):
+        window.add_box(kind)
+    window.resize(960, 680)
+    window.show()
+    window.activateWindow()
+    app.processEvents()
+    panel = window.view.controls
+    assert panel.parentWidget() is window.view.viewport()
+    assert not hasattr(panel, 'scene')
+    bounds = window.scene.itemsBoundingRect()
+    panel_size = panel.size()
+    assert [a.text() for a in window.view_menu.actions() if a in (
+        window.zoom_in_action, window.zoom_out_action, window.fit_action, window.reset_view_action
+    )] == ['확대', '축소', '화면에 맞추기', '100%로 보기']
+    toolbar = next(bar for bar in window.findChildren(QToolBar) if bar.windowTitle() == '프로젝트')
+    for action in (window.zoom_in_action, window.zoom_out_action, window.fit_action, window.reset_view_action):
+        assert action not in toolbar.actions()
+    for action in toolbar.actions():
+        widget = toolbar.widgetForAction(action)
+        if widget:
+            assert widget.isVisible() and toolbar.rect().contains(widget.geometry())
+    assert window.zoom_in_action.shortcut() == QKeySequence.ZoomIn
+    QTest.keySequence(window.view, QKeySequence.ZoomIn)
+    app.processEvents()
+    assert window.zoom_percent.text() == '120%'
+    QTest.mouseClick(window.zoom_in_button, Qt.LeftButton)
+    assert window.zoom_percent.text() == '144%'
+    assert '144%' in window.zoom_percent.accessibleName()
+    bar = window.view.horizontalScrollBar()
+    bar.setFocus()
+    QTest.keyClick(bar, Qt.Key_Home)
+    assert bar.value() == bar.minimum()
+    assert window.zoom_percent.text() == '144%'
+    QTest.mouseClick(window.zoom_out_button, Qt.LeftButton)
+    assert window.zoom_percent.text() == '120%'
+    window.view.setTransform(QTransform.fromScale(.735, .735))
+    assert window.zoom_percent.text() == '73.5%'
+    QTest.mouseClick(window.fit_button, Qt.LeftButton)
+    assert float(window.zoom_percent.text()[:-1]) == pytest.approx(window.view.transform().m11()*100, abs=.051)
+    assert window.view.transform().m11() < 1
+    assert window.scene.itemsBoundingRect() == bounds
+    assert panel.size() == panel_size and window.view.viewport().rect().contains(panel.geometry())
+    QTest.mouseClick(window.zoom_percent, Qt.LeftButton)
+    assert window.zoom_percent.text() == '100%' and window.view.transform().m11() == 1
+    window.zoom_in_action.trigger()
+    window.reset_view_action.trigger()
+    assert window.zoom_percent.text() == '100%'
+
+
+def test_selection_docks_and_reshow_keep_current_scale_and_view_position(window, app):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtTest import QTest
+    for kind in ('geometry', 'analysis', 'results'):
+        window.add_box(kind)
+    window.scene.setSceneRect(-2000, -2000, 4000, 4000)
+    window.resize(960, 680)
+    window.show()
+    app.processEvents()
+    window.view.scale(2, 2)
+    window.view.centerOn(QPointF(240, 170))
+    before = window.view.mapToScene(window.view.viewport().rect().center())
+    for box in window.boxes.values():
+        _select(window, box)
+        assert window.zoom_percent.text() == '200%'
+    for dock in (window.toolbox_dock, window.settings_dock):
+        dock.close()
+    app.processEvents()
+    for dock in (window.toolbox_dock, window.settings_dock):
+        dock.toggleViewAction().trigger()
+    app.processEvents()
+    window.hide()
+    window.show()
+    app.processEvents()
+    after = window.view.mapToScene(window.view.viewport().rect().center())
+    assert window.zoom_percent.text() == '200%' and window.view.transform().m11() == 2
+    assert abs(after.x()-before.x()) < 1 and abs(after.y()-before.y()) < 1
+    window.zoom_percent.click()
+    restored = window.view.mapToScene(window.view.viewport().rect().center())
+    assert abs(restored.x()-after.x()) < 1 and abs(restored.y()-after.y()) < 1
+    assert window.zoom_percent.text() == '100%'
+    for _ in range(3):
+        window.zoom_percent.click()
+        assert window.view.mapToScene(window.view.viewport().rect().center()) == restored
+    # A newly initialized project starts at 100%; re-showing one does not reset it.
+    window._dirty = False
+    assert window.new_project()
+    assert window.zoom_percent.text() == '100%'
+
+
+def test_input_owner_move_identifies_final_input_without_breaking_chain(window, tmp_path):
+    first, other, last = [window.add_box(kind) for kind in ('geometry', 'geometry', 'analysis')]
+    for name, box in (('A', first), ('B', other)):
+        folder = tmp_path/name
+        folder.mkdir()
+        window.register_file(box.node_id, _file(folder, 'model.FCStd'))
+    window.connect(first.node_id, other.node_id, 'input')
+    window.connect(other.node_id, last.node_id, 'input')
+    edges = list(window.project.connections)
+    _select(window, last)
+    assert window.owner_button.text() == 'FreeCAD 입력으로 이동'
+    window.owner_button.click()
+    assert first.isSelected() and not other.isSelected()
+    assert 'A/model.FCStd' in window.input_value.text().replace('\\', '/')
+    assert window.project.connections == edges
+
+
+def test_generic_stale_file_does_not_invent_a_model_change_or_calculated_result(window, tmp_path):
+    box = window.add_box('analysis')
+    window.save_project(tmp_path/'project.json')
+    folder = window.project.run_store/'manual'
+    folder.mkdir()
+    deck = _file(folder, 'model.inp')
+    window.register_file(box.node_id, deck)
+    reference = window.project.nodes[box.node_id].files['input']
+    reference.stale = True
+    window._reflect_node(box.node_id)
+    window._selection_changed()
+    assert window.input_summary.text() == '입력 파일 갱신 필요'
+    assert box.status_label == '입력 파일 갱신 필요'
+    assert '이전 입력의 결과' not in _input_text(window)
+    for text in (window.input_summary.text(), box.status_label):
+        assert not any(word in text for word in ('오래됨', '형상 변경', '상위 작업 변경', 'B 미반영'))
+
+
+@pytest.mark.parametrize('state', ['running', 'failed'])
+def test_file_warnings_do_not_replace_execution_or_failure_status(window, tmp_path, state):
+    from apps.workbench_qt.project_window import STATE_LABELS
+    box = window.add_box('geometry')
+    window.register_file(box.node_id, _file(tmp_path, 'source.FCStd'))
+    window.register_file(box.node_id, _file(tmp_path, 'output.inp'), 'output')
+    node = window.project.nodes[box.node_id]
+    node.state, node.reason = state, '[Errno 13] Permission denied: private source'
+    node.files['input'].stale = True
+    window._reflect_node(node.id)
+    window._selection_changed()
+    assert box.state == state
+    assert (box.status_label or STATE_LABELS[box.state]) == {'running': '실행 중', 'failed': '실패'}[state]
+    assert window.input_summary.text() == '입력 파일 갱신 필요'
+    # A ready output likewise must not clear another important node state.
+    node.files['input'].stale = False
+    window._reflect_node(node.id)
+    assert box.state == state and not box.status_label

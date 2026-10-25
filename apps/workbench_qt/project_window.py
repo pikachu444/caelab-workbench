@@ -17,8 +17,8 @@ import math
 import errno
 import re
 
-from PySide6.QtCore import QPointF, Qt, QTimer
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence, QPainterPath, QPen, QPolygonF
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QDockWidget,
     QComboBox,
@@ -78,18 +78,62 @@ STATE_COLORS = {
 STATE_LABELS = {
     "unavailable": "연결 미구현",
     "needs_input": "입력 필요",
-    "ready": "준비됨",
+    "ready": "",
     "running": "실행 중",
     "done": "최신",
     "failed": "실패",
     "changed": "원본 변경됨",
     "missing": "파일 누락",
-    "stale": "오래됨",
+    "stale": "파일 갱신 필요",
     "opened": "열기 요청 전달",
     "queued": "대기", "preparing": "입력 보존 중", "completed": "프로세스 종료",
     "cancelled": "취소됨", "interrupted": "중단됨",
 }
 BOX_W, BOX_H = 210, 98
+
+
+class SchematicView(QGraphicsView):
+    """Notify the fixed view controls whenever the scene transform changes."""
+
+    scaleChanged = Signal()
+
+    def scale(self, sx, sy):
+        super().scale(sx, sy)
+        self.scaleChanged.emit()
+
+    def resetTransform(self):
+        super().resetTransform()
+        self.scaleChanged.emit()
+
+    def setTransform(self, matrix, combine=False):
+        super().setTransform(matrix, combine)
+        self.scaleChanged.emit()
+
+    def fitInView(self, *args):
+        super().fitInView(*args)
+        self.scaleChanged.emit()
+
+    def place_controls(self):
+        if hasattr(self, 'controls'):
+            self.controls.adjustSize()
+            self.controls.move(max(0, self.viewport().width() - self.controls.width() - 8),
+                               max(0, self.viewport().height() - self.controls.height() - 8))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.place_controls()
+
+
+def _fit_icon():
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setPen(QPen(QColor('#33414f'), 1.6))
+    for x, y, dx, dy in ((3, 3, 1, 1), (17, 3, -1, 1), (3, 17, 1, -1), (17, 17, -1, -1)):
+        painter.drawLine(x, y, x + 5 * dx, y)
+        painter.drawLine(x, y, x, y + 5 * dy)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _selection_changed_input(node, reference) -> bool:
@@ -323,7 +367,7 @@ def _problem_message(text: str) -> str | None:
         '현재 선택 입력이 이 실행의 입력과 다릅니다.': '선택한 계산은 현재 입력과 다른 입력으로 실행되었습니다. 해석창에서 사용할 계산을 확인하세요.',
         '입력 단위 선언/출처가 변경되었습니다.': '입력의 단위 선언이 계산 당시와 다릅니다. 해석창에서 단위와 사용할 계산을 확인하세요.',
         '실행 원본 또는 INCLUDE 파일이 변경/누락되었습니다.': '계산에 사용한 입력이나 포함 파일이 바뀌었거나 없습니다. 해석창에서 입력 파일을 확인하세요.',
-        '상위 변경으로 현재 입력 덱이 오래되었습니다.': '상위 입력이 바뀌어 이전 출력이 오래되었습니다. 새로 작성한 출력을 등록하세요.',
+        '상위 변경으로 현재 입력 덱이 오래되었습니다.': '입력 파일 갱신이 필요합니다. 사용할 출력을 확인하고 다시 지정하세요.',
         '선택 실행에 사용할 수 있는 최신 결과가 없습니다.': '선택한 계산에 사용할 수 있는 결과가 없습니다. 해석창에서 종료 상태와 결과 읽기 상태를 확인하세요.',
         '선택하거나 연결한 입력 파일이 없습니다. 파일 경로를 확인하세요.': missing,
         '연결된 입력 파일이 없습니다.': missing,
@@ -434,16 +478,6 @@ class ProjectWindow(QMainWindow):
         refresh = toolbar.addAction("파일 상태 새로고침")
         refresh.setShortcut(QKeySequence.Refresh)
         refresh.triggered.connect(self.refresh_files)
-        fit = toolbar.addAction("도식 맞춤")
-        fit.triggered.connect(self.fit_schematic)
-        self.zoom_in_action = toolbar.addAction("도식 확대")
-        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
-        self.zoom_in_action.triggered.connect(lambda: self.view.scale(1.2, 1.2))
-        self.zoom_out_action = toolbar.addAction("도식 축소")
-        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
-        self.zoom_out_action.triggered.connect(lambda: self.view.scale(1 / 1.2, 1 / 1.2))
-        original = toolbar.addAction("도식 100%")
-        original.triggered.connect(self.reset_view)
         self.analysis_action = toolbar.addAction("해석창 열기")
         self.analysis_action.triggered.connect(self.run_chain)
 
@@ -462,10 +496,55 @@ class ProjectWindow(QMainWindow):
         toolbar.addAction(tools.toggleViewAction())
 
         self.scene = QGraphicsScene(self)
-        self.view = QGraphicsView(self.scene)
+        self.view = SchematicView(self.scene)
+        self.view.setResizeAnchor(QGraphicsView.NoAnchor)
         self.view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.view.setBackgroundBrush(QBrush(QColor("#eef1f5")))
         self.setCentralWidget(self.view)
+        self.zoom_in_action = view_menu.addAction('확대')
+        self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
+        self.zoom_in_action.triggered.connect(lambda: self.view.scale(1.2, 1.2))
+        self.zoom_out_action = view_menu.addAction('축소')
+        self.zoom_out_action.setShortcut(QKeySequence.ZoomOut)
+        self.zoom_out_action.triggered.connect(lambda: self.view.scale(1 / 1.2, 1 / 1.2))
+        self.fit_action = view_menu.addAction('화면에 맞추기')
+        self.fit_action.triggered.connect(self.fit_schematic)
+        self.reset_view_action = view_menu.addAction('100%로 보기')
+        self.reset_view_action.triggered.connect(self.reset_view)
+        view_menu.addSeparator()
+        controls = self.view.controls = QWidget(self.view.viewport())
+        controls.setObjectName('canvasControls')
+        controls.setStyleSheet('''
+            QWidget#canvasControls { background: #f8fafc; border: 1px solid #bdc7d1; border-radius: 4px; }
+            QToolButton { min-width: 24px; min-height: 24px; padding: 2px 4px; }
+        ''')
+        control_row = QHBoxLayout(controls)
+        control_row.setContentsMargins(3, 3, 3, 3)
+        control_row.setSpacing(2)
+        self.zoom_out_button = QToolButton()
+        self.zoom_out_button.setDefaultAction(self.zoom_out_action)
+        self.zoom_out_button.setText('−')
+        self.zoom_percent = QToolButton()
+        self.zoom_percent.setFixedWidth(60)
+        self.zoom_percent.setToolTip('100%로 보기')
+        self.zoom_percent.setAccessibleName('현재 배율, 누르면 100%로 보기')
+        self.zoom_percent.clicked.connect(self.reset_view)
+        self.zoom_in_button = QToolButton()
+        self.zoom_in_button.setDefaultAction(self.zoom_in_action)
+        self.zoom_in_button.setText('+')
+        self.fit_button = QToolButton()
+        self.fit_button.setDefaultAction(self.fit_action)
+        self.fit_button.setIcon(_fit_icon())
+        self.fit_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        for button, label in ((self.zoom_out_button, '축소'), (self.zoom_in_button, '확대'),
+                              (self.fit_button, '화면에 맞추기')):
+            button.setToolTip(label)
+            button.setAccessibleName(label)
+        for button in (self.zoom_out_button, self.zoom_percent, self.zoom_in_button, self.fit_button):
+            button.setFocusPolicy(Qt.StrongFocus)
+            control_row.addWidget(button)
+        self.view.scaleChanged.connect(self._update_zoom_display)
+        self._update_zoom_display()
         self.scene.mouseDoubleClickEvent = self._scene_double_click
         self.scene.selectionChanged.connect(self._selection_changed)
         self.empty_hint = self.scene.addText(
@@ -507,7 +586,7 @@ class ProjectWindow(QMainWindow):
         self.input_button.clicked.connect(lambda: self.choose_file('input'))
         self.input_units_button = QPushButton('단위…')
         self.input_units_button.clicked.connect(lambda: self.edit_units('input'))
-        self.owner_button = QPushButton('상위 파일 지정…')
+        self.owner_button = QPushButton()
         self.owner_button.clicked.connect(self.select_input_owner)
         self.output_summary = QLabel()
         self.output_value = QLineEdit()
@@ -743,6 +822,7 @@ class ProjectWindow(QMainWindow):
         self._message("프로그램을 추가하고 입력 파일을 지정하세요." if not self.boxes
                       else "프로젝트를 열었습니다.")
         self.reset_view()
+        self.view.centerOn(self.scene.itemsBoundingRect().center())
 
     def _add_node_box(self, node) -> SystemBox:
         title, sub = next(((title, sub) for kind, title, sub in SYSTEM_KINDS if kind == node.kind),
@@ -788,6 +868,12 @@ class ProjectWindow(QMainWindow):
         reference = self.workbench.input_file(self.project, box.node_id)
         return f'{box.title} · {self._summary_file_name(reference.path)[0]}' if reference else box.title
 
+    def _calculation_result(self, node_id, role, reference):
+        owner_id, owner_role = self._file_owner(node_id, role)
+        return bool(reference and owner_role == 'output'
+                    and self.project.nodes[owner_id].kind == 'analysis'
+                    and self._is_run_file(reference.path))
+
     def _selection_changed(self) -> None:
         selected = self._selected_boxes()
         self.analysis_action.setEnabled(len(selected) == 1 and selected[0].kind == 'analysis')
@@ -819,15 +905,24 @@ class ProjectWindow(QMainWindow):
         self.input_button.setText('지정…' if direct else '직접 파일로…')
         self.input_button.setVisible(editable)
         self.owner_button.setVisible(not direct and editable)
+        if not direct:
+            owner_id, owner_role = self._file_owner(node.id)
+            owner = self.boxes[owner_id]
+            role_name = '입력' if owner_role == 'input' else '출력'
+            self.owner_button.setText(f'{owner.title} {role_name}으로 이동')
         for summary, value, button, unit_button, role, ref in (
                 (self.input_summary, self.input_value, self.input_button, self.input_units_button, 'input', reference),
                 (self.output_summary, self.output_value, self.output_button, self.output_units_button, 'output', node.files.get('output'))):
-            title = '입력' if role == 'input' and direct else '연결 입력' if role == 'input' else '작성한 출력'
+            title = '입력 파일' if role == 'input' else '출력 파일'
             saved_result = bool(role == 'output' and node.kind == 'analysis' and ref and self._is_run_file(ref.path))
             if saved_result:
                 title = '선택 계산 결과'
             status = self._file_status(ref) if ref else 'needs_input'
-            summary.setText(f'{title} — {STATE_LABELS.get(status, "미확인")}')
+            if status == 'stale':
+                note = '이전 입력의 결과' if self._calculation_result(node.id, role, ref) else '갱신 필요'
+            else:
+                note = {'ready': '', 'needs_input': '미지정', 'changed': '변경됨', 'missing': '누락'}.get(status, '상태 미확인')
+            summary.setText(f'{title} {note}'.rstrip())
             value.setText(self._summary_file_name(ref.path)[0] if ref else '')
             value.setPlaceholderText('파일 지정 안 됨')
             value.setToolTip(self._file_tooltip(ref.path) if ref else '')
@@ -1039,7 +1134,7 @@ class ProjectWindow(QMainWindow):
             self._mark_dirty()
         self._reflect_programs()
         self._selection_changed()
-        self._message("파일 상태를 다시 확인했습니다. 변경된 원본과 오래된 연결을 확인하세요." +
+        self._message("파일 상태를 확인했습니다." +
                       ('\n' + '\n'.join(self._project_notes()) if issues else ''))
 
     def _reflect_programs(self) -> None:
@@ -1058,6 +1153,14 @@ class ProjectWindow(QMainWindow):
         box.title = {"geometry": "FreeCAD", "mesh": "Gmsh", "analysis": "CalculiX", "results": "ParaView", "expert": "전문가 논의"}.get(node.kind, title)
         box.file_label = self._summary_file_name(reference.path)[0] if reference else "선택 파일 없음"
         box.set_state(node.state, self._node_note(node, reference))
+        execution_state = node.state in {'queued', 'preparing', 'running', 'failed', 'cancelled', 'interrupted'}
+        if reference and not execution_state:
+            status = self._file_status(reference)
+            if status in {'stale', 'changed', 'missing'}:
+                box.status_label = {'stale': '입력 파일 갱신 필요', 'changed': '입력 파일 변경됨',
+                                    'missing': '입력 파일 누락'}[status]
+                if status == 'stale' and self._calculation_result(node_id, 'input', reference):
+                    box.status_label = '이전 입력의 결과'
         if _selection_changed_input(node, reference):
             # The connected file changed; this does not establish that a viewer
             # displayed it or that a discussion adopted it. Keep the stored state.
@@ -1066,10 +1169,15 @@ class ProjectWindow(QMainWindow):
                 box.status_label = "선택 자료 변경"
             else:
                 box.set_state(status, self._node_note(node, reference))
-        if reference and self._file_status(reference) == 'ready' and node.kind in {'geometry', 'mesh'}:
+                box.status_label = {'stale': '입력 파일 갱신 필요', 'changed': '입력 파일 변경됨',
+                                    'missing': '입력 파일 누락'}.get(status, '')
+                if status == 'stale' and self._calculation_result(node_id, 'input', reference):
+                    box.status_label = '이전 입력의 결과'
+        if not execution_state and reference and self._file_status(reference) == 'ready' and node.kind in {'geometry', 'mesh'}:
             output = node.files.get('output')
-            if output and self._file_status(output) in {'stale', 'changed', 'missing'}:
-                box.status_label = '작성 출력 갱신 필요'
+            if output:
+                box.status_label = {'stale': '출력 파일 갱신 필요', 'changed': '출력 파일 변경됨',
+                                    'missing': '출력 파일 누락'}.get(self._file_status(output), '')
         file_label = self._file_tooltip(reference.path) if reference else "입력 파일 없음"
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{file_label}\n{self._node_note(node, reference)}")
 
@@ -1197,9 +1305,13 @@ class ProjectWindow(QMainWindow):
                 self.view.resetTransform()
 
     def reset_view(self) -> None:
+        viewport = self.view.viewport()
+        center = self.view.viewportTransform().inverted()[0].map(QPointF(viewport.width() / 2, viewport.height() / 2))
         self.view.resetTransform()
-        self.view.centerOn(self.scene.itemsBoundingRect().center())
+        self.view.centerOn(center)
 
-    def showEvent(self, event) -> None:  # noqa: N802
-        super().showEvent(event)
-        self.reset_view()
+    def _update_zoom_display(self) -> None:
+        percent = f'{self.view.transform().m11() * 100:.1f}'.rstrip('0').rstrip('.')
+        self.zoom_percent.setText(percent + '%')
+        self.zoom_percent.setAccessibleName(f'현재 배율 {percent}%, 100%로 보기')
+        self.view.place_controls()
