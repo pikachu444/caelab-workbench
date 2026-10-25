@@ -64,8 +64,8 @@ def test_analysis_opens_independent_process_with_project_and_node(app, monkeypat
     assert window.register_file(box.node_id, deck)
     project_path = tmp_path / "연구 프로젝트.json"
     assert window.save_project(project_path)
-    assert window.analysis_action.isEnabled()
-    window.analysis_action.trigger()
+    assert window.open_button.text() == '해석창 열기'
+    window.open_button.click()
     assert len(calls) == 1
     command, kwargs = calls[0]
     assert command[:3] == [sys.executable, "-m", "apps.workbench_qt.native_analysis"]
@@ -77,19 +77,20 @@ def test_analysis_opens_independent_process_with_project_and_node(app, monkeypat
     window.close()
 
 
-def test_analysis_toolbar_action_matches_selected_object(app):
+def test_context_open_command_matches_selected_object_without_duplicate_analysis_toolbar(app):
     window = ProjectWindow()
     try:
         geometry = window.add_box('geometry')
-        assert geometry.isSelected() and not window.analysis_action.isEnabled()
+        assert geometry.isSelected() and window.open_button.text() == '입력 파일 지정…'
         analysis = window.add_box('analysis')
-        assert analysis.isSelected() and window.analysis_action.isEnabled()
+        assert analysis.isSelected() and window.open_button.text() == '해석창 열기'
         expert = window.add_box('expert')
-        assert expert.isSelected() and not window.analysis_action.isEnabled()
+        assert expert.isSelected() and window.open_button.text() == '전문가 대화 열기'
         analysis.setSelected(True)
-        assert not window.analysis_action.isEnabled()
+        assert window.open_button.isHidden()
         window.scene.clearSelection()
-        assert not window.analysis_action.isEnabled()
+        assert window.open_button.isHidden()
+        assert not hasattr(window, 'analysis_action')
     finally:
         window._dirty = False
         window.close()
