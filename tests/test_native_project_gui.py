@@ -46,12 +46,16 @@ def _select(window, box):
     box.setSelected(True)
 
 
+def _input_text(window):
+    return window.input_summary.text() + "\n" + window.input_value.text()
+
+
 def _parent_text(window):
     """Include secondary UI surfaces, not only the visible summary."""
     texts = [window.windowTitle(), window.statusBar().currentMessage()]
     for widget in window.findChildren(QWidget):
         texts.extend((widget.toolTip(), widget.statusTip(), widget.whatsThis()))
-        if isinstance(widget, QLabel):
+        if isinstance(widget, (QLabel, QLineEdit)):
             texts.append(widget.text())
         elif isinstance(widget, QTextEdit):
             texts.append(widget.toPlainText())
@@ -79,8 +83,8 @@ def test_multiple_same_kind_keep_distinct_files(window, tmp_path):
     assert window.project.nodes[first.node_id].files["input"].path == str(a)
     assert window.project.nodes[second.node_id].files["input"].path == str(b)
     _select(window, first)
-    assert a.name in window.input_summary.text()
-    assert b.name not in window.input_summary.text()
+    assert a.name in _input_text(window)
+    assert b.name not in _input_text(window)
 
 
 def test_selected_boxes_connect_the_file_shown_in_the_dialog(window, tmp_path, monkeypatch):
@@ -113,14 +117,15 @@ def test_program_missing_and_input_ready_are_shown_separately(window, tmp_path, 
     box = window.add_box("geometry")
     window.register_file(box.node_id, _file(tmp_path, "document.FCStd"))
     assert box.state == "ready"
-    assert "연결 확인 필요" in box.subtitle
-    assert "준비됨" in window.input_summary.text()
+    assert "프로그램 연결 필요" in box.subtitle
+    assert "준비됨" in _input_text(window)
     assert "실행 파일을 찾지 못했거나" in window.program_summary.text()
-    assert "연결 설정" in window.next_action.text()
     assert not window.open_button.isEnabled()
 
 
-def test_parent_summary_keeps_sources_states_and_actions_without_raw_details(window, tmp_path, app):
+def test_parent_summary_keeps_sources_states_and_actions_without_raw_details(window, tmp_path, app, monkeypatch):
+    monkeypatch.setattr(window.workbench, 'programs', lambda: [SimpleNamespace(
+        spec=SimpleNamespace(id='freecad', name='FreeCAD'), available=True)])
     box = window.add_box("geometry")
     (tmp_path / "A").mkdir()
     (tmp_path / "B").mkdir()
@@ -135,29 +140,28 @@ def test_parent_summary_keeps_sources_states_and_actions_without_raw_details(win
     window._selection_changed()
     window.show()
     app.processEvents()
-    assert "B/작업 사본.FCStd" in window.input_summary.text()
-    assert "준비됨" in window.input_summary.text()
-    assert "길이: mm" in window.input_summary.text()
-    assert "A/FEMMeshGmsh.inp" in window.output_summary.text()
-    assert "오래됨" in window.output_summary.text()
-    assert "힘: N" in window.output_summary.text()
-    assert "출력 파일" in window.next_action.text()
-    assert "이미 작성" in window.next_action.text()
+    assert "B/작업 사본.FCStd" in _input_text(window)
+    assert "준비됨" in _input_text(window)
+    assert window.input_units_button.text() == "단위…"
+    assert "A/FEMMeshGmsh.inp" in (window.output_summary.text() + window.output_value.text())
+    assert "오래됨" in (window.output_summary.text() + window.output_value.text())
+    assert window.output_units_button.text() == "단위…"
+    assert window.output_button.isVisible() and window.output_button.isEnabled()
     assert window.open_button.text() == "FreeCAD 열기"
-    assert "입력 상태: 준비됨" not in window.program_summary.text()
-    assert str(tmp_path) not in window.input_summary.text() + window.output_summary.text()
+    assert not window.program_summary.text()
+    assert str(tmp_path) not in _input_text(window) + (window.output_summary.text() + window.output_value.text())
     assert not any(hasattr(window, name) for name in ("properties", "details_dialog", "details_toggle"))
     assert window.input_button.isEnabled() and window.output_button.isEnabled()
     window.register_file(box.node_id, new_deck, "output", {"force": "N"})
-    assert "B/FEMMeshGmsh.inp" in window.output_summary.text()
-    assert "A/FEMMeshGmsh.inp" not in window.output_summary.text()
+    assert "B/FEMMeshGmsh.inp" in (window.output_summary.text() + window.output_value.text())
+    assert "A/FEMMeshGmsh.inp" not in (window.output_summary.text() + window.output_value.text())
     cad.write_text("changed CAD")
     window.refresh_files()
-    assert "원본 변경됨" in window.input_summary.text()
+    assert "원본 변경됨" in _input_text(window)
     cad.unlink()
     window.refresh_files()
-    assert "파일 누락" in window.input_summary.text()
-    assert "누락" in window.next_action.text()
+    assert "파일 누락" in _input_text(window)
+    assert window.open_button.text() == "입력 파일 지정…"
 
 
 def test_parent_task_history_is_collapsed_without_hiding_current_failure(window, app, tmp_path, monkeypatch):
@@ -238,8 +242,9 @@ def test_fcstd_to_authored_inp_to_calculix_survives_save_and_save_as(window, tmp
     assert window.open_project(destination / "다른 이름.json")
     assert window.workbench.input_file(window.project, analysis.node_id).path == str(deck)
     _select(window, window.boxes[analysis.node_id])
-    text = window.input_summary.text()
-    assert "사용자 선언" in text and "길이: mm" in text and "힘: N" in text
+    text = _input_text(window)
+    assert "사용자 선언" not in text and "길이: mm" not in text
+    assert window.input_units_button.isEnabled()
     assert "연결 입력" in text and deck.name in text
     assert analysis.node_id not in text and reference.revision not in text
     assert cad.read_text(encoding="utf-8") == "external native document"
@@ -259,7 +264,7 @@ def test_changed_or_missing_file_marks_downstream_stale(window, tmp_path):
     assert window.boxes[analysis.node_id].state == "stale"
     assert window.project.nodes[geometry.node_id].files["input"].revision == revision
     _select(window, window.boxes[analysis.node_id])
-    assert "오래됨" in window.input_summary.text()
+    assert "오래됨" in _input_text(window)
     cad.unlink()
     window.refresh_files()
     assert window.boxes[geometry.node_id].state == "missing"
@@ -323,10 +328,9 @@ def test_file_units_are_entered_in_named_fields_and_empty_fields_stay_unknown(wi
     assert window.choose_file()
     reference = window.workbench.input_file(window.project, box.node_id)
     assert reference.units == {"length": "mm", "force": "N"}
-    assert "길이: mm" in window.input_summary.text()
-    assert "사용자 선언" in window.input_summary.text()
-    assert "힘: N" in window.input_summary.text()
-    assert "응력:" not in window.input_summary.text()
+    assert window.input_units_button.text() == "단위…"
+    assert "사용자 선언" not in _input_text(window)
+    assert window.input_units_button.isEnabled()
 
 
 def test_default_view_keeps_original_scale_in_a_small_window(window, app):
@@ -415,12 +419,12 @@ def test_deselection_clears_file_tooltips(window, tmp_path):
     first, second = window.add_box("geometry"), window.add_box("geometry")
     window.register_file(first.node_id, _file(tmp_path, "first.FCStd"))
     _select(window, first)
-    assert "first.FCStd" in window.input_summary.toolTip()
+    assert "first.FCStd" in window.input_value.toolTip()
     _select(window, second)
-    assert "선택 파일 없음" in window.input_summary.text()
-    assert not window.input_summary.toolTip()
+    assert not window.input_value.text()
+    assert not window.input_value.toolTip()
     window.scene.clearSelection()
-    assert not window.input_summary.toolTip() and not window.output_summary.toolTip()
+    assert not window.input_value.toolTip() and not window.output_value.toolTip()
 
 
 def test_external_sources_remain_distinct_in_summary_tooltip_and_connection(window, tmp_path, monkeypatch):
@@ -439,8 +443,8 @@ def test_external_sources_remain_distinct_in_summary_tooltip_and_connection(wind
         boxes.append(box)
     for box, path in zip(boxes, sources):
         _select(window, box)
-        assert f'{path.parts[-5]}/one/two/CAD/model.FCStd' in window.input_summary.text()
-        assert window.input_summary.toolTip() == str(path)
+        assert f'{path.parts[-5]}/one/two/CAD/model.FCStd' in _input_text(window)
+        assert window.input_value.toolTip() == str(path)
         assert str(path) in box.toolTip()
         assert window.project.nodes[box.node_id].files['input'].path == str(path)
     assert 'Variant-A/one/two/CAD/model.FCStd' in boxes[0].file_label
@@ -546,7 +550,7 @@ def test_invalid_program_connection_configuration_keeps_actionable_cause(window,
     monkeypatch.setattr(window.workbench, 'programs', lambda: [status])
     box = window.add_box('geometry')
     assert window.register_file(box.node_id, _file(tmp_path, 'model.FCStd'))
-    for text in (window.program_summary.text(), window.next_action.text()):
+    for text in (window.program_summary.text(),):
         assert '연결 설정' in text
         assert 'runtime_env' not in text and str(executable) not in text
     assert '형식이 올바르지 않습니다' in window.program_summary.text()
@@ -614,7 +618,7 @@ def test_cli_project_argument_reaches_project_window(monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["results", "expert"])
-def test_internal_result_summary_uses_its_receipt_without_diagnostic_id(window, tmp_path, kind):
+def test_internal_result_file_remains_selectable_without_receipt_metadata(window, tmp_path, kind):
     from caelab.native.run_store import NativeRun, RunStore
     box = window.add_box(kind)
     assert window.save_project(tmp_path / "project.json")
@@ -631,16 +635,197 @@ def test_internal_result_summary_uses_its_receipt_without_diagnostic_id(window, 
     assert window.register_file(box.node_id, result)
     _select(window, box)
     window._selection_changed()
-    text = window.input_summary.text()
-    assert "model.frd" in text and "A/FEMMeshGmsh.inp" in text
-    from apps.workbench_qt.project_window import _request_time
-    assert _request_time("2026-10-24T09:18:36Z") in text
+    text = _input_text(window)
+    assert "model.frd" in text and "A/FEMMeshGmsh.inp" not in text
+    assert "2026-10-24" not in text and "기준 입력" not in text
     assert run_id not in text and "project.runs" not in text
     assert window.workbench.input_file(window.project, box.node_id).path == str(result)
-    assert run_id not in window.input_summary.toolTip()
-    assert "이 파일의 계산" in text and "선택한 계산:" not in text
+    assert not window.input_units_button.isEnabled()
+    assert not window.edit_units()
+    assert run_id not in window.input_value.toolTip()
+    assert "이 파일의 계산" not in text and "선택한 계산:" not in text
     (folder / "job.json").unlink()
     window._selection_changed()
-    assert "실행 출처 미확인" in window.input_summary.text()
-    assert "A/FEMMeshGmsh.inp" not in window.input_summary.text()
-    assert run_id not in window.input_summary.text()
+    assert window.input_value.text() == "model.frd"
+    assert "A/FEMMeshGmsh.inp" not in _input_text(window)
+    assert run_id not in _input_text(window)
+
+
+@pytest.mark.parametrize("kind", ["geometry", "mesh", "results"])
+@pytest.mark.parametrize("interaction", ["button", "double_click"])
+def test_missing_input_default_assigns_file_without_failed_launch(window, app, tmp_path, monkeypatch, kind, interaction):
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import Qt
+    box = window.add_box(kind)
+    missing = _file(tmp_path, "removed.native")
+    window.register_file(box.node_id, missing)
+    missing.unlink()
+    window.refresh_files()
+    before = window.project.nodes[box.node_id].files['input']
+    requests = []
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: requests.append(args[1]) or ('', ''))
+    monkeypatch.setattr(window.workbench, 'open_program', lambda *args: pytest.fail('default must assign missing input'))
+    window.show()
+    app.processEvents()
+    if interaction == 'button':
+        window.open_button.click()
+    else:
+        QTest.mouseDClick(window.view.viewport(), Qt.LeftButton,
+                         pos=window.view.mapFromScene(box.sceneBoundingRect().center()))
+    assert len(requests) == 1
+    assert window.project.nodes[box.node_id].files['input'] is before
+    assert box.state == 'missing' and not window.workbench.jobs.launches
+    assert window.open_button.text() in {'입력 파일 지정…', '결과 파일 지정…'}
+
+
+def test_empty_default_can_assign_and_subsequently_open_actual_file(window, tmp_path, monkeypatch):
+    box = window.add_box('geometry')
+    cad = _file(tmp_path, 'document.FCStd')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(cad), ''))
+    monkeypatch.setattr(window, '_ask_file_units', lambda *args: {'length': 'mm'})
+    window.open_button.click()
+    assert window.workbench.input_file(window.project, box.node_id).path == str(cad)
+    calls = []
+    monkeypatch.setattr(window.workbench, 'open_program', lambda project, node: calls.append(node) or SimpleNamespace(state='opened'))
+    # The actual program is mocked as available here; availability is a separate condition.
+    monkeypatch.setattr(window.workbench, 'programs', lambda: [SimpleNamespace(spec=SimpleNamespace(id='freecad', name='FreeCAD'), available=True)])
+    window._selection_changed()
+    window.open_button.click()
+    assert calls == [box.node_id]
+    assert box.state != 'done'
+
+
+def test_connected_file_commands_follow_final_owner_and_units_preserve_edges(window, tmp_path, monkeypatch):
+    first, middle, last = [window.add_box(kind) for kind in ('geometry', 'mesh', 'analysis')]
+    deck = _file(tmp_path, 'shared.inp')
+    inactive = _file(tmp_path, 'inactive.inp')
+    window.register_file(first.node_id, deck, 'output', {'length': 'mm'})
+    window.register_file(middle.node_id, inactive)
+    window.connect(first.node_id, middle.node_id, 'output')
+    window.connect(middle.node_id, last.node_id, 'input')
+    edges = list(window.project.connections)
+    reference = window.project.nodes[first.node_id].files['output']
+    revision = reference.revision
+    reference.stale = True
+    deck.write_text('external change not adopted')
+    _select(window, last)
+    assert window.owner_button.isHidden() is False
+    assert window.input_button.text() == '직접 파일로…'
+    window.select_input_owner()
+    assert window.boxes[first.node_id].isSelected()
+    _select(window, last)
+    seen = []
+    monkeypatch.setattr(window, '_ask_file_units', lambda path, current: seen.append((path, dict(current))) or {'length': 'm'})
+    assert window.edit_units()
+    assert seen == [(str(deck), {'length': 'mm'})]
+    assert reference.units == {'length': 'm'} and reference.unit_source == 'user'
+    assert reference.path == str(deck) and reference.revision == revision and reference.stale
+    assert window.project.connections == edges
+    assert window.project.nodes[middle.node_id].files['input'].path == str(inactive)
+    assert window.workbench.input_file(window.project, last.node_id) is reference
+    assert window.project.nodes[last.node_id].state == 'stale'
+
+
+def test_existing_unit_dialog_prefills_and_cancel_or_same_value_does_not_mutate(window, tmp_path, monkeypatch):
+    box = window.add_box('geometry')
+    cad = _file(tmp_path, 'document.FCStd')
+    window.register_file(box.node_id, cad, units={'length': 'mm', 'force': 'N'})
+    reference = window.project.nodes[box.node_id].files['input']
+    reference.unit_source = 'imported'
+    window._dirty = False
+    before = dict(vars(reference))
+    def reject(dialog):
+        assert dialog.findChild(QLineEdit, 'unit_length').text() == 'mm'
+        assert dialog.findChild(QLineEdit, 'unit_force').text() == 'N'
+        assert dialog.findChild(QLineEdit, 'unit_stress').text() == ''
+        return QDialog.Rejected
+    monkeypatch.setattr(QDialog, 'exec', reject)
+    assert not window.edit_units()
+    monkeypatch.setattr(window, '_ask_file_units', lambda *args: dict(reference.units))
+    assert window.edit_units()
+    assert vars(reference) == before and not window._dirty
+
+
+def test_direct_file_alternative_is_explicit_and_cancellation_keeps_connection(window, tmp_path, monkeypatch):
+    source, target = window.add_box('geometry'), window.add_box('analysis')
+    deck, replacement = _file(tmp_path, 'old.inp'), _file(tmp_path, 'new.inp')
+    window.register_file(source.node_id, deck, 'output', {'force': 'N'})
+    window.connect(source.node_id, target.node_id)
+    edges = list(window.project.connections)
+    _select(window, target)
+    def choose(*args):
+        assert args[1] == '상위 연결 대신 사용할 입력 파일'
+        return str(replacement), ''
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', choose)
+    monkeypatch.setattr(window, '_ask_file_units', lambda *args: None)
+    assert not window.choose_file()
+    assert window.project.connections == edges
+    assert window.workbench.input_file(window.project, target.node_id).path == str(deck)
+    monkeypatch.setattr(window, '_ask_file_units', lambda *args: {})
+    assert window.choose_file()
+    assert window.project.connections == []
+    assert window.workbench.input_file(window.project, target.node_id).path == str(replacement)
+
+
+def test_two_targets_show_connection_context_and_arrow_destination(window, tmp_path, monkeypatch):
+    first, second = window.add_box('geometry'), window.add_box('geometry')
+    for box, filename in ((first, 'A.FCStd'), (second, 'B.FCStd')):
+        window.register_file(box.node_id, _file(tmp_path, filename))
+    first.setSelected(True)
+    second.setSelected(True)
+    assert window.selection_name.text() == '상자 연결'
+    assert 'A.FCStd' in window.program_summary.text() and 'B.FCStd' in window.program_summary.text()
+    assert not window.selection_connect_button.isHidden() and window.open_button.isHidden()
+    def accept(dialog):
+        source, role = dialog.findChildren(QComboBox)
+        source.setCurrentIndex(source.findData(first.node_id))
+        role.setCurrentIndex(role.findData('input'))
+        assert 'A.FCStd' in source.currentText()
+        assert any('B.FCStd' in label.text() for label in dialog.findChildren(QLabel))
+        return QDialog.Accepted
+    monkeypatch.setattr(QDialog, 'exec', accept)
+    window.selection_connect_button.click()
+    connector = window.connectors[0]
+    assert connector.src is first and connector.dst is second
+    assert connector.path().pointAtPercent(1) == second.left_anchor()
+    assert window.workbench.input_file(window.project, second.node_id).path.endswith('A.FCStd')
+
+
+def test_narrow_workspace_docks_can_close_reopen_and_fit(window, app):
+    for kind in ('geometry', 'analysis', 'results', 'expert'):
+        window.add_box(kind)
+    window.resize(960, 680)
+    window.show()
+    app.processEvents()
+    original_width = window.view.viewport().width()
+    for dock in (window.toolbox_dock, window.settings_dock):
+        dock.close()
+    app.processEvents()
+    assert window.view.viewport().width() > original_width + 200
+    view_menu = window.view_menu
+    for dock in (window.toolbox_dock, window.settings_dock):
+        assert dock.toggleViewAction() in view_menu.actions()
+        dock.toggleViewAction().trigger()
+        assert dock.isVisible()
+    app.processEvents()
+    window.fit_schematic()
+    visible = window.view.mapToScene(window.view.viewport().rect()).boundingRect()
+    assert visible.contains(window.scene.itemsBoundingRect())
+    window.reset_view()
+    assert window.view.transform().m11() == 1
+
+
+def test_recorded_calculation_output_is_not_a_manual_output_setting(window, tmp_path, monkeypatch):
+    box = window.add_box('analysis')
+    assert window.save_project(tmp_path / 'project.json')
+    folder = window.project.run_store / ('a' * 32)
+    folder.mkdir()
+    output = _file(folder, 'model.frd')
+    window.register_file(box.node_id, output, 'output')
+    assert window.output_value.text() == 'model.frd'
+    assert window.output_summary.text().startswith('선택 계산 결과')
+    assert not window.output_button.isEnabled() and not window.output_units_button.isEnabled()
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: pytest.fail('protected output chooser opened'))
+    assert not window.choose_file('output')
+    assert window.open_button.text() == '해석창 열기'
+    assert window.project.nodes[box.node_id].files['output'].path == str(output)

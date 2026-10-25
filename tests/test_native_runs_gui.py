@@ -277,11 +277,11 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         box = window.boxes[consumer.id]
         box.setSelected(True)
         window._selection_changed()
-        assert box.status_label == "선택 실행 변경"
-        text = window.input_summary.text() + window.program_summary.text()
+        assert box.status_label == "선택 자료 변경"
+        text = (window.input_summary.text() + window.input_value.text()) + window.program_summary.text()
         assert "연결 입력" in text and "준비됨" in text
-        assert "기존 표시·대화와 다를 수" in text
-        assert "오래됨" not in window.input_summary.text()
+        assert "기존 표시·대화" not in text
+        assert "오래됨" not in (window.input_summary.text() + window.input_value.text())
         # Selection never certifies an external display/discussion as completed.
         assert window.project.nodes[consumer.id].state == "stale"
         assert not wb.jobs.launches
@@ -291,25 +291,25 @@ def test_parent_distinguishes_changed_run_selection_from_stale_input(app, tmp_pa
         window._reflect_node(consumer.id)
         window._selection_changed()
         assert not box.status_label
-        assert "오래됨" in window.input_summary.text()
+        assert "오래됨" in (window.input_summary.text() + window.input_value.text())
         reference.stale = False
         raw.write_text("externally changed output")
         window._reflect_node(consumer.id)
         window._selection_changed()
         assert box.state == "changed" and not box.status_label
-        assert "원본 변경됨" in window.input_summary.text()
+        assert "원본 변경됨" in (window.input_summary.text() + window.input_value.text())
         raw.unlink()
         window._reflect_node(consumer.id)
         window._selection_changed()
         assert box.state == "missing" and not box.status_label
-        assert "파일 누락" in window.input_summary.text()
+        assert "파일 누락" in (window.input_summary.text() + window.input_value.text())
     finally:
         window._dirty = False
         window.close()
 
 
 @pytest.mark.parametrize("state,process_label", [
-    ("completed", "프로세스 정상 종료"), ("failed", "실패"), ("cancelled", "취소"),
+    ("completed", "계산 종료 · 결과 읽기 실패"), ("failed", "계산 실패"), ("cancelled", "취소됨"),
 ])
 def test_parent_keeps_input_process_and_readability_separate(app, tmp_path, monkeypatch, state, process_label):
     from apps.workbench_qt.project_window import ProjectWindow
@@ -338,15 +338,53 @@ def test_parent_keeps_input_process_and_readability_separate(app, tmp_path, monk
         box.setSelected(True)
         window._poll_runs()
         window._selection_changed()
-        assert "준비됨" in window.input_summary.text()
-        assert "길이: mm" in window.input_summary.text()
-        assert process_label in window.run_summary.text()
-        assert "결과 읽기: 판독 실패" in window.run_summary.text()
+        assert "준비됨" in (window.input_summary.text() + window.input_value.text())
+        assert window.input_units_button.isEnabled()
+        assert process_label in window.output_summary.text()
+        assert not window.run_summary.text()
+        other = window.add_box('geometry')
+        other.setSelected(True)
+        window._poll_runs()
+        assert not box.isSelected()
+        if state == 'completed':
+            assert box.state == 'completed'
+            assert box.status_label == '계산 종료 · 결과 읽기 실패'
+        else:
+            assert box.state == state
         text = (window.program_summary.text() + window.run_summary.text() + box.toolTip()
                 + box.detail + window.log.toPlainText() + window.status.toolTip())
         assert not any(token in text for token in ("request_id", "PID", "SHA256", run.id))
         assert (run.workdir / "job.json").read_bytes() == receipt
         assert not wb.jobs.launches
+    finally:
+        window._dirty = False
+        window.close()
+
+
+@pytest.mark.parametrize('parse_state,label', [
+    ('reading', '결과 읽는 중'), ('partial', '일부 결과'),
+    ('missing', '계산 종료 · 결과 없음'),
+    ('unsupported', '계산 종료 · 읽을 수 없는 결과'),
+])
+def test_unselected_analysis_card_distinguishes_completed_result_states(app, tmp_path, monkeypatch, parse_state, label):
+    from apps.workbench_qt.project_window import ProjectWindow
+    wb = Workbench()
+    project = wb.new_native_project()
+    node = wb.add_program_node(project, 'analysis', 'calculix')
+    wb.save_native_project(project, tmp_path / 'project.json')
+    run = make_run(tmp_path, 'saved', 'completed', parse_state, {})
+    run.node_id = node.id
+    monkeypatch.setattr(wb, 'selected_native_run', lambda *args: run)
+    window = ProjectWindow(wb)
+    try:
+        window.project = project
+        window._show_project()
+        other = window.add_box('geometry')
+        assert other.isSelected()
+        window._poll_runs()
+        box = window.boxes[node.id]
+        assert box.state == 'completed' and box.status_label == label
+        assert not box.isSelected() and run.state == 'completed'
     finally:
         window._dirty = False
         window.close()

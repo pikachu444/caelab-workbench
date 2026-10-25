@@ -64,7 +64,8 @@ def test_analysis_opens_independent_process_with_project_and_node(app, monkeypat
     assert window.register_file(box.node_id, deck)
     project_path = tmp_path / "연구 프로젝트.json"
     assert window.save_project(project_path)
-    window.open_box(box)
+    assert window.analysis_action.isEnabled()
+    window.analysis_action.trigger()
     assert len(calls) == 1
     command, kwargs = calls[0]
     assert command[:3] == [sys.executable, "-m", "apps.workbench_qt.native_analysis"]
@@ -74,6 +75,24 @@ def test_analysis_opens_independent_process_with_project_and_node(app, monkeypat
     assert not hasattr(window, "_workspace")
     assert "열기 요청" in window.status.text()
     window.close()
+
+
+def test_analysis_toolbar_action_matches_selected_object(app):
+    window = ProjectWindow()
+    try:
+        geometry = window.add_box('geometry')
+        assert geometry.isSelected() and not window.analysis_action.isEnabled()
+        analysis = window.add_box('analysis')
+        assert analysis.isSelected() and window.analysis_action.isEnabled()
+        expert = window.add_box('expert')
+        assert expert.isSelected() and not window.analysis_action.isEnabled()
+        analysis.setSelected(True)
+        assert not window.analysis_action.isEnabled()
+        window.scene.clearSelection()
+        assert not window.analysis_action.isEnabled()
+    finally:
+        window._dirty = False
+        window.close()
 
 @pytest.mark.parametrize("kind", ["analysis", "expert"])
 def test_unsaved_independent_window_open_can_be_cancelled(app, monkeypatch, kind):
