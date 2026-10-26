@@ -385,6 +385,7 @@ QToolButton:checked {{
     font-weight: 600;
 }}
 QDockWidget {{
+    background: {p['window_bg']};
     color: {p['text_primary']};
     border: 1px solid {p['border']};
 }}

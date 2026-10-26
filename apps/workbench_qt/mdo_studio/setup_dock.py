@@ -35,6 +35,7 @@ class SetupDockWidget(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         container = QWidget()
+        container.setObjectName("setupDockContainer")
         layout = QVBoxLayout(container)
         layout.setSpacing(10)
 
@@ -90,7 +91,9 @@ class SetupDockWidget(QWidget):
 
     def set_theme(self, is_dark: bool) -> None:
         self.is_dark = is_dark
+        bg_color = "#13171e" if is_dark else "#eef1f5"
         guide_color = "#94a3b8" if is_dark else "#475569"
+        self.setStyleSheet(f"QWidget#setupDockContainer {{ background-color: {bg_color}; }} QScrollArea {{ background: {bg_color}; }}")
         self.lbl_guide.setStyleSheet(f"color: {guide_color}; font-size: 8.5pt;")
 
     def display_record(self, record: DesignPointRecord | None) -> None:
