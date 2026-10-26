@@ -556,3 +556,12 @@ def test_native_diagnostic_payload_stays_out_of_status_and_error_dialogs(analysi
     assert len(seen) == 1 and '입력 파일' in seen[0]
     for text in [window.run_status.text(), *seen]:
         assert not any(token in text for token in ('[Errno', '.runs', 'a' * 32, 'b' * 64, 'PID', 'SHA256'))
+
+    win_err = "[WinError 5] 액세스가 거부되었습니다: 'C:\\\\private\\\\secret.inp'"
+    env_err = "CalculiX 실행 파일을 찾지 못했습니다 (CAELAB_CCX=C:\\\\secret\\\\ccx.exe)."
+    for bad_msg in (win_err, env_err):
+        run.error = bad_msg
+        window.refresh_runs()
+        assert "[WinError" not in window.run_status.text()
+        assert "CAELAB_CCX" not in window.run_status.text()
+        assert "secret" not in window.run_status.text()

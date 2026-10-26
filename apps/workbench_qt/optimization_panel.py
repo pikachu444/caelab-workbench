@@ -32,11 +32,13 @@ panel is verified offscreen by tests/test_optimization_panel.py.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -50,7 +52,7 @@ from PySide6.QtWidgets import (
 from caelab.numerical import (ModelEvaluator, fit_surrogate, get_path,
                               normalize_variables, optimize, run_doe, scalar_value)
 
-from .theme import current_theme_mode, get_palette, register_theme_listener
+from .theme import build_stylesheet, current_theme_mode, get_palette, register_theme_listener
 
 _SOURCES = {"doe": "DOE", "test": "테스트 DOE", "opt_surrogate": "최적화(근사 예측)",
             "opt_actual": "최적화(실제)", "verify": "재실행"}
@@ -87,6 +89,10 @@ class OptimizationPanel(QWidget):
         self.variable_table = QTableWidget(0, 6)
         self.variable_table.setHorizontalHeaderLabels(
             ["변수", "단위", "모델 경로", "하한", "상한", "시작값"])
+        self.variable_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.variable_table.setAlternatingRowColors(True)
+        self.variable_table.setMinimumHeight(88)
+        self.variable_table.setMaximumHeight(120)
         setup_layout.addWidget(self.variable_table)
         obj_row = QHBoxLayout()
         obj_row.addWidget(QLabel("목적 응답"))
@@ -116,6 +122,8 @@ class OptimizationPanel(QWidget):
         layout.addWidget(QLabel("이력 (출처를 구분해 표시합니다. 예측은 실제 결과가 아닙니다)"))
         self.history_table = QTableWidget(0, 4)
         self.history_table.setHorizontalHeaderLabels(["후보", "출처", "변수값", "목적값"])
+        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.history_table.setAlternatingRowColors(True)
         layout.addWidget(self.history_table, 1)
 
         # -- step 2: DOE ----------------------------------------------------
@@ -176,8 +184,10 @@ class OptimizationPanel(QWidget):
         ver_layout.addWidget(self.verify_status)
         layout.addWidget(ver_box)
 
+        self.setAttribute(Qt.WA_StyledBackground, True)
         if evaluator is not None and variables:
             self.set_study(evaluator, variables, objective)
+        self.apply_theme()
         register_theme_listener(self.apply_theme)
 
     # -- study setup -------------------------------------------------------
@@ -329,10 +339,26 @@ class OptimizationPanel(QWidget):
                     item.setForeground(best_fg)
                 self.history_table.setItem(i, col, item)
         if self.best_history_index is not None:
-            self.history_table.selectRow(self.best_history_index)
+            self.history_table.clearSelection()
+            best_item = self.history_table.item(self.best_history_index, 0)
+            if best_item is not None:
+                self.history_table.scrollToItem(best_item)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if self.best_history_index is not None:
+            best_item = self.history_table.item(self.best_history_index, 0)
+            if best_item is not None:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda item=best_item: self.history_table.scrollToItem(item))
 
     def apply_theme(self, mode: str | None = None) -> None:
         self._mode = mode if mode in ("dark", "light") else current_theme_mode()
+        p = get_palette(self._mode)
+        self.setStyleSheet(
+            build_stylesheet(self._mode)
+            + f"\nOptimizationPanel {{ background: {p['window_bg']}; }}\n"
+        )
         if self._history:
             self._refresh_history()
 

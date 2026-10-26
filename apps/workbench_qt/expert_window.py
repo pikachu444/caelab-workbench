@@ -215,6 +215,7 @@ class ExpertWindow(QMainWindow):
 
     def apply_theme(self, mode: str | None = None):
         resolved = mode if mode in ('dark', 'light') else current_theme_mode()
+        self._theme_mode = resolved
         p = get_palette(resolved)
         self.setStyleSheet(build_stylesheet(resolved))
         self.theme_action.setText(theme_toggle_label(resolved))
@@ -321,7 +322,8 @@ class ExpertWindow(QMainWindow):
             return False
 
     def render(self):
-        p = get_palette()
+        mode = getattr(self, '_theme_mode', None)
+        p = get_palette(mode)
         bar = self.transcript.verticalScrollBar()
         self.transcript.restored_anchor = None
         old_position, follow = bar.value(), bar.maximum() - bar.value() <= 32
@@ -371,7 +373,7 @@ class ExpertWindow(QMainWindow):
                           f"<p style='color:{p['text_accent']}; margin-top:18px; margin-bottom:4px;'><b>{html.escape(human_text(turn.get('role') or '전문가'))}</b></p>"]
             proposals = [p for p in self.document.get('proposals', []) if isinstance(p, dict) and
                          p.get('request_id') == turn.get('id') and turn.get('id')]
-            reply, malformed = markdown_body(turn.get('reply') or '', accepted_proposals=proposals)
+            reply, malformed = markdown_body(turn.get('reply') or '', accepted_proposals=proposals, mode=mode)
             if reply:
                 fragments.append(f"<table width='100%' cellspacing='0' cellpadding='12' style='background-color:{p['chat_assistant_bg']}; border:1px solid {p['border_subtle']};'><tr><td style='color:{p['text_primary']};'>{reply}</td></tr></table>")
             status = labels.get(turn.get('status'), '응답 상태를 확인할 수 없습니다.')

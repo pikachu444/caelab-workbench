@@ -38,6 +38,15 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _isolated_ui_theme_settings(tmp_path, monkeypatch):
+    from apps.workbench_qt.theme import set_theme_mode
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "ui-settings.ini"))
+    set_theme_mode("dark")
+    yield
+    set_theme_mode("dark")
+
+
 def _panel(app):
     panel = OptimizationPanel(
         evaluator=bowl, variables=VARS,

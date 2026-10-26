@@ -122,17 +122,26 @@ class SchematicView(QGraphicsView):
             self._layout_scroll = (self.horizontalScrollBar().value(), self.verticalScrollBar().value())
 
     def drawBackground(self, painter, rect):
-        p = get_palette()
+        window = getattr(self, "_owner_window", None)
+        p = get_palette(getattr(window, "_theme_mode", None))
         painter.fillRect(rect, QColor(str(p["canvas_bg"])))
+        scale = max(0.01, painter.worldTransform().m11())
         minor, major = 20, 100
-        for x in range(int(math.floor(rect.left() / minor) * minor), int(math.ceil(rect.right())), minor):
-            for y in range(int(math.floor(rect.top() / minor) * minor), int(math.ceil(rect.bottom())), minor):
+        while major * scale < 24.0:
+            major *= 2
+            minor *= 2
+        draw_minor = (minor * scale) >= 6.0
+        major_pen = QPen(QColor(str(p["canvas_grid_major"])), 1)
+        minor_pen = QPen(QColor(str(p["canvas_grid_minor"])), 1.5)
+        step = minor if draw_minor else major
+        for x in range(int(math.floor(rect.left() / step) * step), int(math.ceil(rect.right())), step):
+            for y in range(int(math.floor(rect.top() / step) * step), int(math.ceil(rect.bottom())), step):
                 if x % major == 0 and y % major == 0:
-                    painter.setPen(QPen(QColor(str(p["canvas_grid_major"])), 1))
+                    painter.setPen(major_pen)
                     painter.drawLine(x - 3, y, x + 3, y)
                     painter.drawLine(x, y - 3, x, y + 3)
-                else:
-                    painter.setPen(QPen(QColor(str(p["canvas_grid_minor"])), 1.5))
+                elif draw_minor:
+                    painter.setPen(minor_pen)
                     painter.drawPoint(x, y)
 
     def drawForeground(self, painter, rect):
@@ -1047,6 +1056,7 @@ class ProjectWindow(QMainWindow):
 
     def apply_theme(self, mode: str | None = None) -> None:
         resolved = mode if mode in ("dark", "light") else current_theme_mode()
+        self._theme_mode = resolved
         p = get_palette(resolved)
         self.setStyleSheet(build_stylesheet(resolved))
         self.theme_action.setText(theme_toggle_label(resolved))
@@ -1344,7 +1354,8 @@ class ProjectWindow(QMainWindow):
 
     def _selection_changed(self) -> None:
         selected = self._selected_boxes()
-        p = get_palette()
+        mode = getattr(self, "_theme_mode", None)
+        p = get_palette(mode)
         self.exec_metrics_title.clear()
         self.exec_metrics_body.clear()
         self.exec_metrics_card.hide()
@@ -1448,7 +1459,7 @@ class ProjectWindow(QMainWindow):
                 if (run is not None and run.state == 'completed' and run.parse_state in {'readable', 'partial'}
                         and isinstance(run.result, dict) and bool(run.result)):
                     self.exec_metrics_title.setText('계산 결과 요약 — 이전 입력의 결과' if run.stale else '계산 결과 요약')
-                    self.exec_metrics_title.setStyleSheet(status_badge_style('warning' if run.stale else 'ready'))
+                    self.exec_metrics_title.setStyleSheet(status_badge_style('warning' if run.stale else 'ready', mode))
                     summary = run.result.get('summary') or {}
                     max_disp = summary.get('max_displacement')
                     len_unit = (run.units or {}).get('length') or '(단위 미확인)'

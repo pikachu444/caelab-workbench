@@ -67,15 +67,26 @@ def _display_file(project, raw_path: str | Path | None) -> str:
 
 
 def _display_reason(reason, fallback: str) -> str:
+    if isinstance(reason, OSError):
+        return fallback
     text = str(reason or '')
-    if re.search(r'\[Errno\b|\b(?:PID|SHA256|node_id|request_id)\b|program\.(?:source|runtime_env|path|reason)|\.runs\b|\b[0-9a-f]{32,64}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', text, re.I):
+    if re.search(
+        r'\[(?:Errno|WinError)\b|\b(?:PID|SHA256|node_id|request_id|CAELAB_[A-Z0-9_]+)\b'
+        r'|program\.(?:source|runtime_env|path|reason)|\.runs\b'
+        r'|설치 레지스트리|실행 파일이 없거나|실행 파일을 찾지 못했습니다.*?\('
+        r'|\b[0-9a-f]{32,64}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b',
+        text,
+        re.I,
+    ):
         return fallback
     return text
 
 
 class CalculixDeckHighlighter(QSyntaxHighlighter):
+    theme_mode: str | None = None
+
     def highlightBlock(self, text):  # noqa: N802
-        p = get_palette()
+        p = get_palette(self.theme_mode)
         if re.match(r'^\*\*', text):
             self._format(0, len(text), p['syn_comment'])
             return
@@ -96,7 +107,7 @@ class CalculixDeckHighlighter(QSyntaxHighlighter):
 
 class SolverLogHighlighter(CalculixDeckHighlighter):
     def highlightBlock(self, text):  # noqa: N802
-        p = get_palette()
+        p = get_palette(self.theme_mode)
         for pattern, key, bold in (
                 (r'\bSTEP\s+\d+|\bINCREMENT\s+\d+|iteration\s+\d+|Job finished', 'syn_keyword', False),
                 (r'\*WARNING.*|\bWARNING\b|cutback', 'syn_warning', True),
@@ -305,6 +316,8 @@ class NativeAnalysisWindow(QMainWindow):
             card = QFrame()
             card.setObjectName("kpiCard")
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 5, 10, 5)
+            card_layout.setSpacing(2)
             card_layout.addWidget(QLabel(title))
             value = QLabel("미확인")
             setattr(self, attr, value)
@@ -314,24 +327,30 @@ class NativeAnalysisWindow(QMainWindow):
         tables = QWidget()
         tables_layout = QVBoxLayout(tables)
         tables_layout.setContentsMargins(0, 0, 0, 0)
+        tables_layout.setSpacing(4)
         self.field_table = self._result_table(["필드", "성분", "최솟값", "최댓값", "판독/메시 절점"])
-        tables_layout.addWidget(self.field_table)
+        self.field_table.setMinimumHeight(115)
+        tables_layout.addWidget(self.field_table, 1)
         self.dat_container = QWidget()
         dat_layout = QVBoxLayout(self.dat_container)
         dat_layout.setContentsMargins(0, 0, 0, 0)
+        dat_layout.setSpacing(2)
         dat_layout.addWidget(QLabel("DAT 마지막 판독 프레임의 집합 원값 (별도 파일)"))
         self.dat_frame_label = QLabel()
         self.dat_frame_label.setWordWrap(True)
         dat_layout.addWidget(self.dat_frame_label)
         self.dat_table = self._result_table(["집합 (NSET)", "종류", "절점 수", "원 합계 성분 (1, 2, 3)", "단위"])
+        self.dat_table.setMinimumHeight(54)
+        self.dat_table.setMaximumHeight(62)
         dat_layout.addWidget(self.dat_table)
-        tables_layout.addWidget(self.dat_container)
+        tables_layout.addWidget(self.dat_container, 0)
         self.result_text = QPlainTextEdit()
         self.result_text.setReadOnly(True)
+        self.result_text.setMinimumHeight(96)
         result_split = QSplitter(Qt.Vertical)
         result_split.addWidget(tables)
         result_split.addWidget(self.result_text)
-        result_split.setSizes([320, 90])
+        result_split.setSizes([355, 110])
         result_layout.addWidget(result_split)
         output_tabs = QTabWidget()
         output_tabs.addTab(log_panel, "로그")
@@ -340,12 +359,13 @@ class NativeAnalysisWindow(QMainWindow):
         split = QSplitter(Qt.Vertical)
         split.addWidget(input_tabs)
         split.addWidget(run_panel)
-        split.setSizes([220, 460])
+        split.setSizes([155, 555])
         layout.addWidget(split)
         note = QLabel("입력 편집은 전용 프로그램에서 합니다. 실행 기록을 선택해도 새 계산은 시작되지 않습니다.")
         note.setWordWrap(True)
         layout.addWidget(note)
         self.setCentralWidget(container)
+        self._theme_mode = current_theme_mode()
         self.apply_theme()
         register_theme_listener(self.apply_theme)
         self._clear_result()
@@ -358,24 +378,28 @@ class NativeAnalysisWindow(QMainWindow):
 
     def apply_theme(self, mode: str | None = None) -> None:
         resolved = mode if mode in ("dark", "light") else current_theme_mode()
+        self._theme_mode = resolved
         self.setStyleSheet(build_stylesheet(resolved))
         self.theme_action.setText(theme_toggle_label(resolved))
         self.active_status.setStyleSheet(status_badge_style("running", resolved))
         self.result_verify_badge.setStyleSheet(status_badge_style("neutral", resolved))
+        self.source.highlighter.theme_mode = resolved
         self.source.highlighter.rehighlight()
         self.source.gutter.update()
+        self.log_highlighter.theme_mode = resolved
         self.log_highlighter.rehighlight()
         self._update_unit_badges()
         self._update_log_summary()
 
     def _update_unit_badges(self):
+        mode = getattr(self, '_theme_mode', None)
         reference = self.workbench.input_file(self.project, self.node_id)
         for badge, units, exists in ((self.unit_badge, reference.units if reference else {}, reference is not None),
                                      (self.result_unit_badge, getattr(self._runs.get(self._displayed_run_id), 'units', {}),
                                       self._displayed_run_id in self._runs)):
             tone = 'ready' if units else 'warning' if exists else 'neutral'
             badge.setText('단위 선언됨' if units else '단위 미확인' if exists else '자료 없음')
-            badge.setStyleSheet(status_badge_style(tone))
+            badge.setStyleSheet(status_badge_style(tone, mode))
 
     @staticmethod
     def _result_table(headers):
@@ -405,14 +429,16 @@ class NativeAnalysisWindow(QMainWindow):
         for value in (self.kpi_disp_value, self.kpi_nodes_value, self.kpi_dat_value):
             value.setText('미확인')
         self.result_unit_badge.setText('자료 없음')
-        self.result_unit_badge.setStyleSheet(status_badge_style('neutral'))
+        self.result_unit_badge.setStyleSheet(status_badge_style('neutral', getattr(self, '_theme_mode', None)))
 
     def _update_log_summary(self):
         text = self.log.toPlainText()
         errors = len(re.findall(r'\*ERROR\b', text, re.I))
         warnings = len(re.findall(r'\*WARNING\b', text, re.I))
         self.log_summary_badge.setText(f'최근 로그: 오류 {errors} / 경고 {warnings}')
-        self.log_summary_badge.setStyleSheet(status_badge_style('error' if errors else 'warning' if warnings else 'neutral'))
+        self.log_summary_badge.setStyleSheet(
+            status_badge_style('error' if errors else 'warning' if warnings else 'neutral', getattr(self, '_theme_mode', None))
+        )
 
     @staticmethod
     def _deck_category(keyword):
@@ -493,7 +519,13 @@ class NativeAnalysisWindow(QMainWindow):
         else:
             units = ", ".join(f"{_UNIT_LABELS.get(name, name)}: {unit}" for name, unit in reference.units.items())
             unit_source = {"user": "사용자 선언", "unknown": "미확인"}.get(reference.unit_source, reference.unit_source)
-            lines += [f"입력 파일: {reference.path}",
+            p_ref = Path(reference.path)
+            shown_input_path = (
+                p_ref.name
+                if (self.project.run_store and p_ref.resolve().is_relative_to(self.project.run_store.resolve()))
+                else reference.path
+            )
+            lines += [f"입력 파일: {shown_input_path}",
                       f"파일 상태: {_STATE_LABELS.get(reference.status, reference.status)}",
                       f"단위: {units or '미확인 — 사용자 선언 필요'}",
                       f"단위 출처: {unit_source or '미확인'}"]
@@ -715,7 +747,7 @@ class NativeAnalysisWindow(QMainWindow):
                     ('total_force', '절점력 합계 원값', 'force', 'nodal_forces'),
                     ('total_displacement', '변위 합계 원값', 'length', 'displacements')):
                 if key in values:
-                    self._append_row(self.dat_table, [name, label, len(values[records]) if records in values else '?',
+                    self._append_row(self.dat_table, [name, label, len(values[records]) if records in values else '—',
                                      ', '.join(f'{x:.4g}' for x in values[key]), run.units.get(unit_key, '(단위 미확인)')])
             for records, label, unit_key in (('displacements', '변위', 'length'), ('nodal_forces', '절점력 원값', 'force')):
                 if records in values:

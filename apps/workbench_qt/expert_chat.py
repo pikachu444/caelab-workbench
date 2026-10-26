@@ -131,7 +131,7 @@ class ChatBrowser(QTextBrowser):
         return QByteArray()
 
 
-def markdown_body(text: str, *, accepted_proposals=None) -> tuple[str, bool]:
+def markdown_body(text: str, *, accepted_proposals=None, mode: str | None = None) -> tuple[str, bool]:
     """Render ordinary Markdown; strip only internal fenced proposal payloads."""
     malformed = False
     protocol_items = []
@@ -200,7 +200,7 @@ def markdown_body(text: str, *, accepted_proposals=None) -> tuple[str, bool]:
             cursor.setCharFormat(fmt)
         block = block.next()
     # Format citations after parsing so code examples and Markdown stay intact.
-    p = get_palette()
+    p = get_palette(mode)
     block = document.begin()
     while block.isValid():
         if not block.blockFormat().nonBreakableLines():

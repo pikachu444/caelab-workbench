@@ -7,11 +7,35 @@ and can switch between Dark and Light modes immediately.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import tempfile
 import weakref
+from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QSettings
+
+
+def _arrow_svg_url(direction: str, color: str) -> str:
+    """Return a forward-slash filesystem path to a cached chevron SVG for QSS url(...)."""
+    cache_dir = Path(tempfile.gettempdir()) / "caelab-ui-theme-assets"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.md5(f"{direction}:{color}".encode("utf-8")).hexdigest()[:10]
+        svg_path = cache_dir / f"arrow-{direction}-{digest}.svg"
+        if not svg_path.exists():
+            pts = "2,6 5,3 8,6" if direction == "up" else "2,3 5,6 8,3"
+            svg = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="9" viewBox="0 0 10 9">'
+                f'<polyline points="{pts}" fill="none" stroke="{color}" '
+                'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+                "</svg>"
+            )
+            svg_path.write_text(svg, encoding="utf-8")
+        return svg_path.as_posix()
+    except OSError:
+        return ""
 
 UI_FONT_STACK = '"Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'
 MONO_FONT_STACK = '"Cascadia Mono", "Consolas", "D2Coding", "Malgun Gothic", monospace'
@@ -288,6 +312,8 @@ def status_badge_style(tone: str, mode: str | None = None) -> str:
 
 def build_stylesheet(mode: str | None = None) -> str:
     p = get_palette(mode)
+    up_arrow = _arrow_svg_url("up", str(p["text_secondary"]))
+    down_arrow = _arrow_svg_url("down", str(p["text_secondary"]))
     return f"""
 QWidget {{
     color: {p['text_primary']};
@@ -508,16 +534,57 @@ QPushButton#primary:disabled, QPushButton#primary:disabled:hover {{
 QPushButton:focus, QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
     border: 1.5px solid {p['accent']};
 }}
-QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {{
+QComboBox, QLineEdit {{
     background: {p['input_bg']};
     color: {p['text_primary']};
     border: 1px solid {p['border_strong']};
     border-radius: 5px;
     padding: 4px 8px;
 }}
+QSpinBox, QDoubleSpinBox {{
+    background: {p['input_bg']};
+    color: {p['text_primary']};
+    border: 1px solid {p['border_strong']};
+    border-radius: 5px;
+    padding: 4px 24px 4px 8px;
+    min-height: 20px;
+}}
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 19px;
+    background: {p['header_bg']};
+    border-left: 1px solid {p['border']};
+    border-bottom: 1px solid {p['border']};
+    border-top-right-radius: 4px;
+}}
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 19px;
+    background: {p['header_bg']};
+    border-left: 1px solid {p['border']};
+    border-bottom-right-radius: 4px;
+}}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+    background: {p['hover_bg']};
+}}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    image: url("{up_arrow}");
+    width: 9px;
+    height: 7px;
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QComboBox::down-arrow {{
+    image: url("{down_arrow}");
+    width: 9px;
+    height: 7px;
+}}
 QComboBox::drop-down {{
-    border: none;
-    width: 20px;
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    border-left: 1px solid {p['border']};
+    width: 22px;
 }}
 QComboBox QAbstractItemView {{
     background: {p['panel_bg']};
