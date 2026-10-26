@@ -59,12 +59,8 @@ class CodeAsterAdapter:
         return codeaster_run_request(status, workdir, input_path)
 
     def collect_results(self, workdir: Path, *, check_cancelled: Callable[[], None] | None = None) -> dict:
-        try:
-            from .code_aster import collect_codeaster_results
-            return collect_codeaster_results(workdir, check_cancelled=check_cancelled)
-        except ImportError:
-            return {"status": "unparsed", "frames": [], "exchange_files": [], "summary": {},
-                    "warnings": ["Code_Aster 결과 판독기가 아직 구현되지 않았습니다."]}
+        from .code_aster import collect_codeaster_results
+        return collect_codeaster_results(workdir, check_cancelled=check_cancelled)
 
     def expected_output_names(self) -> tuple[str, ...]:
         return ("model.rmed", "model.resu", "model.med")
@@ -80,12 +76,8 @@ class OpenRadiossAdapter:
         return radioss_run_request(status, workdir, input_path)
 
     def collect_results(self, workdir: Path, *, check_cancelled: Callable[[], None] | None = None) -> dict:
-        try:
-            from .radioss import collect_radioss_results
-            return collect_radioss_results(workdir, check_cancelled=check_cancelled)
-        except ImportError:
-            return {"status": "unparsed", "frames": [], "exchange_files": [], "summary": {},
-                    "warnings": ["OpenRadioss 결과 판독기가 아직 구현되지 않았습니다."]}
+        from .radioss import collect_radioss_results
+        return collect_radioss_results(workdir, check_cancelled=check_cancelled)
 
     def expected_output_names(self) -> tuple[str, ...]:
         return ("A001", "model.h3d", "model.out")
@@ -101,12 +93,8 @@ class LSDynaAdapter:
         return lsdyna_run_request(status, workdir, input_path)
 
     def collect_results(self, workdir: Path, *, check_cancelled: Callable[[], None] | None = None) -> dict:
-        try:
-            from .lsdyna import collect_lsdyna_results
-            return collect_lsdyna_results(workdir, check_cancelled=check_cancelled)
-        except ImportError:
-            return {"status": "unparsed", "frames": [], "exchange_files": [], "summary": {},
-                    "warnings": ["LS-DYNA 결과 판독기가 아직 구현되지 않았습니다."]}
+        from .lsdyna import collect_lsdyna_results
+        return collect_lsdyna_results(workdir, check_cancelled=check_cancelled)
 
     def expected_output_names(self) -> tuple[str, ...]:
         return ("d3plot", "glstat", "nodout")
