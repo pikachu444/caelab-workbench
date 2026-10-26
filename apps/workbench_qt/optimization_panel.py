@@ -50,7 +50,8 @@ from PySide6.QtWidgets import (
 from caelab.numerical import (ModelEvaluator, fit_surrogate, get_path,
                               normalize_variables, optimize, run_doe, scalar_value)
 
-_BEST_BG = QColor("#d9f2d9")
+from .theme import current_theme_mode, get_palette, register_theme_listener
+
 _SOURCES = {"doe": "DOE", "test": "테스트 DOE", "opt_surrogate": "최적화(근사 예측)",
             "opt_actual": "최적화(실제)", "verify": "재실행"}
 
@@ -75,6 +76,7 @@ class OptimizationPanel(QWidget):
         self._run_fn = None
         self._variable_paths: dict[str, str] = {}
         self._response_path: str = ""
+        self._mode: str | None = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("최적화 (5단계: 설정 → DOE → 근사모델 → 최적화 → 재실행 검증)"))
@@ -176,6 +178,7 @@ class OptimizationPanel(QWidget):
 
         if evaluator is not None and variables:
             self.set_study(evaluator, variables, objective)
+        register_theme_listener(self.apply_theme)
 
     # -- study setup -------------------------------------------------------
     def set_study(self, evaluator, variables, objective=None, *, _keep_model=False) -> None:
@@ -309,6 +312,9 @@ class OptimizationPanel(QWidget):
         self._refresh_history()
 
     def _refresh_history(self) -> None:
+        p = get_palette(getattr(self, "_mode", None))
+        best_bg = QBrush(QColor(str(p["best_row_bg"])))
+        best_fg = QBrush(QColor(str(p["best_row_fg"])))
         self.history_table.setRowCount(len(self._history))
         self.best_history_index = self._best_index()
         for i, entry in enumerate(self._history):
@@ -319,10 +325,16 @@ class OptimizationPanel(QWidget):
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if i == self.best_history_index:
-                    item.setBackground(QBrush(_BEST_BG))
+                    item.setBackground(best_bg)
+                    item.setForeground(best_fg)
                 self.history_table.setItem(i, col, item)
         if self.best_history_index is not None:
             self.history_table.selectRow(self.best_history_index)
+
+    def apply_theme(self, mode: str | None = None) -> None:
+        self._mode = mode if mode in ("dark", "light") else current_theme_mode()
+        if self._history:
+            self._refresh_history()
 
     def _best_index(self):
         """The step-4 best row when it is pinned; otherwise the best
