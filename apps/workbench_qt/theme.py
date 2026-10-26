@@ -385,6 +385,7 @@ QToolButton:checked {{
     font-weight: 600;
 }}
 QDockWidget {{
+    background: {p['window_bg']};
     color: {p['text_primary']};
     border: 1px solid {p['border']};
 }}
@@ -395,7 +396,7 @@ QDockWidget::title {{
     font-weight: 600;
     border-bottom: 1px solid {p['border']};
 }}
-QTreeWidget, QListWidget, QTableWidget {{
+QTreeWidget, QListWidget, QTableWidget, QTableView {{
     background: {p['panel_bg']};
     alternate-background-color: {p['card_alt_bg']};
     color: {p['text_primary']};
@@ -411,7 +412,7 @@ QTreeWidget::item, QListWidget::item {{
 QTreeWidget::item:hover, QListWidget::item:hover {{
     background: {p['hover_bg']};
 }}
-QTreeWidget::item:selected, QListWidget::item:selected, QTableWidget::item:selected {{
+QTreeWidget::item:selected, QListWidget::item:selected, QTableWidget::item:selected, QTableView::item:selected {{
     background: {p['selection_bg']};
     color: {p['text_primary']};
 }}

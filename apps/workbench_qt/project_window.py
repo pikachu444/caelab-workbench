@@ -1232,17 +1232,11 @@ class ProjectWindow(QMainWindow):
         return self.save_project(path) if path else False
 
     def open_optimization_panel(self) -> None:
-        from .optimization_panel import OptimizationPanel
-
-        if self._optimization_panel is None:
-            panel = self._optimization_panel = OptimizationPanel()
-            panel.setParent(self, Qt.Window)
-            panel.setup_status.setText(
-                "프로젝트의 네이티브 해석 파일은 아직 최적화 평가에 자동 연결되지 않습니다. "
-                "변수·응답과 평가 함수가 연결된 연구가 필요합니다.")
-        self._optimization_panel.showNormal()
-        self._optimization_panel.raise_()
-        self._optimization_panel.activateWindow()
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self, "MDO Studio",
+            "MDO Studio is undergoing clean-slate rearchitecture.\n"
+            "The new 4-area workspace will be connected soon.")
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._optimization_panel is not None and self._optimization_panel._busy:

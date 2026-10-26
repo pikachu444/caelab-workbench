@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.26", "filelock>=3.13"]
 # PySide6 6.12.0 loses None references on Python 3.11 (even plain Qt calls).
 gui = ["PySide6>=6.6,<6.12; python_version < '3.12'", "PySide6>=6.6; python_version >= '3.12'", "vtk>=9.3", "scipy>=1.15", "matplotlib>=3.8"]
 numerical = ["scipy>=1.15"]
+mdo = ["scipy>=1.15", "scikit-learn>=1.5", "pymoo>=0.6.1.5", "SALib>=1.5"]
 rag = ["pypdf>=4"]
 dev = ["pytest>=8"]
 sensitivity = ["SALib>=1.4"]
