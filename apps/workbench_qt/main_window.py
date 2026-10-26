@@ -513,8 +513,12 @@ class MainWindow(QMainWindow):
 
     # -- optimization panel ---------------------------------------------------
     def open_optimization_panel(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, 'MDO Studio', 'MDO Studio is undergoing clean-slate rearchitecture.')
+        from .mdo_studio.window import MDOStudioWindow
+        if not hasattr(self, '_mdo_studio_window') or self._mdo_studio_window is None:
+            self._mdo_studio_window = MDOStudioWindow()
+        self._mdo_studio_window.show()
+        self._mdo_studio_window.raise_()
+        self._mdo_studio_window.activateWindow()
     def run_solve(self) -> None:
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
