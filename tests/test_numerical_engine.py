@@ -237,3 +237,56 @@ def test_fit_surrogate_rbf_holdout_error_small_for_smooth_sum():
     with pytest.raises(ValueError):  # training/holdout overlap is refused
         fit_surrogate(training, training, {"response": "s", "unit": "1"},
                       variables=SUM_VARS)
+
+@pytest.mark.parametrize('study', ['doe', 'optimization'])
+@pytest.mark.parametrize('stop_after', [0, 3])
+def test_cooperative_cancel_returns_only_completed_evaluations(study, stop_after):
+    calls = []
+
+    def evaluator(values):
+        calls.append(values)
+        return bowl(values)
+
+    execution = {'cancel_requested': lambda: len(calls) >= stop_after}
+    if study == 'doe':
+        result = run_doe(evaluator, VARS2, count=8, execution=execution)
+    else:
+        result = optimize(evaluator, VARS2, {'response': 'f', 'unit': '1'}, execution=execution)
+    assert result['execution_status'] == 'CANCELLED'
+    assert result['termination_reason'] == 'CANCELLED'
+    assert result['timing']['model_calls'] == stop_after
+    assert len(result['candidates']) == stop_after
+    assert all(r['execution_status'] == 'SUCCEEDED' for r in result['candidates'])
+    if study == 'optimization':
+        assert (result['best'] is not None) == bool(stop_after)
+
+
+def test_polynomial_recovers_cross_terms_on_independent_holdout():
+    def response(v):
+        x, y = v['x'], v['y']
+        return {'f': 1 + 2*x - 3*y + 4*x*x - 5*x*y + 6*y*y}
+
+    train = run_doe(response, VARS2, count=12, seed=21)
+    holdout = run_doe(response, VARS2, count=7, seed=22)
+    surrogate = fit_surrogate(train, holdout, {'response': 'f', 'unit': '1'}, method='polynomial')
+    assert surrogate.validation['rmse'] < 1e-12
+    point = {'x': 0.125, 'y': -0.75}
+    prediction = surrogate.predict([point])[0]
+    assert prediction['execution_status'] == 'PREDICTED'
+    assert prediction['responses']['f']['value'] == pytest.approx(response(point)['f'], abs=1e-12)
+
+
+@pytest.mark.parametrize('case,match', [('insufficient', 'at least 6'), ('rank', 'rank deficient'), ('fixed', 'nonzero ranges')])
+def test_polynomial_rejects_unidentifiable_design(case, match):
+    if case == 'fixed':
+        variables = [{**VARS2[0], 'lower': 0, 'upper': 0, 'value': 0, 'mode': 'fixed'}, VARS2[1]]
+        train = run_doe(bowl, variables, count=8, seed=1)
+        holdout = run_doe(bowl, variables, count=3, seed=2)
+    elif case == 'rank':
+        train = run_doe(bowl, VARS2, candidates=[{'x': x, 'y': x} for x in [-1.5, -1, -.5, 0, .5, 1, 1.5]])
+        holdout = run_doe(bowl, VARS2, count=3, seed=2)
+    else:
+        train = run_doe(bowl, VARS2, count=5, seed=1)
+        holdout = run_doe(bowl, VARS2, count=3, seed=2)
+    with pytest.raises(ValueError, match=match):
+        fit_surrogate(train, holdout, {'response': 'f', 'unit': '1'}, method='polynomial')

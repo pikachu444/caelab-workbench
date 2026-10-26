@@ -737,6 +737,7 @@ class ProjectWindow(QMainWindow):
         self.connectors: list[Connector] = []
         self._dirty = False
         self._loading = False
+        self._optimization_panel = None
         self.resize(1280, 820)
         self._build_ui()
         self.apply_theme()
@@ -804,6 +805,10 @@ class ProjectWindow(QMainWindow):
         refresh.triggered.connect(self.refresh_files)
 
         view_menu = self.view_menu = self.menuBar().addMenu("보기(&V)")
+        tools_menu = self.tools_menu = self.menuBar().addMenu("도구(&T)")
+        self.tools_menu_action = tools_menu.menuAction()
+        self.optimization_action = tools_menu.addAction("최적화 및 매개변수 연구...")
+        self.optimization_action.triggered.connect(self.open_optimization_panel)
         self.toolbox = QListWidget()
         self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         view_menu.addSeparator()
@@ -1226,8 +1231,27 @@ class ProjectWindow(QMainWindow):
             self, "다른 이름으로 저장", str(self.project.path or "project.json"), PROJECT_FILTER)
         return self.save_project(path) if path else False
 
+    def open_optimization_panel(self) -> None:
+        from .optimization_panel import OptimizationPanel
+
+        if self._optimization_panel is None:
+            panel = self._optimization_panel = OptimizationPanel()
+            panel.setParent(self, Qt.Window)
+            panel.setup_status.setText(
+                "프로젝트의 네이티브 해석 파일은 아직 최적화 평가에 자동 연결되지 않습니다. "
+                "변수·응답과 평가 함수가 연결된 연구가 필요합니다.")
+        self._optimization_panel.showNormal()
+        self._optimization_panel.raise_()
+        self._optimization_panel.activateWindow()
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._optimization_panel is not None and self._optimization_panel._busy:
+            self._optimization_panel.request_cancel()
+            event.ignore()
+            return
         if self._confirm_transition():
+            if self._optimization_panel is not None:
+                self._optimization_panel.close()
             self.run_timer.stop()
             event.accept()
         else:

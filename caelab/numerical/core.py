@@ -50,6 +50,10 @@ class EvaluationBudgetExceeded(RuntimeError):
     budget_exhausted = True
 
 
+class EvaluationCancelled(RuntimeError):
+    """Cooperative cancellation between evaluations; completed rows survive."""
+
+
 def _number(value, label):
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.number)):
         raise ValueError(f"{label} must be a finite number")
@@ -107,7 +111,7 @@ class _Runner:
 
     def __init__(self, evaluator, execution=None):
         opts = dict(execution or {})
-        unknown = set(opts) - {"max_evaluations", "on_failure"}
+        unknown = set(opts) - {"max_evaluations", "on_failure", "cancel_requested"}
         if unknown:
             raise ValueError(f"Unknown execution options: {sorted(unknown)} "
                              "(this port is serial-only)")
@@ -121,8 +125,16 @@ class _Runner:
         self.limit = limit
         self.calls = 0
         self.seconds = 0.0
+        self.cancel_requested = opts.get("cancel_requested")
+        if self.cancel_requested is not None and not callable(self.cancel_requested):
+            raise ValueError("cancel_requested must be callable")
+
+    def check_cancel(self):
+        if self.cancel_requested is not None and self.cancel_requested():
+            raise EvaluationCancelled("CANCELLED")
 
     def one(self, values):
+        self.check_cancel()
         if self.limit is not None and self.calls >= self.limit:
             raise EvaluationBudgetExceeded(
                 f"Evaluation budget {self.limit} exhausted after {self.calls} evaluations")
@@ -241,6 +253,8 @@ def run_doe(evaluator, variables, *, count=16, seed=0, candidates=None, executio
     Returns the original table shape: ``{"kind": "doe", "variables": ...,
     "sampling": ..., "candidates": [rows], "execution_status": ...,
     "timing": ...}``. Failures keep their candidate IDs and reasons.
+    ``execution['cancel_requested']`` may be a callable; a true result stops
+    before the next evaluation and returns CANCELLED with completed rows only.
     """
     variables = normalize_variables(variables)
     if type(seed) is not int or not 0 <= seed <= 2**32 - 1:
@@ -281,6 +295,9 @@ def run_doe(evaluator, variables, *, count=16, seed=0, candidates=None, executio
             continue
         try:
             evaluation = runner.one(item["values"])
+        except EvaluationCancelled:
+            stop_reason = "CANCELLED"
+            break
         except EvaluationBudgetExceeded:
             stop_reason = "EVALUATION_BUDGET_EXHAUSTED"
             rows.append(_row(item["candidate_id"], item["values"],
@@ -291,7 +308,8 @@ def run_doe(evaluator, variables, *, count=16, seed=0, candidates=None, executio
             stop_reason = "STOPPED_AFTER_FAILURE"
     timing = runner.timing()
     timing["total_seconds"] = perf_counter() - started
-    status = ("REJECTED" if stop_reason == "EVALUATION_BUDGET_EXHAUSTED" else
+    status = ("CANCELLED" if stop_reason == "CANCELLED" else
+              "REJECTED" if stop_reason == "EVALUATION_BUDGET_EXHAUSTED" else
               "PARTIAL_FAILURE" if stop_reason or
               any(r["execution_status"] != "SUCCEEDED" for r in rows) else "SUCCEEDED")
     return {"kind": "doe", "variables": variables, "sampling": sampling,
@@ -349,6 +367,7 @@ def optimize(evaluator, variables, objective, *, constraints=None, seed=0,
 
     def feedback(full_free_values):
         """Evaluate (or reuse) one point; returns SciPy-facing feedback."""
+        runner.check_cancel()
         values = full_values(variables, full_free_values)
         key = tuple(float(values[v["id"]]).hex() if isinstance(values[v["id"]], float)
                     else values[v["id"]] for v in free_variables(variables))
@@ -376,6 +395,8 @@ def optimize(evaluator, variables, objective, *, constraints=None, seed=0,
     if not free:
         try:
             feedback({})
+        except EvaluationCancelled:
+            termination = "CANCELLED"
         except EvaluationBudgetExceeded:
             termination = "EVALUATION_BUDGET_EXHAUSTED"
         algorithm = {"engine": "scipy.differential_evolution", "solver_called": False,
@@ -423,6 +444,9 @@ def optimize(evaluator, variables, objective, *, constraints=None, seed=0,
                          "generations": int(result.nit),
                          "strategy": "best1bin", "mutation": [0.5, 1.0],
                          "recombination": 0.7, "polish": False}
+        except EvaluationCancelled:
+            termination = "CANCELLED"
+            algorithm = {"engine": "scipy.differential_evolution", "seed": seed}
         except EvaluationBudgetExceeded:
             termination = "EVALUATION_BUDGET_EXHAUSTED"
             algorithm = {"engine": "scipy.differential_evolution", "seed": seed}
@@ -434,7 +458,8 @@ def optimize(evaluator, variables, objective, *, constraints=None, seed=0,
         termination = "NO_FREE_VARIABLES"
     timing = runner.timing()
     timing["total_seconds"] = perf_counter() - started
-    status = ("REJECTED" if termination == "EVALUATION_BUDGET_EXHAUSTED" else
+    status = ("CANCELLED" if termination == "CANCELLED" else
+              "REJECTED" if termination == "EVALUATION_BUDGET_EXHAUSTED" else
               "PARTIAL_FAILURE" if termination == "STOPPED_AFTER_FAILURE" else
               "SUCCEEDED" if best else "FAILED")
     return {"kind": "optimization", "variables": variables,
