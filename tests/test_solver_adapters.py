@@ -100,3 +100,45 @@ def test_lsdyna_run_request(tmp_path):
     assert isinstance(req, LaunchRequest)
     assert req.argv[0] == str(exe)
     assert any("i=" in arg for arg in req.argv)
+
+
+def test_codeaster_adapter_collect_results_delegation(tmp_path):
+    import json
+    adapter = get_solver_adapter("codeaster")
+    rmed = tmp_path / "model.rmed"
+    rmed.write_text(json.dumps({
+        "format": "caelab-codeaster-rmed-fixture-v1",
+        "time": 0.0,
+        "nodes": [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        "elements": [{"type": "tetra", "nodes": [0, 1, 2, 3]}],
+        "displacement": [[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 0, 0]],
+        "stress": [[1, 0, 0, 0, 0, 0]] * 4,
+    }), encoding="utf-8")
+    result = adapter.collect_results(tmp_path)
+    assert result["status"] == "readable"
+    assert result["summary"]["solver_id"] == "codeaster"
+    assert result["summary"]["max_displacement"] == 1.0
+
+
+def test_radioss_adapter_collect_results_delegation(tmp_path):
+    adapter = get_solver_adapter("radioss")
+    out = tmp_path / "model_0001.out"
+    out.write_text("KINETIC ENERGY = 10.0\nINTERNAL ENERGY = 20.0\nHOURGLASS ENERGY = 1.0\nTOTAL ENERGY = 31.0\nENERGY ERROR = -1.0 %\n")
+    a001 = tmp_path / "A001"
+    a001.write_text("NODE 1 0.0 0.0 0.0\nNODE 2 1.0 0.0 0.0\nNODE 3 0.0 1.0 0.0\nNODE 4 0.0 0.0 1.0\nTETRA 1 1 2 3 4\n")
+    result = adapter.collect_results(tmp_path)
+    assert result["status"] == "readable"
+    assert result["summary"]["solver_id"] == "radioss"
+    assert result["summary"]["internal_energy"] == 20.0
+
+
+def test_lsdyna_adapter_collect_results_delegation(tmp_path):
+    adapter = get_solver_adapter("lsdyna")
+    glstat = tmp_path / "glstat"
+    glstat.write_text(" time = 0.0\n kinetic energy = 1.0\n internal energy = 2.0\n hourglass energy = 0.1\n sliding interface energy = 0.0\n total energy = 3.1\n energy ratio = 1.0\n")
+    deck = tmp_path / "model.k"
+    deck.write_text("*KEYWORD\n*NODE\n1,0.0,0.0,0.0\n2,1.0,0.0,0.0\n3,1.0,1.0,0.0\n4,0.0,1.0,0.0\n5,0.0,0.0,1.0\n6,1.0,0.0,1.0\n7,1.0,1.0,1.0\n8,0.0,1.0,1.0\n*ELEMENT_SOLID\n1,1,1,2,3,4,5,6,7,8\n*END\n")
+    result = adapter.collect_results(tmp_path)
+    assert result["status"] == "readable"
+    assert result["summary"]["solver_id"] == "lsdyna"
+    assert result["summary"]["internal_energy"] == 2.0
