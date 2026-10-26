@@ -30,6 +30,10 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
   ```bash
   python -m apps.workbench_qt.mdo_studio
   ```
+- **사용자 설명서 및 튜토리얼**:
+  - [그림으로 보는 MDO Studio 비주얼 퀵스타트 가이드](docs/tutorials/visual_mdo_guide.md): 5대 실사 캡처 및 4대 영역 3분 조작법
+  - [박스 거더 캔틸레버 단면 치수 최적화 튜토리얼](docs/tutorials/mdo_cantilever_quickstart.md): 현업 실무 엔지니어 핸즈온 가이드
+  - [3D 산업 표준 대형 벤치마크 계획서](docs/benchmarks/commercial_mdo_benchmark_calculix.md): GE 제트 엔진 브래킷 및 로어 컨트롤 암 비교 사양서
 - **핵심 수치 모듈 ([`caelab.mdo`](caelab/mdo/__init__.py))**:
   - [`VariableSpace`](caelab/mdo/variables.py): 연속형(`ContinuousVariable`), 이산 규격형(`DiscreteVariable`), 범주형(`CategoricalVariable`), 수식 연동형(`LinkedVariable`) 설계 공간 정의.
   - [`ObjectiveSpec`](caelab/mdo/objectives.py) 및 [`ConstraintSpec`](caelab/mdo/constraints.py): 3상태([`Feasibility`](caelab/mdo/constraints.py): FEASIBLE / MARGINAL / INFEASIBLE) 판정 및 오차 대역 평가.

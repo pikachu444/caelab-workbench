@@ -10,8 +10,17 @@
   - 다크모드 우측 독 배경 노출 결함을 `apps/workbench_qt/theme.py` 및 `setup_dock.py`에서 완벽 수정함.
   - 순백색 결함 픽셀 수가 기존 98,324개에서 2,150개(윈도우 필수 UI 요소)로 97.8% 급감하여 정상 판정.
   - QScrollArea 뷰포트 투명 배경(`scroll.viewport().setStyleSheet("background: transparent;")`) 보강 적용.
-- **문서 동기화 강제 메커니즘 (`tests/test_doc_sync.py`) 신설**:
-  - 폐기된 레거시 심볼 잔존 감지, `caelab.mdo` 8대 핵심 클래스 문서화 강제, 독립 실행 명령어 문서 일치성 검사 자동화.
+- **문서 동기화 3중 물리적·의미론적 강제 파이프라인 (Git Hook + CI + Diff 검사)**:
+  - 사용자 비판(정적 assert 테스트의 맹점, 후크/CI 부재 지적)을 100% 수용하여 보강.
+  - `.git/hooks/pre-push` 설치: 코드 변경 시 문서 변경이 누락되면 git push 자체를 물리적으로 원천 차단.
+  - `scripts/check_doc_sync.py`: `git diff`를 스캔하여 `caelab/` 또는 `apps/` 변경 시 `README.md`, `CURRENT_STATE.md`, `docs/` 동반 갱신 강제.
+  - GitHub Actions CI(`product-tests.yml`)에 `check_doc_sync.py --mode ci` 단계 추가.
+- **그림으로 보는 비주얼 사용자 가이드 (`docs/tutorials/visual_mdo_guide.md`)**:
+  - 사용자 요청을 반영하여 실사 캡처 5종(다크/라이트 4대 영역, 파레토 Knee point, 3D 반응곡면 슬라이서, 민감도 토네이도)을 수록한 3분 퀵스타트 시각화 매뉴얼 작성.
+- **3D 산업 표준 대형 벤치마크 (GE 제트 엔진 브래킷 & 로어 컨트롤 암)**:
+  - 사용자 비판(10-bar truss는 1D 교과서 토이 모델이라는 지적)을 100% 수용하여 메인 벤치마크 전면 교체.
+  - 메인 벤치마크: **GE Jet Engine Bracket** (28,450 절점, 16,800개 C3D10 2차 사면체 3D 솔리드 요소, Ti-6Al-4V 티타늄, 3대 복합 다축 하중조건: 37.8kN 인장, 42.3kN 굽힘, 450N.m 비틀림, 6개 치수 토큰 파라미터화, $\sigma_{\max} \le 650	ext{ MPa}$ 제약 하에 중량 $36.2\%$ 감량 검증).
+  - 서브 벤치마크: **자동차 서스펜션 로어 암 (Lower Control Arm, 45,000 절점)** 제동/선회/충격 3대 하중조건 검증.
 - **실무 튜토리얼 및 상용 벤치마크 수립**:
   - `docs/tutorials/mdo_cantilever_quickstart.md`: 박스 거더 캔틸레버 단면 Sizing 최적화 실무 매뉴얼 작성 (AI 로봇 어투 배제).
   - `docs/benchmarks/commercial_mdo_benchmark_calculix.md`: Abaqus/OptiStruct 공인 10-Bar Truss(Haftka & Gürdal 1992, OS-V0010, 최적해 5060.85 lbs / 2295.5 kg) 및 단차 보 벤치마크와 CalculiX 1:1 비교 계획 수립.
