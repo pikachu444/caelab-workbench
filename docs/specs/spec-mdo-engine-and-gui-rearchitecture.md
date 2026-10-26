@@ -1,5 +1,7 @@
 # Specification: Commercial-Grade CAE MDO Engine & GUI Rearchitecture
 
+> Superseded on 2026-10-26 by [the clean-slate MDO specification](spec-clean-slate-mdo-design.md). This proposal is historical: its numerical-package reuse, panel layout, statistics and application semantics are not implementation instructions.
+
 **Status**: PROPOSED (Under User Review)  
 **Date**: 2026-10-26  
 **Authors**: Antigravity Main Session, in collaboration with `chief-reviewer`, `cae-user-expert`, and Codex (`gpt-6-astra`)  

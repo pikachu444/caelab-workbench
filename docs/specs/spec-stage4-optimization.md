@@ -1,5 +1,7 @@
 # Specification: Stage 4-1 Optimization & Parametric Study 2-Panel Visualization Dashboard
 
+> Superseded on 2026-10-26 by [the clean-slate MDO specification](spec-clean-slate-mdo-design.md). This document records the retired two-panel direction and is not the implementation target for the new MDO system.
+
 **Author**: Antigravity Main (Gemini Flash High) & Reviewers (`chief-reviewer`, `cae-user-expert`)  
 **Target Branch**: `feat/stage4-optimization`  
 **Reference**: [DESIGN.md](../../DESIGN.md) (§11.5, §14), [AGENTS.md](../../AGENTS.md)

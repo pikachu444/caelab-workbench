@@ -225,15 +225,8 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
         self.props_dock = props_dock
 
-        # right dock, tabbed with properties: optimization panel
-        from .optimization_panel import OptimizationPanel
-
-        self.optimization_panel = OptimizationPanel()
-        self.optimization_dock = QDockWidget("최적화")
-        self.optimization_dock.setWidget(self.optimization_panel)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.optimization_dock)
-        self.tabifyDockWidget(props_dock, self.optimization_dock)
-        self.optimization_dock.hide()
+        self.optimization_panel = object()
+        self.optimization_dock = None
 
         # bottom dock: messages + flow
         bottom = QWidget()
@@ -520,9 +513,8 @@ class MainWindow(QMainWindow):
 
     # -- optimization panel ---------------------------------------------------
     def open_optimization_panel(self) -> None:
-        self.optimization_dock.show()
-        self.optimization_dock.raise_()
-
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, 'MDO Studio', 'MDO Studio is undergoing clean-slate rearchitecture.')
     def run_solve(self) -> None:
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
@@ -608,7 +600,7 @@ class MainWindow(QMainWindow):
             item.setIcon(0, icon(LEAF_ICONS.get(kind, "folder"), resolved))
         if hasattr(self, "viewport") and self.viewport is not None:
             self.viewport.apply_theme(resolved)
-        if hasattr(self, "optimization_panel") and self.optimization_panel is not None:
+        if hasattr(self, 'optimization_panel') and hasattr(self.optimization_panel, 'apply_theme'):
             self.optimization_panel.apply_theme(resolved)
         for chip in getattr(self, "flow_labels", []):
             chip.style().unpolish(chip)
