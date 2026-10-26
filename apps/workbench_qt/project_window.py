@@ -18,8 +18,8 @@ import errno
 import heapq
 import re
 
-from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPainterPathStroker, QPen, QPixmap, QPolygonF
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPainterPathStroker, QPalette, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QDockWidget,
     QComboBox,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsScene,
@@ -41,6 +42,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
     QTextEdit,
     QToolBar,
     QToolButton,
@@ -51,7 +54,10 @@ from PySide6.QtWidgets import (
 from caelab.workbench import Workbench
 
 from .icons import icon
-from .theme import THEME
+from .theme import (
+    build_stylesheet, current_theme_mode, get_palette, register_theme_listener,
+    status_badge_style, theme_toggle_label, toggle_theme_mode,
+)
 
 _KIND_ICONS = {"geometry": "geometry", "mesh": "mesh", "analysis": "solver",
                "results": "result", "expert": "expert"}
@@ -63,6 +69,10 @@ SYSTEM_KINDS = [
     ("results", "ParaView", "결과 보기"),
     ("expert", "전문가", "논의"),
 ]
+_KIND_CATEGORIES = {
+    "geometry": "형상 · CAD", "mesh": "전처리 · 메시", "analysis": "해석 · 계산",
+    "results": "후처리 · 결과", "expert": "전문가 · 논의",
+}
 STATE_COLORS = {
     "unavailable": "#c9ced4",
     "needs_input": "#c9ced4",
@@ -110,6 +120,61 @@ class SchematicView(QGraphicsView):
     def _remember_scroll(self, *_):
         if not self._resizing:
             self._layout_scroll = (self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+
+    def drawBackground(self, painter, rect):
+        p = get_palette()
+        painter.fillRect(rect, QColor(str(p["canvas_bg"])))
+        minor, major = 20, 100
+        for x in range(int(math.floor(rect.left() / minor) * minor), int(math.ceil(rect.right())), minor):
+            for y in range(int(math.floor(rect.top() / minor) * minor), int(math.ceil(rect.bottom())), minor):
+                if x % major == 0 and y % major == 0:
+                    painter.setPen(QPen(QColor(str(p["canvas_grid_major"])), 1))
+                    painter.drawLine(x - 3, y, x + 3, y)
+                    painter.drawLine(x, y - 3, x, y + 3)
+                else:
+                    painter.setPen(QPen(QColor(str(p["canvas_grid_minor"])), 1.5))
+                    painter.drawPoint(x, y)
+
+    def drawForeground(self, painter, rect):
+        window = getattr(self, "_owner_window", None)
+        vp = self.viewport()
+        if (window is None or not window.empty_hint.isVisible() or window.boxes
+                or vp.width() < 380 or vp.height() < 220):
+            return
+        # Replace the legacy hint visually without changing its scene geometry or visibility.
+        painter.save()
+        painter.setClipRect(window.empty_hint.sceneBoundingRect())
+        self.drawBackground(painter, window.empty_hint.sceneBoundingRect())
+        painter.restore()
+        p = get_palette()
+        card_w, card_h = min(460, vp.width() - 48), 146
+        x = (vp.width() - card_w) // 2
+        y = min(max(96, (vp.height() - card_h) // 2), vp.height() - card_h - 12)
+        if hasattr(self, 'controls'):
+            y = max(12, min(y, self.controls.geometry().top() - card_h - 12))
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(str(p["card_bg"])))
+        painter.setPen(QPen(QColor(str(p["border"])), 1.2))
+        painter.drawRoundedRect(QRectF(x, y, card_w, card_h), 10, 10)
+        painter.setFont(_box_font(11, bold=True))
+        painter.setPen(QColor(str(p["text_primary"])))
+        painter.drawText(QRectF(x + 18, y + 12, card_w - 36, 24), Qt.AlignVCenter,
+                         "CAELAB 프로젝트 시작하기")
+        steps = (
+            "'프로그램 추가'로 상자를 만들고 CAD·입력 파일을 지정하세요.",
+            "파일의 길이·힘·응력 단위(mm, N, MPa 등)를 확인하세요.",
+            "상자를 연결하고 열어 전용 프로그램에서 작업하세요.",
+        )
+        painter.setFont(_box_font(9.5))
+        for idx, text in enumerate(steps):
+            row_y = y + 43 + idx * 32
+            painter.setPen(QColor(str(p["accent"])))
+            painter.drawText(QRectF(x + 18, row_y, 18, 28), Qt.AlignTop, str(idx + 1))
+            painter.setPen(QColor(str(p["text_secondary"])))
+            painter.drawText(QRectF(x + 40, row_y, card_w - 56, 31), Qt.TextWordWrap, text)
+        painter.restore()
 
     def scale(self, sx, sy):
         self._layout_scroll = None
@@ -161,11 +226,11 @@ class SchematicView(QGraphicsView):
         self.place_controls()
 
 
-def _fit_icon():
+def _fit_icon(color: str | None = None) -> QIcon:
     pixmap = QPixmap(20, 20)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
-    painter.setPen(QPen(QColor('#33414f'), 1.6))
+    painter.setPen(QPen(QColor(color or str(get_palette()["text_primary"])), 1.6))
     for x, y, dx, dy in ((3, 3, 1, 1), (17, 3, -1, 1), (3, 17, 1, -1), (17, 17, -1, -1)):
         painter.drawLine(x, y, x + 5 * dx, y)
         painter.drawLine(x, y, x, y + 5 * dy)
@@ -179,7 +244,7 @@ def _selection_changed_input(node, reference) -> bool:
             and reference is not None and not reference.stale)
 
 
-def _box_font(size: int, bold: bool = False) -> QFont:
+def _box_font(size: float, bold: bool = False) -> QFont:
     """Pick a font whose metrics are reliable for mixed Korean/Latin
     text in graphics items (the empty default family garbles it)."""
     from PySide6.QtGui import QFontDatabase
@@ -187,13 +252,52 @@ def _box_font(size: int, bold: bool = False) -> QFont:
     available = set(QFontDatabase.families())
     for family in ("Noto Sans CJK KR", "Malgun Gothic", "Noto Sans", "Sans Serif"):
         if family in available:
-            font = QFont(family, size)
+            font = QFont(family)
+            font.setPointSizeF(size)
             font.setBold(bold)
             return font
     font = QFont()
-    font.setPointSize(size)
+    font.setPointSizeF(size)
     font.setBold(bold)
     return font
+
+
+class _ToolboxItemDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index):
+        return QSize(180, 50)
+
+    def paint(self, painter, option, index):
+        p = get_palette()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(option.rect).adjusted(3, 2, -3, -2)
+        if option.state & (QStyle.State_Selected | QStyle.State_MouseOver):
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(str(p["selection_bg"] if option.state & QStyle.State_Selected else p["hover_bg"])))
+            painter.drawRoundedRect(rect, 6, 6)
+        item_icon = index.data(Qt.DecorationRole)
+        if isinstance(item_icon, QIcon):
+            item_icon.paint(painter, int(rect.x() + 7), int(rect.y() + 12), 20, 20)
+        left, width = rect.x() + 35, rect.width() - 43
+        painter.setFont(_box_font(9, bold=True))
+        painter.setPen(QColor(str(p["text_primary"])))
+        title = str(index.data(Qt.DisplayRole) or "")
+        title_w = painter.fontMetrics().horizontalAdvance(title)
+        painter.drawText(QRectF(left, rect.y() + 4, width, 18), Qt.AlignVCenter, title)
+        painter.setFont(_box_font(8))
+        painter.setPen(QColor(str(p["text_accent"])))
+        category_w = max(0, int(width - title_w - 8))
+        category = painter.fontMetrics().elidedText(str(index.data(Qt.UserRole + 1) or ""), Qt.ElideRight, category_w)
+        painter.drawText(QRectF(left + title_w + 8, rect.y() + 4, category_w, 18), Qt.AlignVCenter, category)
+        painter.setFont(_box_font(8.5))
+        painter.setPen(QColor(str(p["text_muted"])))
+        subtitle = painter.fontMetrics().elidedText(str(index.data(Qt.UserRole + 2) or ""), Qt.ElideRight, int(width))
+        painter.drawText(QRectF(left, rect.y() + 24, width, 18), Qt.AlignVCenter, subtitle)
+        if option.state & QStyle.State_HasFocus:
+            painter.setPen(QPen(QColor(str(p["accent"])), 1, Qt.DotLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect, 6, 6)
+        painter.restore()
 
 
 class SystemBox(QGraphicsItem):
@@ -210,6 +314,11 @@ class SystemBox(QGraphicsItem):
         self.status_error = False
         self.detail = ""
         self.file_label = "선택 파일 없음"
+        self.cell_code: str = ""
+        self.unit_badge: str = ""
+        self.unit_warning: bool = False
+        self.has_in_edge: bool = False
+        self.has_out_edge: bool = False
         self.setFlag(QGraphicsItem.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
@@ -229,39 +338,91 @@ class SystemBox(QGraphicsItem):
         self.update()
 
     def paint(self, painter, option, widget=None) -> None:
-        from PySide6.QtCore import QRectF
-
-        rect = self.boundingRect()
-        painter.setRenderHint(painter.RenderHint.Antialiasing)
-        # Selection is shown by the border and a light tint only: a
-        # dark fill would bury the dark title/status text drawn below.
-        painter.setBrush(QBrush(QColor("#dcebf7") if self.isSelected() else QColor("#fdfdfe")))
-        painter.setPen(QPen(QColor("#1668b4") if self.isSelected() else QColor("#8a97a5"),
-                            2.2 if self.isSelected() else 1.6))
-        painter.drawRoundedRect(rect, 8, 8)
-        # header band
-        painter.setBrush(QBrush(QColor("#e8eef4")))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(QRectF(1, 1, BOX_W - 2, 24), 7, 7)
-        painter.setPen(QPen(QColor("#10243a")))
-        painter.setFont(_box_font(11, bold=True))
-        painter.drawText(QRectF(10, 3, BOX_W - 40, 20), Qt.AlignLeft,
-                         painter.fontMetrics().elidedText(self.choice_title or self.title, Qt.ElideRight, BOX_W - 40))
-        # state dot
-        painter.setBrush(QBrush(QColor('#d64545' if self.status_error else '#c28422' if self.status_warning else STATE_COLORS.get(self.state, "#c9ced4"))))
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(QRectF(BOX_W - 24, 7, 11, 11))
-        painter.setPen(QPen(QColor("#33414f")))
-        painter.setFont(_box_font(10))
-        painter.drawText(QRectF(10, 32, BOX_W - 20, 18), Qt.AlignLeft,
-                         painter.fontMetrics().elidedText(self.file_label, Qt.ElideMiddle, BOX_W - 20))
-        painter.drawText(QRectF(10, 51, BOX_W - 20, 18), Qt.AlignLeft,
-                         painter.fontMetrics().elidedText(self.subtitle, Qt.ElideRight, BOX_W - 20))
-        painter.setPen(QPen(QColor('#a12e2e' if self.status_error or self.state in {'failed', 'missing'} else
-                                  '#875212' if self.status_warning or self.state in {'stale', 'changed', 'cancelled', 'interrupted'} else '#344d65')))
-        painter.setFont(_box_font(9, bold=bool(self.status_label)))
+        p = get_palette()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        body = QRectF(0.75, 0.75, BOX_W - 1.5, BOX_H - 1.5)
+        painter.setBrush(QColor(str(p["box_selected_bg"] if self.isSelected() else p["box_bg"])))
+        painter.setPen(QPen(QColor(str(p["box_selected_border"] if self.isSelected() else p["box_border"])),
+                            2.2 if self.isSelected() else 1.4))
+        painter.drawRoundedRect(body, 8, 8)
+        # Clip bands inside the existing bounds so the scene and routing stay stable.
+        clip = QPainterPath()
+        clip.addRoundedRect(body, 8, 8)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.fillRect(QRectF(1.5, 1.5, BOX_W - 3, 25),
+                         QColor(str(p["box_selected_header_bg"] if self.isSelected() else p["box_header_bg"])))
+        painter.setPen(QPen(QColor(str(p["border_subtle"])), 1))
+        painter.drawLine(QPointF(1.5, 26.5), QPointF(BOX_W - 1.5, 26.5))
+        is_err = self.status_error or self.state in {"failed", "missing"}
+        is_warn = self.status_warning or self.state in {"stale", "changed", "cancelled", "interrupted"}
+        is_run = self.state in {"queued", "preparing", "running"}
+        is_ok = self.state in {"ready", "completed", "opened"}
+        tone, symbol = (("error", "×") if is_err else ("warning", "!") if is_warn else
+                        ("running", "↻") if is_run else ("ready", "✓") if is_ok else ("neutral", "·"))
+        band = QRectF(1.5, 71, BOX_W - 3, 25.5)
+        if is_err:
+            painter.fillRect(band, QColor(str(p["status_error_bg"])))
+        elif is_warn:
+            painter.fillRect(band, QColor(str(p["status_warning_bg"])))
+            painter.fillRect(band, QBrush(QColor(str(p["stale_stripe"])), Qt.BDiagPattern))
+        painter.setPen(QPen(QColor(str(p["border_subtle"])), 1))
+        painter.drawLine(QPointF(1.5, 71), QPointF(BOX_W - 1.5, 71))
+        painter.restore()
+        if self.cell_code:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(str(p["accent"])))
+            painter.drawRoundedRect(QRectF(7, 5, 19, 16), 4, 4)
+            painter.setPen(QColor("#ffffff"))
+            painter.setFont(_box_font(8, bold=True))
+            painter.drawText(QRectF(7, 5, 19, 16), Qt.AlignCenter, self.cell_code)
+        title_rect = QRectF(30 if self.cell_code else 10, 4, BOX_W - (56 if self.cell_code else 36), 19)
+        painter.setFont(_box_font(10, bold=True))
+        painter.setPen(QColor(str(p["text_primary"])))
+        painter.drawText(title_rect, Qt.AlignVCenter,
+                         painter.fontMetrics().elidedText(self.choice_title or self.title, Qt.ElideRight, int(title_rect.width())))
+        badge = QRectF(BOX_W - 22, 6, 14, 14)
+        painter.setBrush(QColor(str(p[f"status_{tone}_bg"])))
+        painter.setPen(QPen(QColor(str(p[f"status_{tone}_fg"])), 1.2))
+        painter.drawEllipse(badge)
+        painter.setFont(_box_font(8, bold=True))
+        painter.drawText(badge, Qt.AlignCenter, symbol)
+        painter.setFont(_box_font(9))
+        painter.setPen(QColor(str(p["text_primary"])))
+        painter.drawText(QRectF(12, 30, BOX_W - 24, 17), Qt.AlignVCenter,
+                         painter.fontMetrics().elidedText(self.file_label, Qt.ElideMiddle, BOX_W - 24))
+        bw = 0
+        if self.unit_badge:
+            painter.setFont(_box_font(8, bold=self.unit_warning))
+            bw = min(92, painter.fontMetrics().horizontalAdvance(self.unit_badge) + 12)
+            unit_rect = QRectF(BOX_W - 10 - bw, 50, bw, 16)
+            unit_tone = "warning" if self.unit_warning else "neutral"
+            painter.setBrush(QColor(str(p[f"status_{unit_tone}_bg"])))
+            painter.setPen(QPen(QColor(str(p[f"status_{unit_tone}_border"])), 1))
+            painter.drawRoundedRect(unit_rect, 4, 4)
+            painter.setPen(QColor(str(p["status_warning_fg"] if self.unit_warning else p["text_secondary"])))
+            painter.drawText(unit_rect.adjusted(6, 0, -6, 0), Qt.AlignCenter,
+                             painter.fontMetrics().elidedText(self.unit_badge, Qt.ElideRight, bw - 12))
+        painter.setFont(_box_font(8))
+        painter.setPen(QColor(str(p["text_muted"])))
+        subtitle_w = BOX_W - 22 - (bw + 6 if self.unit_badge else 0)
+        painter.drawText(QRectF(12, 49, subtitle_w, 18), Qt.AlignVCenter,
+                         painter.fontMetrics().elidedText(self.subtitle, Qt.ElideRight, subtitle_w))
+        status_color = p["status_error_fg"] if is_err else p["status_warning_fg"] if is_warn else p["status_ready_fg"] if is_ok else p["text_secondary"]
+        painter.setPen(QColor(str(status_color)))
+        painter.setFont(_box_font(8, bold=bool(self.status_label or is_warn or is_err)))
         status = self.status_label or STATE_LABELS.get(self.state, "상태 미확인")
-        painter.drawText(QRectF(10, 73, BOX_W - 20, 18), Qt.AlignLeft, status)
+        painter.drawText(QRectF(12, 74, BOX_W - 24, 19), Qt.AlignVCenter,
+                         painter.fontMetrics().elidedText(status, Qt.ElideRight, BOX_W - 24))
+        for visible, connected, x, color in (
+                (self.kind != "geometry" or self.has_in_edge, self.has_in_edge, 4.0, "port_in"),
+                (self.kind != "expert", self.has_out_edge, BOX_W - 4.0, "port_out")):
+            if visible:
+                painter.setBrush(QColor(str(p[color] if connected else p["panel_bg"])))
+                painter.setPen(QPen(QColor(str(p[color] if connected else p["border_strong"])), 1))
+                painter.drawEllipse(QPointF(x, BOX_H / 2), 3.2, 3.2)
+        painter.restore()
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged:
@@ -287,11 +448,29 @@ class Connector(QGraphicsPathItem):
         super().__init__()
         self.src, self.dst = src, dst
         self.boxes = boxes
-        self.setPen(QPen(QColor("#5b7a99"), 2))
+        self.setAcceptHoverEvents(True)
+        self._hovered = False
+        self._apply_style()
         self.setZValue(-1)
         src._on_move.append(self.refresh)
         dst._on_move.append(self.refresh)
         self.refresh()
+
+    def _apply_style(self):
+        p = get_palette()
+        self.setPen(QPen(QColor(str(p["connector_hover"] if self._hovered else p["connector"])),
+                            2.5 if self._hovered else 1.8))
+        self.update()
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self._apply_style()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self._apply_style()
+        super().hoverLeaveEvent(event)
 
     def paint(self, painter, option, widget=None):
         super().paint(painter, option, widget)
@@ -350,6 +529,7 @@ class Connector(QGraphicsPathItem):
         return None
 
     def refresh(self) -> None:
+        self._apply_style()
         # Route along the dominant direction between the two boxes.
         # A box placed below its source (e.g. the expert box under the
         # results box) must connect bottom -> top; forcing every link
@@ -549,11 +729,9 @@ class ProjectWindow(QMainWindow):
         self._dirty = False
         self._loading = False
         self.resize(1280, 820)
-        self.setStyleSheet(THEME + '''
-            QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
-                background: #e1e6eb; border-color: #d5dce3; color: #5d6b78; }
-        ''')
         self._build_ui()
+        self.apply_theme()
+        register_theme_listener(self.apply_theme)
         self._show_project()
         if project_path is not None:
             self.open_project(project_path, confirm=False)
@@ -618,13 +796,21 @@ class ProjectWindow(QMainWindow):
 
         view_menu = self.view_menu = self.menuBar().addMenu("보기(&V)")
         self.toolbox = QListWidget()
+        self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
+        view_menu.addSeparator()
         self.toolbox.setObjectName("toolbox")
+        self.toolbox.setMouseTracking(True)
+        self.toolbox.setItemDelegate(_ToolboxItemDelegate(self.toolbox))
         from PySide6.QtWidgets import QListWidgetItem
         for kind, title, sub in SYSTEM_KINDS:
-            self.toolbox.addItem(QListWidgetItem(icon(_KIND_ICONS[kind]), f"{title}"))
+            item = QListWidgetItem(icon(_KIND_ICONS[kind]), title)
+            item.setData(Qt.UserRole + 1, _KIND_CATEGORIES.get(kind, ""))
+            item.setData(Qt.UserRole + 2, sub)
+            self.toolbox.addItem(item)
         self.toolbox.itemClicked.connect(
             lambda item: self.add_box(SYSTEM_KINDS[self.toolbox.row(item)][0]))
         tools = self.toolbox_dock = QDockWidget("프로그램", self)
+        tools.setMinimumWidth(190)
         tools.setWidget(self.toolbox)
         self.addDockWidget(Qt.LeftDockWidgetArea, tools)
         view_menu.addAction(tools.toggleViewAction())
@@ -632,12 +818,12 @@ class ProjectWindow(QMainWindow):
 
         self.scene = QGraphicsScene(self)
         self.view = SchematicView(self.scene)
+        self.view._owner_window = self
         self.view.addAction(self.remove_action)
         self.view.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.view.setViewportMargins(24, 24, 8, 8)
         self.view.setResizeAnchor(QGraphicsView.NoAnchor)
         self.view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        self.view.setBackgroundBrush(QBrush(QColor("#eef1f5")))
         self.setCentralWidget(self.view)
         self.zoom_in_action = view_menu.addAction('확대')
         self.zoom_in_action.setShortcut(QKeySequence.ZoomIn)
@@ -652,11 +838,6 @@ class ProjectWindow(QMainWindow):
         view_menu.addSeparator()
         controls = self.view.controls = QWidget(self.view.viewport())
         controls.setObjectName('canvasControls')
-        controls.setStyleSheet('''
-            QWidget#canvasControls { background: #f8fafc; border: 1px solid #bdc7d1; border-radius: 4px; }
-            QToolButton { min-width: 24px; min-height: 24px; padding: 2px 4px; }
-            QToolButton#zoomPercentage { min-width: 50px; max-width: 50px; }
-        ''')
         control_row = QHBoxLayout(controls)
         control_row.setContentsMargins(3, 3, 3, 3)
         control_row.setSpacing(2)
@@ -665,6 +846,7 @@ class ProjectWindow(QMainWindow):
         self.zoom_out_button.setText('−')
         self.zoom_percent = QToolButton()
         self.zoom_percent.setObjectName('zoomPercentage')
+        self.zoom_percent.setFixedWidth(56)
         self.zoom_percent.setToolTip('100%로 보기')
         self.zoom_percent.setAccessibleName('현재 배율, 누르면 100%로 보기')
         self.zoom_percent.clicked.connect(self.reset_view)
@@ -677,6 +859,7 @@ class ProjectWindow(QMainWindow):
         self.fit_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         for button, label in ((self.zoom_out_button, '축소'), (self.zoom_in_button, '확대'),
                               (self.fit_button, '화면에 맞추기')):
+            button.setMinimumSize(26, 26)
             button.setToolTip(label)
             button.setAccessibleName(label)
         for button in (self.zoom_out_button, self.zoom_percent, self.zoom_in_button, self.fit_button):
@@ -694,15 +877,22 @@ class ProjectWindow(QMainWindow):
 
         props_widget = QWidget()
         props_widget.setObjectName('selectionSettings')
-        props_widget.setStyleSheet('''
-            QWidget#selectionSettings { background: #fafbfd; }
-            QWidget#selectionSettings QPushButton { padding: 3px 7px; }
-            QWidget#selectionSettings QLineEdit { border: none; background: #edf1f5; padding: 5px; }
-            QWidget#selectionSettings QToolButton { padding: 3px 6px; }
-        ''')
         props_layout = QVBoxLayout(props_widget)
         props_layout.setSpacing(12)
         props_layout.setContentsMargins(10, 10, 10, 10)
+        self.project_brief_card = QFrame()
+        self.project_brief_card.setObjectName("sectionCard")
+        brief = QVBoxLayout(self.project_brief_card)
+        brief.setContentsMargins(10, 8, 10, 8)
+        brief.setSpacing(6)
+        self.project_brief_title = QLabel()
+        self.project_brief_title.setObjectName("cardTitle")
+        self.project_brief_body = QLabel()
+        for label in (self.project_brief_title, self.project_brief_body):
+            label.setTextFormat(Qt.PlainText)
+            label.setWordWrap(True)
+            brief.addWidget(label)
+        props_layout.addWidget(self.project_brief_card)
         self.selection_name = QLabel()
         title_font = self.selection_name.font()
         title_font.setBold(True)
@@ -712,6 +902,7 @@ class ProjectWindow(QMainWindow):
         header = QHBoxLayout()
         header.addWidget(self.selection_name, 1)
         self.open_button = QPushButton('열기')
+        self.open_button.setObjectName('primary')
         self.open_button.clicked.connect(self.open_selected)
         header.addWidget(self.open_button)
         props_layout.addLayout(header)
@@ -761,10 +952,11 @@ class ProjectWindow(QMainWindow):
                 (self.output_summary, self.output_value, self.output_button, self.output_units_button)):
             summary.setTextFormat(Qt.PlainText)
             summary.setWordWrap(True)
-            section_widget = QWidget()
+            section_widget = QFrame()
+            section_widget.setObjectName("sectionCard")
             section = QVBoxLayout(section_widget)
-            section.setContentsMargins(0, 0, 0, 0)
-            section.setSpacing(4)
+            section.setContentsMargins(10, 8, 10, 8)
+            section.setSpacing(6)
             if summary is self.input_summary:
                 self.input_section = section_widget
             else:
@@ -792,6 +984,18 @@ class ProjectWindow(QMainWindow):
             if summary is self.input_summary:
                 section.addWidget(self.owner_button, 0, Qt.AlignLeft)
             fields.addWidget(section_widget)
+        self.exec_metrics_card = QFrame()
+        self.exec_metrics_card.setObjectName("sectionCard")
+        metrics = QVBoxLayout(self.exec_metrics_card)
+        metrics.setContentsMargins(10, 8, 10, 8)
+        metrics.setSpacing(6)
+        self.exec_metrics_title = QLabel()
+        self.exec_metrics_body = QLabel()
+        for label in (self.exec_metrics_title, self.exec_metrics_body):
+            label.setTextFormat(Qt.PlainText)
+            label.setWordWrap(True)
+            metrics.addWidget(label)
+        fields.addWidget(self.exec_metrics_card)
         self.run_summary = QLabel()
         self.run_summary.setWordWrap(True)
         self.run_summary.setTextFormat(Qt.PlainText)
@@ -807,7 +1011,7 @@ class ProjectWindow(QMainWindow):
         self.settings_dock.setWidget(props_scroll)
         self.addDockWidget(Qt.RightDockWidgetArea, self.settings_dock)
         view_menu.addAction(self.settings_dock.toggleViewAction())
-        self.resizeDocks([tools, self.settings_dock], [150, 280], Qt.Horizontal)
+        self.resizeDocks([tools, self.settings_dock], [190, 280], Qt.Horizontal)
         self._first_settings = True
         self.settings_dock.hide()
         self.settings_dock.toggleViewAction().triggered.connect(self._settings_view_chosen)
@@ -840,6 +1044,32 @@ class ProjectWindow(QMainWindow):
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._context_menu)
         self._selection_changed()
+
+    def apply_theme(self, mode: str | None = None) -> None:
+        resolved = mode if mode in ("dark", "light") else current_theme_mode()
+        p = get_palette(resolved)
+        self.setStyleSheet(build_stylesheet(resolved))
+        self.theme_action.setText(theme_toggle_label(resolved))
+        self.add_program_button.setIcon(icon("geometry", resolved))
+        for kind, act in self.add_program_actions.items():
+            act.setIcon(icon(_KIND_ICONS[kind], resolved))
+        for idx, (kind, _title, _sub) in enumerate(SYSTEM_KINDS):
+            self.toolbox.item(idx).setIcon(icon(_KIND_ICONS[kind], resolved))
+        self.fit_button.setIcon(_fit_icon(str(p["text_primary"])))
+        self.empty_hint.setDefaultTextColor(QColor(str(p["text_muted"])))
+        self.view.setBackgroundBrush(QBrush(QColor(str(p["canvas_bg"]))))
+        palette = self.view.palette()
+        palette.setColor(QPalette.Base, QColor(str(p["canvas_bg"])))
+        palette.setColor(QPalette.Window, QColor(str(p["canvas_bg"])))
+        self.view.setPalette(palette)
+        for box in self.boxes.values():
+            box.update()
+        for connector in self.connectors:
+            connector.refresh()
+        self.view.viewport().update()
+        self.toolbox.viewport().update()
+        if hasattr(self, "selection_name"):
+            self._selection_changed()
 
     def _show_history(self, shown: bool) -> None:
         self.history_dock.setVisible(shown)
@@ -1114,6 +1344,21 @@ class ProjectWindow(QMainWindow):
 
     def _selection_changed(self) -> None:
         selected = self._selected_boxes()
+        p = get_palette()
+        self.exec_metrics_title.clear()
+        self.exec_metrics_body.clear()
+        self.exec_metrics_card.hide()
+        if not selected:
+            self.project_brief_title.setText(f"프로젝트 개요 — {self.project.name}")
+            problems = sum(1 for box in self.boxes.values() if box.status_warning or box.status_error)
+            self.project_brief_body.setText(
+                f"프로그램 {len(self.boxes)}개 · 연결 {len(self.project.connections)}개 · 확인 필요 {problems}개\n"
+                "프로그램 상자를 선택하면 입력과 출력을 확인하고 전용 프로그램을 열 수 있습니다.")
+            self.project_brief_card.show()
+        else:
+            self.project_brief_title.clear()
+            self.project_brief_body.clear()
+            self.project_brief_card.hide()
         self.connect_action.setEnabled(bool(selected) and len(self.boxes) > 1)
         self.selection_connect_button.setVisible(len(selected) == 2)
         self.remove_action.setEnabled(len(selected) == 1)
@@ -1166,8 +1411,10 @@ class ProjectWindow(QMainWindow):
             else:
                 note = {'ready': '', 'needs_input': '미지정', 'changed': '변경됨', 'missing': '누락'}.get(status, '상태 미확인')
             summary.setText(f'{title} {note}'.rstrip())
-            summary.setStyleSheet('color: #9d2929;' if status == 'missing' else
-                                 'color: #875212;' if status in {'stale', 'changed'} else '')
+            summary.setStyleSheet(
+                f"color: {p['status_error_fg']}; font-weight: 600;" if status == 'missing' else
+                f"color: {p['status_warning_fg']}; font-weight: 600;" if status in {'stale', 'changed'} else
+                f"color: {p['text_primary']}; font-weight: 600;")
             value.setText(self._summary_file_name(ref.path)[0] if ref else '')
             value.setPlaceholderText('파일 지정 안 됨')
             value.setToolTip(self._file_tooltip(ref.path) if ref else '')
@@ -1198,6 +1445,23 @@ class ProjectWindow(QMainWindow):
         if node.kind == 'analysis' and self.project.path is not None:
             try:
                 run = self.workbench.selected_native_run(self.project, node.id)
+                if (run is not None and run.state == 'completed' and run.parse_state in {'readable', 'partial'}
+                        and isinstance(run.result, dict) and bool(run.result)):
+                    self.exec_metrics_title.setText('계산 결과 요약 — 이전 입력의 결과' if run.stale else '계산 결과 요약')
+                    self.exec_metrics_title.setStyleSheet(status_badge_style('warning' if run.stale else 'ready'))
+                    summary = run.result.get('summary') or {}
+                    max_disp = summary.get('max_displacement')
+                    len_unit = (run.units or {}).get('length') or '(단위 미확인)'
+                    disp_line = f"최대 변위: {max_disp:.4g} {len_unit}" if isinstance(max_disp, (int, float)) else '최대 변위: 미확인'
+                    lines = [disp_line]
+                    d_nodes, m_nodes = summary.get('displacement_node_count'), summary.get('mesh_node_count')
+                    if isinstance(d_nodes, int) and isinstance(m_nodes, int) and m_nodes > 0:
+                        lines.append(f"변위 절점: {d_nodes:,} / {m_nodes:,}")
+                    finished = getattr(run, 'finished_at', None)
+                    if isinstance(finished, str) and finished.strip():
+                        lines.append(f"완료 시각: {finished[:19].replace('T', ' ')}")
+                    self.exec_metrics_body.setText('\n'.join(lines))
+                    self.exec_metrics_card.show()
                 if run:
                     self.output_summary.setText('선택 계산 결과 — ' + _run_text(run))
                     self.output_value.setPlaceholderText('결과 파일 없음')
@@ -1340,6 +1604,13 @@ class ProjectWindow(QMainWindow):
         self.connectors.clear()
         for connection in self.project.connections:
             self._draw_connection(connection.source_id, connection.target_id, connection.source_role)
+        in_targets = {edge.target_id for edge in self.project.connections}
+        out_sources = {edge.source_id for edge in self.project.connections}
+        for idx, box in enumerate(self.boxes.values()):
+            box.cell_code = chr(ord('A') + idx) if idx < 26 else f'S{idx + 1}'
+            box.has_in_edge = box.node_id in in_targets
+            box.has_out_edge = box.node_id in out_sources
+            box.update()
 
     def _draw_connection(self, source_id: str, target_id: str, role: str) -> None:
         connector = Connector(self.boxes[source_id], self.boxes[target_id], self.boxes.values())
@@ -1550,16 +1821,34 @@ class ProjectWindow(QMainWindow):
 
     def _reflect_programs(self) -> None:
         statuses = {status.spec.id: status for status in self.workbench.programs()}
-        for node_id, box in self.boxes.items():
+        in_targets = {edge.target_id for edge in self.project.connections}
+        out_sources = {edge.source_id for edge in self.project.connections}
+        for idx, (node_id, box) in enumerate(self.boxes.items()):
+            box.cell_code = chr(ord('A') + idx) if idx < 26 else f'S{idx + 1}'
+            box.has_in_edge = node_id in in_targets
+            box.has_out_edge = node_id in out_sources
             node = self.project.nodes[node_id]
             program = statuses.get(node.program_id)
             box.subtitle = "프로그램 연결 필요" if program and not program.available else ""
             self._reflect_node(node_id)
+            box.update()
         self._poll_runs()
 
     def _reflect_node(self, node_id: str) -> None:
         node, box = self.project.nodes[node_id], self.boxes[node_id]
         reference = self.workbench.input_file(self.project, node_id)
+        unit_ref = reference or node.files.get('output')
+        if unit_ref is not None and unit_ref.units:
+            vals = [str(v).strip() for v in unit_ref.units.values() if str(v).strip()]
+            box.unit_badge = '·'.join(vals[:3])
+            box.unit_warning = False
+        elif (unit_ref is not None and not unit_ref.units and node.kind in {'geometry', 'mesh', 'analysis'}
+              and not self._is_run_file(unit_ref.path)):
+            box.unit_badge = '단위 미확인'
+            box.unit_warning = True
+        else:
+            box.unit_badge = ''
+            box.unit_warning = False
         title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), "프로그램")
         box.title = {"geometry": "FreeCAD", "mesh": "Gmsh", "analysis": "CalculiX", "results": "ParaView", "expert": "전문가 논의"}.get(node.kind, title)
         box.file_label = self._summary_file_name(reference.path)[0] if reference else "선택 파일 없음"

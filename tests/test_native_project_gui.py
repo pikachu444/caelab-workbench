@@ -957,7 +957,7 @@ def test_canvas_controls_stay_fixed_and_show_real_scale_for_all_commands(window,
     panel_size = panel.size()
     buttons = (window.zoom_out_button, window.zoom_percent, window.zoom_in_button, window.fit_button)
     button_sizes = [button.size() for button in buttons]
-    assert window.zoom_percent.minimumWidth() == window.zoom_percent.maximumWidth() == 60
+    assert window.zoom_percent.minimumWidth() == window.zoom_percent.maximumWidth() == 56
     assert [a.text() for a in window.view_menu.actions() if a in (
         window.zoom_in_action, window.zoom_out_action, window.fit_action, window.reset_view_action
     )] == ['확대', '축소', '화면에 맞추기', '100%로 보기']
@@ -1485,3 +1485,169 @@ def test_removed_calculations_use_their_actual_saved_input_not_identical_result_
         return QDialog.Rejected
     monkeypatch.setattr(QDialog, 'exec', cancel)
     assert not window.restore_program()
+
+
+@pytest.fixture
+def themed_window(app, monkeypatch, tmp_path):
+    import gc
+    from apps.workbench_qt.theme import set_theme_mode
+    from caelab.workbench import Workbench
+
+    # Release closed windows from earlier tests before broadcasting theme changes.
+    gc.collect()
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "ui.ini"))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: QMessageBox.Ok)
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: pytest.fail("unexpected launch"))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: pytest.fail("unexpected network"))
+    workbench = Workbench()
+    monkeypatch.setattr(workbench, 'programs', lambda: [])
+    instance = ProjectWindow(workbench)
+    instance.run_timer.stop()
+    try:
+        yield instance
+    finally:
+        set_theme_mode("dark")
+        instance._dirty = False
+        instance.close()
+
+
+def test_project_window_dark_default_and_light_theme_toggle(themed_window, app, tmp_path):
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtWidgets import QToolBar
+    from apps.workbench_qt.theme import current_theme_mode, get_palette, theme_toggle_label
+
+    window = themed_window
+    assert current_theme_mode() == "dark"
+    geometry, analysis = window.add_box("geometry"), window.add_box("analysis")
+    window.register_file(geometry.node_id, _file(tmp_path, "native.inp"), "output")
+    assert window.connect(geometry.node_id, analysis.node_id)
+    connector = window.connectors[0]
+    assert geometry.has_out_edge and analysis.has_in_edge
+    assert not geometry.has_in_edge and not analysis.has_out_edge
+    analysis.set_state("stale")
+    analysis.status_warning = True
+    bounds = window.scene.itemsBoundingRect()
+    window.resize(960, 680)
+    window.show()
+    app.processEvents()
+    toolbar = next(bar for bar in window.findChildren(QToolBar) if bar.windowTitle() == "프로젝트")
+    assert window.theme_action in window.view_menu.actions()
+    assert window.theme_action not in toolbar.actions()
+    assert window.toolbox.count() == 5
+    assert [window.toolbox.item(i).text() for i in range(5)] == ["FreeCAD", "Gmsh", "CalculiX", "ParaView", "전문가"]
+    for mode in ("light", "dark"):
+        window.theme_action.trigger()
+        app.processEvents()
+        palette = get_palette(mode)
+        assert current_theme_mode() == mode
+        assert window.theme_action.text() == theme_toggle_label(mode)
+        assert str(palette["window_bg"]) in window.styleSheet()
+        assert window.view.backgroundBrush().color() == QColor(str(palette["canvas_bg"]))
+        assert window.view.palette().color(QPalette.Base) == QColor(str(palette["canvas_bg"]))
+        assert window.empty_hint.defaultTextColor() == QColor(str(palette["text_muted"]))
+        assert connector.pen().color() == QColor(str(palette["connector"]))
+        assert connector.pen().widthF() == 1.8
+        assert window.scene.itemsBoundingRect() == bounds
+        assert analysis.state == "stale" and analysis.status_warning
+        for action in toolbar.actions():
+            widget = toolbar.widgetForAction(action)
+            if widget:
+                assert widget.isVisible() and toolbar.rect().contains(widget.geometry())
+    _select(window, analysis)
+    window.disconnect_selected()
+    assert not geometry.has_out_edge and not analysis.has_in_edge
+
+
+def test_system_box_cell_code_and_unit_warning_badges(themed_window, tmp_path):
+    window = themed_window
+    first, second = window.add_box("geometry"), window.add_box("analysis")
+    assert (first.cell_code, second.cell_code) == ("A", "B")
+    assert first.title == "FreeCAD" and second.title == "CalculiX"
+    assert first.choice_title is second.choice_title is None
+    assert window._box_name(first) == "FreeCAD"
+    assert window._box_name(second) == "CalculiX"
+    assert first.toolTip().splitlines()[0] == "FreeCAD"
+    assert second.toolTip().splitlines()[0] == "CalculiX"
+    assert first.boundingRect().width() == 210 and first.boundingRect().height() == 98
+    assert first.unit_badge == "" and not first.unit_warning
+    path = _file(tmp_path, "declared.inp")
+    assert window.register_file(second.node_id, path)
+    assert second.unit_warning and second.unit_badge == "단위 미확인"
+    window.workbench.set_node_file_units(window.project, second.node_id, {"length": "mm", "force": "N"})
+    window._reflect_node(second.node_id)
+    assert not second.unit_warning and second.unit_badge == "mm·N"
+    assert window.connect(second.node_id, first.node_id, "input")
+    assert first.has_in_edge and first.unit_badge == "mm·N"
+    assert first.title == "FreeCAD" and "A ·" not in window._box_name(first)
+    assert "B ·" not in second.toolTip()
+
+
+def test_project_brief_card_clears_labels_when_box_selected(themed_window):
+    window = themed_window
+    assert not window.project_brief_card.isHidden()
+    assert window.project.name in window.project_brief_title.text()
+    assert "프로그램 0개" in window.project_brief_body.text()
+    assert "연결 0개" in window.project_brief_body.text()
+    box = window.add_box("geometry")
+    assert window.project_brief_card.isHidden()
+    assert window.project_brief_title.text() == window.project_brief_body.text() == ""
+    window.scene.clearSelection()
+    assert not window.project_brief_card.isHidden()
+    assert "프로그램 1개" in window.project_brief_body.text()
+    other = window.add_box("analysis")
+    box.setSelected(True)
+    assert other.isSelected()
+    assert window.project_brief_card.isHidden()
+    assert window.project_brief_title.text() == window.project_brief_body.text() == ""
+
+
+def test_analysis_exec_metrics_card_handles_stale_and_missing_finished_at(themed_window, tmp_path, monkeypatch):
+    window = themed_window
+    analysis, geometry = window.add_box("analysis"), window.add_box("geometry")
+    run = SimpleNamespace(state="completed", parse_state="partial", stale=True,
+                          result={"summary": {"max_displacement": .123456,
+                                  "displacement_node_count": 1200, "mesh_node_count": 1500}},
+                          units={"length": "mm"}, created_at="CREATION_TIME_SENTINEL")
+    window.project.path = tmp_path / "project.json"
+    monkeypatch.setattr(window.workbench, "selected_native_run", lambda *args: run)
+    _select(window, analysis)
+    assert not window.exec_metrics_card.isHidden()
+    assert "이전 입력의 결과" in window.exec_metrics_title.text()
+    assert window.exec_metrics_body.text() == "최대 변위: 0.1235 mm\n변위 절점: 1,200 / 1,500"
+    assert "CREATION_TIME_SENTINEL" not in _parent_text(window)
+    assert "완료 시각" not in window.exec_metrics_body.text()
+    run.stale = False
+    run.finished_at = "2026-10-26T13:14:15+00:00"
+    window._selection_changed()
+    assert window.exec_metrics_title.text() == "계산 결과 요약"
+    assert "완료 시각: 2026-10-26 13:14:15" in window.exec_metrics_body.text()
+    run.units = {}
+    run.result = {"summary": {"max_displacement": 0}}
+    window._selection_changed()
+    assert "최대 변위: 0 (단위 미확인)" in window.exec_metrics_body.text()
+    run.result = {"summary": {}}
+    window._selection_changed()
+    assert "최대 변위: 미확인" in window.exec_metrics_body.text()
+    for state, parse_state, result in (("failed", "readable", {"summary": {}}),
+                                       ("completed", "missing", {"summary": {}}),
+                                       ("completed", "failed", {"summary": {}}),
+                                       ("completed", "readable", {}),
+                                       ("completed", "readable", None)):
+        run.state, run.parse_state, run.result = state, parse_state, result
+        window._selection_changed()
+        assert window.exec_metrics_card.isHidden()
+        assert window.exec_metrics_title.text() == window.exec_metrics_body.text() == ""
+    run.state, run.parse_state, run.result = "completed", "readable", {"summary": {}}
+    window._selection_changed()
+    assert not window.exec_metrics_card.isHidden()
+    _select(window, geometry)
+    assert window.exec_metrics_card.isHidden()
+    assert window.exec_metrics_title.text() == window.exec_metrics_body.text() == ""
+    _select(window, analysis)
+    assert not window.exec_metrics_card.isHidden()
+    def unavailable(*args):
+        raise ValueError("private failure")
+    monkeypatch.setattr(window.workbench, "selected_native_run", unavailable)
+    window._selection_changed()
+    assert window.exec_metrics_card.isHidden()
+    assert window.exec_metrics_title.text() == window.exec_metrics_body.text() == ""
