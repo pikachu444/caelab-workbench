@@ -16,11 +16,12 @@ from PySide6.QtCore import Qt, QItemSelection
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableView, QTabWidget, QToolBar, QLabel, QDockWidget, QStatusBar,
-    QMessageBox, QHeaderView
+    QMessageBox, QHeaderView, QFileDialog
 )
 from PySide6.QtGui import QAction
 
 from caelab.mdo.study_manager import StudyManager, DesignPointRecord
+from caelab.mdo.inp_binder import TemplateDeck
 from caelab.mdo.variables import ContinuousVariable, VariableSpace
 from caelab.mdo.objectives import ObjectiveSpec
 from caelab.mdo.constraints import ConstraintSpec
@@ -57,6 +58,19 @@ class MDOStudioWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
+        act_new = tb.addAction("📄 새 스터디")
+        act_new.setToolTip("빈 MDO 스터디 시작 (Clean New Study)")
+        act_new.triggered.connect(self._on_new_study)
+
+        act_load_deck = tb.addAction("📂 해석 덱 열기")
+        act_load_deck.setToolTip("CalculiX/Abaqus/Code_Aster 덱에서 <PARAM> 토큰 자동 검색")
+        act_load_deck.triggered.connect(self._on_load_deck)
+
+        act_demo = tb.addAction("💡 예제 (외팔보)")
+        act_demo.setToolTip("외팔보 MDO 벤치마크 예제 스터디 불러오기")
+        act_demo.triggered.connect(self._on_load_demo)
+
+        tb.addSeparator()
         act_run = tb.addAction("▶ Run Evaluations")
         act_run.setToolTip("Evaluate all pending design points")
         act_run.triggered.connect(self._run_all_points)
@@ -180,8 +194,35 @@ class MDOStudioWindow(QMainWindow):
         self.study_tree.populate(self.study)
 
         param_keys = [v.id for v in self.study.space.variables]
-        response_keys = ["mass", "stress", "disp"]
+        response_keys = [o.id for o in self.study.objectives] or (["mass", "stress", "disp"] if self.study.records else [])
         self.tdp_model.set_study_data(self.study.records, param_keys, response_keys)
+
+        if not self.study.records:
+            self.pareto_view.ax.clear()
+            self.pareto_view.ax.text(
+                0.5, 0.5, "해석 결과 없음 (No Points Evaluated)",
+                ha="center", va="center", transform=self.pareto_view.ax.transAxes,
+                color="#64748b", fontsize=11
+            )
+            self.pareto_view.canvas.draw_idle()
+
+            self.tornado_view.ax.clear()
+            self.tornado_view.ax.text(
+                0.5, 0.5, "민감도 분석 데이터 없음",
+                ha="center", va="center", transform=self.tornado_view.ax.transAxes,
+                color="#64748b", fontsize=11
+            )
+            self.tornado_view.canvas.draw_idle()
+
+            self.surface_view.ax.clear()
+            self.surface_view.ax.text(
+                0.5, 0.5, "대리모델 피팅 데이터 없음",
+                ha="center", va="center", transform=self.surface_view.ax.transAxes,
+                color="#64748b", fontsize=11
+            )
+            self.surface_view.canvas.draw_idle()
+            self.setup_widget.display_record(None)
+            return
 
         # Update Pareto Plot
         self.pareto_view.plot_study(
@@ -252,6 +293,47 @@ class MDOStudioWindow(QMainWindow):
 
     def _run_all_points(self) -> None:
         self.status_bar.showMessage("All 25 design points evaluated successfully. Pareto frontier updated.", 5000)
+    def _on_new_study(self) -> None:
+        self.study = StudyManager(name="새 MDO 스터디 (New Study)")
+        self._populate_study()
+        self.status_bar.showMessage("새 MDO 스터디가 생성되었습니다. 변수를 정의하거나 해석 덱을 여세요.", 5000)
+
+    def _on_load_demo(self) -> None:
+        self.study = self._create_demo_cantilever_study()
+        self._populate_study()
+        self.status_bar.showMessage("외팔보 벤치마크 예제 스터디가 로드되었습니다.", 5000)
+
+    def _on_load_deck(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "해석 덱 열기 (파라미터 토큰 자동 검색)",
+            "",
+            "CAE Input Decks (*.inp *.comm *.k *.dat *.bdf);;All Files (*.*)"
+        )
+        if not file_path:
+            return
+        p = Path(file_path)
+        try:
+            deck = TemplateDeck.from_file(p)
+            vars_list = []
+            for tok in deck.token_names:
+                vars_list.append(
+                    ContinuousVariable(id=tok.lower(), name=tok, lower=1.0, upper=100.0, initial=10.0)
+                )
+            self.study = StudyManager(
+                name=f"Study: {p.name}",
+                space=VariableSpace(variables=tuple(vars_list)) if vars_list else None,
+            )
+            self._populate_study()
+            toks_str = ", ".join(deck.token_names)
+            msg = f"덱 '{p.name}'에서 {len(deck.token_names)}개 파라미터 토큰을 발견하여 변수로 자동 등록했습니다."
+            if deck.token_names:
+                msg += f" ({toks_str})"
+            self.status_bar.showMessage(msg, 8000)
+            QMessageBox.information(self, "파라미터 토큰 자동 검색", msg)
+        except Exception as ex:
+            QMessageBox.warning(self, "덱 로드 오류", f"해석 덱을 읽는 중 오류가 발생했습니다: {ex}")
+
 
     def _on_toggle_theme(self) -> None:
         toggle_theme_mode()
