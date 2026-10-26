@@ -295,7 +295,7 @@ def fit_model(evaluator, variables, experiments, *, method="least_squares",
 # ------------------------------------------------------------- surrogate
 
 class Surrogate:
-    """SciPy RBF interpolation with a disjoint confirmation table (original)."""
+    """Bound-normalized surrogate with a separate confirmation table."""
 
     def __init__(self, model, variables, response, validation, support):
         self.model, self.variables, self.response = model, variables, response
@@ -324,8 +324,15 @@ class Surrogate:
                 for i, (row, value) in enumerate(zip(x, predictions))]
 
 
-def fit_surrogate(training, holdout, response, *, variables=None, options=None):
-    """Fit SciPy RBF on training rows only; report independent holdout errors."""
+def _quadratic_features(x):
+    return np.column_stack([np.ones(len(x)), *x.T,
+                            *(x[:, i] * x[:, j] for i in range(x.shape[1])
+                              for j in range(i, x.shape[1]))])
+
+
+def fit_surrogate(training, holdout, response, *, variables=None, options=None,
+                  method="rbf"):
+    """Fit RBF or quadratic least squares; report independent holdout errors."""
     variables = normalize_variables(variables or training["variables"])
     response = dict(response)
     response["response"] = response.get("response", response.get("metric"))
@@ -343,6 +350,8 @@ def fit_surrogate(training, holdout, response, *, variables=None, options=None):
         raise ValueError("Training and holdout parameter points overlap")
     low = np.asarray([v["lower"] for v in variables])
     high = np.asarray([v["upper"] for v in variables])
+    if np.any(high <= low):
+        raise ValueError("Surrogate variables require nonzero ranges")
     if not np.all(np.isfinite(train_x)) or not np.all(np.isfinite(test_x)) \
             or np.any((train_x < low) | (train_x > high)) \
             or np.any((test_x < low) | (test_x > high)):
@@ -351,12 +360,34 @@ def fit_surrogate(training, holdout, response, *, variables=None, options=None):
     train_y = np.asarray([scalar_value(row, response) for row in train])
     test_y = np.asarray([scalar_value(row, response) for row in test])
     opts = dict(options or {})
-    if set(opts) - {"neighbors", "smoothing", "kernel", "epsilon", "degree"}:
-        raise ValueError("Unknown SciPy RBF options")
-    model = RBFInterpolator((train_x - low) / (high - low), train_y, **opts)
+    if method == "rbf":
+        if set(opts) - {"neighbors", "smoothing", "kernel", "epsilon", "degree"}:
+            raise ValueError("Unknown SciPy RBF options")
+        model = RBFInterpolator((train_x - low) / (high - low), train_y, **opts)
+        method_name = "scipy.interpolate.RBFInterpolator"
+    elif method == "polynomial":
+        if opts:
+            raise ValueError("Quadratic polynomial does not accept RBF options")
+        design = _quadratic_features((train_x - low) / (high - low))
+        if len(design) < design.shape[1]:
+            raise ValueError(f"Quadratic polynomial requires at least {design.shape[1]} training points")
+        coefficients, _, rank, singular = np.linalg.lstsq(design, train_y, rcond=None)
+        if rank != design.shape[1] or not np.all(np.isfinite(coefficients)):
+            raise ValueError("Quadratic polynomial training design is rank deficient")
+        if singular[0] / singular[-1] > 1e12:
+            raise ValueError("Quadratic polynomial training design is ill conditioned")
+
+        def model(x):
+            return _quadratic_features(x) @ coefficients
+
+        method_name = "numpy.linalg.lstsq.quadratic"
+    else:
+        raise ValueError("Surrogate method must be rbf or polynomial")
     predictions = model((test_x - low) / (high - low))
+    if not np.all(np.isfinite(predictions)):
+        raise ValueError("Surrogate produced nonfinite holdout predictions")
     error = predictions - test_y
-    validation = {"method": "scipy.interpolate.RBFInterpolator", "options": opts,
+    validation = {"method": method_name, "options": opts,
                   "train_ids": [r["candidate_id"] for r in train],
                   "holdout_ids": [r["candidate_id"] for r in test],
                   "holdout_prediction": predictions.tolist(),
