@@ -1,5 +1,14 @@
 # 현재 상태
 
+## MDO 수치 API 로컬 구현 (2026-10-27)
+
+- `feat/mdo-codex-team`에서 새 `caelab/mdo/` 수치 모듈 8개와 `tests/test_mdo_*.py`를 작성했다. 변수 코덱·연결식 단위/차원 검사, 목적함수·허용오차 제약, DOE, GP/RBF/2차 PRS, SLSQP/DE와 NSGA-II 어댑터, Pareto/HV/2차원 chord knee, Sobol/Morris/Spearman을 포함한다. 실제 관측·예측·평가 실패를 구분하고 수치 배열을 읽기 전용으로 보존한다.
+- 독립 리뷰의 지수 반올림, 제약 페널티 가중치, 모순된 합격 기록, GP 분산 수치오차, 민감도 표본 배치/출처, 실패 캐시와 시간순 검증 분할 지적을 수정했다. 최종 수치 검사(`tests/test_mdo_*.py`)는 127 passed, 1 skipped(pymoo 미설치)이다. 독립 리뷰어의 전체 수치 검사와 마지막 생성자 검증 수정분 재검토도 통과했다. 전체 제품 회귀는 819 passed, 19 skipped, 6 failed로 종료했다. 설치 도우미 3개는 Windows에서 Linux 설치 동작을 기대하는 기존 실패이며, Windows 자식 프로세스 종료 3개는 현재 환경의 `taskkill` 접근 거부와 함께 재현됐다. 실패 6개 모두 시작 커밋 `8e7ec48`의 별도 사본에서도 같은 실패를 확인했다. 전체 회귀 실행 중 보강한 MDO 생성자 검증은 이후 최종 수치 검사 127 passed/1 skipped와 독립 수정분 검토로 확인했다. 전체 제품 회귀가 모두 통과한 상태는 아니다.
+- 검사 환경은 Windows/Python 3.13, NumPy 2.5.2, SciPy 1.18.0, scikit-learn 1.8.0, SALib 1.5.2이다. SALib와 의존성은 기존 로컬 캐시에서 작업용 비추적 경로로 복사해 사용했다. pymoo는 설치돼 있지 않고 네트워크 설치가 차단돼 실제 NSGA-II 실행은 미검증이다. 선언한 최소 버전 및 Python 3.11/3.12 조합의 호환 검증도 남아 있다. CI는 `mdo` 의존성을 설치·확인하도록 수정했으나 이번 환경에서 원격 실행하지 못했다.
+- 수치 API의 `max_evaluations`는 평가 요청 수 예산이다. 네이티브 시도·재시도·확인 계산 예산과 동시 실행 제어는 향후 StudyManager 연결에서 집행해야 한다. 자동 grouped CV/LOOCV·모델군 탐색, 자동 민감도 수렴 반복은 구현하지 않았다. 고정 설정과 명시적 holdout 검증을 제공한다.
+- 시작 커밋 `8e7ec48`에서 기존 numerical 구현·전용 테스트와 `optimization_panel.py`는 이미 삭제됐다. `caelab/numerical/`에는 설명용 `__init__.py`와 AGENTS만 남고 부모 GUI에는 미연결 메뉴·자리표시자가 있다. 이 삭제는 이번 수치 구현의 변경으로 세지 않는다. StudyManager/StudyStore, 네이티브 바인딩·실행, 독립 MDO Studio, 실제 솔버/GUI 끝단 검증과 Phase 1–3 인도를 완료한 상태가 아니다. 아래 2026-10-26 설계 기록과 과거 제품 검증은 이번 수치 구현의 실행 근거와 구분한다.
+- GitHub 접속과 공용 Git 메타데이터 쓰기가 현재 샌드박스에서 차단됐다. 실제 `git add`에서 공용 worktree의 `index.lock` 생성이 `Permission denied`로 실패해 커밋·게시하지 못했고, 원격 main도 새로 조회하지 못했다. 시작 HEAD는 `8e7ec4896c88fa3b4540333b3a71c91f7040db76`이며 작업 파일은 현재 worktree에 남아 있다.
+
 ## 새 MDO 설계 (2026-10-26 후속 요청)
 
 - [Clean-slate MDO 명세](docs/specs/spec-clean-slate-mdo-design.md)를 작성했다. 기존 numerical 전체와 패널·전용 테스트의 폐기 범위, 새 수치 계약, 네이티브 실행·복구·백업, 독립 4영역 Studio와 Phase 1–3을 정의한다.

@@ -38,12 +38,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libegl1 libopengl0 libgl1
       - name: Install product and test dependencies
-        run: python -m pip install -e ".[dev,gui,rag]"
+        run: python -m pip install -e ".[dev,gui,rag,mdo]"
       - name: Require GUI and numerical imports
         run: |
           python - <<'PY'
           import PySide6
           import scipy
+          import sklearn
+          import pymoo
+          import SALib
           import vtk
           from PySide6.QtWidgets import QApplication, QLabel
 

@@ -39,12 +39,15 @@ Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저�
 |---|---|
 | 기본 | 프로젝트·연결 및 NumPy 기반 기능 |
 | `gui` | PySide6·VTK와 기존 GUI가 사용하는 수치 기능(SciPy 1.15 이상) |
-| `numerical` | GUI 없이 수치 기능 사용(SciPy 1.15 이상) |
+| `numerical` | 과거 설치 설정에 남은 SciPy 그룹; 새 MDO는 `mdo` 사용 |
+| `mdo` | 새 독립 수치 API: SciPy·scikit-learn·pymoo·SALib |
 | `rag` | PDF 매뉴얼 읽기(pypdf); 텍스트/Markdown 검색은 기본 설치로 가능 |
 | `sensitivity` | Sobol 민감도 분석용 SALib |
 | `dev` | pytest |
 
-GUI 없이 수치 기능만 쓰려면 `python -m pip install -e ".[numerical]"`로 설치합니다. 기존 코드의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
+새 MDO 수치 API는 `python -m pip install -e ".[mdo,dev]"`로 설치합니다. `caelab.mdo`의 각 모듈을 직접 가져옵니다. PowerShell 수치 검사 명령은 `python -m pytest -q (Get-ChildItem tests/test_mdo_*.py).FullName`입니다. 기존 GUI·네이티브 실행 연결을 교체하는 통합 전환은 별도 작업이며, 이 패키지만 설치해 MDO Studio나 실제 해석 연구를 실행할 수 있는 것은 아닙니다. 선언된 의존성 최소 버전의 Python 3.11/3.12 호환 검증은 아직 완료되지 않았습니다.
+
+기존 numerical 구현과 최적화 패널은 시작 커밋에서 삭제됐으며, 남아 있는 `numerical` 설치 그룹은 그 기능을 복원하지 않습니다. SciPy의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
 
 Python 3.11에서는 PySide6 6.12.0의 Qt 호출 중 참조 계수 손상을 재현해 GUI 의존성을 6.12 미만으로 제한합니다. 동일 검사에서 6.11.1·6.11.2는 정상 종료했습니다. 이미 6.12를 설치한 3.11 환경은 낮은 버전을 설치해도 분리 배포된 PDF·WebEngine 패키지가 남아 충돌할 수 있습니다. 이 경우 기존 환경을 보관하고 새 가상환경에 설치하세요. Python 3.12 이상은 기존 PySide6 범위를 유지합니다.
 
