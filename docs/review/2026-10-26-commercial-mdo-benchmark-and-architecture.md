@@ -8,7 +8,7 @@ Replan optimization around a persistent **study**, a typed **design space**, a r
 
 The recommended product is a dedicated Qt **MDO Study window**, opened from and linked to the launcher project. It combines native parameter binding with a study dashboard: these are complementary responsibilities, not competing product choices. FreeCAD FEM remains the CalculiX modeling authority; ParaView remains the detailed field postprocessor. Workbench commands and JobManager remain the execution boundary. An optimizer must never invoke an arbitrary solver process from a chart callback.
 
-Commercial parity here means credible workflow behavior, numerical semantics, failure handling, and decision support. It does not mean reproducing proprietary algorithms, claiming vendor performance, or displaying every vendor's feature name. No licensed commercial installation was operated for this research. Vendor comparisons below are based on public first-party documentation; GUI behavior is documented behavior, not a hands-on usability benchmark. Public pages and rolling documentation were consulted on the report date; versioned documentation is identified where available. Absence from a cited page does not establish that a product lacks a capability.
+Commercial parity here means credible workflow behavior, numerical semantics, failure handling, and decision support. It does not mean reproducing proprietary algorithms, claiming vendor performance, or displaying every vendor's feature name. No licensed commercial installation was operated for this research. Vendor comparisons below are based on primary vendor-authored documentation, including university-hosted copies; GUI behavior is documented behavior, not a hands-on usability benchmark. Public pages and rolling documentation were consulted on the report date; versioned documentation is identified where available. Absence from a cited page does not establish that a product lacks a capability.
 
 Repository facts below come from source inspection at the baseline. Numerical recommendations are supported by method/library documentation and a bounded CAE advisory review. The proposed module/API names, layout dimensions, acceptance thresholds, and delivery sequence are design recommendations. They are not claims about current implementation.
 
@@ -52,7 +52,7 @@ These are overlapping PIDO/MDO architectures, not six incompatible categories. M
 
 DesignXplorer is the clearest example of project-integrated parameter exploration. In the 2025 R2 Workbench documentation, exploration systems are added below the Parameter Set bar. Parameters can originate in supported analysis/CAD systems. Workbench exposes Direct Optimization, Parameters Correlation, Response Surface, Response Surface Optimization and 3D ROM systems. Thus the product's topology is not merely an optimizer dialog: the parameters, analysis-system update and exploration system have an explicit relationship. Installation and an appropriate DesignXplorer license are required. [D1](https://ansyshelp.ansys.com/public/views/secured/corp/v252/en/wb2_help/wb2h_desexplore.html)
 
-The 2025 R2 DesignXplorer manual documents MOGA settings, initial sampling and candidate verification. Its documented MOGA convergence controls include a Pareto-percentage criterion as well as evaluation/iteration settings. These are product-specific stopping rules, not proof that the physical global Pareto frontier has been found. The useful architectural requirement is an explicit route from a surrogate candidate back to a solver evaluation. Do not equate an attractive response-surface point with a validated design. [D2](https://ansyshelp.ansys.com/public/Views/Secured/corp/v252/en/pdf/DesignXplorer_Users_Guide.pdf)
+The 2024 R2 scripting reference and 2025 R2 methods documentation describe MOGA settings, initial sampling and candidate verification. MOGA convergence controls include a Pareto-percentage criterion as well as evaluation/iteration settings. These are product-specific stopping rules, not proof that the physical global Pareto frontier has been found. The useful architectural requirement is an explicit route from a surrogate candidate back to a solver evaluation. Do not equate an attractive response-surface point with a validated design. [Workbench scripting: MOGAOptimization and VerifyPoints](https://ansyshelp.ansys.com/public/Views/Secured/corp/v242/en/wb2_js/ContainerName16.html), [ANSYS multi-objective optimization methods, §4.3](https://ansyshelp.ansys.com/public/Views/Secured/corp/v252/en/opti_pdo/opti_pdo_multi_objective_optimization.html).
 
 **Inference for caelab:** retain the launcher as owner of program/file relationships, but let a Study document refer to immutable revisions of its bound parameters. Use separate status labels for predicted, evaluated and revalidated points. A study that outlives a source edit must retain its old evidence and mark the new project relationship stale.
 
@@ -74,7 +74,7 @@ The 2025 Runtime Gateway documentation is unusually useful for a concrete UI spe
 
 The official Pro component catalog lists LHS/optimal LHS, full/fractional factorial, Box–Behnken and CCD DOE plug-ins; Kriging, RBF/EBF, orthogonal polynomial and RSM approximation plug-ins; and separate optimization plug-ins including Miga, NSGA2, MISQP, NLPQL and multi-objective particle swarm. Package/platform/token distinctions in the catalog must not be flattened into a claim that every installed Isight seat includes every method. A catalog entry marked “License: None” is not evidence that the commercial product itself is free. [I3](https://www.3ds.com/products/simulia/isight/pro-components)
 
-**MIGA correction:** the Isight reference defines a Multi-Island Genetic Algorithm as populations split into islands with periodic migration; fitness combines the objective and a constraint penalty. Island migration is a population architecture, not a synonym for nondominated Pareto selection. An implementation may combine islands and Pareto selection, but that is a separately specified algorithm. NSGA-II and MIGA must not share a misleading “multi-objective” label solely because both names start with “multi.” [I4](https://docs.software.vt.edu/abaqusv2025/English/IhrComponentMap/ihr-c-Reference-MultiIsland.htm)
+**MIGA correction:** the Isight reference defines a Multi-Island Genetic Algorithm as populations split into islands with periodic migration; fitness combines the objective and a constraint penalty. Island migration is a population architecture, not a synonym for nondominated Pareto selection. An implementation may combine islands and Pareto selection, but that is a separately specified algorithm. MIGA should not be classified as a Pareto MOO method solely because its name contains “multi.” [I4](https://docs.software.vt.edu/abaqusv2025/English/IhrComponentMap/ihr-c-Reference-MultiIsland.htm)
 
 **Inference for caelab:** a point inspector should select a specific design and attempt, not just “latest run.” A setup/run-analysis distinction can exist within one independent Study window; recreating Isight's entire UI is unnecessary.
 
@@ -98,7 +98,7 @@ The DOE guidance describes a progression from problem definition to initial samp
 
 ### 2.6 Altair HyperStudy
 
-HyperStudy's study file is a self-contained definition of models, input variables, output responses and approaches. The documented `.hstudy` format is XML. This is evidence for the document concept, not a reason for caelab to copy its proprietary file schema. [A1](https://help.altair.com/hwdesktop/hst/topics/design_exploration/study_perform_t.htm)
+HyperStudy's study file is a self-contained definition of models, input variables, output responses and approaches. The documented `.hstudy` format is XML. This is evidence for the document concept, not a reason for caelab to copy its vendor-specific file schema. [A1](https://help.altair.com/hwdesktop/hst/topics/design_exploration/study_perform_t.htm)
 
 The Study Explorer guides model/variable/response setup and permits multiple DOE, Fit, Optimization and Stochastic approaches. Its step icons distinguish next action, completed, unavailable and potentially changed conditions. The Work Area uses step-specific tabs and tables/plots with column visibility, sorting and spreadsheet-like transfer. A compact Study tree plus a dominant table/chart area is therefore a strong commercial precedent. [A2](https://help.altair.com/hwdesktop/hst/topics/user_interface/explorer_overview_r.htm), [A3](https://help.altair.com/hwdesktop/hst/topics/user_interface/work_area_overview_r.htm)
 
@@ -114,10 +114,10 @@ The postprocessing tutorial exposes Summary, Integrity, Scatter, 3D Scatter and 
 
 For design variables `x`, uncertain inputs `ξ`, and discipline/coupling states `y`, define:
 
-\[
+$$
 \min_x\;\mathbf{f}(x,y,\xi),\qquad
 g_i(x,y,\xi)\le0,\qquad h_j(x,y,\xi)=0,\qquad x\in\mathcal X.
-\]
+$$
 
 Every objective and constraint must name the analysis case and response definition that produces it. A deterministic study fixes `ξ` or its nominal values; an uncertainty or robust-design study declares distributions and statistical operators explicitly. Several objectives from one structural solve constitute MOO, but do not by themselves constitute multiple disciplines.
 
@@ -185,11 +185,11 @@ Use a preview to expose total solver cost, unique points, intended repetitions, 
 
 Normalize definitions centrally, before adapting to any optimizer. Convert a lower response bound `r >= L` to `g = L-r <= 0`, an upper bound to `g = r-U <= 0`, and equality to `h = r-T = 0`. Store physical residuals and scales with their units. Define numerical acceptance using explicit tolerances:
 
-\[
+$$
 v_i=\max\left(0,\frac{g_i-\tau_i}{s_i}\right),\qquad
 v_j^{eq}=\max\left(0,\frac{|h_j|-\tau_j^{eq}}{s_j^{eq}}\right),\qquad
 V=\sum_k w_kv_k,\quad s_k>0,\;w_k>0.
-\]
+$$
 
 Zero inequality tolerance preserves the exact stated limit. Equality tolerances must reflect engineering/numerical resolution; a binary floating-point comparison to zero is not an adequate acceptance rule. Display the original limit, tolerance and residual together. A tolerance must never be expanded automatically to make a design pass.
 
@@ -263,12 +263,14 @@ Final validation must include shortlisted Pareto candidates, active-constraint n
 
 For independent input distributions, variance-based indices have the interpretations
 
-\[
+$$
 S_i=\frac{\mathrm{Var}(\mathbb{E}[Y\mid X_i])}{\mathrm{Var}(Y)},\qquad
 S_{T_i}=\frac{\mathbb{E}[\mathrm{Var}(Y\mid X_{\sim i})]}{\mathrm{Var}(Y)}.
-\]
+$$
 
 First-order effects and total effects differ because the latter include interactions. SALib separates sampling from model execution and analysis, which fits the proposed managed evaluator boundary. [SALib basic workflow](https://salib.readthedocs.io/en/latest/user_guide/basics.html).
+
+These ratios require finite, nonzero response variance. A constant response makes the indices undefined, not zero. Finite-sample estimates can fall outside `[0,1]`; preserve the estimates and uncertainty diagnostics rather than silently clipping them or interpreting a negative estimate as negative physical influence. [SciPy Sobol-index notes](https://docs.scipy.org/doc/scipy-1.15.2/reference/generated/scipy.stats.sobol_indices.html).
 
 | Analysis | Correct interpretation and implementation |
 |---|---|
@@ -461,5 +463,174 @@ A separate persistence capability flag distinguishes exact checkpoint, restart-f
 Keep `core.py` public functions as temporary compatibility wrappers while moving behavior to the new boundaries. Preserve `fit_model` parameter-identification behavior and its experiment semantics; it is not the same operation as surrogate fitting. Keep `model_binding` as the auxiliary model adapter. Reuse `events.py` if its contract is suitable rather than introducing a second incompatible event system.
 
 The current [pyproject.toml](../../pyproject.toml) already declares NumPy, SciPy ≥1.15, optional SALib and GUI Matplotlib/PySide6/VTK. Use these for DOE, SOO, RBF/PRS, sensitivity and charts. Propose scikit-learn for optional GP and a maintained MOO library such as pymoo for NSGA-II behind optional extras. Pin and test an actual supported version before adoption, including constraint/mixed-variable/checkpoint behavior and distribution license compatibility. Their online documentation is not proof that every API works with the repository's declared minimum versions. No new service, cloud account or paid algorithm dependency is necessary for the proposed local core.
+
+## 6. Commercial-grade GUI workflow and layout
+
+### 6.1 Integrated binding and a dedicated Study workspace
+
+The vendor evidence supports two complementary layers. DesignXplorer demonstrates a study attached to project parameters. Isight, modeFRONTIER and HyperStudy demonstrate explicit workflow/study configuration, execution history and analysis workspaces. The proposed caelab design therefore keeps the **launcher as the project navigator** and uses an independent **MDO Study window** for numerical investigation. It does not replace the launcher with optimization charts or embed a second CAD editor in Study.
+
+Proposed entry points:
+
+- Project Tools → **New optimization study…** creates a study against the explicitly selected analysis/workflow. With multiple analyses, require a visible selection; never bind the first available model silently.
+- A Study project node and **Open study…** reopen the same saved study. A standalone entry point, `python -m apps.workbench_qt.study_window --study <path>`, is proposed for direct reopening, analogous to the existing independent analysis/expert entry points.
+- Opening a study validates references and displays results; it does not regenerate CAD, solve, call an LLM or adopt a candidate. A missing project/source offers **Locate source**, **Open historical results**, or a precise explanation of unavailable actions.
+- Choosing a candidate highlights it. **Open in ParaView**, **Open native candidate**, **Verify with solver**, and **Create project variant** are separate commands tied to that candidate and attempt.
+
+The default promotion action should create a project variant referencing the verified candidate artifacts, leaving the original native source intact. Applying parameter values back to the original native document is a separate explicit action with a current-source comparison, backup/revision and native-API support check. The Study cannot claim successful CAD promotion merely because a patched INP exists. Exporting results is distinct from changing the working design.
+
+### 6.2 Window anatomy
+
+Use a `QMainWindow` with a central horizontal `QSplitter`, preserving the approved left/right organization. The normal working target is approximately 1440×900 logical pixels, with a roughly 300–360-pixel resizable controller and a chart/table-dominant right area. These are starting layout targets, not fixed minimums or measured usability results. Qt splitters support adjustable child sizing; their presence alone does not determine a good information hierarchy. [Qt QSplitter](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QSplitter.html).
+
+```text
+┌ MDO Study — Bracket study     Saved     Source changed since baseline ┐
+│ File  Study  View                         Run…  Pause  Cancel…        │
+├─────────────────────┬───────────────────────────────────────────────┤
+│ Study / strategy    │ Designs  Pareto  Trade-offs  Surfaces           │
+│ 1 Define            │ Sensitivity  History  Validation               │
+│ 2 Explore           ├───────────────────────────────────────────────┤
+│ 3 Model             │ Active chart or setup/response table           │
+│ 4 Search            │ Axes / response / data-source / feasibility     │
+│ 5 Validate          │ filters in a compact contextual toolbar        │
+│                     │                                               │
+│ Contextual settings │ Linked selected-design table / comparison      │
+│ and prerequisites   │ Selected point details when requested          │
+├─────────────────────┴───────────────────────────────────────────────┤
+│ Jobs: 2 running · 8 queued · 36 evaluated · 3 failed      Show jobs   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+This is a specification wireframe, not a screenshot. At narrower widths the controller can collapse to a labeled navigation rail; settings open in a pane, the design inspector becomes a drawer, and chart tabs can scroll. Do not retain three permanent columns that squeeze axis labels or hide the active run control. Preserve unsaved form edits when resizing. The job drawer is collapsible, but failure/pause feedback and the selected study remain visible.
+
+Use the repository's shared engineering dark theme with light-mode support. Reuse `theme.py`, `icons.py`, `QAction`, table views and existing Matplotlib embedding. Use neutral surfaces, one interaction accent, restrained status colors and shapes/patterns as a second channel. Keep engineering units in labels, aligned numeric columns and readable Korean/English text. Internal hashes/UUIDs belong to export/diagnostic detail, not ordinary chart labels.
+
+Desktop reference rules applied here are contextual editing (FreeCAD task/property pattern), separation of active visual selection from applied data operations (ParaView pattern), a dominant engineering work area, and preserved splitter sizing. These are design inferences, not claims that those applications implement this Study. Qt uses device-independent coordinates; actual Windows tests must include mixed scaling rather than assuming a 1× render proves DPI behavior. [Qt high-DPI model](https://doc.qt.io/qt-6/highdpi.html).
+
+### 6.3 Five stages, with legitimate direct-search branches
+
+| Stage | Visible user task | Gate and output |
+|---|---|---|
+| **1 Define** | Select project/native workflow; bind variables; define response extraction, units, objectives and constraints; inspect baseline diff | **Validate bindings** is non-solving; **Evaluate baseline** explicitly executes. Block ambiguous binding/missing extractor; produce one traceable baseline observation |
+| **2 Explore** | Choose DOE, sample budget, bounds/levels, seed and holdout policy; preview sample layout and count | Run planned points through JobManager; show feasible/infeasible/unknown counts and failures; save the exact plan |
+| **3 Model** | Choose RBF/PRS/GP per response; inspect training/validation coverage, fit quality and uncertainty | Fit immutable model versions; show insufficient-data/rank/encoding reasons. Mark “Not used” for direct optimization rather than force a dummy surrogate |
+| **4 Search** | Choose direct versus surrogate-assisted SOO/MOO; select compatible method, budget, stopping and resources | Display objective vector and all constraints; reject incompatible algorithms. Direct search can proceed from Define without a mandatory DOE/model |
+| **5 Validate** | Compare shortlisted candidates, run actual confirmations, inspect deviations and engineering checks, create a project variant | Require valid observed responses and explicit feasibility; preserve predicted-vs-actual pairings. No “best design” promotion from an unverified prediction |
+
+A strategy run freezes its definition. Editing settings while a run executes creates a draft for the next run, with the difference shown; it does not alter in-flight candidates. The left controller displays meaningful prerequisites and reasons, not a generic green tick whenever a button was pressed. Fitting a model does not mean validation passed; optimizer termination does not mean the target engineering requirements were met.
+
+### 6.4 Native CalculiX binding interaction
+
+The Define stage's variable table has **Name, Type, Domain/levels, Nominal, Unit, Native target, Binding status**. **Add from native input…** opens a read-only deck/include view and a target preview. The user chooses a supported scalar context; the application shows file, keyword/entity, current value and expected matching occurrence. **Preview candidate** shows changed values and a textual diff without solving. CAD properties are selected through a native-object/property adapter; unavailable automatic regeneration is shown explicitly.
+
+The response table has **Name, Quantity, Location/region, Case/frame, Reduction, Unit, Availability**. Baseline output can populate supported fields/components, but cannot supply invented stress/mass/stiffness metrics. Selecting a response previews its definition and source scope. Requested output additions belong to a versioned candidate preparation recipe with a visible deck diff, not a hidden mutation of the original input.
+
+Objectives and constraints are separate editable tables. Each objective has direction and scale. Each constraint has comparison, limit/target, unit, tolerance and scale. The editor displays the mathematical residual convention in advanced help, while the working UI says, for example, **Stress ≤ 150 MPa; tolerance 0 MPa**. Multiple loadcases and response reductions must remain inspectable before launch.
+
+Changing a binding or material category invalidates only the appropriate downstream records for a new revision. Old candidate evidence remains navigable. If a selected native set disappears after CAD regeneration, the candidate reports **Region unresolved after regeneration** with the exact affected response/load reference; the application must not select an arbitrary nearest node.
+
+### 6.5 Interactive visualization contracts
+
+All plots use the same stable candidate/evaluation identifiers and shared selection model. A chart filter never deletes observations or changes a training set implicitly. Display the selected strategy/revision, observation versus prediction source, eligibility filter and included/excluded count. Tables remain an accessible exact-value alternative to every plot.
+
+| View | Encodings and controls | Required selection/action behavior and scientific limits |
+|---|---|---|
+| **Pareto front** | 2D or 3D objective axes with units/directions; color for declared third/fourth response or feasibility; optional bubble area for a positive quantitative attribute with legend | Click/lasso links to table and inspector; brush infeasible/unknown separately; observed feasible front emphasized, predicted front hollow/dashed. Arbitrary negative values need an explicit size mapping. Do not connect a 3D nondominated cloud as though it were a known continuous surface |
+| **Parallel coordinates / Trade-offs** | Variables and responses as axes; reorder/invert axes, physical tick labels, optional normalized view, categorical bands | Range brushing and category selection filter the same candidate set as Pareto/table; show selected lines prominently and others faintly. Missing responses break lines. Axes order/scaling are view metadata, not optimization preferences |
+| **Response surfaces** | Two quantitative input axes and one response; linked 3D surface and 2D contour; sliders for remaining numeric dimensions and selectors for categories | Slice updates predict from a fixed model only; never run FEA on slider movement. Display held values, model revision and support/extrapolation mask; overlay relevant nearby observations with slice tolerance. Optional GP uncertainty panel and predicted constraint contour are labeled predictions |
+| **Sensitivity tornado** | Response/method/sample-population selector; ranked effects with intervals; clear signed/unsigned mode | Signed local/regression effects show direction; Sobol S1/ST show variance percentages without direction; Morris μ* shows magnitude. A selected bar identifies the variable and can configure the surface axes without editing the study |
+| **Correlation heatmap** | Pearson/Spearman toggle, variables/responses, symmetric `[-1,1]` color range; cell values and sample counts | Click opens the corresponding scatter view with the same filtering. Constant/undefined cells are hatched, not zero; ordinal/discrete/categorical assumptions are explicit. Feasible-only or optimizer-adaptive subsets are labeled because they change the estimand |
+| **Iteration/convergence history** | Actual evaluation count, generation or elapsed-time x-axis; objective traces, feasible best-so-far, per-constraint residual panels; MOO hypervolume/feasible count | Preserve submission/completion distinction. Constraint panels show physical limit or normalized zero/tolerance boundaries; an unrelated stress boundary is never drawn on a mass axis. Failed points with no response occupy a status strip, not y=0. Predictions use a separate series/source filter |
+| **Surrogate validation** | Holdout parity with equal axis scale, residual-vs-prediction, error distributions, GP interval coverage when supported | Select a point to inspect observed/predicted values and source roles. Show units, absolute and declared normalized errors. Near-zero responses use absolute bands; fixed percentage guides are not an engineering pass rule |
+
+For the Pareto example, a user can plot mass against stiffness, color by stress margin and size by cost; filter to valid feasible observations; brush manufacturable thickness/material combinations in parallel coordinates; then compare three candidates. **Open in ParaView** must use that selected attempt's verified exchange artifacts and is available only when they are readable and intact. A valid scalar-only or DAT-only evaluation may have no renderable field output; show the missing/unsupported/corrupt artifact reason and retain scalar, log and native-output inspection. A predicted point offers **Evaluate candidate** before actual-result actions become available.
+
+Provide separate **observed design set**, **surrogate preview set** and **shortlist** concepts. Changing chart selection is transient; **Add to shortlist** persists a decision candidate; **Create project variant** changes project structure. A chart must not silently change which solver run is attached to a discussion. Export selected data with units, filtering/role definitions and source revisions; export figures with visible observation/prediction legends.
+
+### 6.6 GUI implementation boundaries and responsiveness
+
+Proposed GUI decomposition:
+
+```text
+apps/workbench_qt/
+  study_window.py           # standalone entry, shell, actions, layout
+  study_controller.py       # Qt-facing commands/events; no numerical algorithms
+  study_models.py           # QAbstractTableModel/proxies, shared selection
+  study_setup.py            # variable, binding, response and constraint editors
+  study_plots.py             # linked plots; split by view only as complexity grows
+  optimization_panel.py     # migration wrapper/reused widgets, then retire duplicate state
+```
+
+Use `QAbstractTableModel` with proxy filtering instead of rebuilding a large `QTableWidget` on every result. Keep plot artists and update data incrementally; coalesce progress events and use `draw_idle()`. Only the GUI thread touches widgets/Matplotlib artists. Numerical fitting, dense surface prediction and solver evaluation occur in workers; results return with study/revision tokens so obsolete replies are ignored.
+
+The current `QApplication.processEvents()` polling is not the target concurrency design. Qt discourages using `processEvents()` as a substitute for moving long operations out of the GUI thread. Matplotlib also documents thread-safety limitations. Use queued signals and bounded work instead of nested event processing and UI mutation during solver callbacks. [Qt event-processing guidance](https://doc.qt.io/qt-6/qcoreapplication.html#processEvents), [Matplotlib threading FAQ](https://matplotlib.org/stable/faq/howto_faq.html#work-with-threads).
+
+Keep Matplotlib QtAgg for the first 2D, contour and moderate 3D views because it is already declared. The existing VTK dependency can be considered for higher-volume 3D picking only after a measured need. Do not add a browser chart stack, remote dashboard or paid visualization component simply to look commercial. Use table-first fallbacks if 3D rendering is unavailable.
+
+Proposed performance acceptance targets, to be measured on a recorded reference machine: selecting/filtering a 10,000-point archived study should update the linked table and a decimated chart within roughly 200 ms; slice-preview updates should be debounced and normally visible within 500 ms; cancelling should acknowledge immediately even while process termination completes later. These are engineering targets, not measured current capabilities. Decimation affects rendering only; exact Pareto computation, metrics and exports use the complete eligible dataset. If targets are missed, show progressive rendering and a point-count indicator rather than freezing input.
+
+Keyboard access must cover navigation, table editing, filter clearing, shortlist selection and run/pause/cancel. Verify focus/disabled/hover states, color-independent point types, long names/units, Korean IME, dark/light modes, 1366×768 and larger windows, and 100/150/200% Windows scaling. Normal and constrained-size captures of the implemented window are required before GUI acceptance. This report contains no claim that those actual-screen checks have been performed.
+
+## 7. Delivery sequence, verification and acceptance
+
+### 7.1 Implement vertical user flows, not an algorithm inventory
+
+This sequence refines the proposed optimization work. It does not overwrite the existing overall P1–P7 plan or assert that its prerequisites have passed. At implementation kickoff, align accepted decisions with DESIGN/ARCHITECTURE and the existing plan rather than creating parallel product-status documents.
+
+| Increment | User-visible outcome | Required completion evidence |
+|---|---|---|
+| **A. Native study foundation** | Create/open/save a study, bind one continuous deck parameter and declared response, evaluate baseline and a small DOE, reopen records | Native/include preservation, exact candidate diff, actual CalculiX response, no automatic solve on open, failure/cancel/reopen path; actual selected run opens in ParaView |
+| **B. Managed batches and constraints** | Multiple simultaneous design evaluations with all constraints and durable recovery/cache | Single coordinator ownership; CPU/memory limits; no cross-candidate artifacts; equality tolerance, feasible/infeasible/unknown and retry accounting; interruption/recovery fault checks |
+| **C. Search and trade-offs** | Direct DE/SLSQP/Nelder–Mead/trust-constr where compatible; NSGA-II MOO; linked Pareto/parallel/history views | Algorithm compatibility gates, analytic constrained benchmarks and repeat-seed statistics; actual shortlist verification; categorical operators and native material bundles if exposed |
+| **D. Models and uncertainty** | RBF/PRS/GP, response surfaces, independent validation, adaptive solver confirmation, Morris/Sobol and correlation | No training/holdout leakage; calibrated model-conditional uncertainty; matched sensitivity designs; failures cannot produce false sensitivity/reliability claims |
+| **E. General MDO and CAD regeneration** | Native CAD dimensions regenerated across candidates; multi-analysis and coupled workflows | Topology/region checks, real file/field transfer, inner MDA residuals, multi-loadcase aggregation, actual native multi-tool end-to-end verification |
+
+LHS and the existing DE/RBF/PRS assets should deliver the first useful path quickly. Full factorial, Sobol DOE, CCD/BBD and additional SOO methods can be added through the stable plan/adapter contracts. MOEA/D and MIGA remain capability-gated implementations with explicit constraint/mixed-variable semantics; naming them in a menu is not delivery. “First useful increment” does not mean “complete commercial-grade MDO.” The full target includes the later flows and their evidence.
+
+### 7.2 Numerical verification matrix
+
+| Area | Independent test/oracle | Acceptance principle |
+|---|---|---|
+| Typed design space | Enumerated mixed-level spaces, log round trips, illegal categories and derived cycles | All evaluated assignments legal; no silent rounding/relabeling; original physical units retained |
+| DOE | Exact factorial combinations; CCD axial locations; three-factor BBD construction; LHS strata; Sobol sequence metadata | Correct points/roles/counts, bounds honored by declared variant, duplicate/replicate distinction and rank diagnostics |
+| Constraint engine | Analytic feasible sets, equality tolerance edges, lower/upper bounds, inconsistent constraints, missing data | All residual signs/scales correct; unknown never feasible; no numerical penalty stored as an observation |
+| SOO | Analytic constrained quadratics and Rosenbrock/local cases; discontinuous/mixed cases only for compatible methods | Feasible result and known objective tolerance; budgets count all calls. Stochastic algorithms tested over multiple seeds, not one favorable run |
+| MOO/Pareto | Hand-computable dominance sets, constrained bi-objective problem, ZDT/DTLZ-style known reference problems | Feasibility filtering, direction reversal, duplicates and indicators correct; approximate-front metrics within justified tolerances |
+| RBF/PRS/GP | Known polynomial/interpolation examples, independent holdout, duplicates, near-singular matrices, category incompatibility | Prediction accuracy and numerical stability; no fabricated uncertainty for RBF/PRS; GP intervals assessed for the declared model/noise setting |
+| Sensitivity/UQ | Additive analytic function and Ishigami-style interactions; structured failure perturbations | Expected indices within sampling uncertainty; Sobol sample identity enforced; correlated-input restrictions and success conditioning visible |
+| Native response extraction | Independent hand/manual values and native solver output at known nodes/integration points/frames | Location, reduction, unit and component correct; same parser run twice is not an independent oracle |
+| Coupled MDO | Known two-discipline solution and deliberately nonconvergent inner coupling | Coupling tolerances, transfer errors and outer-vs-inner convergence distinguished |
+
+The purpose is meaningful numerical verification, not mirroring implementation internals. Include invalid and near-boundary cases because constraint handling and incomplete observations are frequent sources of false optima.
+
+### 7.3 Execution and GUI verification matrix
+
+| Scenario | Required result |
+|---|---|
+| Two candidates complete out of order; one fails during parsing | Independent artifacts/statuses; correct candidate identity; no project selection race; valid peers retained |
+| Controller crashes after dispatch or before terminal study receipt | Reopen without execution; reconcile native receipt; no duplicated budget consumption or false success; explicit retry/continuation choice |
+| Another window attempts execution in the same store | Clear ownership conflict/read-only view; no active run marked interrupted by competing recovery |
+| Include/CAD/material/solver version changes; extractor alone changes | Correct cache invalidation; old evidence preserved; extraction-only reuse when raw fields suffice |
+| Pause/cancel during preparation, solving, parsing and model fitting | Prompt UI acknowledgement; only owned work cancelled; terminal status and partial evidence preserved |
+| All runs fail or all valid runs are infeasible | Useful diagnostics and violation view; no optimum/Pareto-success claim; no chart-generated zero values |
+| Source/project moved or copied; output missing/corrupt | Explicit missing/integrity state, portable owned references, no reuse of damaged cache |
+| Chart selection → actual candidate → ParaView → shortlist → project variant → reopen | Same input/run/result identity throughout; every mutation explicit; no dependency on an auxiliary `StructuralModel` |
+| Window resize, DPI change, theme switch, long names and Korean IME | Readable units/controls, keyboard operation and preserved edit/selection state in real Windows windows |
+
+Run relevant automated tests per implementation change and one full product regression on the integrated executable candidate as required by the repository. Distinguish mock jobs, analytical numerical checks, Qt offscreen rendering, actual native solver runs and real Windows interaction. For this **report-only** change, validate document links, numerical/source claims and diff; do not rerun product tests and imply that the proposal has been executed.
+
+### 7.4 Decisions and remaining implementation work
+
+The replan recommends adopting: persistent study/strategy/evaluation identities; native binding with frozen candidate snapshots; central constraint semantics; managed asynchronous evaluation; a dedicated linked Study window; observed/predicted archive separation; and final solver confirmation of shortlisted designs. These provide a coherent foundation for every requested algorithm and visualization.
+
+Implementation still must choose and validate supported library versions, exact CAD parameter APIs, native output extractors, persistence schema migrations, algorithm checkpoint capabilities and practical resource limits. These are concrete engineering tasks under the proposed contracts, not grounds to invent success or defer the user-facing native connection indefinitely. Proprietary SHERPA/pilOPT parity and universal solver support are not promised.
+
+The first demonstrable milestone is: **a user opens their own CalculiX project, binds a real parameter and response, runs a budgeted study through JobManager, explores linked plots, verifies a selected candidate in the actual solver, opens that run in ParaView, saves, and reopens the same study without losing provenance.** Use a field-capable study for this end-to-end ParaView check; scalar-only studies remain valid without a field viewer. The complete target additionally requires mixed variables, constrained MOO, validated surrogates and sensitivity, robust batch recovery, CAD regeneration and genuinely coupled multidisciplinary workflows.
+
+## 8. Research provenance and review scope
+
+Sources are linked adjacent to the claims they support. Vendor release context includes ANSYS Workbench 2025 R2 and its 2024 R2 DesignXplorer scripting reference, ANSYS optimization methods 2025 R2, optiSLang 2024 R2 tutorials and explicitly identified `v2611` MOP help, SIMULIA 2025 vendor-authored documentation hosted by Virginia Tech, rolling Siemens/ESTECO pages, and Altair current help plus the explicitly dated 2023 tutorial. These are complementary evidence, not a claim that all products were benchmarked at one installed release. Numerical API recommendations use SciPy 1.15 references where possible to match the repository floor; rolling pymoo/SALib/Qt/Matplotlib references require version confirmation during implementation.
+
+Research combined commercial-document investigation, local source inspection and a bounded read-only CAE review. The CAE review identified and the proposal incorporates the whole-store lease/recovery prerequisite, incomplete native response coverage, MDA coupling requirements and uncertainty/sensitivity interpretation safeguards. Review of this document is not approval of an implemented optimizer, physical design or GUI. No solver campaign, commercial application benchmark, paid service, production deployment or product-completion assertion is part of this report.
 
 
