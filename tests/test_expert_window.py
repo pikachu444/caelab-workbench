@@ -23,12 +23,18 @@ from caelab.workbench import Workbench
 
 
 @pytest.fixture(autouse=True)
-def isolated_view_preferences(tmp_path):
+def isolated_view_preferences(tmp_path, monkeypatch):
+    from apps.workbench_qt.theme import set_theme_mode
+    monkeypatch.setenv('CAELAB_UI_SETTINGS_PATH', str(tmp_path / 'ui.ini'))
+    set_theme_mode('dark')
     previous = QSettings.defaultFormat()
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path / 'view-preferences'))
-    yield
-    QSettings.setDefaultFormat(previous)
+    try:
+        yield
+    finally:
+        set_theme_mode('dark')
+        QSettings.setDefaultFormat(previous)
 
 
 @pytest.fixture(scope='module')
@@ -580,6 +586,35 @@ def test_send_button_visibly_distinguishes_enabled_waiting_and_unconfigured(wind
     app.processEvents()
     assert not ui.ask_button.isEnabled()
     assert background() == waiting
+
+
+@pytest.mark.parametrize('mode', ['dark', 'light'])
+def test_chat_theme_and_before_after_cards_keep_proposals_unapplied(window, app, tmp_path, mode):
+    from apps.workbench_qt.theme import current_theme_mode, get_palette, set_theme_mode
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** input')
+    ui.document['turns'] = [dict(id='turn', evidence_id=evidence['id'], question='설정을 확인해 주세요.',
+                                 role='재료 전문가', reply='확인할 설정입니다.', status='completed')]
+    ui.document['proposals'] = [dict(id='change', request_id='turn', target_file='A/model.inp',
+                                    location='*PLASTIC', before=0, after='1.2E-05 K⁻¹', reason='재료값 확인', status='unapplied'),
+                                dict(id='check', request_id='turn', target_file='A/model.inp',
+                                     location='*BOUNDARY', before=0, after=None, reason='방향 확인', status='manual_required')]
+    set_theme_mode(mode)
+    ui.render()
+    ui.show(); app.processEvents()
+    text = ui.transcript.toPlainText()
+    assert '변경 전 (Before)' in text and '변경 후 (After)' in text and '현재 확인 내용' in text
+    assert '1.2E-05 K⁻¹' in text and 'None' not in text and '미적용' in text
+    assert get_palette()['chat_user_bg'] in ui.transcript.toHtml()
+    assert ui.ask_button.objectName() == 'primary' and not ui.ask_button.styleSheet()
+    enabled = ui.ask_button.grab().toImage().pixelColor(ui.ask_button.width() - 8, ui.ask_button.height() // 2)
+    ui._set_busy(True); app.processEvents()
+    waiting = ui.ask_button.grab().toImage().pixelColor(ui.ask_button.width() - 8, ui.ask_button.height() // 2)
+    assert waiting.lightness() > enabled.lightness() + 40
+    ui._set_busy(False)
+    ui.theme_action.trigger()
+    assert current_theme_mode() != mode and get_palette()['text_primary'] in ui.styleSheet()
+    assert provider.prompts == []
 
 
 def test_log_only_attachments_and_ui_validation_messages_are_specific(window, app, tmp_path, monkeypatch):
