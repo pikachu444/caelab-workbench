@@ -83,7 +83,8 @@ class MDOStudioWindow(QMainWindow):
         # Area 2: Right Setup Dock
         self.setup_dock = QDockWidget("Design Point Setup & Actions")
         self.setup_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.setup_widget = SetupDockWidget()
+        self.setup_dock.setMinimumWidth(280)
+        self.setup_widget = SetupDockWidget(is_dark=self.is_dark)
         self.setup_widget.apply_as_current.connect(self._on_apply_as_current)
         self.setup_dock.setWidget(self.setup_widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.setup_dock)
@@ -96,9 +97,10 @@ class MDOStudioWindow(QMainWindow):
         tdp_layout = QVBoxLayout(tdp_container)
         tdp_layout.setContentsMargins(4, 4, 4, 4)
 
-        tdp_lbl = QLabel("Table of Design Points (TDP) — Virtual Virtualized Grid")
-        tdp_lbl.setStyleSheet("font-weight: bold; font-size: 10pt; color: #38bdf8;")
-        tdp_layout.addWidget(tdp_lbl)
+        self.tdp_lbl = QLabel("Table of Design Points (TDP) — Virtual Virtualized Grid")
+        title_color = "#38bdf8" if self.is_dark else "#0284c7"
+        self.tdp_lbl.setStyleSheet(f"font-weight: bold; font-size: 10pt; color: {title_color};")
+        tdp_layout.addWidget(self.tdp_lbl)
 
         self.tdp_table = QTableView()
         self.tdp_model = DesignPointsTableModel(is_dark=self.is_dark)
@@ -260,6 +262,9 @@ class MDOStudioWindow(QMainWindow):
         self.is_dark = mode == "dark"
         self.setStyleSheet(build_stylesheet(mode))
         self.act_theme.setText(theme_toggle_label())
+        title_color = "#38bdf8" if self.is_dark else "#0284c7"
+        self.tdp_lbl.setStyleSheet(f"font-weight: bold; font-size: 10pt; color: {title_color};")
+        self.setup_widget.set_theme(self.is_dark)
         self.tdp_model.set_theme(self.is_dark)
         self.pareto_view.set_theme(self.is_dark)
         self.tornado_view.set_theme(self.is_dark)

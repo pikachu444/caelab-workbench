@@ -21,10 +21,12 @@ class SetupDockWidget(QWidget):
     apply_as_current = Signal(str)  # point_id
     re_evaluate = Signal(str)      # point_id
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, is_dark: bool = True, parent=None) -> None:
         super().__init__(parent)
+        self.is_dark = is_dark
         self._current_record: DesignPointRecord | None = None
         self._build_ui()
+        self.set_theme(is_dark)
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -46,6 +48,7 @@ class SetupDockWidget(QWidget):
         b_layout = QFormLayout(badge_box)
         self.lbl_status = QLabel("—")
         self.lbl_feasibility = QLabel("—")
+        self.lbl_feasibility.setWordWrap(True)
         self.lbl_violation = QLabel("0.0")
         b_layout.addRow("Execution:", self.lbl_status)
         b_layout.addRow("Feasibility:", self.lbl_feasibility)
@@ -76,15 +79,19 @@ class SetupDockWidget(QWidget):
         self.btn_apply_current.clicked.connect(self._on_apply_clicked)
         act_layout.addWidget(self.btn_apply_current)
 
-        lbl_guide = QLabel("Safely substitutes parameters into active native deck with automatic .bak backup.")
-        lbl_guide.setWordWrap(True)
-        lbl_guide.setStyleSheet("color: #94a3b8; font-size: 8.5pt;")
-        act_layout.addWidget(lbl_guide)
+        self.lbl_guide = QLabel("Safely substitutes parameters into active native deck with automatic .bak backup.")
+        self.lbl_guide.setWordWrap(True)
+        act_layout.addWidget(self.lbl_guide)
 
         layout.addWidget(act_box)
 
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+    def set_theme(self, is_dark: bool) -> None:
+        self.is_dark = is_dark
+        guide_color = "#94a3b8" if is_dark else "#475569"
+        self.lbl_guide.setStyleSheet(f"color: {guide_color}; font-size: 8.5pt;")
 
     def display_record(self, record: DesignPointRecord | None) -> None:
         self._current_record = record
