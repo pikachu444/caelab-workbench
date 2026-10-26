@@ -596,9 +596,9 @@ _PROGRAM_IDS = {"geometry": "freecad", "mesh": "gmsh", "analysis": "calculix",
                 "results": "paraview", "expert": "expert"}
 _FILE_FILTERS = {
     "geometry": "FreeCAD (*.FCStd *.fcstd);;모든 파일 (*)",
-    "mesh": "Gmsh (*.geo *.msh);;모든 파일 (*)",
-    "analysis": "CalculiX 입력 (*.inp);;모든 파일 (*)",
-    "results": "결과 파일 (*.vtu *.vtk *.pvd *.frd);;모든 파일 (*)",
+    "mesh": "Gmsh / MED (*.geo *.msh *.med);;모든 파일 (*)",
+    "analysis": "해석 입력 (*.inp *.comm *.rad *.k *.key);;CalculiX (*.inp);;Code_Aster (*.comm);;OpenRadioss (*.rad);;LS-DYNA (*.k *.key);;모든 파일 (*)",
+    "results": "결과 파일 (*.vtu *.vtk *.pvd *.frd *.rmed *.med *.d3plot);;모든 파일 (*)",
 }
 PROJECT_FILTER = "CAELAB 프로젝트 (*.json);;모든 파일 (*)"
 OUTPUT_FILTER = "작성한 출력 (*.inp *.msh *.med *.frd *.vtu *.vtk *.pvd);;모든 파일 (*)"
@@ -1861,7 +1861,13 @@ class ProjectWindow(QMainWindow):
             box.unit_badge = ''
             box.unit_warning = False
         title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), "프로그램")
-        box.title = {"geometry": "FreeCAD", "mesh": "Gmsh", "analysis": "CalculiX", "results": "ParaView", "expert": "전문가 논의"}.get(node.kind, title)
+        program_titles = {
+            "freecad": "FreeCAD", "salome": "Salome", "gmsh": "Gmsh",
+            "calculix": "CalculiX", "codeaster": "Code_Aster", "radioss": "OpenRadioss",
+            "openradioss": "OpenRadioss", "opencourant": "OpenCourant", "lsdyna": "LS-DYNA",
+            "paraview": "ParaView", "expert": "전문가 논의",
+        }
+        box.title = program_titles.get(node.program_id) or {"geometry": "FreeCAD", "mesh": "Gmsh", "analysis": "CalculiX", "results": "ParaView", "expert": "전문가 논의"}.get(node.kind, title)
         box.file_label = self._summary_file_name(reference.path)[0] if reference else "선택 파일 없음"
         box.set_state(node.state, self._node_note(node, reference))
         execution_state = node.state in {'queued', 'preparing', 'running', 'failed', 'cancelled', 'interrupted'}
@@ -2015,7 +2021,7 @@ class ProjectWindow(QMainWindow):
     def run_chain(self) -> None:
         boxes = self._selected_boxes()
         if len(boxes) != 1 or boxes[0].kind != "analysis":
-            self._message("CalculiX 상자를 하나 선택하세요. 별도 해석창에서 입력을 확인하고 계산합니다.")
+            self._message("해석 상자를 하나 선택하세요. 별도 해석창에서 입력을 확인하고 계산합니다.")
             return
         self.open_box(boxes[0])
 

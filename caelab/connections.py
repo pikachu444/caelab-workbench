@@ -288,6 +288,39 @@ def calculix_run_request(status: ProgramStatus, workdir: Path) -> LaunchRequest:
                          {**status.runtime_env, **os.environ}, "calculix")
 
 
+def codeaster_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
+    if status.spec.id != "codeaster" or not status.available:
+        raise ValueError(status.reason or "Code_Aster 실행 파일이 없습니다.")
+    reason = _executable_reason(Path(status.path), host_platform())
+    if reason:
+        raise ValueError(reason)
+    target = Path(workdir) / Path(input_path).name
+    return LaunchRequest([status.path, str(target)], Path(workdir),
+                         {**status.runtime_env, **os.environ}, "codeaster")
+
+
+def radioss_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
+    if status.spec.id not in {"radioss", "openradioss", "opencourant"} or not status.available:
+        raise ValueError(status.reason or "OpenRadioss 실행 파일이 없습니다.")
+    reason = _executable_reason(Path(status.path), host_platform())
+    if reason:
+        raise ValueError(reason)
+    target = Path(workdir) / Path(input_path).name
+    return LaunchRequest([status.path, "-i", str(target)], Path(workdir),
+                         {**status.runtime_env, **os.environ}, status.spec.id)
+
+
+def lsdyna_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
+    if status.spec.id != "lsdyna" or not status.available:
+        raise ValueError(status.reason or "LS-DYNA 실행 파일이 없습니다.")
+    reason = _executable_reason(Path(status.path), host_platform())
+    if reason:
+        raise ValueError(reason)
+    target = Path(workdir) / Path(input_path).name
+    return LaunchRequest([status.path, f"i={target}"], Path(workdir),
+                         {**status.runtime_env, **os.environ}, "lsdyna")
+
+
 def expert_launch_request(discussion_file, project_file=None, node_id=None, run_id=None) -> LaunchRequest:
     argv = [sys.executable, '-m', 'apps.workbench_qt.expert_window',
             '--discussion', str(Path(discussion_file).resolve())]

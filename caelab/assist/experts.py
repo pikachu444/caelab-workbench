@@ -309,7 +309,7 @@ class Discussion:
         ]
         if self.native_evidence is not None:
             parts += ["[현재 발언의 출처]", json.dumps({key: self.native_evidence.get(key) for key in
-                      ("id", "source_kind", "run_id", "input_revision", "frame_index", "units",
+                      ("id", "source_kind", "solver_id", "run_id", "input_revision", "frame_index", "units",
                        "unit_source", "process_state", "parse_state")}, ensure_ascii=False)]
         if "model_summary" in self.template.allowed_tools and self.model_text:
             self.evidence_sources.append("model_summary")

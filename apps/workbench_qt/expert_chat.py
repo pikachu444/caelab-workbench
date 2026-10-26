@@ -51,7 +51,10 @@ def evidence_name(evidence) -> str:
     if path:
         name = source_name(path)
     else:
-        roles = {'frd': '결과', 'dat': '수치 출력', 'log': '로그', 'raw': '파일', 'include': '추가 입력'}
+        roles = {'frd': '결과', 'dat': '수치 출력', 'log': '로그', 'raw': '파일', 'include': '추가 입력',
+                 'rmed': '결과 (MED)', 'med': '메시 (MED)', 'resu': '수치 출력 (Aster)',
+                 'd3plot': '결과 (D3PLOT)', 'glstat': '에너지 출력', 'nodout': '절점 출력',
+                 'h3d': '결과 (H3D)', 'rad_out': 'Radioss 출력'}
         names = [f"{roles.get(item.get('role'), '파일')} {source_name(item.get('source_path'))}"
                  for item in evidence.get('files', []) if item.get('source_path')]
         name = ' · '.join(names) if names else '입력 출처 미확인'

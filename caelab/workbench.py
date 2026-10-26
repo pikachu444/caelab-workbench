@@ -98,7 +98,8 @@ class Workbench:
     def refresh_native_project(self, project: NativeProject) -> list[str]:
         issues = project.refresh()
         for node in project.nodes.values():
-            if node.program_id == "calculix" and project.path:
+            from .native.adapter import supported_solver_ids
+            if (node.kind == "analysis" or node.program_id in supported_solver_ids()) and project.path:
                 try:
                     self.selected_native_run(project, node.id)
                 except (OSError, ValueError) as error:
@@ -119,12 +120,15 @@ class Workbench:
     def submit_native(self, project: NativeProject, node_id: str, timeout=3600) -> NativeRun:
         import copy
         node = project.nodes[node_id]
-        if node.program_id != "calculix":
-            raise ValueError("네이티브 계산은 CalculiX 노드에서 실행하세요.")
+        from .native.adapter import supported_solver_ids
+        if node.kind != "analysis" and node.program_id not in supported_solver_ids():
+            raise ValueError("네이티브 계산은 해석 노드에서 실행하세요.")
         reference = project.input_file(node_id)
         if reference is None:
-            raise ValueError("선택하거나 연결한 INP 파일이 없습니다.")
-        status = next(status for status in self.programs() if status.spec.id == "calculix")
+            raise ValueError(f"선택하거나 연결한 {node.program_id} 입력 파일이 없습니다.")
+        status = next((status for status in self.programs() if status.spec.id == node.program_id), None)
+        if status is None:
+            raise ValueError(f"{node.program_id} 솔버 프로그램을 찾을 수 없습니다.")
         prerequisites = []
         pending, seen = [node_id], set()
         while pending:
@@ -166,7 +170,12 @@ class Workbench:
         node = project.nodes[node_id]
         previous = node.files.get("output")
         outputs = run.snapshot.get("outputs", {})
-        name = next((name for name in ("model.frd", "model.dat") if outputs.get(name)), None)
+        from .native.adapter import get_solver_adapter
+        try:
+            expected = get_solver_adapter(run.solver_id).expected_output_names()
+        except ValueError:
+            expected = ("model.frd", "model.dat")
+        name = next((name for name in expected if outputs.get(name)), None)
         if run.state == "completed" and run.parse_state in {"readable", "partial"} and name:
             reference = FileReference(str(run.workdir / name), outputs[name], dict(run.units), run.unit_source, run.stale)
             if previous != reference:
@@ -206,7 +215,8 @@ class Workbench:
         while node_id not in seen:
             seen.add(node_id)
             node = project.nodes[node_id]
-            if node.program_id == 'calculix':
+            from .native.adapter import supported_solver_ids
+            if node.kind == 'analysis' or node.program_id in supported_solver_ids():
                 return self.selected_native_run(project, node_id)
             edge = next((edge for edge in project.connections if edge.target_id == node_id), None)
             if edge is None:
