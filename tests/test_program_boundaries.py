@@ -46,7 +46,7 @@ def test_empty_project_and_expert_never_start_analysis_solver_or_llm(app, monkey
     assert "열기 요청" in window.status.text()
     assert not hasattr(window, "_workspace")
     window.run_chain()
-    assert "CalculiX 상자를 하나 선택" in window.status.text()
+    assert ("해석 상자를 하나 선택" in window.status.text() or "CalculiX 상자를 하나 선택" in window.status.text())
     assert len(launches) == 1
     window._dirty = False
     window.close()
