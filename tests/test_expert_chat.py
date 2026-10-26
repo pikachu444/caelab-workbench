@@ -15,6 +15,17 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def isolated_theme(tmp_path, monkeypatch):
+    from apps.workbench_qt.theme import set_theme_mode
+    monkeypatch.setenv('CAELAB_UI_SETTINGS_PATH', str(tmp_path / 'ui.ini'))
+    set_theme_mode('dark')
+    try:
+        yield
+    finally:
+        set_theme_mode('dark')
+
+
 def test_markdown_formats_text_table_and_normal_code_but_removes_only_proposals(app):
     text = '**강조**\n\n- 항목 하나\n- 항목 둘\n\n| 조건 | 값 |\n| --- | --- |\n| 힘 | 5 |\n\n```python\nprint("hello")\n```\n\n```proposals\n[]\n```'
     body, malformed = markdown_body(text)
@@ -153,3 +164,24 @@ def test_proposal_fields_follow_core_type_and_finite_value_requirements(app, bad
     import json
     body, malformed = markdown_body('답변\n```proposals\n' + json.dumps([bad]) + '\n```')
     assert malformed and 'target_file' not in body
+
+
+def test_citation_chips_preserve_inline_and_fenced_code_and_scientific_unicode(app):
+    from PySide6.QtGui import QColor, QTextCursor
+    from apps.workbench_qt.theme import get_palette
+    text = '참고 [근거: 재료 *PLASTIC]\n\n[근거: **강조** *PLASTIC]\n\n`[근거: 코드 예시]`\n\n```text\n[근거: 코드블록]\n```\n\n1.2E-05 K⁻¹, −471.078'
+    body, malformed = markdown_body(text)
+    browser = ChatBrowser()
+    browser.setHtml(body)
+    plain = browser.toPlainText()
+    assert not malformed and '1.2E-05 K⁻¹, −471.078' in plain
+    for citation, chip in (('[근거: 재료 *PLASTIC]', True), ('[근거: 코드 예시]', False), ('[근거: 코드블록]', False)):
+        cursor = QTextCursor(browser.document())
+        start = plain.index(citation)
+        cursor.setPosition(start)
+        cursor.setPosition(start + len(citation), QTextCursor.KeepAnchor)
+        assert (cursor.charFormat().background().color() == QColor(get_palette()['chat_citation_bg'])) == chip
+    assert browser.document().defaultFont().families()[0] == 'Segoe UI'
+    cursor = browser.document().find('강조')
+    assert cursor.charFormat().fontWeight() == 700
+    assert cursor.charFormat().background().color() == QColor(get_palette()['chat_citation_bg'])

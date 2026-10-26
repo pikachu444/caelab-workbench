@@ -16,6 +16,15 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from caelab.model.schema import StructuralModel
 from caelab.solvers.base import ResultSet
 
+try:
+    from .theme import current_theme_mode, get_palette, register_theme_listener
+except (ImportError, ValueError):  # Fallback when loaded outside a package by tests
+    from apps.workbench_qt.theme import (
+        current_theme_mode,
+        get_palette,
+        register_theme_listener,
+    )
+
 _CELL_TYPES = {}
 _VTK_IMPORT_ERROR = ""
 try:
@@ -82,6 +91,10 @@ class Viewport(QWidget):
         self._vtk_widget = None
         self._grid = None
         self._node_ids: list[int] = []
+        self._fallback_label = None
+        self._axes_actor = None
+        self._edge_actor = None
+        self._scalar_bar = None
         self.available = False
         self.unavailable_reason = None
         if vtk is None:
@@ -103,11 +116,14 @@ class Viewport(QWidget):
         if not self.available:
             label = QLabel(self.unavailable_reason)
             label.setWordWrap(True)
-            label.setStyleSheet("color:#666;")
+            label.setObjectName("panelHint")
             from PySide6.QtCore import Qt
 
             label.setAlignment(Qt.AlignCenter)
             self._layout.addWidget(label)
+            self._fallback_label = label
+        self.apply_theme(current_theme_mode())
+        register_theme_listener(self.apply_theme)
 
     # -- VTK setup ---------------------------------------------------------
     def _init_vtk(self) -> None:
@@ -123,6 +139,7 @@ class Viewport(QWidget):
         self._vtk_widget.Initialize()
         axes = vtk.vtkAxesActor()
         axes.SetTotalLength(1.0, 1.0, 1.0)
+        self._axes_actor = axes
         marker = vtk.vtkOrientationMarkerWidget()
         marker.SetOrientationMarker(axes)
         marker.SetInteractor(self._vtk_widget.GetRenderWindow().GetInteractor())
@@ -143,6 +160,8 @@ class Viewport(QWidget):
             return
         self._grid, self._node_ids = build_grid(model)
         self._renderer.RemoveAllViewProps()
+        self._edge_actor = None
+        self._scalar_bar = None
         surface = vtk.vtkDataSetSurfaceFilter()
         surface.SetInputData(self._grid)
         mapper = vtk.vtkPolyDataMapper()
@@ -158,7 +177,8 @@ class Viewport(QWidget):
         emapper.SetInputConnection(edges.GetOutputPort())
         eactor = vtk.vtkActor()
         eactor.SetMapper(emapper)
-        eactor.GetProperty().SetColor(0.15, 0.2, 0.28)
+        eactor.GetProperty().SetColor(*get_palette()["vtk_edge_rgb"])
+        self._edge_actor = eactor
         self._renderer.AddActor(eactor)
         self._renderer.ResetCamera()
         self._render()
@@ -212,6 +232,8 @@ class Viewport(QWidget):
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
         self._renderer.RemoveAllViewProps()
+        self._edge_actor = None
+        self._scalar_bar = None
         ghost_edges = vtk.vtkExtractEdges()
         ghost_edges.SetInputData(self._grid)
         ghost_mapper = vtk.vtkPolyDataMapper()
@@ -229,17 +251,19 @@ class Viewport(QWidget):
         bar.SetWidth(0.09)
         bar.SetPosition(0.88, 0.15)
         bar.SetHeight(0.7)
+        rgb = get_palette()["vtk_text_rgb"]
         title_prop = bar.GetTitleTextProperty()
-        title_prop.SetColor(0.1, 0.1, 0.1)
+        title_prop.SetColor(*rgb)
         title_prop.SetFontSize(15)
         title_prop.BoldOff()
         _apply_text_font(title_prop)
         label_prop = bar.GetLabelTextProperty()
-        label_prop.SetColor(0.1, 0.1, 0.1)
+        label_prop.SetColor(*rgb)
         label_prop.SetFontSize(13)
         label_prop.BoldOff()
         _apply_text_font(label_prop)
         bar.SetLabelFormat("%.3g")
+        self._scalar_bar = bar
         self._renderer.AddActor2D(bar)
         self._renderer.ResetCamera()
         self._render()
@@ -274,3 +298,34 @@ class Viewport(QWidget):
         camera.SetViewUp(*up)
         self._renderer.ResetCamera()
         self._render()
+
+    def apply_theme(self, mode: str | None = None) -> None:
+        p = get_palette(mode)
+        if self._fallback_label is not None:
+            self._fallback_label.setStyleSheet(f"color: {p['text_secondary']};")
+        if self.available and self._renderer is not None:
+            self._renderer.SetBackground(*p["vtk_bg_top"])
+            self._renderer.SetBackground2(*p["vtk_bg_bottom"])
+            if self._axes_actor is not None:
+                rgb = p["vtk_text_rgb"]
+                for axis_actor in (
+                    self._axes_actor.GetXAxisCaptionActor2D(),
+                    self._axes_actor.GetYAxisCaptionActor2D(),
+                    self._axes_actor.GetZAxisCaptionActor2D(),
+                ):
+                    if axis_actor is not None:
+                        prop = axis_actor.GetCaptionTextProperty()
+                        if prop is not None:
+                            prop.SetColor(*rgb)
+            if self._edge_actor is not None:
+                self._edge_actor.GetProperty().SetColor(*p["vtk_edge_rgb"])
+            if self._scalar_bar is not None:
+                rgb = p["vtk_text_rgb"]
+                tprop = self._scalar_bar.GetTitleTextProperty()
+                if tprop is not None:
+                    tprop.SetColor(*rgb)
+                lprop = self._scalar_bar.GetLabelTextProperty()
+                if lprop is not None:
+                    lprop.SetColor(*rgb)
+            self._render()
+

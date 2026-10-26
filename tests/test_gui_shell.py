@@ -197,3 +197,44 @@ def test_failed_rerun_removes_previous_success_display(app, monkeypatch, failure
     assert "완료" not in window.status.text()
     assert all(label.text() != "0.2500 m" for label in window.props_panel.findChildren(QLabel))
     window.close()
+
+
+def test_main_window_theme_toggle_updates_ui(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "ui.ini"))
+    from apps.workbench_qt.icons import icon
+    from apps.workbench_qt.theme import current_theme_mode, get_palette, set_theme_mode
+
+    try:
+        set_theme_mode("dark")
+        window = MainWindow()
+        window.set_model(cantilever_model())
+
+        dark_p = get_palette("dark")
+        assert current_theme_mode() == "dark"
+        assert window.theme_action.text() == "라이트 모드"
+        assert dark_p["window_bg"] in window.styleSheet()
+        assert f"color: {dark_p['text_secondary']};" in window.viewport._fallback_label.styleSheet()
+        assert window._toolbar_icon_actions[0][0].icon().cacheKey() == icon("folder", "dark").cacheKey()
+
+        # Switch to light mode via menu action trigger
+        window.theme_action.trigger()
+
+        light_p = get_palette("light")
+        assert current_theme_mode() == "light"
+        assert window.theme_action.text() == "다크 모드"
+        assert light_p["window_bg"] in window.styleSheet()
+        assert f"color: {light_p['text_secondary']};" in window.viewport._fallback_label.styleSheet()
+        assert window._toolbar_icon_actions[0][0].icon().cacheKey() == icon("folder", "light").cacheKey()
+
+        # Switch back to dark mode
+        window.theme_action.trigger()
+
+        assert current_theme_mode() == "dark"
+        assert window.theme_action.text() == "라이트 모드"
+        assert dark_p["window_bg"] in window.styleSheet()
+        assert f"color: {dark_p['text_secondary']};" in window.viewport._fallback_label.styleSheet()
+        assert window._toolbar_icon_actions[0][0].icon().cacheKey() == icon("folder", "dark").cacheKey()
+        window.close()
+    finally:
+        set_theme_mode("dark")
+

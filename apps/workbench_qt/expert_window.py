@@ -13,15 +13,16 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QSettings, QPoint
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QFont, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QFormLayout, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from caelab.workbench import Workbench
-from .theme import THEME
+from .theme import (UI_FONT_STACK, MONO_FONT_STACK, build_stylesheet, current_theme_mode, get_palette,
+                    register_theme_listener, status_badge_style, theme_toggle_label, toggle_theme_mode)
 from .expert_chat import ChatBrowser, QuestionEdit, evidence_name, human_text, markdown_body, proposal_text, source_name, evidence_cautions, proposal_brief, user_error
 
 
@@ -48,17 +49,6 @@ class ExpertWindow(QMainWindow):
         self.setWindowTitle('전문가 논의')
         self.resize(1100, 850)
         self.setMinimumSize(680, 580)
-        self.setStyleSheet(THEME + """
-            QMainWindow, QWidget#chatRoot { background: #fafaf9; }
-            QLabel#heading { font-size: 19px; font-weight: 600; color: #202d39; }
-            QTextBrowser#conversation { background: #fafaf9; border: none; font-size: 16px; }
-            QPlainTextEdit#composer { background: white; border: 1px solid #b9c2cb;
-                border-radius: 10px; padding: 10px; font-size: 15px; }
-            QLabel#basis { color: #526476; font-size: 12px; }
-            QPushButton#primary:disabled, QPushButton#primary:disabled:hover {
-                background: #e1e6eb; border-color: #d5dce3; color: #5d6b78; }
-            QPushButton:focus, QComboBox:focus { border: 2px solid #1668b4; }
-        """)
         self._edit_actions = []
         menu = self.menuBar().addMenu('대화')
         for label, slot, shortcut in (
@@ -73,13 +63,15 @@ class ExpertWindow(QMainWindow):
             if shortcut:
                 action.setShortcut(shortcut)
             self._edit_actions.append(action)
+        self.view_menu = self.menuBar().addMenu('보기(&V)')
+        self.theme_action = self.view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         root = QWidget()
         root.setObjectName('chatRoot')
         outer = QHBoxLayout(root)
         outer.setContentsMargins(18, 12, 18, 14)
         outer.addStretch()
         column = QWidget()
-        column.setMaximumWidth(900)
+        column.setMaximumWidth(960)
         layout = QVBoxLayout(column)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
@@ -87,6 +79,10 @@ class ExpertWindow(QMainWindow):
         self.heading = QLabel('새 대화')
         self.heading.setWordWrap(True)
         self.heading.setObjectName('heading')
+        heading_font = QFont()
+        heading_font.setPointSize(13)
+        heading_font.setBold(True)
+        self.heading.setFont(heading_font)
         top.addWidget(self.heading, 1)
         self.settings = QPushButton('연결 설정')
         self.settings.clicked.connect(self.configure_provider)
@@ -98,23 +94,30 @@ class ExpertWindow(QMainWindow):
         layout.addWidget(self.status)
         self.asset_warning = QLabel()
         self.asset_warning.setWordWrap(True)
-        self.asset_warning.setStyleSheet('color: #8a3d11;')
+        self.asset_warning.setStyleSheet(status_badge_style('warning'))
         self.asset_warning.hide()
         layout.addWidget(self.asset_warning)
         self.transcript = ChatBrowser()
         self.transcript.setObjectName('conversation')
-        self.transcript.document().setDefaultStyleSheet(
-            'p { margin-top: 8px; margin-bottom: 12px; line-height: 150%; } '
-            'pre { background-color: #eef0f2; white-space: pre-wrap; } '
-            'td, th { padding: 6px; }')
         layout.addWidget(self.transcript, 1)
+        composer_card = QFrame()
+        composer_card.setObjectName('sectionCard')
+        composer_layout = QVBoxLayout(composer_card)
+        composer_layout.setContentsMargins(12, 10, 12, 10)
+        composer_layout.setSpacing(8)
+        attachment_line = QHBoxLayout()
+        self.basis = QLabel('이번 질문의 첨부: 선택하지 않음')
+        self.basis.setObjectName('basis')
+        self.basis.setWordWrap(True)
+        attachment_line.addWidget(self.basis, 1)
         controls = QHBoxLayout()
         self.attachments_button = QPushButton('첨부 자료')
         self.attachments_button.clicked.connect(self.show_attachments)
-        controls.addWidget(self.attachments_button)
+        attachment_line.addWidget(self.attachments_button)
         self.proposals_button = QPushButton('제안 검토')
         self.proposals_button.clicked.connect(self.show_proposals)
-        controls.addWidget(self.proposals_button)
+        attachment_line.addWidget(self.proposals_button)
+        composer_layout.addLayout(attachment_line)
         controls.addWidget(QLabel('다음 역할'))
         self.role = QComboBox()
         self.role.setAccessibleName('이번 질문의 전문가 역할')
@@ -123,21 +126,18 @@ class ExpertWindow(QMainWindow):
         for template in self.workbench.expert_templates():
             self.role.addItem(template.name, template.id)
         controls.addWidget(self.role)
-        self.basis = QLabel('이번 질문의 첨부: 선택하지 않음')
-        self.basis.setObjectName('basis')
-        self.basis.setWordWrap(True)
-        layout.addWidget(self.basis)
         self.question = QuestionEdit()
         self.question.setObjectName('composer')
         self.question.setPlaceholderText('질문을 적으세요… Enter 보내기 · Shift+Enter 줄바꿈')
         self.question.setToolTip('Enter 또는 Ctrl+Enter로 보내기 · Shift+Enter로 줄바꿈. 한글 조합 중에는 보내지 않습니다.')
         self.question.submitted.connect(self.ask)
-        layout.addWidget(self.question)
+        composer_layout.addWidget(self.question)
         send_line = controls
+        send_line.addStretch(1)
         self.wait_label = QLabel('')
         self.wait_label.setMaximumWidth(110)
         self.wait_label.setWordWrap(True)
-        send_line.addWidget(self.wait_label, 1)
+        send_line.addWidget(self.wait_label)
         self.stop = QPushButton('중단')
         self.stop.clicked.connect(self.cancel_request)
         self.stop.setEnabled(False)
@@ -146,7 +146,8 @@ class ExpertWindow(QMainWindow):
         self.ask_button.setObjectName('primary')
         self.ask_button.clicked.connect(self.ask)
         send_line.addWidget(self.ask_button)
-        layout.addLayout(send_line)
+        composer_layout.addLayout(send_line)
+        layout.addWidget(composer_card)
         outer.addWidget(column, 1)
         outer.addStretch()
         self.setCentralWidget(root)
@@ -154,7 +155,6 @@ class ExpertWindow(QMainWindow):
         self.attachments_dialog = QDialog(self)
         self.attachments_dialog.setWindowTitle('대화의 첨부 자료')
         self.attachments_dialog.resize(680, 520)
-        self.attachments_dialog.setStyleSheet('QWidget { font-size: 14px; } QPlainTextEdit { padding: 8px; }')
         attachment_layout = QVBoxLayout(self.attachments_dialog)
         attachment_layout.addWidget(QLabel('목록 선택은 미리보기입니다. 이번 질문에 쓸 자료는 아래에서 선택하세요.'))
         self.sources = QListWidget()
@@ -179,7 +179,6 @@ class ExpertWindow(QMainWindow):
         self.proposals_dialog = QDialog(self)
         self.proposals_dialog.setWindowTitle('미적용 제안 검토')
         self.proposals_dialog.resize(680, 570)
-        self.proposals_dialog.setStyleSheet('QWidget { font-size: 14px; } QPlainTextEdit { padding: 8px; }')
         proposal_layout = QVBoxLayout(self.proposals_dialog)
         self.proposal_choice = QComboBox()
         self.proposal_choice.setAccessibleName('검토할 제안')
@@ -205,11 +204,28 @@ class ExpertWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._poll)
         self.timer.start(50)
+        self.apply_theme()
+        register_theme_listener(self.apply_theme)
         if discussion_path:
             self._load(Path(discussion_path), create=True)
             if run_id:
                 self._notice('프로젝트의 계산 결과가 전달되었습니다. 첨부 자료에서 가져올 결과를 확인하세요.')
         else:
+            self.render()
+
+    def apply_theme(self, mode: str | None = None):
+        resolved = mode if mode in ('dark', 'light') else current_theme_mode()
+        p = get_palette(resolved)
+        self.setStyleSheet(build_stylesheet(resolved))
+        self.theme_action.setText(theme_toggle_label(resolved))
+        self.asset_warning.setStyleSheet(status_badge_style('warning', resolved))
+        self.status.setStyleSheet(status_badge_style('neutral', resolved))
+        self.transcript.document().setDefaultStyleSheet(
+            f'body, p, li, td, th {{ font-family: {UI_FONT_STACK}; color: {p["text_primary"]}; }} '
+            'p { margin-top: 8px; margin-bottom: 12px; line-height: 150%; } '
+            f'pre, code {{ font-family: {MONO_FONT_STACK}; background-color: {p["code_bg"]}; white-space: pre-wrap; }} '
+            f'th {{ background-color: {p["header_bg"]}; }} td, th {{ padding: 6px; }}')
+        if hasattr(self, 'document'):
             self.render()
 
     @property
@@ -305,6 +321,7 @@ class ExpertWindow(QMainWindow):
             return False
 
     def render(self):
+        p = get_palette()
         bar = self.transcript.verticalScrollBar()
         self.transcript.restored_anchor = None
         old_position, follow = bar.value(), bar.maximum() - bar.value() <= 32
@@ -343,26 +360,49 @@ class ExpertWindow(QMainWindow):
             source = self.document.get('evidences', {}).get(turn.get('evidence_id'), {})
             question = html.escape(human_text(turn.get('question', ''))).replace('\n', '<br>')
             cautions = self._cautions(source)
-            source_label = _evidence_name(source) + (' · ' + ' · '.join(cautions) if cautions else '')
-            fragments += [f"<p style='color:#526476; margin-top:26px'>나 · {html.escape(source_label)}</p>",
-                          f"<table width='100%' bgcolor='#edf2f5' cellpadding='14'><tr><td>{question}</td></tr></table>",
-                          f"<p style='color:#24557b; margin-top:22px'><b>{html.escape(human_text(turn.get('role') or '전문가'))}</b></p>"]
+            source_label = _evidence_name(source)
+            frame_tag = f" · 프레임 {source['frame_index'] + 1}" if isinstance(source.get('frame_index'), int) else ''
+            units = source.get('units') or {}
+            unit_tag = ' · 단위: ' + ' / '.join(str(v) for v in list(units.values())[:3]) if units else ' · 단위 미확인'
+            fragments += [f"<p style='color:{p['text_secondary']}; margin-top:26px'>나 · {html.escape(source_label + frame_tag)}"
+                          f"<span style='color:{p['text_secondary'] if units else p['status_warning_fg']};'>{html.escape(unit_tag)}</span>"
+                          + (f"<span style='color:{p['status_warning_fg']};'> · {html.escape(' · '.join(cautions))}</span>" if cautions else '') + '</p>',
+                          f"<table width='100%' cellspacing='0' cellpadding='12' style='background-color:{p['chat_user_bg']}; border:1px solid {p['chat_user_border']}; margin-top:4px;'><tr><td style='color:{p['text_primary']};'>{question}</td></tr></table>",
+                          f"<p style='color:{p['text_accent']}; margin-top:18px; margin-bottom:4px;'><b>{html.escape(human_text(turn.get('role') or '전문가'))}</b></p>"]
             proposals = [p for p in self.document.get('proposals', []) if isinstance(p, dict) and
                          p.get('request_id') == turn.get('id') and turn.get('id')]
             reply, malformed = markdown_body(turn.get('reply') or '', accepted_proposals=proposals)
-            fragments.append(reply)
+            if reply:
+                fragments.append(f"<table width='100%' cellspacing='0' cellpadding='12' style='background-color:{p['chat_assistant_bg']}; border:1px solid {p['border_subtle']};'><tr><td style='color:{p['text_primary']};'>{reply}</td></tr></table>")
             status = labels.get(turn.get('status'), '응답 상태를 확인할 수 없습니다.')
             if status:
-                fragments.append(f"<p style='color:#8a3d11'>{status}</p>")
+                fragments.append(f"<p style='color:{p['status_warning_fg']}'>{status}</p>")
             if turn.get('error'):
-                fragments.append(f"<p>{html.escape(user_error(turn['error']))}</p>")
+                fragments.append(f"<p style='color:{p['status_error_fg']}'>{html.escape(user_error(turn['error']))}</p>")
             proposals = [p for p in self.document.get('proposals', []) if isinstance(p, dict) and
                          p.get('request_id') == turn.get('id') and turn.get('id')]
             if proposals:
-                fragments.extend(f"<p style='color:#526476'><b>제안</b><br>{html.escape(proposal_brief(proposal)).replace(chr(10), '<br>')}</p>" for proposal in proposals)
+                for proposal in proposals:
+                    brief = proposal_brief(proposal)
+                    if brief.startswith('제안 내용을 확인할 수 없습니다'):
+                        fragments.append(f"<p style='color:{p['status_warning_fg']}'><b>제안</b><br>{html.escape(brief)}</p>")
+                        continue
+                    status_line, _, content = brief.partition('\n')
+                    reason_line, _, target_line = content.rpartition('\n')
+                    fragments.append(f"<table width='100%' bgcolor='{p['chat_proposal_bg']}' cellspacing='0' cellpadding='10' style='border:1px solid {p['chat_proposal_border']}; margin-top:10px;'><tr><td>"
+                                     f"<b>변경 제안</b> · <span style='color:{p['status_warning_fg']}; font-weight:600;'>{html.escape(status_line)}</span><br>"
+                                     f"<span style='color:{p['text_secondary']};'>{html.escape(target_line)}</span><br>{html.escape(reason_line).replace(chr(10), '<br>')}")
+                    before = html.escape(human_text(proposal.get('before')))
+                    if proposal.get('after') is not None:
+                        after = html.escape(human_text(proposal.get('after')))
+                        fragments.append(f"<table width='100%' cellspacing='6' cellpadding='8'><tr><td width='50%' bgcolor='{p['chat_before_bg']}'><b>변경 전 (Before)</b><pre>{before}</pre></td>"
+                                         f"<td width='50%' bgcolor='{p['chat_after_bg']}'><b>변경 후 (After)</b><pre>{after}</pre></td></tr></table>")
+                    else:
+                        fragments.append(f"<table width='100%' cellspacing='4' cellpadding='8'><tr><td bgcolor='{p['chat_before_bg']}'><b>현재 확인 내용</b><pre>{before}</pre></td></tr></table>")
+                    fragments.append('</td></tr></table>')
             if malformed:
-                fragments.append('<p style="color:#8a3d11">제안 형식을 읽지 못했습니다. 원문은 보존되어 있습니다. 대상과 내용을 다시 질문해 주세요.</p>')
-        self.transcript.setHtml(''.join(fragments) or '<h2>어떤 점을 함께 살펴볼까요?</h2><p>입력이나 계산 결과를 첨부하고 질문을 적어 주세요.</p>')
+                fragments.append(f'<p style="color:{p["status_warning_fg"]}">제안 형식을 읽지 못했습니다. 원문은 보존되어 있습니다. 대상과 내용을 다시 질문해 주세요.</p>')
+        self.transcript.setHtml(''.join(fragments) or f'<h2 style="color:{p["text_primary"]}">어떤 점을 함께 살펴볼까요?</h2><p style="color:{p["text_secondary"]}">입력이나 계산 결과를 첨부하고 질문을 적어 주세요.</p>')
         bar.setValue(bar.maximum() if follow else old_position)
         proposal_id = self.proposal_choice.currentData()
         self.proposal_choice.blockSignals(True)
