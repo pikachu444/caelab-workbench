@@ -1256,7 +1256,7 @@ def test_connected_missing_result_default_moves_to_owner_without_replacing_input
     window.connect(analysis.node_id, result.node_id)
     _select(window, result)
     edges = list(window.project.connections)
-    assert window.open_button.text() == 'CalculiX 출력으로 이동'
+    assert window.open_button.text() == f'{analysis.title} 출력으로 이동'
     assert result.status_label == '결과 없음'
     assert '갱신' not in result.status_label
     monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: pytest.fail('connected input silently replaced'))
@@ -1463,7 +1463,7 @@ def test_duplicate_removed_programs_are_separate_choices_without_internal_ids(wi
     assert window.remove_selected()
     def accept(dialog):
         choices = dialog.findChild(QComboBox)
-        assert [choices.itemText(i) for i in range(choices.count())] == ['CalculiX (1)', 'CalculiX (2)']
+        assert [choices.itemText(i) for i in range(choices.count())] == [f'{first.title} (1)', f'{second.title} (2)']
         choices.setCurrentIndex(choices.findData(first.node_id))
         return QDialog.Accepted
     monkeypatch.setattr(QDialog, 'exec', accept)
@@ -1489,7 +1489,7 @@ def test_removed_calculations_use_their_actual_saved_input_not_identical_result_
     def cancel(dialog):
         choices = dialog.findChild(QComboBox)
         labels = [choices.itemText(i) for i in range(choices.count())]
-        assert labels == ['CalculiX — A/same.inp', 'CalculiX — B/same.inp']
+        assert labels == [f'{first.title} — A/same.inp', f'{second.title} — B/same.inp']
         assert all('model.frd' not in label for label in labels)
         return QDialog.Rejected
     monkeypatch.setattr(QDialog, 'exec', cancel)

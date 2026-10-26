@@ -4,8 +4,14 @@
 - 기준: 저장소 DESIGN.md의 제품 정의와 5가지 결정. 2026-10-23 정합성 개정은 원격 main `18322ce3798d55b50a70d9a5275ef9d34d5b7ace`를 새로 clone한 코드에서 시작했다. 아래 변경의 원격 반영 여부는 PR과 병합 후 새 clone 검사로 확인하며, 로컬 파일 존재만으로 반영 완료라고 하지 않는다.
 - 단계:
   * 1단계(CalculiX 단일 솔버 본선 파이프라인 엔드투엔드 연결 및 연구 재개) 완료. 6대 과제 실측 및 독립 수석 검수관(chief-reviewer)·CAE 도메인 수석 검수관(cae-user-expert)의 공식 Gate 3 서명(Sign-Off)을 완료했다. 보조 작업 창의 동작과 본선의 독립 프로그램·파일·저장·실행 흐름을 완벽히 분리 검증했다.
-  * 2단계(내부 정리 및 다중 솔버 디스패치 리팩토링) 완료. PR #24를 통해 main에 병합되었다. `SolverAdapter` 프로토콜을 도입하여 CalculiX 전용 종속성을 완전히 분리하고, 다중 솔버 연결 함수 및 GUI 디스패치를 일반화했다.
-  * 3단계(Codex 병렬 워커 기반 다중 솔버 어댑터 확장 및 Gate 4 공식 감사) 완료. Code_Aster(`.comm` 키워드 및 `.rmed`/`.resu` VTU 변환), OpenRadioss(Starter 블록, Engine 에너지 수지 및 A001 애니메이션 VTU 변환), LS-DYNA(`*INCLUDE` 계층 해석, GLSTAT 전역 에너지 수지, deck+nodout VTU 변환) 구현 및 41개 단위 테스트 전원 통과. `chief-reviewer` 및 `cae-user-expert`의 Gate 4 정밀 감사에서 전원 만점 합격(FULL PASS)을 획득했다.
+  * 2단계(내부 정리, 솔버 디스패치 리팩토링): PR #24로 main에 병합했다(`b6861f5`). `caelab/native/adapter.py`의 `SolverAdapter` 등록을 거쳐 `jobs.py`·`workbench.py`·해석 창이 솔버를 고르도록 바꿨다. CalculiX 실제 실행 회귀(독립 입력 7범주 스크립트)는 유지됐다.
+  * 3단계(솔버 확장): **미완료.** DESIGN §12의 종료 조건은 "같은 프로젝트 구조에서 실제 파일·상태·결과 교환"이다. PR #25(`8ee553c`)로 반영된 것은 Code_Aster·OpenRadioss·LS-DYNA의 실행 명령 구성과 결과 수집기 골격, 그리고 41개 단위 테스트다. 수집기는 실제 솔버 결과 파일을 읽지 못한다.
+    - Code_Aster: 실제 MED/HDF5 `.rmed`는 거부한다. 테스트는 자체 JSON 형식(`caelab-codeaster-rmed-fixture-v1`)만 읽는다.
+    - OpenRadioss: 실제 `A###` 애니메이션 바이너리는 해독하지 못하고 빈 VTU와 경고를 남긴다. 테스트는 간이 ASCII(NODE/TETRA)만 읽는다. Engine 에너지 값은 명시적 레이블 형식만 읽으며, 실제 Engine 출력 형식과의 일치는 미확인이다.
+    - LS-DYNA: `d3plot`은 해독하지 않는다. ASCII `glstat`·`nodout`와 deck의 `*NODE`/`*ELEMENT_SOLID`(8절점)만 사용한다. 실제 `glstat` 출력 형식과의 일치는 미확인이다.
+    - 세 솔버 모두 이 환경에 실행 파일이 없어 실제 계산, 실제 결과 판독, ParaView 표시, GUI 끝단 흐름을 확인하지 않았다.
+    - 2026-10-26 Gate 4 리뷰(`chief-reviewer`·`cae-user-expert`)는 위 한계를 결함으로 기록하지 않은 채 통과 판정을 냈다. 메인이 이 판정을 철회하고 재판정을 요청했다. 리뷰어는 명령 실행 도구가 없어 테스트 수치는 메인 보고에 의존했다.
+  * 회귀 테스트: 수집 780개(설치 10개 제외 시 770개). 대부분 P1~P7 개발 세션에서 작성됐고 전체를 의미 단위로 검토한 기록은 없다. 2026-10-26 테스트 의미 감사(R-3)를 시작했다. `eaffee4`의 경계 테스트 기대값 수정은 리뷰 없이 main에 직접 반영됐고 사후 검토(R-1) 중이다. 그 직전 전체 실행(`8ee553c`, Windows)은 1 failed, 709 passed, 20 skipped였다.
 
 ## 최신 확인과 남은 작업 (2026-10-26)
 ### 새 세션에서 이어갈 작업
