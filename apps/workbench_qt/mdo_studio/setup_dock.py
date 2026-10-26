@@ -34,6 +34,7 @@ class SetupDockWidget(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.viewport().setStyleSheet("background: transparent;")
         container = QWidget()
         container.setObjectName("setupDockContainer")
         layout = QVBoxLayout(container)

@@ -259,6 +259,7 @@ def _check_split(dataset, split):
 
 
 def fit_surrogate(dataset, config=None, split=None, *, model_id="surrogate"):
+    """Fit a surrogate metamodel (Kriging, RBF, or Polynomial) on dataset."""
     config = config or SurrogateConfig()
     split = split or HoldoutSplit(train_indices=tuple(range(len(dataset.x))), validation_indices=())
     _check_split(dataset, split)
@@ -368,6 +369,7 @@ def fit_surrogate(dataset, config=None, split=None, *, model_id="surrogate"):
 
 
 def predict(model, points, *, variance_kind="latent", observation_noise_variance=None):
+    """Predict mean responses and variance intervals for input points."""
     if variance_kind not in ("latent", "observation"):
         raise ValueError("variance kind must be latent or observation")
     x = _array(points, 2)

@@ -22,32 +22,61 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
 - 해석 작업 창은 전문가 UI·공급자 없이 확인·검사·실행·요약을 수행합니다. 전문가 상자는 별도 대화 프로그램을 엽니다. 그 창에서 입력·결과·로그를 직접 불러오거나 전달받은 실행을 근거로 보존하고, 질문·제약·실패 이유·미적용 제안을 저장합니다. 공개 FreeCAD A/B 사례의 실제 구독 답변·공학적 대조·대화 재열기를 확인했으며, 연구팀 흐름 전체의 품질 검증은 남아 있습니다.
 - 부모 화면은 빈 프로젝트로 시작합니다. 사용자 파일·프로그램 상자·연결을 저장하고 다시 열 수 있으며, 네이티브 INP 해석 창은 별도 프로세스로 엽니다. 이 창에서 CalculiX 계산·취소·과거 실행의 로그와 결과 조회가 가능합니다. 결과 상자는 선택 실행의 해시를 확인한 PVD/VTU를 ParaView에 전달합니다.
 
+## MDO Studio 및 상용급 수치 엔진 (`caelab.mdo`)
+
+상용 5대 최적화 툴(OptiStruct, Tosca, Isight, modeFRONTIER, HEEDS)의 아키텍처를 벤치마크하여 레거시 장난감 수치 코드를 전면 퇴출하고 8대 독립 수치 코어와 4대 분할 영역 MDO Studio GUI([`MDOStudioWindow`](apps/workbench_qt/mdo_studio/window.py))를 새로 구축했습니다.
+
+- **독립 실행 명령어**:
+  ```bash
+  python -m apps.workbench_qt.mdo_studio
+  ```
+- **핵심 수치 모듈 ([`caelab.mdo`](caelab/mdo/__init__.py))**:
+  - [`VariableSpace`](caelab/mdo/variables.py): 연속형(`ContinuousVariable`), 이산 규격형(`DiscreteVariable`), 범주형(`CategoricalVariable`), 수식 연동형(`LinkedVariable`) 설계 공간 정의.
+  - [`ObjectiveSpec`](caelab/mdo/objectives.py) 및 [`ConstraintSpec`](caelab/mdo/constraints.py): 3상태([`Feasibility`](caelab/mdo/constraints.py): FEASIBLE / MARGINAL / INFEASIBLE) 판정 및 오차 대역 평가.
+  - `doe`: 최적 라틴 하이퍼큐브(Optimal LHS), Sobol 시퀀스, 완전 요인 배치.
+  - `surrogate`: Kriging(GPR), RBF, 다항 반응표면(Polynomial) 대리모델 및 교차검증 지표($R^2$, RMSE).
+  - `sensitivity`: Sobol 1차/총차 민감도 지수, Morris 스크리닝.
+  - `optimize`: 구배 기반 SLSQP, 전역 미분진화(DE), 다목적 유전알고리즘(NSGA-II).
+  - `pareto`: 비지배 정렬, NSGA-II 밀집도 거리, 초체적, 무릎점([`knee_point`](caelab/mdo/pareto.py)) 의사결정.
+  - [`TemplateDeck`](caelab/mdo/inp_binder.py) & [`StudyManager`](caelab/mdo/study_manager.py): 텍스트 기반 템플릿 토큰 치환(`@@VAR@@`, `{{VAR}}`)을 통한 솔버 독립 덱 바인딩 및 전 과정 이력 보존.
+- **4대 작업 영역 (MDO Studio Workspace)**:
+  1. **설정 도크 (Setup Dock)**: 설계변수 테이블, 목적함수/제약조건 정의, DoE/최적화 알고리즘 파라미터 제어.
+  2. **해석 모델 토폴로지 캔버스 (Visual Canvas)**: CalculiX/FEA 해석 덱 및 컴포넌트 데이터 플로우 시각화.
+  3. **평가 실행 매트릭스 테이블 (Evaluation Table)**: DoE 샘플 및 세대별 해석 실행 결과 매트릭스 (성공/실패/제약 위반 실시간 표시).
+  4. **4-탭 인터랙티브 분석 대시보드 (Interactive Analytics)**:
+     - 수렴 이력 (Convergence History): 세대별 최적값 및 제약 만족 여부 트래킹.
+     - 2D/3D 파레토 프론티어 (Pareto Frontier): 다목적 상충 관계 분산도, Knee Point 자동 검출.
+     - 3D 응답곡면 (Response Surface): Kriging 곡면 3D 회전 렌더링, 단면 슬라이서, $\pm 2\sigma$ 신뢰 구간.
+     - 민감도 토네이도 차트 (Sensitivity Tornado): 설계변수별 기여도 순위화.
+- **"Set as Current" 피드백 루프**:
+  - 파레토 프론트나 수렴 이력에서 엔지니어가 최적 설계점을 클릭하고 "Set as Current Design Point"를 실행하면, 원본 네이티브 해석 덱(예: `cantilever.inp`)에 최적 치수가 즉시 치환 반영되며 안전한 백업 파일(`.bak`)이 자동 생성됩니다.
+
 ## 실행
 
 ```bash
-python -m pip install -e ".[gui,rag,dev]"
+python -m pip install -e ".[gui,mdo,rag,dev]"
 python -m pytest            # 자동 검사; 설치된 솔버의 개별 검사는 전체 GUI 끝단 검증과 다릅니다
 python -m apps.workbench_qt # 프로젝트 GUI 진입점; 전체 사용자 파일 흐름은 아직 미완료
+python -m apps.workbench_qt.mdo_studio # 상용급 독립 MDO Studio (다분야 통합 최적화) 실행
 python -m apps.workbench_qt "프로젝트 폴더/project.json" # 저장한 프로젝트 열기
 python -m apps.workbench_qt.expert_window # 독립 전문가 프로그램; 새 대화에서 자료 직접 불러오기
 python -m apps.workbench_qt.expert_window --discussion "연구/discussion.json" # 대화 재열기
 ```
 
-Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,rag]` 의존성을 설치·동기화한 뒤 `pip check`로 일관성을 확인합니다. 설치나 의존성 검사에 실패하면 오류를 표시하고 앱을 시작하지 않습니다.
+Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,mdo,rag]` 의존성을 설치·동기화한 뒤 `pip check`로 일관성을 확인합니다. 설치나 의존성 검사에 실패하면 오류를 표시하고 앱을 시작하지 않습니다.
 
 | 설치 선택 | 포함 범위 |
 |---|---|
 | 기본 | 프로젝트·연결 및 NumPy 기반 기능 |
 | `gui` | PySide6·VTK와 기존 GUI가 사용하는 수치 기능(SciPy 1.15 이상) |
-| `numerical` | 과거 설치 설정에 남은 SciPy 그룹; 새 MDO는 `mdo` 사용 |
-| `mdo` | 새 독립 수치 API: SciPy·scikit-learn·pymoo·SALib |
+| `mdo` | 독립 수치 MDO 코어: SciPy·scikit-learn·pymoo·SALib |
 | `rag` | PDF 매뉴얼 읽기(pypdf); 텍스트/Markdown 검색은 기본 설치로 가능 |
 | `sensitivity` | Sobol 민감도 분석용 SALib |
 | `dev` | pytest |
 
-새 MDO 수치 API는 `python -m pip install -e ".[mdo,dev]"`로 설치합니다. `caelab.mdo`의 각 모듈을 직접 가져옵니다. PowerShell 수치 검사 명령은 `python -m pytest -q (Get-ChildItem tests/test_mdo_*.py).FullName`입니다. 기존 GUI·네이티브 실행 연결을 교체하는 통합 전환은 별도 작업이며, 이 패키지만 설치해 MDO Studio나 실제 해석 연구를 실행할 수 있는 것은 아닙니다. 선언된 의존성 최소 버전의 Python 3.11/3.12 호환 검증은 아직 완료되지 않았습니다.
+새 MDO 수치 API 검사는 PowerShell에서 `python -m pytest -q (Get-ChildItem tests/test_mdo_*.py).FullName`을 실행합니다.
 
-기존 numerical 구현과 최적화 패널은 시작 커밋에서 삭제됐으며, 남아 있는 `numerical` 설치 그룹은 그 기능을 복원하지 않습니다. SciPy의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
+SciPy의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
 
 Python 3.11에서는 PySide6 6.12.0의 Qt 호출 중 참조 계수 손상을 재현해 GUI 의존성을 6.12 미만으로 제한합니다. 동일 검사에서 6.11.1·6.11.2는 정상 종료했습니다. 이미 6.12를 설치한 3.11 환경은 낮은 버전을 설치해도 분리 배포된 PDF·WebEngine 패키지가 남아 충돌할 수 있습니다. 이 경우 기존 환경을 보관하고 새 가상환경에 설치하세요. Python 3.12 이상은 기존 PySide6 범위를 유지합니다.
 

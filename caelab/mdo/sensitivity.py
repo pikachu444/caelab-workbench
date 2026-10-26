@@ -177,6 +177,7 @@ def generate_sensitivity_design(space, config=None):
 
 
 def analyze_sensitivity(design, observations, *, output_unit=""):
+    """Compute first-order and total-order Sobol indices from design observations."""
     if set(observations) != set(design.row_ids):
         raise ValueError("incomplete experiment: observations must match every paired row ID exactly")
     records = [observations[i] for i in design.row_ids]

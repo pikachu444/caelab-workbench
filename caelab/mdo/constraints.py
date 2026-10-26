@@ -8,6 +8,7 @@ from .variables import _id, _finite, _readonly, evaluate_expression, parse_unit
 
 
 class Feasibility(str, Enum):
+    """Three-state constraint feasibility evaluation status."""
     FEASIBLE = "FEASIBLE"
     MARGINAL = "MARGINAL"
     INFEASIBLE = "INFEASIBLE"

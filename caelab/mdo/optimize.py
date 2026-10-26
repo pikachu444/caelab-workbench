@@ -444,6 +444,7 @@ def _nsga2(problem, config, ledger):
 
 
 def optimize(problem, evaluator, config=None, cancel=None):
+    """Execute single or multi-objective numerical optimization (SLSQP, DE, NSGA-II)."""
     config = config or OptimizationConfig()
     factors = problem.space.independent_variables
     if config.algorithm in ("slsqp", "de") and len(problem.objectives) > 1 and not config.weighted_sum:

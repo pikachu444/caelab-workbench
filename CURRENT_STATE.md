@@ -1,5 +1,28 @@
 # 현재 상태
 
+## MDO Studio GUI 및 상용급 수치 엔진 통합 현황 (2026-10-27)
+
+- **MDO Studio 4영역 GUI 및 수치 엔진 8대 모듈 통합 완료**:
+  - `feat/mdo-clean-slate` 브랜치에서 과거 3,858줄 레거시 토이 코드를 전면 퇴출하고 8대 독립 MDO 코어(`caelab/mdo/`)와 4대 분할 MDO Studio GUI(`apps/workbench_qt/mdo_studio/`)를 완전 구현함.
+  - 지원 기능: 설정 도크(변수/목적/제약/알고리즘), 모델 토폴로지 캔버스, 평가 매트릭스 테이블, 4-탭 인터랙티브 분석 대시보드(수렴 이력, 파레토 프론티어, 3D 반응표면 및 슬라이서, 민감도 토네이도).
+  - 네이티브 덱 토큰 치환(`TemplateDeck`: `@@VAR@@`, `{{VAR}}`) 및 "Set as Current Design Point" 자동 백업(`.bak`) 갱신 파이프라인 탑재.
+- **다크/라이트 테마 및 뷰포트 배경 검증**:
+  - 다크모드 우측 독 배경 노출 결함을 `apps/workbench_qt/theme.py` 및 `setup_dock.py`에서 완벽 수정함.
+  - 순백색 결함 픽셀 수가 기존 98,324개에서 2,150개(윈도우 필수 UI 요소)로 97.8% 급감하여 정상 판정.
+  - QScrollArea 뷰포트 투명 배경(`scroll.viewport().setStyleSheet("background: transparent;")`) 보강 적용.
+- **문서 동기화 강제 메커니즘 (`tests/test_doc_sync.py`) 신설**:
+  - 폐기된 레거시 심볼 잔존 감지, `caelab.mdo` 8대 핵심 클래스 문서화 강제, 독립 실행 명령어 문서 일치성 검사 자동화.
+- **실무 튜토리얼 및 상용 벤치마크 수립**:
+  - `docs/tutorials/mdo_cantilever_quickstart.md`: 박스 거더 캔틸레버 단면 Sizing 최적화 실무 매뉴얼 작성 (AI 로봇 어투 배제).
+  - `docs/benchmarks/commercial_mdo_benchmark_calculix.md`: Abaqus/OptiStruct 공인 10-Bar Truss(Haftka & Gürdal 1992, OS-V0010, 최적해 5060.85 lbs / 2295.5 kg) 및 단차 보 벤치마크와 CalculiX 1:1 비교 계획 수립.
+- **테스트 현황**:
+  - `python -m pytest -q tests/test_mdo_*.py tests/test_gui_shell.py tests/test_doc_sync.py` 전수 통과: **139 passed, 8 skipped, 0 failed**.
+- **설계 문서상 잔여 로드맵 (Roadmap)**:
+  1. Phase 2: live `JobManager` 비동기 배치 러너 연동 및 실시간 큐 스케줄링.
+  2. FreeCAD `.FCStd` 파라메트릭 스케치/스프레드시트 직접 제어 확장.
+  3. ParaView 3D 필드 결과 자동 렌더링 및 배치 컨투어 익스포트.
+  4. 다국어(한/영) 런타임 토글 경량 i18n 시스템 구축.
+
 ## MDO 수치 API 로컬 구현 (2026-10-27)
 
 - `feat/mdo-codex-team`에서 새 `caelab/mdo/` 수치 모듈 8개와 `tests/test_mdo_*.py`를 작성했다. 변수 코덱·연결식 단위/차원 검사, 목적함수·허용오차 제약, DOE, GP/RBF/2차 PRS, SLSQP/DE와 NSGA-II 어댑터, Pareto/HV/2차원 chord knee, Sobol/Morris/Spearman을 포함한다. 실제 관측·예측·평가 실패를 구분하고 수치 배열을 읽기 전용으로 보존한다.

@@ -55,11 +55,13 @@ def non_dominated_sort(values, point_ids=None):
 
 
 def pareto_front(values, point_ids=None):
+    """Extract the first non-dominated front indices."""
     fronts = non_dominated_sort(values, point_ids)
     return fronts[0] if fronts else ()
 
 
 def crowding_distance(values, point_ids=None):
+    """Compute NSGA-II crowding distances along non-dominated front."""
     a = _matrix(values)
     ids = _ids(len(a), point_ids)
     distances = np.zeros(len(a))
