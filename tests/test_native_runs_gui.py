@@ -565,3 +565,6 @@ def test_native_diagnostic_payload_stays_out_of_status_and_error_dialogs(analysi
         assert "[WinError" not in window.run_status.text()
         assert "CAELAB_CCX" not in window.run_status.text()
         assert "secret" not in window.run_status.text()
+    run.error = env_err
+    window.refresh_runs()
+    assert "CalculiX 실행 파일 또는 연결 설정을 확인하세요." in window.run_status.text()

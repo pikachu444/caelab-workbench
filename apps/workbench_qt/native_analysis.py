@@ -70,6 +70,8 @@ def _display_reason(reason, fallback: str) -> str:
     if isinstance(reason, OSError):
         return fallback
     text = str(reason or '')
+    if re.search(r'CalculiX (?:실행 파일|연결|솔버)', text, re.I):
+        return "CalculiX 실행 파일 또는 연결 설정을 확인하세요."
     if re.search(
         r'\[(?:Errno|WinError)\b|\b(?:PID|SHA256|node_id|request_id|CAELAB_[A-Z0-9_]+)\b'
         r'|program\.(?:source|runtime_env|path|reason)|\.runs\b'
