@@ -7,6 +7,7 @@ and can switch between Dark and Light modes immediately.
 
 from __future__ import annotations
 
+import os
 import weakref
 from typing import Callable
 
@@ -102,10 +103,13 @@ DARK_PALETTE: dict[str, object] = {
     "chat_citation_fg": "#93c5fd",
     "chat_table_header_bg": "#253041",
     # Auxiliary 3D viewport & optimization table
+    # Note: best_row_bg keeps green > 200 in both themes (test_optimization_panel.py:84).
     "vtk_bg_bottom": (0.08, 0.10, 0.14),
     "vtk_bg_top": (0.15, 0.19, 0.25),
     "vtk_text_rgb": (0.88, 0.91, 0.95),
-    "best_row_bg": "#173626",
+    "vtk_edge_rgb": (0.58, 0.66, 0.78),
+    "best_row_bg": "#22d37e",
+    "best_row_fg": "#0b1f15",
 }
 
 LIGHT_PALETTE: dict[str, object] = {
@@ -196,13 +200,18 @@ LIGHT_PALETTE: dict[str, object] = {
     "vtk_bg_bottom": (0.87, 0.90, 0.93),
     "vtk_bg_top": (0.97, 0.98, 0.99),
     "vtk_text_rgb": (0.14, 0.19, 0.25),
+    "vtk_edge_rgb": (0.15, 0.20, 0.28),
     "best_row_bg": "#dcfce7",
+    "best_row_fg": "#102033",
 }
 
 _LISTENERS: list[object] = []
 
 
 def _settings() -> QSettings:
+    override = os.environ.get("CAELAB_UI_SETTINGS_PATH", "").strip()
+    if override:
+        return QSettings(override, QSettings.IniFormat)
     return QSettings(QSettings.defaultFormat(), QSettings.UserScope, "CAELAB", "WorkbenchUI")
 
 
@@ -422,6 +431,23 @@ QFrame#sectionCard, QWidget#sectionCard {{
     border: 1px solid {p['border']};
     border-radius: 8px;
 }}
+QGroupBox {{
+    background: {p['card_bg']};
+    color: {p['text_primary']};
+    border: 1px solid {p['border']};
+    border-radius: 7px;
+    margin-top: 10px;
+    padding: 12px 10px 10px 10px;
+    font-weight: 600;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 6px;
+    color: {p['text_primary']};
+    background: {p['card_bg']};
+}}
 QFrame#kpiCard, QWidget#kpiCard {{
     background: {p['card_bg']};
     border: 1px solid {p['border']};
@@ -468,6 +494,7 @@ QPushButton#primary, QToolButton#primary {{
     color: {p['primary_btn_fg']};
     font-weight: 600;
     border-radius: 5px;
+    padding: 5px 16px;
 }}
 QPushButton#primary:hover, QToolButton#primary:hover {{
     background: {p['primary_btn_hover']};
