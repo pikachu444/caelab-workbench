@@ -148,7 +148,7 @@ class JobManager:
             try:
                 store.recover_unlocked()
                 run_id = uuid.uuid4().hex
-                run = NativeRun(run_id, node_id, store.root / run_id, input_path=reference.path,
+                run = NativeRun(run_id, node_id, store.root / run_id, solver_id=status.spec.id, input_path=reference.path,
                                 units=dict(reference.units), unit_source=reference.unit_source,
                                 log_path=str(store.root / run_id / "job.log"))
                 control = {"cancel": threading.Event(), "process": None, "group": None, "thread": None, "store": store,
@@ -182,7 +182,8 @@ class JobManager:
                 raise
 
     def _run_native(self, run_id, status, timeout, lease):
-        from .connections import calculix_run_request
+        from .native.adapter import get_solver_adapter
+        adapter = get_solver_adapter(status.spec.id)
 
         with self._native_lock:
             run, control = self._native[run_id], self._controls[run_id]
@@ -219,7 +220,7 @@ class JobManager:
             snapshot["prerequisites"] = lineage
             update(snapshot=snapshot, input_revision=snapshot["input_revision"])
             check()
-            request = calculix_run_request(status, run.workdir)
+            request = adapter.build_run_request(status, run.workdir, Path(run.input_path))
             snapshot["execution"] = {"argv": request.argv, "cwd": str(request.cwd), "executable": status.path,
                                      "discovery_source": status.source, "native_environment": status.execution_environment,
                                      "host_os": status.host_os,
@@ -254,14 +255,13 @@ class JobManager:
                 check()
                 returncode = _finish_owned(control)
                 update(returncode=returncode, state="completed" if returncode == 0 else "failed",
-                       error="" if returncode == 0 else f"CalculiX 종료 코드: {returncode}")
+                       error="" if returncode == 0 else f"{status.spec.name} 종료 코드: {returncode}")
             if run.state == "completed":
                 update(parse_state="reading")
                 try:
-                    from .native.results import collect_results
-                    result = collect_results(run.workdir, check_cancelled=check)
+                    result = adapter.collect_results(run.workdir, check_cancelled=check)
                     check()
-                    snapshot["outputs"] = {name: file_revision(run.workdir / name) for name in ("model.frd", "model.dat")
+                    snapshot["outputs"] = {name: file_revision(run.workdir / name) for name in adapter.expected_output_names()
                                            if (run.workdir / name).is_file()}
                     update(result=result, parse_state=result["status"], snapshot=snapshot)
                 except _NativeCancelled:

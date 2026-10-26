@@ -190,9 +190,12 @@ class NativeAnalysisWindow(QMainWindow):
         self._displayed_run_id = None
         self._displayed_result = None
         node = self.project.nodes[node_id]
-        if node.kind != "analysis" or node.program_id != "calculix":
-            raise ValueError("CalculiX 입력 확인 대상이 아닙니다.")
-        self.setWindowTitle(f"{self.project.name} — CalculiX 해석")
+        from caelab.native.adapter import supported_solver_ids
+        if node.kind != "analysis" and node.program_id not in supported_solver_ids():
+            raise ValueError("해석 입력 확인 대상이 아닙니다.")
+        program_name = {"calculix": "CalculiX", "codeaster": "Code_Aster", "radioss": "OpenRadioss",
+                        "openradioss": "OpenRadioss", "opencourant": "OpenCourant", "lsdyna": "LS-DYNA"}.get(node.program_id, node.program_id.capitalize())
+        self.setWindowTitle(f"{self.project.name} — {program_name} 해석")
         self.resize(1050, 760)
         self.view_menu = self.menuBar().addMenu("보기(&V)")
         self.theme_action = self.view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
@@ -566,8 +569,9 @@ class NativeAnalysisWindow(QMainWindow):
         try:
             project = self.workbench.open_native_project(self.project.path)
             node = project.nodes.get(self.node_id)
-            if node is None or node.kind != "analysis" or node.program_id != "calculix":
-                raise ValueError("저장된 프로젝트에 이 CalculiX 해석 상자가 없습니다.")
+            from caelab.native.adapter import supported_solver_ids
+            if node is None or (node.kind != "analysis" and node.program_id not in supported_solver_ids()):
+                raise ValueError("저장된 프로젝트에 이 해석 상자가 없습니다.")
             self.project = project
             self._project_signature = _signature(project.path)
             self._runs.clear()
@@ -589,7 +593,9 @@ class NativeAnalysisWindow(QMainWindow):
             self._owned_run_ids.add(run.id)
             self.refresh_runs()
         except (OSError, ValueError, RuntimeError) as error:
-            QMessageBox.warning(self, "계산을 시작하지 못했습니다", _display_reason(error, "입력 파일과 CalculiX 연결 설정을 확인하세요."))
+            node = self.project.nodes.get(self.node_id)
+            solver_name = node.program_id.capitalize() if node else "솔버"
+            QMessageBox.warning(self, "계산을 시작하지 못했습니다", _display_reason(error, f"입력 파일과 {solver_name} 연결 설정을 확인하세요."))
 
     def cancel_run(self) -> None:
         for run in self._runs.values():
