@@ -38,6 +38,15 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _isolated_ui_theme_settings(tmp_path, monkeypatch):
+    from apps.workbench_qt.theme import set_theme_mode
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "ui-settings.ini"))
+    set_theme_mode("dark")
+    yield
+    set_theme_mode("dark")
+
+
 def _panel(app):
     panel = OptimizationPanel(
         evaluator=bowl, variables=VARS,
@@ -249,3 +258,31 @@ def test_cantilever_end_to_end_with_real_solver(app, tmp_path):
     values = verification["values"]
     analytic = abs(values["fy"]) / (3 * values["E"] * inertia)
     assert 0.4 * analytic < verification["actual"] < 1.2 * analytic
+
+
+def test_optimization_panel_theme_toggle_updates_highlight(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "ui.ini"))
+    from apps.workbench_qt.theme import get_palette, set_theme_mode
+    try:
+        set_theme_mode("dark")
+        panel = _panel(app)
+        panel.run_doe_step()
+        assert panel.run_surrogate_step() is not None
+        assert panel.run_optimization_step()["best"] is not None
+        assert panel.best_history_index is not None
+
+        dark_p = get_palette("dark")
+        item_dark = panel.history_table.item(panel.best_history_index, 0)
+        assert item_dark.background().color().green() > 200
+        assert item_dark.background().color().name().lower() == str(dark_p["best_row_bg"]).lower()
+        assert item_dark.foreground().color().name().lower() == str(dark_p["best_row_fg"]).lower()
+
+        set_theme_mode("light")
+        light_p = get_palette("light")
+        item_light = panel.history_table.item(panel.best_history_index, 0)
+        assert item_light.background().color().green() > 200
+        assert item_light.background().color().name().lower() == str(light_p["best_row_bg"]).lower()
+        assert item_light.foreground().color().name().lower() == str(light_p["best_row_fg"]).lower()
+    finally:
+        set_theme_mode("dark")
+

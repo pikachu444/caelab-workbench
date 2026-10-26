@@ -15,6 +15,17 @@ from apps.workbench_qt.native_analysis import NativeAnalysisWindow
 from caelab.workbench import Workbench
 
 
+@pytest.fixture(autouse=True)
+def isolated_theme(tmp_path, monkeypatch):
+    from apps.workbench_qt.theme import set_theme_mode
+    monkeypatch.setenv('CAELAB_UI_SETTINGS_PATH', str(tmp_path / 'ui.ini'))
+    set_theme_mode('dark')
+    try:
+        yield
+    finally:
+        set_theme_mode('dark')
+
+
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
@@ -446,3 +457,114 @@ def test_input_status_follows_polled_and_selected_run_without_reading_deck(
         assert not window._owned_run_ids
     finally:
         window.close()
+
+
+def test_deck_outline_filters_and_jumps_without_polling_rebuild(analysis, monkeypatch):
+    from PySide6.QtCore import Qt
+    window, state = analysis
+    deck = Path(window.workbench.input_file(window.project, window.node_id).path)
+    deck.write_text('** comment\n*HEADING\ninspection\n*MATERIAL, NAME=STEEL\n*ELASTIC\n210000, .3\n*STEP\n*STATIC\n*BOUNDARY\n1, 1, 3\n*END STEP\n', encoding='utf-8')
+    window.refresh_input()
+    outline = window.deck_outline
+    titles = [outline.topLevelItem(i).text(0) for i in range(outline.topLevelItemCount())]
+    assert titles == ['*HEADING', '*MATERIAL (STEEL)', '*ELASTIC', '*STEP']
+    step = outline.topLevelItem(3)
+    assert step.childCount() == 3 and step.child(2).text(0) == '*END STEP'
+    window._jump_to_deck_line(step.child(1))
+    assert window.source.textCursor().blockNumber() == 8
+    window.section_jump.setCurrentIndex(window.section_jump.findData('material'))
+    assert outline.topLevelItem(0).isHidden() and not outline.topLevelItem(1).isHidden()
+    window.section_jump.setCurrentIndex(window.section_jump.findData('bc_load'))
+    assert not step.isHidden() and step.child(0).isHidden() and not step.child(1).isHidden()
+    preview = window.source.toPlainText()
+    monkeypatch.setattr(window, '_rebuild_deck_outline', lambda: pytest.fail('polling rebuilt outline'))
+    window.refresh_runs()
+    assert window.source.toPlainText() == preview and step.data(0, Qt.UserRole) == 7
+
+
+def test_result_tables_hide_run_store_and_clear_all_values_on_empty_or_error(analysis, app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QTabWidget
+    window, state = analysis
+    data = result(2.5)
+    data['frames'][0]['fields'][0]['summary'] = {'components': [{'name': 'D1', 'minimum': -1.25, 'maximum': 2.5}]}
+    data['dat'] = {'status': 'readable', 'frame': {'step': 2, 'increment': 3, 'value': 4},
+                   'sets': {'SUPPORT': {'nodal_forces': {1: [1, 2, 3]}, 'total_force': [1., 2., 3.]}}, 'warnings': []}
+    run = make_run(tmp_path, 'a' * 32, 'completed', 'readable', data)
+    run.workdir = window.project.run_store / ('a' * 32)
+    run.input_path = str(run.workdir / 'model.inp')
+    run.units['force'] = 'N'
+    state.runs, state.selected = [run], run
+    window.refresh_runs()
+    assert window.field_table.rowCount() == 1 and window.dat_table.rowCount() == 2
+    assert window.kpi_disp_value.text() == '2.5 mm'
+    assert window.field_table.item(0, 2).text() == '-1.25'
+    assert window.dat_table.item(0, 1).text() == '절점력 합계 원값'
+    assert '단계 2 / 증분 3 / 값 4' in window.dat_frame_label.text()
+    assert '대응 여부 미확인' in window.dat_frame_label.text()
+    text = window.result_text.toPlainText() + window.run_source.text() + window.run_source.toolTip() + window.log.toolTip()
+    assert all(token not in text for token in (str(run.workdir), '.runs', run.id, '반력'))
+    assert window.frame_selector.itemText(0).endswith('[최종]')
+    for tabs in window.findChildren(QTabWidget):
+        for index in range(tabs.count()):
+            if tabs.tabText(index) == '결과':
+                tabs.setCurrentIndex(index)
+    window.show()
+    for width, height in ((1050, 760), (800, 650)):
+        window.resize(width, height)
+        app.processEvents()
+        assert window.dat_table.rowViewportPosition(0) + window.dat_table.rowHeight(0) <= window.dat_table.viewport().height()
+    for failure in (False, True):
+        if failure:
+            state.selected = run
+            window.refresh_runs()
+            monkeypatch.setattr(window.workbench, 'native_runs', lambda *args: (_ for _ in ()).throw(OSError('private path')))
+        else:
+            state.selected = None
+        window.refresh_runs()
+        assert window.field_table.rowCount() == window.dat_table.rowCount() == 0
+        assert window.dat_container.isHidden() and window.result_text.toPlainText() == ''
+        assert window.kpi_disp_value.text() == '미확인' and window.result_unit_badge.text() == '자료 없음'
+
+
+def test_native_theme_toggle_and_log_summary_preserve_original_log(analysis, tmp_path):
+    from apps.workbench_qt.theme import current_theme_mode
+    window, state = analysis
+    run = make_run(tmp_path, 'log', 'failed', 'failed', {})
+    raw = '*ERROR problem\n*WARNING cutback\nSTEP 1 INCREMENT 2\n'
+    Path(run.log_path).write_text(raw, encoding='utf-8')
+    state.runs, state.selected = [run], run
+    window.refresh_runs()
+    before = window.styleSheet()
+    window.theme_action.trigger()
+    assert current_theme_mode() == 'light' and window.styleSheet() != before
+    assert window.theme_action.text() == '다크 모드'
+    assert window.log.toPlainText() == raw and '오류 1 / 경고 1' in window.log_summary_badge.text()
+
+
+def test_native_diagnostic_payload_stays_out_of_status_and_error_dialogs(analysis, tmp_path, monkeypatch):
+    window, state = analysis
+    payload = '[Errno 2] C:/private/project.runs/' + 'a' * 32 + '/model.inp PID 123 SHA256=' + 'b' * 64
+    run = make_run(tmp_path, 'bad', 'failed', 'failed', {})
+    run.error, run.stale, run.stale_reason = payload, True, payload
+    state.runs, state.selected = [run], run
+    window.refresh_runs()
+    assert '확인하세요' in window.run_status.text()
+    seen = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda parent, title, text: seen.append(text))
+    monkeypatch.setattr(window.workbench, 'submit_native', lambda *args, **kwargs: (_ for _ in ()).throw(OSError(payload)))
+    window.start_run()
+    assert len(seen) == 1 and '입력 파일' in seen[0]
+    for text in [window.run_status.text(), *seen]:
+        assert not any(token in text for token in ('[Errno', '.runs', 'a' * 32, 'b' * 64, 'PID', 'SHA256'))
+
+    win_err = "[WinError 5] 액세스가 거부되었습니다: 'C:\\\\private\\\\secret.inp'"
+    env_err = "CalculiX 실행 파일을 찾지 못했습니다 (CAELAB_CCX=C:\\\\secret\\\\ccx.exe)."
+    for bad_msg in (win_err, env_err):
+        run.error = bad_msg
+        window.refresh_runs()
+        assert "[WinError" not in window.run_status.text()
+        assert "CAELAB_CCX" not in window.run_status.text()
+        assert "secret" not in window.run_status.text()
+    run.error = env_err
+    window.refresh_runs()
+    assert "CalculiX 실행 파일 또는 연결 설정을 확인하세요." in window.run_status.text()

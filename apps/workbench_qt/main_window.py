@@ -39,7 +39,13 @@ from caelab.model.schema import StructuralModel
 from caelab.workbench import Workbench
 
 from .icons import GROUP_ICONS, LEAF_ICONS, icon
-from .theme import THEME
+from .theme import (
+    build_stylesheet,
+    current_theme_mode,
+    register_theme_listener,
+    theme_toggle_label,
+    toggle_theme_mode,
+)
 from .viewport import Viewport
 
 FLOW_STEPS = ["열기", "검사", "실행", "결과"]
@@ -82,10 +88,12 @@ class MainWindow(QMainWindow):
         self._group_items: dict[str, QTreeWidgetItem] = {}
         self._last_result = None
         self.module = "모델"
+        self._toolbar_icon_actions: list[tuple] = []
         self.setWindowTitle("CAELAB 구조 해석")
         self.resize(1440, 900)
-        self.setStyleSheet(THEME)
         self._build_ui()
+        self.apply_theme(current_theme_mode())
+        register_theme_listener(self.apply_theme)
 
     # -- construction ---------------------------------------------------------
     def _icon(self, name: str):
@@ -103,6 +111,8 @@ class MainWindow(QMainWindow):
         results_menu = menu.addMenu("결과")
         results_menu.addAction("ParaView에서 열기 (다음 단계)",
                                lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
+        view_menu = menu.addMenu("보기")
+        self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         help_menu = menu.addMenu("도움말")
         help_menu.addAction("진단 정보", self.show_diagnostics)
 
@@ -126,12 +136,18 @@ class MainWindow(QMainWindow):
             if name == "모델":
                 btn.setChecked(True)
         module_bar.addSeparator()
-        module_bar.addAction(icon("folder"), "열기", self.open_project_dialog)
-        module_bar.addAction(icon("save"), "저장", self.save_project)
+        open_act = module_bar.addAction(icon("folder"), "열기", self.open_project_dialog)
+        save_act = module_bar.addAction(icon("save"), "저장", self.save_project)
         module_bar.addSeparator()
-        module_bar.addAction(icon("check"), "검사", self.run_check)
+        check_act = module_bar.addAction(icon("check"), "검사", self.run_check)
         run_action = module_bar.addAction(icon("run"), "실행", self.run_solve)
         module_bar.widgetForAction(run_action).setObjectName("primary")
+        self._toolbar_icon_actions = [
+            (open_act, "folder"),
+            (save_act, "save"),
+            (check_act, "check"),
+            (run_action, "run"),
+        ]
 
         # context toolbar: actions for the current module
         self.context_bar = QToolBar("모듈 도구")
@@ -573,3 +589,28 @@ class MainWindow(QMainWindow):
             chip.setProperty("active", i <= upto)
             chip.style().unpolish(chip)
             chip.style().polish(chip)
+
+    def apply_theme(self, mode: str | None = None) -> None:
+        resolved = mode if mode in ("dark", "light") else current_theme_mode()
+        self.setStyleSheet(build_stylesheet(resolved))
+        if hasattr(self, "theme_action"):
+            self.theme_action.setText(theme_toggle_label(resolved))
+        for act, name in getattr(self, "_toolbar_icon_actions", []):
+            act.setIcon(icon(name, resolved))
+        if "model" in self._path_items:
+            self._path_items["model"].setIcon(0, icon(LEAF_ICONS["model"], resolved))
+        for gname, item in self._group_items.items():
+            item.setIcon(0, icon(GROUP_ICONS.get(gname, "folder"), resolved))
+        for path, item in self._path_items.items():
+            if path == "model":
+                continue
+            kind = path.partition("[")[0]
+            item.setIcon(0, icon(LEAF_ICONS.get(kind, "folder"), resolved))
+        if hasattr(self, "viewport") and self.viewport is not None:
+            self.viewport.apply_theme(resolved)
+        if hasattr(self, "optimization_panel") and self.optimization_panel is not None:
+            self.optimization_panel.apply_theme(resolved)
+        for chip in getattr(self, "flow_labels", []):
+            chip.style().unpolish(chip)
+            chip.style().polish(chip)
+

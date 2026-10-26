@@ -6,8 +6,10 @@ from pathlib import PureWindowsPath
 import re
 
 from PySide6.QtCore import QByteArray, Qt, Signal
-from PySide6.QtGui import QTextDocument, QTextCursor
+from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextDocument, QTextCursor
 from PySide6.QtWidgets import QPlainTextEdit, QTextBrowser
+
+from .theme import UI_FONT_STACK, get_palette
 
 
 def human_text(value) -> str:
@@ -72,6 +74,10 @@ class ChatBrowser(QTextBrowser):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDocument(LocalDocument(self))
+        font = QFont()
+        font.setFamilies(['Segoe UI', 'Malgun Gothic', 'Cambria Math', 'Segoe UI Symbol'])
+        self.setFont(font)
+        self.document().setDefaultFont(font)
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
         self.follow_tail = True
@@ -125,7 +131,7 @@ class ChatBrowser(QTextBrowser):
         return QByteArray()
 
 
-def markdown_body(text: str, *, accepted_proposals=None) -> tuple[str, bool]:
+def markdown_body(text: str, *, accepted_proposals=None, mode: str | None = None) -> tuple[str, bool]:
     """Render ordinary Markdown; strip only internal fenced proposal payloads."""
     malformed = False
     protocol_items = []
@@ -182,7 +188,6 @@ def markdown_body(text: str, *, accepted_proposals=None) -> tuple[str, bool]:
                 fragments.append((fragment.position(), fragment.length(), False))
             iterator += 1
         for start, length, image in reversed(fragments):
-            from PySide6.QtGui import QTextCursor
             cursor = QTextCursor(document)
             cursor.setPosition(start)
             cursor.setPosition(start + length, QTextCursor.KeepAnchor)
@@ -193,6 +198,24 @@ def markdown_body(text: str, *, accepted_proposals=None) -> tuple[str, bool]:
             fmt.setAnchor(False)
             fmt.setAnchorHref('')
             cursor.setCharFormat(fmt)
+        block = block.next()
+    # Format citations after parsing so code examples and Markdown stay intact.
+    p = get_palette(mode)
+    block = document.begin()
+    while block.isValid():
+        if not block.blockFormat().nonBreakableLines():
+            for match in re.finditer(r'\[근거:[^\]\n]+\]', block.text()):
+                cursor = QTextCursor(document)
+                start = block.position() + len(block.text()[:match.start()].encode('utf-16-le')) // 2
+                end = start + len(match[0].encode('utf-16-le')) // 2
+                cursor.setPosition(start)
+                cursor.setPosition(end, QTextCursor.KeepAnchor)
+                if cursor.charFormat().fontFixedPitch():
+                    continue
+                fmt = QTextCharFormat()
+                fmt.setBackground(QColor(str(p['chat_citation_bg'])))
+                fmt.setForeground(QColor(str(p['chat_citation_fg'])))
+                cursor.mergeCharFormat(fmt)
         block = block.next()
     result = document.toHtml().split('<body', 1)[1].split('>', 1)[1].rsplit('</body>', 1)[0]
     return result, malformed
