@@ -456,6 +456,10 @@ class MDOStudyService:
         self._persist()
         return dict(self.resource_policy)
 
+    def _update_pareto_front(self):
+        return self.study.update_pareto_front({revision:tuple(ObjectiveSpec(**o) for o in definition["objectives"])
+                                               for revision,definition in self._revisions.items()})
+
     def _add_point(self, values, *, mode="ACTUAL", source_point_id=None):
         values = self.study.space._physical(values)
         rec = self.study.add_point(values)
@@ -589,7 +593,7 @@ class MDOStudyService:
             with self._lock:
                 row = self._record(item.item_id)
                 self._ingest_run(row,run,state=item.state,duration=item.duration_sec,error=item.error,batch_id=batch_id)
-                self.study.update_pareto_front()
+                self._update_pareto_front()
                 self._persist()
                 snapshot = copy.deepcopy(row)
             if on_item:
@@ -720,9 +724,17 @@ class MDOStudyService:
                     raise ValueError("Native attempt source escapes its prepared point directory") from None
                 if relative not in execution or (workdir/entry["source_copy"]).read_bytes() != execution[relative]:
                     raise ValueError("Native attempt parameters differ from the selected study point")
-        selectors = self._revisions[row.revision]["response_selectors"]
+        definition = self._revisions[row.revision]
+        selectors = definition["response_selectors"]
         if extract_native_responses(workdir, selectors) != row.observations:
             raise ValueError("Native responses differ from recorded values")
+        objectives = tuple(ObjectiveSpec(**o) for o in definition["objectives"])
+        assessment = evaluate_criteria(row.observations,objectives,
+                                       tuple(ConstraintSpec(**c) for c in definition["constraints"]),
+                                       units=definition["response_units"])
+        expected = {o.id:float(value) for o,value in zip(objectives,assessment.objectives)} if assessment.assessed else {}
+        if not assessment.assessed or row.objectives != expected or row.feasibility != assessment.constraints.feasibility.value or row.total_violation != (assessment.constraints.total_violation or 0.):
+            raise ValueError("Stored assessment differs from native responses and the immutable revision criteria")
         return run
 
     def is_verified(self, point_id, *, require_feasible=True):
@@ -1108,7 +1120,7 @@ class MDOStudyService:
                                                    config=asdict(result.config),trace=result.trace,
                                                    budget_usage=asdict(result.budget_usage),termination_reason=result.termination_reason,
                                                    predicted_point_ids=[r.point_id for r in self.study.records if r.model_id == model.id]))
-            self.study.update_pareto_front()
+            self._update_pareto_front()
             self._persist()
             return result
         finally:
@@ -1309,6 +1321,7 @@ class MDOStudyService:
                     self._verified_run(row.point_id,applicable=False)
                 except (OSError,ValueError,KeyError,TypeError) as error:
                     row.status,row.feasibility,row.error_message = "FAILED","NOT_ASSESSED",str(error)
+        self._update_pareto_front()
         if not self.read_only:
             self._persist()
         return copy.deepcopy(self.study.records)

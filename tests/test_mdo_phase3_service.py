@@ -672,4 +672,41 @@ def test_frozen_revision_export_and_actual_batch_allowance(service,tmp_path):
     reopened.close()
 
 
+def test_historical_full_objective_front_survives_new_objective_ids_and_reopen(service,tmp_path):
+    first,second = measured(service,(1.,3.))
+    old = service.revision
+    assert first.is_pareto and second.is_pareto
+    service.configure(service.study.space,[ObjectiveSpec(id="new_mass_only",response_id="mass_eall")],[],service.response_units)
+    current1,current2 = measured(service,(2.,3.))
+    assert first.revision == old and second.revision == old
+    assert first.is_pareto and second.is_pareto
+    assert not current1.is_pareto and current2.is_pareto
+    assert service.result_file(first.point_id).is_file()
+    saved = service.save_as(tmp_path/"historical-fronts.json"); service.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.point_details(first.point_id).is_pareto and reopened.point_details(second.point_id).is_pareto
+    assert not reopened.point_details(current1.point_id).is_pareto and reopened.point_details(current2.point_id).is_pareto
+    # A missing frozen coordinate cannot be projected onto the remaining one.
+    reopened._record(first.point_id).objectives.pop("d")
+    reopened._update_pareto_front()
+    assert not reopened.point_details(first.point_id).is_pareto
+    assert not reopened.is_verified(first.point_id,require_feasible=False)
+    reopened.close()
+
+
+@pytest.mark.parametrize("field",["feasibility","objectives","total_violation"])
+def test_native_verification_rejects_corrupted_frozen_assessment(service,field):
+    (row,) = measured(service,(4.,))
+    assert row.feasibility == "INFEASIBLE"
+    if field == "feasibility":
+        row.feasibility = "FEASIBLE"
+    elif field == "objectives":
+        row.objectives["d"] = 0.
+    else:
+        row.total_violation = 0.
+    assert not service.is_verified(row.point_id,require_feasible=False)
+    with pytest.raises(ValueError,match="Stored assessment"):
+        service.prepare_apply(row.point_id)
+
+
 import numpy as np
