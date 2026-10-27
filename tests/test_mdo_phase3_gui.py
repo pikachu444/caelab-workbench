@@ -5,7 +5,7 @@ import time
 from types import SimpleNamespace
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt,QEvent,QPersistentModelIndex
+from PySide6.QtCore import Qt,QEvent,QPersistentModelIndex,QModelRoleData,QModelRoleDataSpan
 from PySide6.QtGui import QInputMethodEvent
 from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox,QPushButton,QDialog,QFormLayout
 from caelab.workbench import Workbench
@@ -171,6 +171,34 @@ def test_point_numeric_sort_at_ten_thousand_and_insertion(qapp):
     proxy.sort(0,Qt.SortOrder.DescendingOrder); assert proxy.index(0,0).data(model.SortRole)==10000
     model.update_record(DesignPointRecord(point_id='new',index=10001,name='new',physical_values={}))
     assert proxy.index(0,0).data(model.SortRole)==10001
+
+
+def test_proxy_result_deltas_update_numeric_sort_and_filter_membership(qapp):
+    from dataclasses import replace
+    first=DesignPointRecord(point_id='a',index=1,name='kept A',physical_values={'x':2.})
+    second=DesignPointRecord(point_id='b',index=2,name='kept B',physical_values={'x':1.})
+    model=DesignPointsTableModel([first,second],['x']); proxy=DesignPointsProxyModel(); proxy.setSourceModel(model)
+    proxy.sort(model.ParameterStart,Qt.SortOrder.AscendingOrder); proxy.set_filters(text='kept')
+    selected=QPersistentModelIndex(proxy.index(0,0))
+    model.update_record(replace(first,physical_values={'x':0.}))
+    assert proxy.index(0,0).data(model.PointIdRole)=='a' and selected.data(model.PointIdRole)=='b'
+    model.update_record(replace(first,name='hidden',physical_values={'x':0.}))
+    assert proxy.rowCount()==1 and proxy.index(0,0).data(model.PointIdRole)=='b'
+    model.update_record(replace(first,name='kept again',physical_values={'x':0.}))
+    assert proxy.rowCount()==2 and proxy.index(0,0).data(model.PointIdRole)=='a'
+    # A response-only change must retain the same sorted IDs and typed cell values.
+    model.update_record(replace(second,name='kept B',physical_values={'x':1.},observations={'response':3.}))
+    assert [proxy.index(row,0).data(model.PointIdRole) for row in range(2)]==['a','b']
+
+
+def test_batched_roles_match_data_and_clear_reused_unsupported_values(win):
+    for column in (0,4,win.tdp_model.ParameterStart):
+        index=win.tdp_proxy.index(0,column)
+        for role in (Qt.ItemDataRole.DisplayRole,Qt.ItemDataRole.TextAlignmentRole,Qt.ItemDataRole.ForegroundRole,
+                     Qt.ItemDataRole.ToolTipRole,Qt.ItemDataRole.FontRole,win.tdp_model.PointIdRole,win.tdp_model.SortRole):
+            data=QModelRoleData(int(role)); data.setData('stale reused role')
+            win.tdp_proxy.multiData(index,QModelRoleDataSpan(data))
+            assert data.data()==win.tdp_proxy.data(index,int(role))
 
 
 def test_exact_scalar_preview_selection_crlf_and_unicode(qapp):

@@ -10,11 +10,17 @@ _ALIGN=int(Qt.ItemDataRole.TextAlignmentRole)
 _FOREGROUND=int(Qt.ItemDataRole.ForegroundRole)
 _LEFT=int(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
 _RIGHT=int(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+_ITEM_FLAGS=Qt.ItemFlag.ItemIsSelectable|Qt.ItemFlag.ItemIsEnabled
+_NO_FLAGS=Qt.ItemFlag.NoItemFlags
+_POINT_ID=int(Qt.ItemDataRole.UserRole)+1
+_SORT=_POINT_ID+1
+_SCALAR_ROLES=frozenset((_DISPLAY,_TOOLTIP,_ALIGN,_FOREGROUND,_POINT_ID,_SORT))
+_INVALID_INDEX=QModelIndex()
 
 
 class DesignPointsTableModel(QAbstractTableModel):
-    PointIdRole = int(Qt.ItemDataRole.UserRole) + 1
-    SortRole = PointIdRole + 1
+    PointIdRole = _POINT_ID
+    SortRole = _SORT
     ParameterStart=9
 
     def __init__(self, records=None, parameter_keys=(), response_keys=(), is_dark=True, parent=None):
@@ -138,7 +144,7 @@ class DesignPointsTableModel(QAbstractTableModel):
             return self.headers[section]
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if role not in (_DISPLAY,_TOOLTIP,_ALIGN,_FOREGROUND,self.PointIdRole,self.SortRole): return None
+        if role not in _SCALAR_ROLES: return None
         if not index.isValid() or not 0 <= index.row() < len(self.records): return None
         return self._data_at(index.row(),index.column(),role)
 
@@ -159,9 +165,10 @@ class DesignPointsProxyModel(QAbstractProxyModel):
         super().__init__(parent)
         self.text, self.status, self.feasibility, self.point_ids, self.revision = "", "All", "All", None, None
         self._rows=[]; self._proxy_rows={}; self._column=0; self._descending=False; self._source=None
+        self._column_count=0; self._last_sort_keys=[]
 
     def setSourceModel(self,model):
-        self.beginResetModel(); self._source=model
+        self.beginResetModel(); self._source=model; self._column_count=model.columnCount()
         super().setSourceModel(model)
         self._rows=list(range(model.rowCount())); self._proxy_rows={r:r for r in self._rows}
         self.endResetModel()
@@ -180,9 +187,18 @@ class DesignPointsProxyModel(QAbstractProxyModel):
 
     def _mapping(self):
         if self._source is None: return []
-        if self._column>=self._source.columnCount(): self._column=0
-        rows=[row for row in range(len(self._source.records)) if self.filterAcceptsRow(row,QModelIndex())]
-        if self._column>=0: rows.sort(key=lambda row:self._source._sort_keys[row][self._column],reverse=self._descending)
+        self._column_count=self._source.columnCount()
+        if self._column>=self._column_count: self._column=0
+        data=self._source._filter_data; text=self.text; status=self.status; feasibility=self.feasibility; ids=self.point_ids; revision=self.revision
+        if not text and status=='All' and feasibility=='All' and ids is None and revision is None:
+            rows=list(range(len(data)))
+        else:
+            rows=[row for row,(name,state,feasible,point_id,rev) in enumerate(data)
+                  if (not text or text in name) and (status=='All' or status==state)
+                  and (feasibility=='All' or feasibility==feasible) and (ids is None or point_id in ids)
+                  and (revision is None or revision==rev)]
+        self._last_sort_keys=[values[self._column] for values in self._source._sort_keys] if self._column>=0 else []
+        if self._column>=0: rows.sort(key=self._last_sort_keys.__getitem__,reverse=self._descending)
         return rows
 
     def _reset_source(self,*args):
@@ -201,7 +217,10 @@ class DesignPointsProxyModel(QAbstractProxyModel):
             self.layoutChanged.emit()
 
     def _source_changed(self,first,last,roles=()):
-        self._rebuild()
+        changed=range(first.row(),last.row()+1)
+        if any((row in self._proxy_rows)!=self.filterAcceptsRow(row,None)
+               or (self._column>=0 and self._last_sort_keys[row]!=self._source._sort_keys[row][self._column]) for row in changed):
+            self._rebuild()
         for source_row in range(first.row(),last.row()+1):
             row=self._proxy_rows.get(source_row)
             if row is not None: self.dataChanged.emit(self.index(row,first.column()),self.index(row,last.column()),roles)
@@ -217,18 +236,30 @@ class DesignPointsProxyModel(QAbstractProxyModel):
         return self.index(row,index.column()) if row is not None else QModelIndex()
 
     def index(self,row,column,parent=QModelIndex()):
-        return self.createIndex(row,column) if not parent.isValid() and 0<=row<len(self._rows) and 0<=column<self.columnCount() else QModelIndex()
+        return self.createIndex(row,column) if not parent.isValid() and 0<=row<len(self._rows) and 0<=column<self._column_count else QModelIndex()
 
-    def parent(self,index): return QModelIndex()
+    def parent(self,index): return _INVALID_INDEX
     def rowCount(self,parent=QModelIndex()): return 0 if parent.isValid() else len(self._rows)
-    def columnCount(self,parent=QModelIndex()): return 0 if parent.isValid() or self._source is None else self._source.columnCount()
+    def columnCount(self,parent=QModelIndex()): return 0 if parent.isValid() else self._column_count
     def headerData(self,section,orientation,role=Qt.ItemDataRole.DisplayRole):
         return self._source.headerData(section,orientation,role) if self._source else None
-    def flags(self,index): return Qt.ItemFlag.ItemIsSelectable|Qt.ItemFlag.ItemIsEnabled if index.isValid() else Qt.ItemFlag.NoItemFlags
+    def flags(self,index): return _ITEM_FLAGS if index.isValid() else _NO_FLAGS
     def data(self,index,role=Qt.ItemDataRole.DisplayRole):
-        if role not in (_DISPLAY,_TOOLTIP,_ALIGN,_FOREGROUND,DesignPointsTableModel.PointIdRole,DesignPointsTableModel.SortRole): return None
-        if not index.isValid() or not 0<=index.row()<len(self._rows): return None
-        return self._source._data_at(self._rows[index.row()],index.column(),role)
+        if role not in _SCALAR_ROLES or not index.isValid(): return None
+        row=index.row()
+        if not 0<=row<len(self._rows): return None
+        return self._source._data_at(self._rows[row],index.column(),role)
+
+    def multiData(self,index,role_data):
+        if not index.isValid() or not 0<=index.row()<len(self._rows):
+            for item in role_data: item.clearData()
+            return
+        row=self._rows[index.row()]; column=index.column(); source=self._source
+        for item in role_data:
+            role=item.role()
+            value=source._data_at(row,column,role) if role in _SCALAR_ROLES else None
+            if value is None: item.clearData()
+            else: item.setData(value)
 
     def filterAcceptsRow(self, row, parent):
         text,status,feasibility,point_id,revision=self._source._filter_data[row]
