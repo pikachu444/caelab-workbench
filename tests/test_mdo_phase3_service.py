@@ -493,4 +493,28 @@ def test_parameterization_accumulates_original_coordinates_after_reopen(service,
     reopened.close()
 
 
+def test_parameterized_include_closure_backs_up_and_undoes_exact_bytes(service):
+    include = next(Path(p) for p in service.input_sources() if p != str(service.input_path))
+    originals = {p:Path(p).read_bytes() for p in service.input_sources()}
+    service.parameterize([dict(token="E",source_path=str(include),line_number=2,
+                               expected_line="200000, .3",old_literal="200000",occurrence=1)])
+    space = VariableSpace(variables=(*service.study.space.variables,
+                                    ContinuousVariable(id="e",name="Elastic modulus",unit="MPa",lower=100000,upper=300000,initial=200000)))
+    service.configure(space,service.study.objectives,service.study.constraints,service.response_units)
+    first = service.add_point(dict(width=2.,e=120000.))
+    second = service.add_point(dict(width=3.,e=180000.))
+    service.submit([first.point_id,second.point_id])
+    receipt = service.apply(service.prepare_apply(first.point_id))
+    assert {f["path"] for f in receipt["files"]} == set(originals)
+    assert include.read_bytes() == b'*ELASTIC\r\n120000, .3\r\n'
+    for item in receipt["files"]:
+        assert Path(item["backup"]).read_bytes() == originals[item["path"]]
+    service.apply(service.prepare_apply(second.point_id))
+    assert include.read_bytes() == b'*ELASTIC\r\n180000, .3\r\n'
+    service.undo()
+    assert include.read_bytes() == b'*ELASTIC\r\n120000, .3\r\n'
+    service.undo()
+    assert all(Path(p).read_bytes() == content for p,content in originals.items())
+
+
 import numpy as np
