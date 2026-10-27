@@ -105,10 +105,11 @@ class ResponseSurfaceWidget(PlotWidget):
 
     def _dispatch(self):
         if not self.artifact:
-            self._pending=None
+            self._pending=None; self._result=None
             self.empty('Train and validate a surrogate to view a response slice.'); self.native.clear(); return
         xid,yid=self.xaxis.currentData(),self.yaxis.currentData()
         if not xid or not yid or xid==yid:
+            self._result=None
             self.empty('A 3D slice requires two different continuous variables.'); self.native.clear(); return
         fixed={v.id:v.initial for v in self.space.variables if hasattr(v,'initial')}
         for key,widget in self._controls.items(): fixed[key]=widget.currentData() if isinstance(widget,QComboBox) else widget.value()
@@ -129,6 +130,7 @@ class ResponseSurfaceWidget(PlotWidget):
         if token!=self._running_token: return
         self._running=False; self._running_token=None
         if token==self._token and error and error!='cancelled':
+            self._result=None
             self.empty('Slice prediction unavailable'); self.note.setText(error); return
         if token==self._token and not error:
             self._result=result; self._draw_result()

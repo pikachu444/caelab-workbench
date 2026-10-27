@@ -155,6 +155,21 @@ def test_native_controls_and_layer_key_toggle_both_directions(vtk_widget):
     view.close(); surface.close()
 
 
+@pytest.mark.parametrize('is_dark',(False,True))
+def test_native_selected_color_matches_visible_key_in_both_themes(vtk_widget,is_dark):
+    manager=StudyManager(objectives=[ObjectiveSpec(id=key,response_id=key) for key in ('mass','disp','stress')])
+    record=manager.add_point({}); record.status='COMPLETED'; record.feasibility='FEASIBLE'; record.observations=dict(mass=1e-4,disp=.1,stress=200.)
+    view=ParetoFrontWidget(is_dark=is_dark); view.set_study(manager.records,manager.objectives,{})
+    view.set_selected([record.point_id]); view.dimension.setCurrentText('3D')
+    actor=list(view.native.actors)[-1]
+    assert actor.GetProperty().GetColor()==(1.,1.,1.)
+    assert '<span style="color:#ffffff">●</span> Selected' in view.native.legend.text()
+    # The hidden / restored Matplotlib selection keeps the original theme contrast.
+    view.dimension.setCurrentText('2D')
+    np.testing.assert_allclose(view.ax.collections[-1].get_edgecolors()[0,:3],(1,1,1) if is_dark else np.array([15,23,42])/255)
+    view.close()
+
+
 def test_native_empty_error_clears_picker_and_can_recover(vtk_widget):
     manager=StudyManager(objectives=[ObjectiveSpec(id=key,response_id=key) for key in ('mass','disp','stress')])
     record=manager.add_point({}); record.status='COMPLETED'; record.feasibility='FEASIBLE'; record.observations=dict(mass=1e-4,disp=.1,stress=200.)
@@ -176,15 +191,39 @@ def test_native_empty_error_clears_picker_and_can_recover(vtk_widget):
 
 def test_stale_surface_error_cannot_clear_latest_scene(vtk_widget):
     view=ResponseSurfaceWidget(); view.native.points([[1,2,3]],['latest']); view.native.finish(['x [mm]','y [mm]','z [MPa]'])
+    cached=(np.ones((2,2)),)*4; view._result=cached
     view._token=3; view._running=True; view._running_token=2
     before=view.native.widget.renders
     view._receive(2,None,'stale failure')
     assert view.native.actors and view.native.message.isHidden()
+    assert view._result is cached
     assert view.native.widget.renders==before
     view._running=True; view._running_token=3
     view._receive(3,None,'current prediction failed')
     assert not view.native.actors and view.native.axes is None and not view.native.message.isHidden()
+    assert view._result is None
+    view.uncertainty.setChecked(True)
+    assert not view.native.actors and not view.native.message.isHidden()
     assert view.native.widget.renders>before
+    view.artifact=SimpleNamespace(config=SimpleNamespace(method='gp'),dataset=SimpleNamespace(training_revision='1'),qualified=True,metrics=[],id='new-model')
+    view.xaxis.addItem('width [mm]','width'); view.yaxis.addItem('depth [mm]','depth'); view.response.addItem('disp [mm]','disp'); view.timer.stop()
+    x,y=np.meshgrid([1.,2.],[3.,4.]); result=(x,y,x+y,np.full((2,2),.01))
+    view._running=True; view._running_token=view._token; view._receive(view._token,result,None)
+    assert view._result is result and view.native.message.isHidden()
+    assert view.native.renderer.GetViewProps().GetNumberOfItems()>0
+    view.close()
+
+
+@pytest.mark.parametrize('invalid',('missing_model','same_axes'))
+def test_invalid_surface_dispatch_invalidates_cached_scene(vtk_widget,invalid):
+    view=ResponseSurfaceWidget(); view.native.points([[1,2,3]],['old']); view.native.finish(['x','y','z'])
+    view._result=(np.ones((2,2)),)*4
+    if invalid=='same_axes':
+        view.artifact=object(); view.xaxis.addItem('x','x'); view.yaxis.addItem('x','x')
+    view.timer.stop(); view._dispatch()
+    assert view._result is None and not view.native.actors and not view.native.message.isHidden()
+    view.uncertainty.setChecked(True)
+    assert not view.native.actors and not view.native.message.isHidden()
     view.close()
 
 

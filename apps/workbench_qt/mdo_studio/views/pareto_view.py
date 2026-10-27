@@ -4,6 +4,8 @@ import numpy as np
 from PySide6.QtWidgets import QHBoxLayout,QGridLayout,QComboBox,QLabel,QWidget,QSizePolicy
 from .plot_base import PlotWidget, Native3D
 
+NATIVE_SELECTED_COLOR='#ffffff'
+
 
 class ParetoFrontWidget(PlotWidget):
     def __init__(self, parent=None, is_dark=True):
@@ -69,7 +71,7 @@ class ParetoFrontWidget(PlotWidget):
                 ('Actual marginal','#f59e0b','^',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='MARGINAL'),
                 ('Actual infeasible / unassessed','#ef4444','x',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility not in ('FEASIBLE','MARGINAL')),
                 ('Surrogate prediction','#a78bfa','D',lambda r:getattr(r,'mode','ACTUAL')=='SURROGATE')]
-        self.native.set_legend([(label,color) for label,color,_,_ in layers]+[('Full-objective feasible front','#38bdf8'),('Selected','#ffffff')])
+        self.native.set_legend([(label,color) for label,color,_,_ in layers]+[('Full-objective feasible front','#38bdf8'),('Selected',NATIVE_SELECTED_COLOR)])
         from matplotlib.colors import to_rgb
         for label,color,marker,predicate in layers:
             group=[r for r in rendered if predicate(r)]
@@ -83,7 +85,7 @@ class ParetoFrontWidget(PlotWidget):
                 values=np.array([[r.observations[k] for k in keys] for r in group])
                 artist=self.ax.scatter(values[:,0],values[:,1],facecolors='none',edgecolors=color,s=size,linewidths=2,label=label,picker=6)
                 self._picks[artist]=[r.point_id for r in group]
-                if use3: self.native.points(values,[r.point_id for r in group],to_rgb(color),12)
+                if use3: self.native.points(values,[r.point_id for r in group],to_rgb(NATIVE_SELECTED_COLOR if label=='Selected' else color),12)
         labels=[self.axes[i].currentText() for i in range(len(keys))]
         self.ax.set_xlabel(labels[0]); self.ax.set_ylabel(labels[1]); self.ax.set_title('Sampled Pareto projection')
         self.ax.legend(fontsize=8); self._apply_theme(); self.fig.tight_layout(); self.canvas.draw_idle()
