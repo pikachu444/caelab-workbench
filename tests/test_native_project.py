@@ -75,6 +75,55 @@ def test_study_relation_reopens_and_reports_changes_without_staling_solver_outpu
         loaded.connect(first.id, result.id, "mdo_study")
 
 
+def test_parent_copy_waits_for_study_writer_and_preserves_source(tmp_path):
+    from filelock import FileLock
+    wb, project, first, second, result, source = graph(tmp_path)
+    saved = wb.save_native_project(project, tmp_path / "original.json")
+    study = project.run_store / "mdo" / "stable-id" / "study.json"
+    study.parent.mkdir(parents=True)
+    study.write_text('{"owned": "relative"}', encoding="utf-8")
+    first.files["mdo_study"] = FileReference(str(study), file_revision(study))
+    wb.save_native_project(project)
+    original = saved.read_bytes()
+    target = tmp_path / "copied.json"
+    with FileLock(study.parent / "study.lock", timeout=0):
+        with pytest.raises(ValueError, match="MDO Studio"):
+            wb.save_native_project(project, target)
+        assert not target.exists() and not target.with_suffix(".runs").exists()
+        assert project.path == saved and saved.read_bytes() == original
+    wb.save_native_project(project, target)
+    copied = wb.open_native_project(target)
+    relation = Path(copied.nodes[first.id].files["mdo_study"].path)
+    assert relation.is_relative_to(copied.run_store)
+    assert relation.read_bytes() == study.read_bytes()
+    assert source.read_bytes() == b"original native file"
+    assert saved.read_bytes() == original
+
+
+def test_parent_copy_rejects_study_added_after_lock_discovery(tmp_path, monkeypatch):
+    from caelab.native.run_store import RunStore
+    wb, project, first, second, result, source = graph(tmp_path)
+    saved = wb.save_native_project(project, tmp_path / "original.json")
+    original_inventory = RunStore._inventory
+    introduced = False
+
+    def inventory_with_new_study(store):
+        nonlocal introduced
+        if not introduced:
+            introduced = True
+            path = store.root / "mdo" / "new-study" / "study.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{}", encoding="utf-8")
+        return original_inventory(store)
+
+    monkeypatch.setattr(RunStore, "_inventory", inventory_with_new_study)
+    target = tmp_path / "copied.json"
+    with pytest.raises(ValueError, match="스터디 목록"):
+        wb.save_native_project(project, target)
+    assert project.path == saved
+    assert not target.exists() and not target.with_suffix(".runs").exists()
+
+
 def test_connections_select_input_and_reselection_invalidates_old_results(tmp_path):
     wb, project, first, second, result, source = graph(tmp_path)
     old = source.with_suffix(".vtk")

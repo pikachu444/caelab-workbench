@@ -310,6 +310,7 @@ class RunStore:
             if issues:
                 raise ValueError('; '.join(issues))
             documents = self._discussion_paths()
+            studies = self._study_paths()
             with ExitStack() as locks:
                 try:
                     for path in documents:
@@ -317,14 +318,20 @@ class RunStore:
                         locks.enter_context(FileLock(str(path) + '.lock', timeout=0))
                 except Timeout as error:
                     raise ValueError('대화 질문/저장이 진행 중입니다. 완료 후 다른 이름으로 저장하세요.') from error
+                try:
+                    for path in studies:
+                        locks.enter_context(FileLock(path.parent / 'study.lock', timeout=0))
+                except Timeout as error:
+                    raise ValueError('MDO Studio가 스터디를 편집 중입니다. 편집 창을 닫은 후 프로젝트를 다른 이름으로 저장하세요.') from error
                 before = self._inventory()
-                if documents != self._discussion_paths():
-                    raise ValueError('복사 준비 중 대화 목록이 변경되었습니다. 다시 저장하세요.')
+                if documents != self._discussion_paths() or studies != self._study_paths():
+                    raise ValueError('복사 준비 중 대화/스터디 목록이 변경되었습니다. 다시 저장하세요.')
                 destination.mkdir(parents=True, exist_ok=False)
                 created = True
                 shutil.copytree(self.root, destination, dirs_exist_ok=True, ignore=shutil.ignore_patterns('*.lock'))
                 copied = RunStore(destination, expected=True)
-                if before != self._inventory() or before != copied._inventory() or documents != self._discussion_paths():
+                if (before != self._inventory() or before != copied._inventory()
+                        or documents != self._discussion_paths() or studies != self._study_paths()):
                     raise ValueError('복사 중 실행/대화/자산 파일이 변경되었습니다. 다시 저장하세요.')
                 from .evidence import verify_evidence
                 for path in documents:
@@ -347,6 +354,9 @@ class RunStore:
     def _discussion_paths(self):
         return sorted(path for path in (self.root / 'discussions').rglob('*.json')
                       if 'assets' not in path.relative_to(self.root / 'discussions').parts)
+
+    def _study_paths(self):
+        return sorted((self.root / 'mdo').glob('*/study.json'))
 
     def _inventory(self):
         inventory = {}
