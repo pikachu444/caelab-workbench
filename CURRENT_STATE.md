@@ -1,6 +1,25 @@
 # 현재 상태
 
-## MDO Studio GUI 및 상용급 수치 엔진 통합 현황 (2026-10-27)
+## 저장소 전면 체질 개선 및 상용 벤치마크 공인 자료 개편 (2026-10-27)
+
+- **AGENTS 운영 규칙 전면 미래지향적 개편 (과거 서술·폐기 족적 전면 퇴출)**:
+  - 사용자 피드백(신규 진입 AI/개발자에게 과거 폐기 이력이나 임의적 코드 추가 금지는 불필요하다는 지적)을 100% 수용하여 저장소 전체 AGENTS.md를 미래지향적 행동 지침으로 전면 개편함.
+  - caelab/numerical/AGENTS.md: 저수준 범용 수치 해석·선형대수·보간·적분·행렬 연산 라이브러리로 명확히 재정의. 인위적인 신규 코드 추가 금지를 철폐하고, 공통 재사용 수학 루틴의 자유로운 추가와 엄격한 수치 검증(Analytical solution 비교, rtol/atol) 규칙을 확립함.
+  - caelab/mdo/AGENTS.md: 다분야 설계 최적화(MDO) 전용 캠페인 엔진으로서의 책임(변수, DoE, 대리모델, 최적화, 파레토, 스터디 오케스트레이션)을 명확히 하고 헤드리스 무결성 및 방어적 복사(rr.copy()) 규칙 수립.
+  - caelab/assist/AGENTS.md: 과거 로드맵 약어(P2, P5 등)를 전면 제거하고, 해석 창과 분리된 독립 전문가 프로그램의 근거 보존 및 투명성 규칙으로 정제.
+  - pps/workbench_qt/AGENTS.md: 과거 폐기 언급을 제거하고, 독립 MDO Studio(pps/workbench_qt/mdo_studio/) 연동 및 테마 일관성 규칙으로 정제.
+  - caelab/AGENTS.md: 코어 비즈니스 로직과 외부 프로그램 연결 계약 중심으로 정제.
+- **인위적 스케치 퇴출 및 상용·공인 레퍼런스 시각 자료/출처 도입**:
+  - 사용자 비판(초등학생 그림 같은 인위적 합성/스케치 퇴출, 상용 프로그램 및 공인 챌린지 원자료 인용 요구)을 즉시 수용하여 아마추어식 스케치 파일 전면 삭제.
+  - MIT SimJEB(Simulated Jet Engine Bracket Dataset) 및 GrabCAD 공인 챌린지 데이터셋의 실제 3D 모델 및 FEA 변위/응력 컨투어 실사 자료(ge_bracket_simjeb_authentic_teaser.png, ge_bracket_simjeb_authentic_fea.png, ge_bracket_simjeb_authentic_cad.png) 도입 및 공식 출처 링크 수록.
+  - William Hunter의 ToPy 기반 3D 캔틸레버 공인 위상최적화 결과(enchmark_cantilever_authentic_topology.png) 및 공인 유체-구조 연성(FSI) 압력장 최적화 자료(enchmark_fsi_authentic_pressure_field.png) 탑재.
+  - Altair OptiStruct 공식 튜토리얼 매뉴얼(OS-T: 2000, OS-E: 0105), Dassault Tosca, SIMULIA Abaqus 검증 레퍼런스 및 목표치 1:1 비교 체계 구축.
+- **사용자 중심 README.md 전면 개편**:
+  - 제품의 정체성을 한 문장으로 명확히 정의(FreeCAD 모델 → 솔버 계산 → ParaView 후처리 → MDO Studio 최적화 → AI 전문가 검토).
+  - 전체 엔드투엔드 워크플로우를 보여주는 Mermaid 다이어그램 추가.
+  - 실제 MDO Studio 4대 영역 실사 스크린샷(다크/라이트 테마, 파레토 Knee point, 3D 반응곡면, 민감도 토네이도) 수록.
+  - 설치부터 최적화 사이클 완료 및 INP 백업 덱 자동 치환까지 이어지는 '3분 퀵스타트 핸즈온 가이드' 완비.
+- **MDO Studio 워크스페이스 GUI 및 수치 엔진 8대 모듈 통합 완료**:
 
 - **MDO Studio 워크스페이스 GUI 및 수치 엔진 8대 모듈 통합 완료**:
   - `feat/mdo-clean-slate` 브랜치에서 과거 3,858줄 레거시 토이 코드를 전면 퇴출하고 8대 독립 MDO 코어(`caelab/mdo/`)와 MDO Studio GUI(`apps/workbench_qt/mdo_studio/`)를 완전 구현함.

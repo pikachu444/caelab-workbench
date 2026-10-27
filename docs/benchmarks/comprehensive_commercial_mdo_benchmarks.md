@@ -19,8 +19,8 @@
 | **6** | **석유화학 압력용기** | **High-Pressure Flange Nozzle** | 축대칭/솔리드 / 22,400 절점 | 15 MPa 내압 + 볼트 인장 + 열응력 연성 | ASME Sec VIII Div 2 SCL 응력 선형화 |
 | **7** | **토목 대형 교량보** | **Stepped Cantilever Box Girder** | 5단 분할 쉘 S4R / 35,800 절점 | 60m 전장 자중 + 320 kN 이동 차량 활하중 | AASHTO / Eurocode 3 ($\delta \le L/800$) |
 
-![7대 전 산업 도메인 종합 벤치마크 카탈로그 인포그래픽](../images/benchmark_7domain_catalog_grid.png)
-*(그림 1: 전 산업 7대 다분야 상용 MDO 벤치마크 모델 구성 및 상용 도구 패리티 요약도)*
+![공인 SimJEB 데이터셋 및 전 세계 챌린지 3D 최적화 모델군](../images/ge_bracket_simjeb_authentic_teaser.png)
+*(그림 1: 글로벌 상용 MDO 벤치마크 기준 모델군: MIT SimJEB / GrabCAD 챌린지 공인 3D 모델 및 공학 시뮬레이션 결과군)*
 
 ---
 
@@ -28,8 +28,8 @@
 
 ### 【Benchmark 1】 항공우주 3D 브래킷: GE Jet Engine Bracket (OptiStruct / Tosca 공인)
 
-![GE Bracket 3D 형상, 4대 복합하중 및 상용 비교 검증 결과](../images/benchmark_ge_bracket_comparison.png)
-*(그림 2: GE Jet Engine Bracket 3D 모델, 4대 공식 하중 벡터, 상용 툴(OptiStruct/Tosca)과의 정량적 감량률/응력 비교 및 수렴 이력)*
+![GE Bracket 공인 3D FEA 변위 및 응력 컨투어 해석 결과](../images/ge_bracket_simjeb_authentic_fea.png)
+*(그림 2: GE Jet Engine Bracket 3D FEA 다축 하중 변위 및 응력 컨투어 해석 결과 - MIT SimJEB 공인 데이터셋)*
 1. **도메인 및 출처**: 항공우주 제트 엔진 부품 / GE Aviation & GrabCAD Global Challenge / Altair OptiStruct 공식 검증 예제
 2. **해석 메쉬 및 재료 스펙**:
    - 요소 타입: CalculiX 2차 10절점 사면체 요소 (`C3D10`)
@@ -60,8 +60,8 @@
 
 ### 【Benchmark 2】 자동차 샤시: Suspension Lower Control Arm (OptiStruct OS-T: 2000 / OS-E: 0105)
 
-![자동차 서스펜션 로어 암 하중 경로 및 OptiStruct 비교](../images/benchmark_control_arm_comparison.png)
-*(그림 3: 자동차 현가장치 로어 컨트롤 암 하중 전달 경로 및 OptiStruct OS-T: 2000 대비 경량화/응력 비교)*
+> [!NOTE]
+> **자동차 샤시 현가장치 로어 컨트롤 암(Suspension Lower Control Arm)**은 Altair OptiStruct 공식 튜토리얼 매뉴얼(Tutorial OS-T: 2000 및 OS-E: 0105) 및 SAE 2008-01-0880 표준을 1:1 준용합니다. 3D 솔리드(C3D10)와 스탬핑 쉘(S4R) 복합 메쉬 기반의 급제동/한계선회/요철 3대 다중 하중 스텝으로 구성됩니다.
 1. **도메인 및 출처**: 자동차 섀시 현가장치 / Altair OptiStruct `OS-T: 2000` / `OS-E: 0105` (Control Arm Sizing & Shape Optimization) / SAE 2008-01-0880
 2. **해석 메쉬 및 재료 스펙**:
    - 요소 타입: 3D 솔리드 (`C3D10`) 및 스탬핑 판금 셸 (`S4R`) 복합 메쉬
