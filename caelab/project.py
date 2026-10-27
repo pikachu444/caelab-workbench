@@ -222,6 +222,9 @@ class NativeProject:
                 if status != "ready":
                     reason = f"{node.id}.files.{role}: {status} — {reference.path}"
                     issues.append(reason)
+                    if role == "mdo_study":
+                        # Study metadata does not change the physical input/output.
+                        continue
                     if role == "input" and self.input_file(node.id) is not reference:
                         continue  # a connected input supersedes this retained local selection
                     self.invalidate(node.id, reason)
@@ -318,7 +321,7 @@ def load_native_project(path: str | Path) -> NativeProject:
             if not isinstance(raw.get("files", {}), dict):
                 raise ValueError(f"nodes.{key}.files: 파일 사전이 필요합니다.")
             for role, ref in raw.get("files", {}).items():
-                if role not in {"input", "output"} or not isinstance(ref, dict) or not isinstance(ref.get("path"), str) or not ref["path"].strip():
+                if role not in {"input", "output", "mdo_study"} or not isinstance(ref, dict) or not isinstance(ref.get("path"), str) or not ref["path"].strip():
                     raise ValueError(f"nodes.{key}.files.{role}: 파일 경로가 잘못되었습니다.")
                 revision = ref.get("revision")
                 if revision is not None and (not isinstance(revision, str) or len(revision) != 64 or any(c not in "0123456789abcdef" for c in revision)):

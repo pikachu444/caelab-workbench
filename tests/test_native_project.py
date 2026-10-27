@@ -49,6 +49,32 @@ def test_save_reopen_save_as_preserves_external_original_and_multiple_nodes(tmp_
     assert source.read_bytes() == b"original native file"
 
 
+def test_study_relation_reopens_and_reports_changes_without_staling_solver_output(tmp_path):
+    wb, project, first, second, result, source = graph(tmp_path)
+    output = source.with_suffix(".vtk")
+    output.write_bytes(b"retained native result")
+    wb.set_node_file(project, first.id, output, role="output")
+    wb.connect_nodes(project, first.id, result.id)
+    study = tmp_path / "study.json"
+    study.write_text('{"revision": 1}', encoding="utf-8")
+    first.files["mdo_study"] = FileReference(str(study), file_revision(study))
+    saved = wb.save_native_project(project, tmp_path / "project.json")
+    loaded = wb.open_native_project(saved)
+    assert loaded.nodes[first.id].files["mdo_study"].path == str(study)
+    for missing in (False, True):
+        if missing:
+            study.unlink()
+        else:
+            study.write_text('{"revision": 2}', encoding="utf-8")
+        issues = loaded.refresh()
+        assert any("mdo_study" in issue and ("missing" if missing else "changed") in issue for issue in issues)
+        assert not loaded.nodes[first.id].files["output"].stale
+        assert loaded.nodes[result.id].state == "ready"
+        assert output.read_bytes() == b"retained native result"
+    with pytest.raises(ValueError, match="지원하지 않는"):
+        loaded.connect(first.id, result.id, "mdo_study")
+
+
 def test_connections_select_input_and_reselection_invalidates_old_results(tmp_path):
     wb, project, first, second, result, source = graph(tmp_path)
     old = source.with_suffix(".vtk")
