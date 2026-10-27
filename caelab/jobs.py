@@ -14,17 +14,71 @@ import threading
 import time
 import traceback
 import uuid
+from typing import Callable, Sequence, Any, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model.schema import StructuralModel
-from .connections import LaunchRequest
+from .connections import LaunchRequest, ProgramStatus
 from .solvers.base import ResultSet, SolverConverter
 from .validate.checker import validate_model
 from .native.input_snapshot import snapshot_input
 from .native.run_store import NativeRun, RunStore, TERMINAL_STATES, utc_now
+from .project import FileReference, file_revision
 
 JOB_STATES = ("queued", "preparing", "running", "succeeded", "failed", "cancelled")
+
+
+@dataclass
+class BatchItem:
+    item_id: str
+    input_path: str | Path
+    status: ProgramStatus
+    node_id: str = "batch_node"
+    units: dict = field(default_factory=dict)
+    unit_source: str = ""
+    timeout: float = 3600.0
+    parameters: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Runtime state:
+    state: str = "queued"
+    run_id: str | None = None
+    duration_sec: float = 0.0
+    error: str = ""
+    scalar_responses: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class BatchProgress:
+    batch_id: str
+    state: str
+    completed_count: int
+    total_count: int
+    current_item_id: str | None
+    current_item_index: int
+    elapsed_sec: float
+    eta_sec: float | None
+    heartbeat_message: str
+
+
+@dataclass
+class BatchRun:
+    id: str
+    name: str
+    store_root: Path
+    items: list[BatchItem] = field(default_factory=list)
+    state: str = "queued"
+    total_count: int = 0
+    completed_count: int = 0
+    failed_count: int = 0
+    cancelled_count: int = 0
+    current_item_index: int = -1
+    created_at: str = field(default_factory=utc_now)
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str = ""
+    progress: BatchProgress | None = None
 
 
 @dataclass
@@ -131,6 +185,9 @@ class JobManager:
         self._native_lock = threading.RLock()
         self._native: dict[str, NativeRun] = {}
         self._controls: dict[str, dict] = {}
+        self._batch_lock = threading.RLock()
+        self._batches: dict[str, BatchRun] = {}
+        self._batch_controls: dict[str, dict] = {}
         self._closed = False
 
     def native_snapshot(self, run_id: str) -> NativeRun | None:
@@ -331,17 +388,269 @@ class JobManager:
             control["cancel"].set()
             return True
 
+    def batch_snapshot(self, batch_id: str) -> BatchRun | None:
+        with self._batch_lock:
+            batch = self._batches.get(batch_id)
+            return copy.deepcopy(batch) if batch is not None else None
+
+    def cancel_batch(self, batch_id: str) -> bool:
+        with self._batch_lock:
+            control = self._batch_controls.get(batch_id)
+            batch = self._batches.get(batch_id)
+            if control is None or batch is None or batch.state in {"completed", "failed", "cancelled"}:
+                return False
+            control["cancel"].set()
+            current_run_id = control.get("current_run_id")
+        if current_run_id:
+            self.cancel_native(current_run_id)
+        return True
+
+    def submit_batch(
+        self,
+        store: RunStore,
+        items: Sequence[BatchItem],
+        *,
+        name: str = "MDO Batch",
+        batch_id: str | None = None,
+        stop_on_failure: bool = False,
+        on_progress: Callable[[BatchProgress], None] | None = None,
+        on_item_finished: Callable[[BatchItem, NativeRun], None] | None = None,
+        on_batch_finished: Callable[[BatchRun], None] | None = None,
+        cleanup_policy: Callable[[BatchItem, NativeRun], None] | None = None,
+    ) -> BatchRun:
+        if not items:
+            raise ValueError("배치에 실행할 항목이 없습니다.")
+        with self._batch_lock:
+            if self._closed:
+                raise ValueError("종료 중인 Workbench에는 배치를 제출할 수 없습니다.")
+            bid = batch_id or uuid.uuid4().hex
+            batch_items = [copy.deepcopy(it) for it in items]
+            batch = BatchRun(
+                id=bid,
+                name=name,
+                store_root=store.root,
+                items=batch_items,
+                total_count=len(batch_items),
+                state="queued",
+            )
+            control = {
+                "cancel": threading.Event(),
+                "thread": None,
+                "store": store,
+                "current_run_id": None,
+                "stop_on_failure": stop_on_failure,
+                "on_progress": on_progress,
+                "on_item_finished": on_item_finished,
+                "on_batch_finished": on_batch_finished,
+                "cleanup_policy": cleanup_policy,
+            }
+            self._batches[bid] = batch
+            self._batch_controls[bid] = control
+
+            worker = threading.Thread(
+                target=self._run_batch,
+                args=(bid,),
+                daemon=True,
+                name=f"caelab-batch-{bid[:8]}",
+            )
+            control["thread"] = worker
+            worker.start()
+            return copy.deepcopy(batch)
+
+    def _run_batch(self, batch_id: str) -> None:
+        with self._batch_lock:
+            batch = self._batches[batch_id]
+            control = self._batch_controls[batch_id]
+
+        store: RunStore = control["store"]
+        on_progress = control["on_progress"]
+        on_item_finished = control["on_item_finished"]
+        on_batch_finished = control.get("on_batch_finished")
+        cleanup_policy = control["cleanup_policy"]
+        stop_on_failure = control["stop_on_failure"]
+
+        batch.started_at = utc_now()
+        batch.state = "running"
+        total = len(batch.items)
+        t_start = time.monotonic()
+
+        def emit_progress(current_item: BatchItem | None = None, stage: str = "RUNNING"):
+            elapsed = time.monotonic() - t_start
+            completed = batch.completed_count
+            eta_sec = None
+            if completed > 0:
+                avg_time = elapsed / completed
+                remaining = total - completed
+                eta_sec = max(0.0, avg_time * remaining)
+
+            eta_str = f"{int(eta_sec // 60):02d}:{int(eta_sec % 60):02d}" if eta_sec is not None else "--:--"
+            cur_id = current_item.item_id if current_item else "NONE"
+            heartbeat = f"[{completed:3d} / {total:3d} Points | ETA: {eta_str} | {cur_id} {stage}]"
+
+            prog = BatchProgress(
+                batch_id=batch_id,
+                state=batch.state,
+                completed_count=completed,
+                total_count=total,
+                current_item_id=cur_id if current_item else None,
+                current_item_index=batch.current_item_index,
+                elapsed_sec=elapsed,
+                eta_sec=eta_sec,
+                heartbeat_message=heartbeat,
+            )
+            with self._batch_lock:
+                batch.progress = prog
+            if on_progress:
+                try:
+                    on_progress(prog)
+                except Exception:
+                    pass
+
+        emit_progress(None, "STARTING")
+
+        for idx, item in enumerate(batch.items):
+            with self._batch_lock:
+                batch.current_item_index = idx
+
+            if control["cancel"].is_set():
+                item.state = "cancelled"
+                item.error = "사용자가 배치를 취소했습니다."
+                batch.cancelled_count += 1
+                continue
+
+            item.state = "preparing"
+            emit_progress(item, "PREPARING")
+
+            input_path = Path(item.input_path)
+            if not input_path.is_file():
+                item.state = "failed"
+                item.error = f"입력 파일이 존재하지 않습니다: {input_path}"
+                batch.failed_count += 1
+                emit_progress(item, "FAILED")
+                if stop_on_failure:
+                    break
+                continue
+
+            ref = FileReference(
+                path=str(input_path),
+                revision=file_revision(input_path),
+                units=dict(item.units),
+                unit_source=item.unit_source,
+                stale=False,
+            )
+
+            t_item_0 = time.monotonic()
+            try:
+                run = self.submit_native(
+                    store,
+                    item.node_id,
+                    ref,
+                    item.status,
+                    timeout=item.timeout,
+                )
+            except Exception as exc:
+                item.state = "failed"
+                item.error = f"제출 실패: {exc}"
+                batch.failed_count += 1
+                emit_progress(item, "FAILED")
+                if stop_on_failure:
+                    break
+                continue
+
+            item.run_id = run.id
+            with self._batch_lock:
+                control["current_run_id"] = run.id
+
+            item.state = "running"
+            emit_progress(item, f"RUNNING {item.status.spec.id}")
+
+            run_control = self._controls.get(run.id)
+            run_thread = run_control["thread"] if run_control else None
+            while run_thread and run_thread.is_alive():
+                if control["cancel"].is_set():
+                    self.cancel_native(run.id)
+                    run_thread.join(timeout=3.0)
+                    break
+                run_thread.join(timeout=0.05)
+
+            item.duration_sec = time.monotonic() - t_item_0
+            with self._batch_lock:
+                control["current_run_id"] = None
+
+            final_run = self.native_snapshot(run.id)
+            if final_run is None:
+                item.state = "failed"
+                item.error = "실행 스냅샷을 찾을 수 없습니다."
+                batch.failed_count += 1
+            elif final_run.state == "cancelled" or control["cancel"].is_set():
+                item.state = "cancelled"
+                item.error = final_run.error or "사용자가 취소했습니다."
+                batch.cancelled_count += 1
+            elif final_run.state == "completed":
+                item.state = "completed"
+                batch.completed_count += 1
+            else:
+                item.state = "failed"
+                item.error = final_run.error or f"종료 코드 {final_run.returncode}"
+                batch.failed_count += 1
+
+            if on_item_finished and final_run is not None:
+                try:
+                    on_item_finished(item, final_run)
+                except Exception as exc:
+                    item.error = (item.error + f" (on_item_finished 오류: {exc})").strip()
+
+            if cleanup_policy and final_run is not None:
+                try:
+                    cleanup_policy(item, final_run)
+                except Exception as exc:
+                    item.error = (item.error + f" (cleanup_policy 오류: {exc})").strip()
+
+            emit_progress(item, item.state.upper())
+
+            if control["cancel"].is_set():
+                for rem_idx in range(idx + 1, len(batch.items)):
+                    rem_item = batch.items[rem_idx]
+                    rem_item.state = "cancelled"
+                    rem_item.error = "사용자가 배치를 취소했습니다."
+                    batch.cancelled_count += 1
+                break
+
+            if item.state == "failed" and stop_on_failure:
+                break
+
+        batch.finished_at = utc_now()
+        if control["cancel"].is_set() or batch.cancelled_count == total:
+            batch.state = "cancelled"
+        elif (stop_on_failure and batch.failed_count > 0) or (batch.failed_count == total and total > 0):
+            batch.state = "failed"
+        else:
+            batch.state = "completed"
+        emit_progress(None, "DONE")
+        if on_batch_finished:
+            try:
+                on_batch_finished(copy.deepcopy(batch))
+            except Exception:
+                pass
+
     def close(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout
+        with self._batch_lock:
+            for b_id, b_ctrl in self._batch_controls.items():
+                b_ctrl["cancel"].set()
+                if b_ctrl.get("current_run_id"):
+                    self.cancel_native(b_ctrl["current_run_id"])
+            batch_threads = [b_ctrl["thread"] for b_ctrl in self._batch_controls.values() if b_ctrl.get("thread") is not None]
         with self._native_lock:
             self._closed = True
             for run_id, control in self._controls.items():
                 if self._native[run_id].state not in TERMINAL_STATES or self._native[run_id].parse_state == "reading":
                     control["cancel"].set()
             threads = [control["thread"] for control in self._controls.values() if control["thread"] is not None]
-        for thread in threads:
+        all_threads = threads + batch_threads
+        for thread in all_threads:
             thread.join(max(0.0, deadline - time.monotonic()))
-        return not any(thread.is_alive() for thread in threads) and not any(c["cleanup_failed"] for c in self._controls.values())
+        return not any(thread.is_alive() for thread in all_threads) and not any(c["cleanup_failed"] for c in self._controls.values())
 
     def launch(self, request: LaunchRequest) -> LaunchRecord:
         """Retain this GUI process; creation never means calculation success."""
