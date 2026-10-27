@@ -52,8 +52,7 @@ class ParetoFrontWidget(PlotWidget):
         use3=self.dimension.currentText()=='3D'
         self.axis_groups[2].setVisible(use3)
         for combo in self.axes: combo.setToolTip(combo.currentText())
-        self.native.setVisible(use3 and self.native.available)
-        self.canvas.setVisible(not use3 or not self.native.available)
+        self.set_native_mode(use3 and self.native.available)
         keys=[c.currentData() for c in self.axes[:3 if use3 else 2]]
         if len(set(keys)) != len(keys) or any(k is None for k in keys):
             self.empty('Choose two / three different objective responses.'); return
@@ -70,6 +69,7 @@ class ParetoFrontWidget(PlotWidget):
                 ('Actual marginal','#f59e0b','^',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='MARGINAL'),
                 ('Actual infeasible / unassessed','#ef4444','x',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility not in ('FEASIBLE','MARGINAL')),
                 ('Surrogate prediction','#a78bfa','D',lambda r:getattr(r,'mode','ACTUAL')=='SURROGATE')]
+        self.native.set_legend([(label,color) for label,color,_,_ in layers]+[('Full-objective feasible front','#38bdf8'),('Selected','#ffffff')])
         from matplotlib.colors import to_rgb
         for label,color,marker,predicate in layers:
             group=[r for r in rendered if predicate(r)]

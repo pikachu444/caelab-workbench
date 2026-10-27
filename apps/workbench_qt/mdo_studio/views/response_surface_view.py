@@ -52,7 +52,7 @@ class ResponseSurfaceWidget(PlotWidget):
         self.fixed_container=QWidget(); self.fixed_form=QFormLayout(self.fixed_container)
         self.fixed_form.setContentsMargins(0,0,0,0); self.controls.addWidget(self.fixed_container)
         self.native=Native3D(self); self.layout.insertWidget(self.layout.indexOf(self.canvas)+1,self.native,1)
-        self.native.setVisible(self.native.available); self.canvas.setVisible(not self.native.available)
+        self.set_native_mode(self.native.available)
         self.artifact=None; self.space=None; self.records=[]; self.units={}; self._token=0; self._controls={}; self._fixed_values={}; self._result=None
         self._running=False; self._running_token=None; self._pending=None; self._cancel=None
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(180); self.timer.timeout.connect(self._dispatch)
@@ -139,6 +139,7 @@ class ResponseSurfaceWidget(PlotWidget):
         if self._result is None: return
         x,y,z,sigma=self._result; self.native.clear(); self.ax.clear()
         if self.native.available:
+            self.native.set_legend([('Surrogate mean','#33a6cc')]+([('95% uncertainty bounds','#8066cc')] if self.uncertainty.isChecked() and sigma is not None else []))
             self.native.surface(x,y,z)
             if self.uncertainty.isChecked() and sigma is not None:
                 self.native.surface(x,y,z-1.96*sigma,(.5,.4,.8),.15); self.native.surface(x,y,z+1.96*sigma,(.5,.4,.8),.15)

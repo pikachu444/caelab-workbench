@@ -23,12 +23,14 @@ class StudyTreeWidget(QWidget):
         for o in study.objectives: item(criteria,f'{o.response_id} — {o.sense}','criteria',o.id)
         for c in study.constraints: item(criteria,f'{c.response_id or c.id} — {c.kind}','criteria',c.id)
         item(root,'DOE plans','doe')
-        campaign=item(root,f'Evaluations ({sum(r.status=="COMPLETED" for r in study.records)} completed)','evaluations')
+        actual=[r for r in study.records if getattr(r,'mode','ACTUAL')=='ACTUAL']
+        predicted=[r for r in study.records if getattr(r,'mode','ACTUAL')=='SURROGATE']
+        campaign=item(root,f'Native evaluations ({sum(r.status=="COMPLETED" for r in actual)} completed)','evaluations')
         for state in ('RUNNING','FAILED','CANCELLED'):
-            count=sum(r.status==state for r in study.records)
+            count=sum(r.status==state for r in actual)
             if count: item(campaign,f'{state}: {count}','evaluations',state)
         item(root,'Surrogates — '+('validation available' if surrogate else 'needs training'),'surrogates')
-        item(root,'Optimization runs / predicted candidates','optimization')
+        item(root,f'Optimization runs ({len(predicted)} surrogate predictions)','optimization')
         item(root,'Sensitivity analyses','sensitivity')
         views=item(root,'Views','views')
         for key in ('Pareto','Parallel','Surface','Sensitivity','Convergence'): item(views,key,'view',key)
