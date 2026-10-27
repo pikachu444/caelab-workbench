@@ -145,6 +145,9 @@ def test_10k_scalar_snapshot_sort_filter(qapp):
     proxy=DesignPointsProxyModel(); proxy.setSourceModel(model); proxy.sort(28,Qt.SortOrder.AscendingOrder)
     assert proxy.index(0,0).data(model.PointIdRole)=='point-9999'
     proxy.set_filters(text='Point 9999'); assert proxy.rowCount()==1
+    # Opening a study with fewer columns must retire the prior response-column sort.
+    model.set_study_data(records,[],[])
+    assert proxy.rowCount()==1 and proxy.columnCount()==10
 
 
 def test_readonly_startup_never_creates_or_autoloads_wrong_relation():

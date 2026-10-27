@@ -176,6 +176,7 @@ class DesignPointsProxyModel(QAbstractProxyModel):
 
     def _mapping(self):
         if self._source is None: return []
+        if self._column>=self._source.columnCount(): self._column=0
         rows=[row for row in range(len(self._source.records)) if self.filterAcceptsRow(row,QModelIndex())]
         if self._column>=0: rows.sort(key=lambda row:self._source._sort_keys[row][self._column],reverse=self._descending)
         return rows
