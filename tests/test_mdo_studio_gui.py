@@ -1,5 +1,8 @@
 """GUI unit tests and screenshot validation for MDO Studio."""
 
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
 from PySide6.QtWidgets import QApplication
 from apps.workbench_qt.mdo_studio.window import MDOStudioWindow

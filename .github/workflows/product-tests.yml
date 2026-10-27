@@ -59,6 +59,8 @@ jobs:
               app.processEvents()
           print("PySide6", PySide6.__version__, "VTK", vtk.vtkVersion.GetVTKVersion(), "SciPy", scipy.__version__)
           PY
+      - name: Enforce documentation synchronization
+        run: python scripts/check_doc_sync.py --mode ci
       - name: Run full product regression
         run: python -m pytest -q -ra
 

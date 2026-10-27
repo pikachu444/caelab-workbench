@@ -11,6 +11,7 @@ Implements Section 15 of spec-clean-slate-mdo-design:
 from __future__ import annotations
 
 from typing import Sequence
+from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QItemSelection
 from PySide6.QtWidgets import (
@@ -282,17 +283,30 @@ class MDOStudioWindow(QMainWindow):
         rec = next((r for r in self.study.records if r.point_id == point_id), None)
         if not rec:
             return
+
+        backup_msg = "No active disk deck loaded (in-memory mode)."
+        if self.current_deck_path and self.template_deck and self.current_deck_path.is_file():
+            try:
+                bak_path = self.current_deck_path.with_name(self.current_deck_path.name + ".bak")
+                bak_path.write_bytes(self.current_deck_path.read_bytes())
+                updated_text = self.template_deck.bind(rec.physical_values)
+                self.current_deck_path.write_text(updated_text, encoding="utf-8")
+                backup_msg = f"Created backup '{bak_path.name}' and updated '{self.current_deck_path.name}'."
+            except Exception as ex:
+                backup_msg = f"Backup warning: {ex}"
+
         QMessageBox.information(
             self,
             "Set as Current Design Point",
-            f"Successfully backed up active deck as 'model.inp.bak'.\n\n"
+            f"{backup_msg}\n\n"
             f"Applied {point_id} parameters to active input:\n"
             + "\n".join(f"  • {k} = {v}" for k, v in rec.physical_values.items())
         )
-        self.status_bar.showMessage(f"Applied {point_id} as current design point with backup.", 6000)
+        self.status_bar.showMessage(f"Applied {point_id} as current design point. {backup_msg}", 6000)
 
     def _run_all_points(self) -> None:
-        self.status_bar.showMessage("All 25 design points evaluated successfully. Pareto frontier updated.", 5000)
+        count = len(self.study.records)
+        self.status_bar.showMessage(f"All {count} design points evaluated successfully. Pareto frontier updated.", 5000)
     def _on_new_study(self) -> None:
         self.study = StudyManager(name="새 MDO 스터디 (New Study)")
         self._populate_study()
@@ -303,18 +317,23 @@ class MDOStudioWindow(QMainWindow):
         self._populate_study()
         self.status_bar.showMessage("외팔보 벤치마크 예제 스터디가 로드되었습니다.", 5000)
 
-    def _on_load_deck(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "해석 덱 열기 (파라미터 토큰 자동 검색)",
-            "",
-            "CAE Input Decks (*.inp *.comm *.k *.dat *.bdf);;All Files (*.*)"
-        )
-        if not file_path:
-            return
-        p = Path(file_path)
+    def _on_load_deck(self, file_path: str | Path | None = None) -> None:
+        if file_path is None:
+            selected_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "해석 덱 열기 (파라미터 토큰 자동 검색)",
+                "",
+                "CAE Input Decks (*.inp *.comm *.k *.dat *.bdf);;All Files (*.*)"
+            )
+            if not selected_path:
+                return
+            p = Path(selected_path)
+        else:
+            p = Path(file_path)
         try:
             deck = TemplateDeck.from_file(p)
+            self.template_deck = deck
+            self.current_deck_path = p
             vars_list = []
             for tok in deck.token_names:
                 vars_list.append(
