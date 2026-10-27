@@ -19,7 +19,6 @@
 | **6** | **석유화학 압력용기** | **High-Pressure Flange Nozzle** | 축대칭/솔리드 / 22,400 절점 | 15 MPa 내압 + 볼트 인장 + 열응력 연성 | ASME Sec VIII Div 2 SCL 응력 선형화 |
 | **7** | **토목 대형 교량보** | **Stepped Cantilever Box Girder** | 5단 분할 쉘 S4R / 35,800 절점 | 60m 전장 자중 + 320 kN 이동 차량 활하중 | AASHTO / Eurocode 3 ($\delta \le L/800$) |
 
-![공인 SimJEB 데이터셋 및 전 세계 챌린지 3D 최적화 모델군](../images/ge_bracket_simjeb_authentic_teaser.png)
 *(그림 1: 글로벌 상용 MDO 벤치마크 기준 모델군: MIT SimJEB / GrabCAD 챌린지 공인 3D 모델 및 공학 시뮬레이션 결과군)*
 
 ---
@@ -28,7 +27,6 @@
 
 ### 【Benchmark 1】 항공우주 3D 브래킷: GE Jet Engine Bracket (OptiStruct / Tosca 공인)
 
-![GE Bracket 공인 3D FEA 변위 및 응력 컨투어 해석 결과](../images/ge_bracket_simjeb_authentic_fea.png)
 *(그림 2: GE Jet Engine Bracket 3D FEA 다축 하중 변위 및 응력 컨투어 해석 결과 - MIT SimJEB 공인 데이터셋)*
 1. **도메인 및 출처**: 항공우주 제트 엔진 부품 / GE Aviation & GrabCAD Global Challenge / Altair OptiStruct 공식 검증 예제
 2. **해석 메쉬 및 재료 스펙**:

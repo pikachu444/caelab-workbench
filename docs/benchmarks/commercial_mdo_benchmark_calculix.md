@@ -14,10 +14,8 @@
 - **상용 툴 공인 활용**: Altair OptiStruct 공식 검증 예제, Dassault Tosca Topology/Sizing 벤치마크, SIMULIA Abaqus 최적화 쇼케이스.
 - **실무 선정 이유**: 3D 연속체 솔리드 요소, 4대 다축 복합 하중, 엄격한 항복응력 제약 하의 극단적 경량화(약 $35\sim 40\%$ 감량)를 다루는 글로벌 Gold Standard 모델.
 
-![SimJEB GE Bracket Challenge 엔트리 카탈로그 및 공인 해석 데이터셋](../images/ge_bracket_simjeb_authentic_teaser.png)
 *(그림 1: GE Jet Engine Bracket Challenge 기반 공인 SimJEB 데이터셋의 3D 모델 및 공학 시뮬레이션 결과군)*
 
-![GE Bracket 공인 3D FEA 변위 및 응력 컨투어 해석 결과](../images/ge_bracket_simjeb_authentic_fea.png)
 *(그림 2: GE Jet Engine Bracket 공인 3D 유한요소해석(FEA) 다축 하중 변위 및 응력 컨투어 해석 결과 - 출처: MIT SimJEB)*
 
 ```
@@ -87,7 +85,6 @@ CalculiX 인풋 파일(`ge_bracket.inp`) 내에 다음 6개 토큰을 삽입하�
 
 ## 2. 서브 3D 산업 벤치마크: 【자동차 서스펜션 로어 암 (Lower Control Arm)】
 
-![자동차 서스펜션 로어 암 하중 경로 및 OptiStruct 비교](../images/benchmark_control_arm_comparison.png)
 *(그림 2: 자동차 현가장치 로어 컨트롤 암 하중 전달 경로 및 OptiStruct OS-T: 2000 대비 경량화/응력 비교)*
 
 ### 2.1 부품의 물리적 역할과 구조역학적 거동 직관 (Physical Intuition)

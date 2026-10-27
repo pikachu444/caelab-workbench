@@ -12,9 +12,13 @@ Implements Section 15 of spec-clean-slate-mdo-design:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import time
+import math
+import re
+import shutil
 from typing import Sequence, Any
 from pathlib import Path
 import numpy as np
@@ -30,7 +34,7 @@ from caelab.mdo.study_manager import StudyManager, DesignPointRecord
 from caelab.mdo.inp_binder import TemplateDeck
 from caelab.mdo.variables import ContinuousVariable, VariableSpace
 from caelab.mdo.objectives import ObjectiveSpec
-from caelab.mdo.constraints import ConstraintSpec
+from caelab.mdo.constraints import ConstraintSpec, assess_constraints
 from .views.sensitivity_view import SensitivityTornadoWidget, TornadoItem
 from caelab.mdo.surrogate import SurrogateDataset, SurrogateConfig, fit_surrogate
 from .bridge import MDOExecutionBridge
@@ -47,6 +51,123 @@ from .study_tree import StudyTreeWidget
 from .setup_dock import SetupDockWidget
 from .views.pareto_view import ParetoFrontWidget
 from .views.response_surface_view import ResponseSurfaceWidget
+
+
+def extract_calculix_responses(workdir: Path, run_result: dict | None) -> dict[str, float]:
+    obs: dict[str, float] = {}
+    if run_result:
+        summary = run_result.get("summary", {})
+        if summary.get("max_displacement") is not None:
+            try:
+                obs["disp"] = float(summary["max_displacement"])
+            except (ValueError, TypeError):
+                pass
+        dat = run_result.get("dat", {})
+        if "disp" not in obs and dat.get("max_displacement") is not None:
+            try:
+                obs["disp"] = float(dat["max_displacement"])
+            except (ValueError, TypeError):
+                pass
+        for set_name, set_data in dat.get("sets", {}).items():
+            if "total_force" in set_data:
+                tot = set_data["total_force"]
+                if isinstance(tot, (list, tuple)) and len(tot) >= 3:
+                    try:
+                        obs[f"rf_{set_name.lower()}"] = float(math.hypot(*tot[:3]))
+                    except (ValueError, TypeError):
+                        pass
+
+    # Find FRD result file (model.frd or any .frd in workdir)
+    frd_path = workdir / "model.frd"
+    if not frd_path.is_file():
+        frd_candidates = list(workdir.glob("*.frd"))
+        if frd_candidates:
+            frd_path = frd_candidates[0]
+
+    if frd_path.is_file() and frd_path.stat().st_size > 0:
+        try:
+            from caelab.solvers.calculix import _read_frd
+            parsed = _read_frd(frd_path)
+            if "disp" not in obs and parsed.result.max_displacement is not None:
+                obs["disp"] = float(parsed.result.max_displacement)
+        except Exception:
+            pass
+
+        try:
+            max_vm = 0.0
+            has_stress = False
+            max_disp = 0.0
+            has_disp = False
+            current_block = None
+
+            with frd_path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line.startswith(" -4"):
+                        blk_name = line[5:13].strip().upper() if len(line) >= 13 else ""
+                        if not blk_name and len(line.split()) > 1:
+                            blk_name = line.split()[1].upper()
+                        current_block = blk_name if blk_name in ("DISP", "STRESS") else None
+                    elif line.startswith(" -3"):
+                        current_block = None
+                    elif current_block and line.startswith(" -1"):
+                        vals = None
+                        needed_len = 13 + (72 if current_block == "STRESS" else 36)
+                        if len(line) >= needed_len:
+                            try:
+                                n_comp = 6 if current_block == "STRESS" else 3
+                                vals = [float(line[13 + 12 * i : 13 + 12 * (i + 1)]) for i in range(n_comp)]
+                            except ValueError:
+                                vals = None
+                        if vals is None:
+                            parts = line.split()
+                            if current_block == "STRESS" and len(parts) >= 8:
+                                try:
+                                    vals = [float(x) for x in parts[2:8]]
+                                except ValueError:
+                                    pass
+                            elif current_block == "DISP" and len(parts) >= 5:
+                                try:
+                                    vals = [float(x) for x in parts[2:5]]
+                                except ValueError:
+                                    pass
+                        if vals is not None:
+                            if current_block == "STRESS":
+                                sxx, syy, szz, sxy, syz, szx = vals[:6]
+                                vm = math.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 + 6.0 * (sxy**2 + syz**2 + szx**2)))
+                                if vm > max_vm:
+                                    max_vm = vm
+                                    has_stress = True
+                            elif current_block == "DISP":
+                                ux, uy, uz = vals[:3]
+                                d = math.hypot(ux, uy, uz)
+                                if d > max_disp:
+                                    max_disp = d
+                                    has_disp = True
+
+            if has_stress and "stress" not in obs:
+                obs["stress"] = float(max_vm)
+            if has_disp and "disp" not in obs:
+                obs["disp"] = float(max_disp)
+        except Exception:
+            pass
+
+    # Find log file (job.log or any .log in workdir)
+    log_path = workdir / "job.log"
+    if not log_path.is_file():
+        log_candidates = list(workdir.glob("*.log"))
+        if log_candidates:
+            log_path = log_candidates[0]
+
+    if log_path.is_file():
+        try:
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+            m = re.search(r"(?:total\s+mass|mass)\s*[:=]\s*([\d\.eE\+\-]+)", log_text, re.IGNORECASE)
+            if m:
+                obs["mass"] = float(m.group(1))
+        except Exception:
+            pass
+
+    return obs
 
 
 class MDOStudioWindow(QMainWindow):
@@ -147,7 +268,7 @@ class MDOStudioWindow(QMainWindow):
         tdp_layout = QVBoxLayout(tdp_container)
         tdp_layout.setContentsMargins(4, 4, 4, 4)
 
-        self.tdp_lbl = QLabel("Table of Design Points (TDP) — Virtual Virtualized Grid [Declared Unit: mm - tonne - N - MPa]")
+        self.tdp_lbl = QLabel("Table of Design Points (TDP) — Virtual Virtualized Grid [Declared Units]")
         title_color = "#38bdf8" if self.is_dark else "#0284c7"
         self.tdp_lbl.setStyleSheet(f"font-weight: bold; font-size: 10pt; color: {title_color};")
         tdp_layout.addWidget(self.tdp_lbl)
@@ -248,7 +369,12 @@ class MDOStudioWindow(QMainWindow):
         self.study_tree.populate(self.study)
 
         param_keys = [v.id for v in self.study.space.variables]
-        response_keys = [o.id for o in self.study.objectives] or (["mass", "stress", "disp"] if self.study.records else [])
+        if self.study.objectives:
+            response_keys = [o.id for o in self.study.objectives]
+        elif self.study.records and self.study.records[0].observations:
+            response_keys = list(self.study.records[0].observations.keys())
+        else:
+            response_keys = ["response"]
         self.tdp_model.set_study_data(self.study.records, param_keys, response_keys)
         self._update_visualizations()
 
@@ -280,50 +406,102 @@ class MDOStudioWindow(QMainWindow):
             self.setup_widget.display_record(None)
             return
 
-        # Update Pareto Plot (X: Mass [kg], Y: Disp [mm])
+        # Determine dynamic objective IDs for Pareto front
+        completed = [r for r in self.study.records if r.status == "COMPLETED" and r.observations]
+        sample_obs = completed[0].observations if completed else (self.study.records[0].observations if self.study.records else {})
+        available_resps = list(sample_obs.keys())
+
+        if len(self.study.objectives) >= 2:
+            obj_x_id = self.study.objectives[0].id
+            obj_y_id = self.study.objectives[1].id
+            obj_x_name = getattr(self.study.objectives[0], "name", None) or obj_x_id
+            obj_y_name = getattr(self.study.objectives[1], "name", None) or obj_y_id
+        elif len(self.study.objectives) == 1:
+            obj_x_id = self.study.objectives[0].id
+            obj_y_id = available_resps[1] if len(available_resps) > 1 else obj_x_id
+            obj_x_name = getattr(self.study.objectives[0], "name", None) or obj_x_id
+            obj_y_name = obj_y_id
+        elif len(available_resps) >= 2:
+            obj_x_id = available_resps[0]
+            obj_y_id = available_resps[1]
+            obj_x_name = obj_x_id
+            obj_y_name = obj_y_id
+        elif available_resps:
+            obj_x_id = available_resps[0]
+            obj_y_id = available_resps[0]
+            obj_x_name = obj_x_id
+            obj_y_name = obj_y_id
+        else:
+            obj_x_id = "mass"
+            obj_y_id = "disp"
+            obj_x_name = "Objective X"
+            obj_y_name = "Objective Y"
+
+        # Update Pareto Plot dynamically
         self.pareto_view.plot_study(
             self.study.records,
-            obj_x_id="mass",
-            obj_y_id="disp",
-            obj_x_name="Total Structural Mass (kg)",
-            obj_y_name="Pin Max Displacement (mm)",
+            obj_x_id=obj_x_id,
+            obj_y_id=obj_y_id,
+            obj_x_name=obj_x_name,
+            obj_y_name=obj_y_name,
         )
 
-        # Update Tornado Plot for GE Bracket sensitivity
-        tornado_items = [
-            TornadoItem(variable_id="t_base", metric="Sobol ST", magnitude=0.48, interval=None, sign=1),
-            TornadoItem(variable_id="t_rib", metric="Sobol ST", magnitude=0.32, interval=None, sign=1),
-            TornadoItem(variable_id="d_boss", metric="Sobol ST", magnitude=0.15, interval=None, sign=1),
-            TornadoItem(variable_id="r_fillet", metric="Sobol ST", magnitude=0.05, interval=None, sign=1),
-        ]
-        self.tornado_view.plot_tornado(tornado_items, target_name="Max von Mises Stress (MPa)")
+        # Update Sensitivity Tornado Plot dynamically using Spearman correlation
+        target_resp = obj_y_id if obj_y_id in sample_obs else (obj_x_id if obj_x_id in sample_obs else (available_resps[0] if available_resps else "target"))
+        var_ids = [v.id for v in self.study.space.variables]
 
-        # Fit demo Kriging surrogate and plot
-        completed = [r for r in self.study.records if r.status == "COMPLETED" and "disp" in r.observations]
-        if completed and len(self.study.space.variables) >= 1:
+        tornado_items = []
+        if completed and var_ids and target_resp in sample_obs and len(completed) >= 3:
+            try:
+                from caelab.mdo.sensitivity import spearman
+                X_all = np.array([[r.physical_values.get(vid, 0.0) for vid in var_ids] for r in completed])
+                y_all = np.array([[r.observations.get(target_resp, 0.0)] for r in completed])
+                pairs = spearman(X_all, y_all, variable_ids=var_ids, response_ids=(target_resp,))
+                for p in pairs:
+                    stat = p.rho if (p.rho is not None and math.isfinite(p.rho)) else 0.0
+                    tornado_items.append(
+                        TornadoItem(variable_id=p.variable_id, metric="Spearman |ρ|", magnitude=abs(stat), interval=None, sign=1 if stat >= 0 else -1)
+                    )
+                tornado_items.sort(key=lambda item: item.magnitude, reverse=True)
+            except Exception:
+                pass
+
+        if not tornado_items and var_ids:
+            # Fallback placeholder ranking based on variable space order
+            tornado_items = [
+                TornadoItem(variable_id=vid, metric="Declared Factor", magnitude=max(0.1, 1.0 - idx * 0.15), interval=None, sign=1)
+                for idx, vid in enumerate(var_ids[:8])
+            ]
+
+        self.tornado_view.plot_tornado(tornado_items, target_name=f"Sensitivity: {target_resp}")
+
+        # Fit Kriging surrogate dynamically on primary target response
+        kriging_resp = target_resp
+        kriging_completed = [r for r in completed if kriging_resp in r.observations]
+        if kriging_completed and len(self.study.space.variables) >= 1:
             var0 = self.study.space.variables[0].id
             var1 = self.study.space.variables[1].id if len(self.study.space.variables) > 1 else var0
-            X = np.array([[r.physical_values.get(var0, 10.0), r.physical_values.get(var1, 10.0)] for r in completed])
-            y = np.array([[r.observations["disp"]] for r in completed])
+            X = np.array([[r.physical_values.get(var0, 10.0), r.physical_values.get(var1, 10.0)] for r in kriging_completed])
+            y = np.array([[r.observations[kriging_resp]] for r in kriging_completed])
             try:
                 ds = SurrogateDataset(
                     x=X,
                     y=y,
-                    point_ids=tuple(r.point_id for r in completed),
-                    run_ids=tuple(f"run_{r.point_id}" for r in completed),
-                    response_ids=("disp",),
-                    units=("mm",),
+                    point_ids=tuple(r.point_id for r in kriging_completed),
+                    run_ids=tuple(f"run_{r.point_id}" for r in kriging_completed),
+                    response_ids=(kriging_resp,),
+                    units=("",),
                     feature_order=(var0, var1),
                 )
                 surrogate = fit_surrogate(ds, SurrogateConfig(method="gp", gp_kernel="matern52", seed=42))
-                lower_b = self.study.space.variables[0].lower or 8.0
-                upper_b = self.study.space.variables[0].upper or 25.0
+                lower_b = self.study.space.variables[0].lower if self.study.space.variables[0].lower is not None else 8.0
+                upper_b = self.study.space.variables[0].upper if self.study.space.variables[0].upper is not None else 25.0
                 fixed_val = self.study.space.variables[1].initial if len(self.study.space.variables) > 1 else 10.0
                 self.surface_view.plot_kriging_slice(
                     surrogate,
                     self.study.records,
                     var_id=var0,
-                    resp_id="disp",
+                    resp_id=kriging_resp,
                     lower=lower_b,
                     upper=upper_b,
                     fixed_values={var1: fixed_val},
@@ -389,14 +567,32 @@ class MDOStudioWindow(QMainWindow):
             r.status = "QUEUED"
             self.tdp_model.update_point_result(r.point_id, "QUEUED", r.observations, r.feasibility, r.total_violation, 0.0, False)
 
-        # Determine solver status
+        # Determine solver status with runtime/system fallback
         solver_status = next((p for p in self.workbench.programs() if p.spec.id == "calculix"), None)
-        if solver_status is None:
-            spec = ProgramSpec("calculix", "CalculiX", "solver", "CAELAB_CALCULIX", ("ccx",), "CalculiX solver")
-            solver_status = ProgramStatus(spec, sys.executable, source="internal")
+        if solver_status is None or not solver_status.available:
+            ccx_bin = os.environ.get("CAELAB_CCX") or shutil.which("ccx")
+            if not ccx_bin and sys.platform == "win32":
+                candidate = Path(r"C:\SourceCodes\caelab-p7-public-native\windows\runtime\FreeCAD_1.1.4-Windows-x86_64-py311\bin\ccx.exe")
+                if candidate.is_file():
+                    ccx_bin = str(candidate)
+            if ccx_bin and Path(ccx_bin).is_file():
+                spec = ProgramSpec("calculix", "CalculiX", "solver", "CAELAB_CALCULIX", ("ccx",), "CalculiX solver")
+                solver_status = ProgramStatus(spec, ccx_bin, source="system")
+            elif solver_status is None:
+                spec = ProgramSpec("calculix", "CalculiX", "solver", "CAELAB_CALCULIX", ("ccx",), "CalculiX solver")
+                solver_status = ProgramStatus(spec, sys.executable, source="internal")
 
         batch_workdir = Path(tempfile.mkdtemp(prefix="caelab_mdo_batch_"))
         deck_path = self.current_deck_path if hasattr(self, "current_deck_path") and self.current_deck_path else None
+
+        # Sibling includes preservation for relative *INCLUDE resolution
+        if deck_path and deck_path.is_file():
+            for sibling in deck_path.parent.iterdir():
+                if sibling.is_file() and sibling != deck_path:
+                    try:
+                        shutil.copy2(sibling, batch_workdir / sibling.name)
+                    except OSError:
+                        pass
 
         items = []
         for r in self.study.records:
@@ -405,7 +601,21 @@ class MDOStudioWindow(QMainWindow):
                 content = self.template_deck.bind(r.physical_values)
                 inp_file.write_text(content, encoding="utf-8")
             else:
-                inp_file.write_text(f"*HEADING\n{r.point_id}\n*NODE\n1, 0., 0., 0.\n", encoding="utf-8")
+                # Valid fallback C3D8 solid element deck for in-memory / probe runs
+                inp_file.write_text(
+                    f"*HEADING\n{r.point_id}\n"
+                    f"*NODE, NSET=NALL\n"
+                    f"1, 0., 0., 0.\n2, 10., 0., 0.\n3, 10., 10., 0.\n4, 0., 10., 0.\n"
+                    f"5, 0., 0., 10.\n6, 10., 0., 10.\n7, 10., 10., 10.\n8, 0., 10., 10.\n"
+                    f"*ELEMENT, TYPE=C3D8, ELSET=EALL\n1, 1, 2, 3, 4, 5, 6, 7, 8\n"
+                    f"*MATERIAL, NAME=STEEL\n*ELASTIC\n210000., 0.3\n*DENSITY\n7.85e-9\n"
+                    f"*SOLID SECTION, ELSET=EALL, MATERIAL=STEEL\n"
+                    f"*STEP\n*STATIC\n"
+                    f"*BOUNDARY\n1, 1, 3, 0.\n4, 1, 3, 0.\n"
+                    f"*CLOAD\n6, 3, -1000.\n7, 3, -1000.\n"
+                    f"*NODE FILE\nU\n*EL FILE\nS\n*END STEP\n",
+                    encoding="utf-8"
+                )
 
             items.append(BatchItem(
                 item_id=r.point_id,
@@ -417,19 +627,10 @@ class MDOStudioWindow(QMainWindow):
             ))
 
         def on_item_fin(it: BatchItem, run):
-            p = it.parameters
-            tb = float(p.get("t_base", p.get("width", 15.0)))
-            tr = float(p.get("t_rib", p.get("height", 12.0)))
-            rf = float(p.get("r_fillet", 6.0))
-            db = float(p.get("d_boss", 60.0))
-            tw = float(p.get("t_wall", 10.0))
-            hs = float(p.get("h_stiff", 35.0))
-
-            mass = float((tb * 120.0 + tr * 80.0 + rf * 15.0 + db * 40.0 + tw * 30.0 + hs * 20.0) * 0.00018)
-            stress = float(48000.0 / (tb ** 0.8 * tr ** 0.7) + 85000.0 / (db ** 1.1 * tw ** 0.5))
-            disp = float(320.0 / (tb ** 1.2 * hs ** 0.8) + 180.0 / (tr ** 1.0))
-
-            obs = {"mass": mass, "stress": stress, "disp": disp}
+            # Extract authentic CalculiX simulation responses from output files
+            run_dir = getattr(run, "workdir", None) or it.output_dir or (it.input_path.parent if it.input_path else None)
+            run_res = getattr(run, "result", None)
+            obs = extract_calculix_responses(Path(run_dir) if run_dir else Path("."), run_res)
             it.scalar_responses = obs
             self.bridge.itemFinished.emit(it.item_id, it, run)
 
@@ -469,28 +670,40 @@ class MDOStudioWindow(QMainWindow):
             pass
 
     def _on_item_finished(self, point_id: str, item: Any, run: Any) -> None:
+        if self._active_batch_id is not None and getattr(item, "batch_id", None) != self._active_batch_id:
+            return
+
         rec = next((r for r in self.study.records if r.point_id == point_id), None)
         if not rec:
             return
 
         obs = getattr(item, "scalar_responses", {})
-        rec.observations = obs
-        rec.status = "COMPLETED"
+        rec.observations = dict(obs)
+        rec.status = "COMPLETED" if getattr(item, "state", "") == "completed" else "FAILED"
         rec.duration_sec = getattr(item, "duration_sec", 0.0)
 
-        # 3-state Feasibility assessment (650 MPa limit)
-        stress = obs.get("stress", 0.0)
-        if stress <= 617.5:
+        # Dynamic constraint assessment - preserve NOT_ASSESSED when evaluations are incomplete
+        if getattr(self.study, "constraints", None):
+            assessment = assess_constraints(obs, self.study.constraints)
+            if assessment.feasibility is not None:
+                rec.feasibility = assessment.feasibility.value
+                rec.total_violation = float(assessment.total_violation or 0.0)
+            else:
+                rec.feasibility = "NOT_ASSESSED"
+                rec.total_violation = 0.0
+        else:
             rec.feasibility = "FEASIBLE"
             rec.total_violation = 0.0
-        elif stress <= 650.0:
-            rec.feasibility = "MARGINAL"
-            rec.total_violation = 0.0
-        else:
-            rec.feasibility = "INFEASIBLE"
-            rec.total_violation = float((stress - 650.0) / 100.0)
 
-        rec.objectives = {"mass": obs.get("mass", 0.0), "disp": obs.get("disp", 0.0)}
+        rec.objectives = {k: v for k, v in obs.items() if k in {o.id for o in self.study.objectives}}
+
+        # Refresh table response columns dynamically when new observation keys arrive
+        if obs:
+            current_resp_keys = set(self.tdp_model.response_keys) - {"response"}
+            new_keys = set(obs.keys())
+            if not current_resp_keys.issuperset(new_keys):
+                updated_keys = sorted(list(current_resp_keys | new_keys))
+                self.tdp_model.set_study_data(self.study.records, self.tdp_model.parameter_keys, updated_keys)
 
         # Update Pareto front
         pareto_ids = self.study.update_pareto_front()
@@ -499,13 +712,14 @@ class MDOStudioWindow(QMainWindow):
         # Pinpoint O(1) row update in virtual table model
         self.tdp_model.update_point_result(
             point_id,
-            "COMPLETED",
+            rec.status,
             rec.observations,
             rec.feasibility,
             rec.total_violation,
             rec.duration_sec,
             is_p,
         )
+        self.tdp_model.update_pareto_front(pareto_ids)
 
         # Debounced visualization update to maintain 60fps responsiveness
         self._viz_timer.start(150)
@@ -541,20 +755,31 @@ class MDOStudioWindow(QMainWindow):
         if hasattr(self, "bridge"):
             self.bridge.blockSignals(True)
         if hasattr(self, "workbench"):
-            self.workbench.close()
+            if not self.workbench.close():
+                event.ignore()
+                return
         event.accept()
 
     def _on_new_study(self) -> None:
+        if self._active_batch_id:
+            self.workbench.jobs.cancel_batch(self._active_batch_id)
+            self._active_batch_id = None
         self.study = StudyManager(name="새 MDO 스터디 (New Study)")
         self._populate_study()
         self.status_bar.showMessage("새 MDO 스터디가 생성되었습니다. 변수를 정의하거나 해석 덱을 여세요.", 5000)
 
     def _on_load_demo(self) -> None:
+        if self._active_batch_id:
+            self.workbench.jobs.cancel_batch(self._active_batch_id)
+            self._active_batch_id = None
         self.study = self._create_demo_ge_bracket_study()
         self._populate_study()
         self.status_bar.showMessage("GE 항공 제트엔진 브래킷 (Ti-6Al-4V) 벤치마크 스터디가 로드되었습니다.", 5000)
 
     def _on_load_deck(self, file_path: str | Path | None = None) -> None:
+        if self._active_batch_id:
+            self.workbench.jobs.cancel_batch(self._active_batch_id)
+            self._active_batch_id = None
         if file_path is None:
             selected_path, _ = QFileDialog.getOpenFileName(
                 self,
