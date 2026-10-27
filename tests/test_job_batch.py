@@ -61,6 +61,31 @@ def create_deck(tmp_path: Path, name: str = "deck.inp") -> Path:
     return p
 
 
+def test_stop_scheduling_finishes_current_without_cancelling_owned_process(tmp_path,dummy_status,setup_probe):
+    setup_probe[0] = "import time; print('owned current',flush=True); time.sleep(.3)"
+    manager = JobManager()
+    deck = create_deck(tmp_path)
+    batch = manager.submit_batch(RunStore(tmp_path/"runs"),[
+        BatchItem(item_id=str(i),input_path=deck,status=dummy_status) for i in range(3)])
+    deadline = time.monotonic()+10
+    while time.monotonic() < deadline:
+        snapshot = manager.batch_snapshot(batch.id)
+        if snapshot.items[0].state == "running":
+            break
+        time.sleep(.01)
+    assert manager.stop_batch(batch.id)
+    while time.monotonic() < deadline:
+        snapshot = manager.batch_snapshot(batch.id)
+        if snapshot.state == "stopped":
+            break
+        time.sleep(.02)
+    assert snapshot.state == "stopped"
+    assert [i.state for i in snapshot.items] == ["completed","stopped","stopped"]
+    assert snapshot.items[0].run_id and snapshot.items[1].run_id is None
+    assert snapshot.cancelled_count == 0
+    assert manager.close()
+
+
 def test_batch_submit_and_complete_sequential(tmp_path, dummy_status, setup_probe):
     setup_probe[0] = (
         "import time, sys; from pathlib import Path; "

@@ -9,6 +9,26 @@ from caelab.mdo.inp_binder import TemplateDeck
 from caelab.mdo.responses import ResponseSpec, extract_scalar
 
 
+def test_token_boundary_preserves_bytes_and_roundtrip_precision(tmp_path):
+    original = b'\xef\xbb\xbf** comment <COMMENT>\r\n*ELASTIC\r\n<E>, <NU>\r\n'
+    path = tmp_path / "roundtrip.inp"
+    path.write_bytes(original)
+    deck = TemplateDeck.from_file(path)
+    rendered = deck.render({"e":123456.789123456,"nu":.3123456789123456}).encode("utf-8")
+    assert rendered.startswith(b'\xef\xbb\xbf** comment <COMMENT>\r\n*ELASTIC\r\n')
+    assert rendered.count(b'\r\n') == original.count(b'\r\n')
+    values = rendered.decode("utf-8").splitlines()[-1].split(",")
+    assert [float(v) for v in values] == [123456.789123456,.3123456789123456]
+    with pytest.raises(ValueError,match="Unresolved"):
+        deck.render({"e":1})
+
+
+@pytest.mark.parametrize("value", [float("nan"),float("inf"),"steel\n*NODE\n99,0,0,0","steel,other"])
+def test_token_boundary_rejects_non_scalar_values(value):
+    with pytest.raises(ValueError):
+        TemplateDeck.from_text("*ELASTIC\n<E>\n").render({"E":value})
+
+
 def test_template_deck_tokens_and_binding(tmp_path: Path):
     deck_text = """*HEADING
 ** Parametric model

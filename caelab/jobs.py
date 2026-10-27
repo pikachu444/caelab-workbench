@@ -407,6 +407,16 @@ class JobManager:
             self.cancel_native(current_run_id)
         return True
 
+    def stop_batch(self, batch_id: str) -> bool:
+        """Stop dispatch after the current owned attempt; do not cancel it."""
+        with self._batch_lock:
+            control = self._batch_controls.get(batch_id)
+            batch = self._batches.get(batch_id)
+            if control is None or batch is None or batch.state in {"completed", "failed", "cancelled", "stopped"}:
+                return False
+            control["stop"].set()
+            return True
+
     def submit_batch(
         self,
         store: RunStore,
@@ -437,6 +447,7 @@ class JobManager:
             )
             control = {
                 "cancel": threading.Event(),
+                "stop": threading.Event(),
                 "thread": None,
                 "store": store,
                 "current_run_id": None,
@@ -520,6 +531,11 @@ class JobManager:
                     item.state = "cancelled"
                     item.error = "사용자가 배치를 취소했습니다."
                     batch.cancelled_count += 1
+                    continue
+
+                if control["stop"].is_set():
+                    item.state = "stopped"
+                    item.error = "Scheduling stopped; this point was not dispatched."
                     continue
 
                 item.state = "preparing"
@@ -647,6 +663,8 @@ class JobManager:
             batch.finished_at = utc_now()
             if control["cancel"].is_set() or batch.cancelled_count == total:
                 batch.state = "cancelled"
+            elif control["stop"].is_set():
+                batch.state = "stopped"
             elif (stop_on_failure and batch.failed_count > 0) or (batch.failed_count == total and total > 0) or (batch.completed_count + batch.cancelled_count < total and not control["cancel"].is_set()):
                 batch.state = "failed"
             else:

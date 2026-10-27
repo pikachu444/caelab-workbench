@@ -35,6 +35,14 @@ class DesignPointRecord:
     is_pareto: bool = False
     duration_sec: float = 0.0
     error_message: str = ""
+    mode: str = "ACTUAL"
+    run_id: str | None = None
+    attempts: list[dict] = field(default_factory=list)
+    source_point_id: str | None = None
+    revision: str = "1"
+    study_id: str = ""
+    batch_id: str | None = None
+    model_id: str | None = None
 
 
 class StudyManager:
@@ -103,7 +111,8 @@ class StudyManager:
 
     def update_pareto_front(self) -> list[str]:
         """Compute Pareto front on current feasible points."""
-        feasible = [r for r in self.records if r.status == "COMPLETED" and r.feasibility == "FEASIBLE"]
+        feasible = [r for r in self.records if r.status == "COMPLETED" and r.feasibility == "FEASIBLE"
+                    and all(o.id in r.objectives for o in self.objectives)]
         for r in self.records:
             r.is_pareto = False
 
@@ -111,12 +120,12 @@ class StudyManager:
             return []
 
         # Minimization vectors
-        vecs = [[r.objectives.get(o.id, 0.0) for o in self.objectives] for r in feasible]
-        p_ids = [r.point_id for r in feasible]
-        indices = pareto_front(vecs, p_ids)
-
         pareto_ids = []
-        for idx in indices:
-            feasible[idx].is_pareto = True
-            pareto_ids.append(feasible[idx].point_id)
+        for group in {(r.mode, r.revision) for r in feasible}:
+            rows = [r for r in feasible if (r.mode, r.revision) == group]
+            indices = pareto_front([[r.objectives[o.id] for o in self.objectives] for r in rows],
+                                   [r.point_id for r in rows])
+            for idx in indices:
+                rows[idx].is_pareto = True
+                pareto_ids.append(rows[idx].point_id)
         return pareto_ids
