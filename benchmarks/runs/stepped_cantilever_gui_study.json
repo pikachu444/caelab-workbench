@@ -1,0 +1,536 @@
+{
+  "format": "caelab-mdo-study",
+  "version": 1,
+  "name": "Study: stepped_cantilever_template.inp",
+  "deck_path": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\stepped_cantilever_template.inp",
+  "template": "*HEADING\r\n3-Segment Stepped Cantilever Shell Sizing Benchmark\r\n*NODE\r\n1, 0.0000, 0.0000, 0.0\r\n2, 0.0000, 25.0000, 0.0\r\n3, 0.0000, 50.0000, 0.0\r\n4, 0.0000, 75.0000, 0.0\r\n5, 0.0000, 100.0000, 0.0\r\n6, 33.3333, 0.0000, 0.0\r\n7, 33.3333, 25.0000, 0.0\r\n8, 33.3333, 50.0000, 0.0\r\n9, 33.3333, 75.0000, 0.0\r\n10, 33.3333, 100.0000, 0.0\r\n11, 66.6667, 0.0000, 0.0\r\n12, 66.6667, 25.0000, 0.0\r\n13, 66.6667, 50.0000, 0.0\r\n14, 66.6667, 75.0000, 0.0\r\n15, 66.6667, 100.0000, 0.0\r\n16, 100.0000, 0.0000, 0.0\r\n17, 100.0000, 25.0000, 0.0\r\n18, 100.0000, 50.0000, 0.0\r\n19, 100.0000, 75.0000, 0.0\r\n20, 100.0000, 100.0000, 0.0\r\n21, 133.3333, 0.0000, 0.0\r\n22, 133.3333, 25.0000, 0.0\r\n23, 133.3333, 50.0000, 0.0\r\n24, 133.3333, 75.0000, 0.0\r\n25, 133.3333, 100.0000, 0.0\r\n26, 166.6667, 0.0000, 0.0\r\n27, 166.6667, 25.0000, 0.0\r\n28, 166.6667, 50.0000, 0.0\r\n29, 166.6667, 75.0000, 0.0\r\n30, 166.6667, 100.0000, 0.0\r\n31, 200.0000, 0.0000, 0.0\r\n32, 200.0000, 25.0000, 0.0\r\n33, 200.0000, 50.0000, 0.0\r\n34, 200.0000, 75.0000, 0.0\r\n35, 200.0000, 100.0000, 0.0\r\n36, 233.3333, 0.0000, 0.0\r\n37, 233.3333, 25.0000, 0.0\r\n38, 233.3333, 50.0000, 0.0\r\n39, 233.3333, 75.0000, 0.0\r\n40, 233.3333, 100.0000, 0.0\r\n41, 266.6667, 0.0000, 0.0\r\n42, 266.6667, 25.0000, 0.0\r\n43, 266.6667, 50.0000, 0.0\r\n44, 266.6667, 75.0000, 0.0\r\n45, 266.6667, 100.0000, 0.0\r\n46, 300.0000, 0.0000, 0.0\r\n47, 300.0000, 25.0000, 0.0\r\n48, 300.0000, 50.0000, 0.0\r\n49, 300.0000, 75.0000, 0.0\r\n50, 300.0000, 100.0000, 0.0\r\n51, 333.3333, 0.0000, 0.0\r\n52, 333.3333, 25.0000, 0.0\r\n53, 333.3333, 50.0000, 0.0\r\n54, 333.3333, 75.0000, 0.0\r\n55, 333.3333, 100.0000, 0.0\r\n56, 366.6667, 0.0000, 0.0\r\n57, 366.6667, 25.0000, 0.0\r\n58, 366.6667, 50.0000, 0.0\r\n59, 366.6667, 75.0000, 0.0\r\n60, 366.6667, 100.0000, 0.0\r\n61, 400.0000, 0.0000, 0.0\r\n62, 400.0000, 25.0000, 0.0\r\n63, 400.0000, 50.0000, 0.0\r\n64, 400.0000, 75.0000, 0.0\r\n65, 400.0000, 100.0000, 0.0\r\n66, 433.3333, 0.0000, 0.0\r\n67, 433.3333, 25.0000, 0.0\r\n68, 433.3333, 50.0000, 0.0\r\n69, 433.3333, 75.0000, 0.0\r\n70, 433.3333, 100.0000, 0.0\r\n71, 466.6667, 0.0000, 0.0\r\n72, 466.6667, 25.0000, 0.0\r\n73, 466.6667, 50.0000, 0.0\r\n74, 466.6667, 75.0000, 0.0\r\n75, 466.6667, 100.0000, 0.0\r\n76, 500.0000, 0.0000, 0.0\r\n77, 500.0000, 25.0000, 0.0\r\n78, 500.0000, 50.0000, 0.0\r\n79, 500.0000, 75.0000, 0.0\r\n80, 500.0000, 100.0000, 0.0\r\n81, 533.3333, 0.0000, 0.0\r\n82, 533.3333, 25.0000, 0.0\r\n83, 533.3333, 50.0000, 0.0\r\n84, 533.3333, 75.0000, 0.0\r\n85, 533.3333, 100.0000, 0.0\r\n86, 566.6667, 0.0000, 0.0\r\n87, 566.6667, 25.0000, 0.0\r\n88, 566.6667, 50.0000, 0.0\r\n89, 566.6667, 75.0000, 0.0\r\n90, 566.6667, 100.0000, 0.0\r\n91, 600.0000, 0.0000, 0.0\r\n92, 600.0000, 25.0000, 0.0\r\n93, 600.0000, 50.0000, 0.0\r\n94, 600.0000, 75.0000, 0.0\r\n95, 600.0000, 100.0000, 0.0\r\n96, 633.3333, 0.0000, 0.0\r\n97, 633.3333, 25.0000, 0.0\r\n98, 633.3333, 50.0000, 0.0\r\n99, 633.3333, 75.0000, 0.0\r\n100, 633.3333, 100.0000, 0.0\r\n101, 666.6667, 0.0000, 0.0\r\n102, 666.6667, 25.0000, 0.0\r\n103, 666.6667, 50.0000, 0.0\r\n104, 666.6667, 75.0000, 0.0\r\n105, 666.6667, 100.0000, 0.0\r\n106, 700.0000, 0.0000, 0.0\r\n107, 700.0000, 25.0000, 0.0\r\n108, 700.0000, 50.0000, 0.0\r\n109, 700.0000, 75.0000, 0.0\r\n110, 700.0000, 100.0000, 0.0\r\n111, 733.3333, 0.0000, 0.0\r\n112, 733.3333, 25.0000, 0.0\r\n113, 733.3333, 50.0000, 0.0\r\n114, 733.3333, 75.0000, 0.0\r\n115, 733.3333, 100.0000, 0.0\r\n116, 766.6667, 0.0000, 0.0\r\n117, 766.6667, 25.0000, 0.0\r\n118, 766.6667, 50.0000, 0.0\r\n119, 766.6667, 75.0000, 0.0\r\n120, 766.6667, 100.0000, 0.0\r\n121, 800.0000, 0.0000, 0.0\r\n122, 800.0000, 25.0000, 0.0\r\n123, 800.0000, 50.0000, 0.0\r\n124, 800.0000, 75.0000, 0.0\r\n125, 800.0000, 100.0000, 0.0\r\n126, 833.3333, 0.0000, 0.0\r\n127, 833.3333, 25.0000, 0.0\r\n128, 833.3333, 50.0000, 0.0\r\n129, 833.3333, 75.0000, 0.0\r\n130, 833.3333, 100.0000, 0.0\r\n131, 866.6667, 0.0000, 0.0\r\n132, 866.6667, 25.0000, 0.0\r\n133, 866.6667, 50.0000, 0.0\r\n134, 866.6667, 75.0000, 0.0\r\n135, 866.6667, 100.0000, 0.0\r\n136, 900.0000, 0.0000, 0.0\r\n137, 900.0000, 25.0000, 0.0\r\n138, 900.0000, 50.0000, 0.0\r\n139, 900.0000, 75.0000, 0.0\r\n140, 900.0000, 100.0000, 0.0\r\n141, 933.3333, 0.0000, 0.0\r\n142, 933.3333, 25.0000, 0.0\r\n143, 933.3333, 50.0000, 0.0\r\n144, 933.3333, 75.0000, 0.0\r\n145, 933.3333, 100.0000, 0.0\r\n146, 966.6667, 0.0000, 0.0\r\n147, 966.6667, 25.0000, 0.0\r\n148, 966.6667, 50.0000, 0.0\r\n149, 966.6667, 75.0000, 0.0\r\n150, 966.6667, 100.0000, 0.0\r\n151, 1000.0000, 0.0000, 0.0\r\n152, 1000.0000, 25.0000, 0.0\r\n153, 1000.0000, 50.0000, 0.0\r\n154, 1000.0000, 75.0000, 0.0\r\n155, 1000.0000, 100.0000, 0.0\r\n*ELEMENT,TYPE=S4,ELSET=SEC1\r\n1, 1, 6, 7, 2\r\n2, 2, 7, 8, 3\r\n3, 3, 8, 9, 4\r\n4, 4, 9, 10, 5\r\n5, 6, 11, 12, 7\r\n6, 7, 12, 13, 8\r\n7, 8, 13, 14, 9\r\n8, 9, 14, 15, 10\r\n9, 11, 16, 17, 12\r\n10, 12, 17, 18, 13\r\n11, 13, 18, 19, 14\r\n12, 14, 19, 20, 15\r\n13, 16, 21, 22, 17\r\n14, 17, 22, 23, 18\r\n15, 18, 23, 24, 19\r\n16, 19, 24, 25, 20\r\n17, 21, 26, 27, 22\r\n18, 22, 27, 28, 23\r\n19, 23, 28, 29, 24\r\n20, 24, 29, 30, 25\r\n21, 26, 31, 32, 27\r\n22, 27, 32, 33, 28\r\n23, 28, 33, 34, 29\r\n24, 29, 34, 35, 30\r\n25, 31, 36, 37, 32\r\n26, 32, 37, 38, 33\r\n27, 33, 38, 39, 34\r\n28, 34, 39, 40, 35\r\n29, 36, 41, 42, 37\r\n30, 37, 42, 43, 38\r\n31, 38, 43, 44, 39\r\n32, 39, 44, 45, 40\r\n33, 41, 46, 47, 42\r\n34, 42, 47, 48, 43\r\n35, 43, 48, 49, 44\r\n36, 44, 49, 50, 45\r\n37, 46, 51, 52, 47\r\n38, 47, 52, 53, 48\r\n39, 48, 53, 54, 49\r\n40, 49, 54, 55, 50\r\n*ELEMENT,TYPE=S4,ELSET=SEC2\r\n41, 51, 56, 57, 52\r\n42, 52, 57, 58, 53\r\n43, 53, 58, 59, 54\r\n44, 54, 59, 60, 55\r\n45, 56, 61, 62, 57\r\n46, 57, 62, 63, 58\r\n47, 58, 63, 64, 59\r\n48, 59, 64, 65, 60\r\n49, 61, 66, 67, 62\r\n50, 62, 67, 68, 63\r\n51, 63, 68, 69, 64\r\n52, 64, 69, 70, 65\r\n53, 66, 71, 72, 67\r\n54, 67, 72, 73, 68\r\n55, 68, 73, 74, 69\r\n56, 69, 74, 75, 70\r\n57, 71, 76, 77, 72\r\n58, 72, 77, 78, 73\r\n59, 73, 78, 79, 74\r\n60, 74, 79, 80, 75\r\n61, 76, 81, 82, 77\r\n62, 77, 82, 83, 78\r\n63, 78, 83, 84, 79\r\n64, 79, 84, 85, 80\r\n65, 81, 86, 87, 82\r\n66, 82, 87, 88, 83\r\n67, 83, 88, 89, 84\r\n68, 84, 89, 90, 85\r\n69, 86, 91, 92, 87\r\n70, 87, 92, 93, 88\r\n71, 88, 93, 94, 89\r\n72, 89, 94, 95, 90\r\n73, 91, 96, 97, 92\r\n74, 92, 97, 98, 93\r\n75, 93, 98, 99, 94\r\n76, 94, 99, 100, 95\r\n77, 96, 101, 102, 97\r\n78, 97, 102, 103, 98\r\n79, 98, 103, 104, 99\r\n80, 99, 104, 105, 100\r\n*ELEMENT,TYPE=S4,ELSET=SEC3\r\n81, 101, 106, 107, 102\r\n82, 102, 107, 108, 103\r\n83, 103, 108, 109, 104\r\n84, 104, 109, 110, 105\r\n85, 106, 111, 112, 107\r\n86, 107, 112, 113, 108\r\n87, 108, 113, 114, 109\r\n88, 109, 114, 115, 110\r\n89, 111, 116, 117, 112\r\n90, 112, 117, 118, 113\r\n91, 113, 118, 119, 114\r\n92, 114, 119, 120, 115\r\n93, 116, 121, 122, 117\r\n94, 117, 122, 123, 118\r\n95, 118, 123, 124, 119\r\n96, 119, 124, 125, 120\r\n97, 121, 126, 127, 122\r\n98, 122, 127, 128, 123\r\n99, 123, 128, 129, 124\r\n100, 124, 129, 130, 125\r\n101, 126, 131, 132, 127\r\n102, 127, 132, 133, 128\r\n103, 128, 133, 134, 129\r\n104, 129, 134, 135, 130\r\n105, 131, 136, 137, 132\r\n106, 132, 137, 138, 133\r\n107, 133, 138, 139, 134\r\n108, 134, 139, 140, 135\r\n109, 136, 141, 142, 137\r\n110, 137, 142, 143, 138\r\n111, 138, 143, 144, 139\r\n112, 139, 144, 145, 140\r\n113, 141, 146, 147, 142\r\n114, 142, 147, 148, 143\r\n115, 143, 148, 149, 144\r\n116, 144, 149, 150, 145\r\n117, 146, 151, 152, 147\r\n118, 147, 152, 153, 148\r\n119, 148, 153, 154, 149\r\n120, 149, 154, 155, 150\r\n*ELSET,ELSET=EALL\r\nSEC1, SEC2, SEC3\r\n*NSET,NSET=FIX\r\n1, 2, 3, 4, 5\r\n*MATERIAL,NAME=STEEL\r\n*ELASTIC\r\n210000.0, 0.3\r\n*DENSITY\r\n7.85e-9\r\n*SHELL SECTION,ELSET=SEC1,MATERIAL=STEEL\r\n<T1>\r\n*SHELL SECTION,ELSET=SEC2,MATERIAL=STEEL\r\n<T2>\r\n*SHELL SECTION,ELSET=SEC3,MATERIAL=STEEL\r\n<T3>\r\n*BOUNDARY\r\nFIX, 1, 6, 0.0\r\n*STEP\r\n*STATIC\r\n*CLOAD\r\n151, 3, -20.0\r\n152, 3, -20.0\r\n153, 3, -20.0\r\n154, 3, -20.0\r\n155, 3, -20.0\r\n*NODE FILE,OUTPUT=3D\r\nU\r\n*EL FILE\r\nS,NOE\r\n*EL PRINT,ELSET=EALL,TOTALS=ONLY\r\nEMAS\r\n*END STEP\r\n",
+  "execution_template": "*HEADING\r\n3-Segment Stepped Cantilever Shell Sizing Benchmark\r\n*NODE\r\n1, 0.0000, 0.0000, 0.0\r\n2, 0.0000, 25.0000, 0.0\r\n3, 0.0000, 50.0000, 0.0\r\n4, 0.0000, 75.0000, 0.0\r\n5, 0.0000, 100.0000, 0.0\r\n6, 33.3333, 0.0000, 0.0\r\n7, 33.3333, 25.0000, 0.0\r\n8, 33.3333, 50.0000, 0.0\r\n9, 33.3333, 75.0000, 0.0\r\n10, 33.3333, 100.0000, 0.0\r\n11, 66.6667, 0.0000, 0.0\r\n12, 66.6667, 25.0000, 0.0\r\n13, 66.6667, 50.0000, 0.0\r\n14, 66.6667, 75.0000, 0.0\r\n15, 66.6667, 100.0000, 0.0\r\n16, 100.0000, 0.0000, 0.0\r\n17, 100.0000, 25.0000, 0.0\r\n18, 100.0000, 50.0000, 0.0\r\n19, 100.0000, 75.0000, 0.0\r\n20, 100.0000, 100.0000, 0.0\r\n21, 133.3333, 0.0000, 0.0\r\n22, 133.3333, 25.0000, 0.0\r\n23, 133.3333, 50.0000, 0.0\r\n24, 133.3333, 75.0000, 0.0\r\n25, 133.3333, 100.0000, 0.0\r\n26, 166.6667, 0.0000, 0.0\r\n27, 166.6667, 25.0000, 0.0\r\n28, 166.6667, 50.0000, 0.0\r\n29, 166.6667, 75.0000, 0.0\r\n30, 166.6667, 100.0000, 0.0\r\n31, 200.0000, 0.0000, 0.0\r\n32, 200.0000, 25.0000, 0.0\r\n33, 200.0000, 50.0000, 0.0\r\n34, 200.0000, 75.0000, 0.0\r\n35, 200.0000, 100.0000, 0.0\r\n36, 233.3333, 0.0000, 0.0\r\n37, 233.3333, 25.0000, 0.0\r\n38, 233.3333, 50.0000, 0.0\r\n39, 233.3333, 75.0000, 0.0\r\n40, 233.3333, 100.0000, 0.0\r\n41, 266.6667, 0.0000, 0.0\r\n42, 266.6667, 25.0000, 0.0\r\n43, 266.6667, 50.0000, 0.0\r\n44, 266.6667, 75.0000, 0.0\r\n45, 266.6667, 100.0000, 0.0\r\n46, 300.0000, 0.0000, 0.0\r\n47, 300.0000, 25.0000, 0.0\r\n48, 300.0000, 50.0000, 0.0\r\n49, 300.0000, 75.0000, 0.0\r\n50, 300.0000, 100.0000, 0.0\r\n51, 333.3333, 0.0000, 0.0\r\n52, 333.3333, 25.0000, 0.0\r\n53, 333.3333, 50.0000, 0.0\r\n54, 333.3333, 75.0000, 0.0\r\n55, 333.3333, 100.0000, 0.0\r\n56, 366.6667, 0.0000, 0.0\r\n57, 366.6667, 25.0000, 0.0\r\n58, 366.6667, 50.0000, 0.0\r\n59, 366.6667, 75.0000, 0.0\r\n60, 366.6667, 100.0000, 0.0\r\n61, 400.0000, 0.0000, 0.0\r\n62, 400.0000, 25.0000, 0.0\r\n63, 400.0000, 50.0000, 0.0\r\n64, 400.0000, 75.0000, 0.0\r\n65, 400.0000, 100.0000, 0.0\r\n66, 433.3333, 0.0000, 0.0\r\n67, 433.3333, 25.0000, 0.0\r\n68, 433.3333, 50.0000, 0.0\r\n69, 433.3333, 75.0000, 0.0\r\n70, 433.3333, 100.0000, 0.0\r\n71, 466.6667, 0.0000, 0.0\r\n72, 466.6667, 25.0000, 0.0\r\n73, 466.6667, 50.0000, 0.0\r\n74, 466.6667, 75.0000, 0.0\r\n75, 466.6667, 100.0000, 0.0\r\n76, 500.0000, 0.0000, 0.0\r\n77, 500.0000, 25.0000, 0.0\r\n78, 500.0000, 50.0000, 0.0\r\n79, 500.0000, 75.0000, 0.0\r\n80, 500.0000, 100.0000, 0.0\r\n81, 533.3333, 0.0000, 0.0\r\n82, 533.3333, 25.0000, 0.0\r\n83, 533.3333, 50.0000, 0.0\r\n84, 533.3333, 75.0000, 0.0\r\n85, 533.3333, 100.0000, 0.0\r\n86, 566.6667, 0.0000, 0.0\r\n87, 566.6667, 25.0000, 0.0\r\n88, 566.6667, 50.0000, 0.0\r\n89, 566.6667, 75.0000, 0.0\r\n90, 566.6667, 100.0000, 0.0\r\n91, 600.0000, 0.0000, 0.0\r\n92, 600.0000, 25.0000, 0.0\r\n93, 600.0000, 50.0000, 0.0\r\n94, 600.0000, 75.0000, 0.0\r\n95, 600.0000, 100.0000, 0.0\r\n96, 633.3333, 0.0000, 0.0\r\n97, 633.3333, 25.0000, 0.0\r\n98, 633.3333, 50.0000, 0.0\r\n99, 633.3333, 75.0000, 0.0\r\n100, 633.3333, 100.0000, 0.0\r\n101, 666.6667, 0.0000, 0.0\r\n102, 666.6667, 25.0000, 0.0\r\n103, 666.6667, 50.0000, 0.0\r\n104, 666.6667, 75.0000, 0.0\r\n105, 666.6667, 100.0000, 0.0\r\n106, 700.0000, 0.0000, 0.0\r\n107, 700.0000, 25.0000, 0.0\r\n108, 700.0000, 50.0000, 0.0\r\n109, 700.0000, 75.0000, 0.0\r\n110, 700.0000, 100.0000, 0.0\r\n111, 733.3333, 0.0000, 0.0\r\n112, 733.3333, 25.0000, 0.0\r\n113, 733.3333, 50.0000, 0.0\r\n114, 733.3333, 75.0000, 0.0\r\n115, 733.3333, 100.0000, 0.0\r\n116, 766.6667, 0.0000, 0.0\r\n117, 766.6667, 25.0000, 0.0\r\n118, 766.6667, 50.0000, 0.0\r\n119, 766.6667, 75.0000, 0.0\r\n120, 766.6667, 100.0000, 0.0\r\n121, 800.0000, 0.0000, 0.0\r\n122, 800.0000, 25.0000, 0.0\r\n123, 800.0000, 50.0000, 0.0\r\n124, 800.0000, 75.0000, 0.0\r\n125, 800.0000, 100.0000, 0.0\r\n126, 833.3333, 0.0000, 0.0\r\n127, 833.3333, 25.0000, 0.0\r\n128, 833.3333, 50.0000, 0.0\r\n129, 833.3333, 75.0000, 0.0\r\n130, 833.3333, 100.0000, 0.0\r\n131, 866.6667, 0.0000, 0.0\r\n132, 866.6667, 25.0000, 0.0\r\n133, 866.6667, 50.0000, 0.0\r\n134, 866.6667, 75.0000, 0.0\r\n135, 866.6667, 100.0000, 0.0\r\n136, 900.0000, 0.0000, 0.0\r\n137, 900.0000, 25.0000, 0.0\r\n138, 900.0000, 50.0000, 0.0\r\n139, 900.0000, 75.0000, 0.0\r\n140, 900.0000, 100.0000, 0.0\r\n141, 933.3333, 0.0000, 0.0\r\n142, 933.3333, 25.0000, 0.0\r\n143, 933.3333, 50.0000, 0.0\r\n144, 933.3333, 75.0000, 0.0\r\n145, 933.3333, 100.0000, 0.0\r\n146, 966.6667, 0.0000, 0.0\r\n147, 966.6667, 25.0000, 0.0\r\n148, 966.6667, 50.0000, 0.0\r\n149, 966.6667, 75.0000, 0.0\r\n150, 966.6667, 100.0000, 0.0\r\n151, 1000.0000, 0.0000, 0.0\r\n152, 1000.0000, 25.0000, 0.0\r\n153, 1000.0000, 50.0000, 0.0\r\n154, 1000.0000, 75.0000, 0.0\r\n155, 1000.0000, 100.0000, 0.0\r\n*ELEMENT,TYPE=S4,ELSET=SEC1\r\n1, 1, 6, 7, 2\r\n2, 2, 7, 8, 3\r\n3, 3, 8, 9, 4\r\n4, 4, 9, 10, 5\r\n5, 6, 11, 12, 7\r\n6, 7, 12, 13, 8\r\n7, 8, 13, 14, 9\r\n8, 9, 14, 15, 10\r\n9, 11, 16, 17, 12\r\n10, 12, 17, 18, 13\r\n11, 13, 18, 19, 14\r\n12, 14, 19, 20, 15\r\n13, 16, 21, 22, 17\r\n14, 17, 22, 23, 18\r\n15, 18, 23, 24, 19\r\n16, 19, 24, 25, 20\r\n17, 21, 26, 27, 22\r\n18, 22, 27, 28, 23\r\n19, 23, 28, 29, 24\r\n20, 24, 29, 30, 25\r\n21, 26, 31, 32, 27\r\n22, 27, 32, 33, 28\r\n23, 28, 33, 34, 29\r\n24, 29, 34, 35, 30\r\n25, 31, 36, 37, 32\r\n26, 32, 37, 38, 33\r\n27, 33, 38, 39, 34\r\n28, 34, 39, 40, 35\r\n29, 36, 41, 42, 37\r\n30, 37, 42, 43, 38\r\n31, 38, 43, 44, 39\r\n32, 39, 44, 45, 40\r\n33, 41, 46, 47, 42\r\n34, 42, 47, 48, 43\r\n35, 43, 48, 49, 44\r\n36, 44, 49, 50, 45\r\n37, 46, 51, 52, 47\r\n38, 47, 52, 53, 48\r\n39, 48, 53, 54, 49\r\n40, 49, 54, 55, 50\r\n*ELEMENT,TYPE=S4,ELSET=SEC2\r\n41, 51, 56, 57, 52\r\n42, 52, 57, 58, 53\r\n43, 53, 58, 59, 54\r\n44, 54, 59, 60, 55\r\n45, 56, 61, 62, 57\r\n46, 57, 62, 63, 58\r\n47, 58, 63, 64, 59\r\n48, 59, 64, 65, 60\r\n49, 61, 66, 67, 62\r\n50, 62, 67, 68, 63\r\n51, 63, 68, 69, 64\r\n52, 64, 69, 70, 65\r\n53, 66, 71, 72, 67\r\n54, 67, 72, 73, 68\r\n55, 68, 73, 74, 69\r\n56, 69, 74, 75, 70\r\n57, 71, 76, 77, 72\r\n58, 72, 77, 78, 73\r\n59, 73, 78, 79, 74\r\n60, 74, 79, 80, 75\r\n61, 76, 81, 82, 77\r\n62, 77, 82, 83, 78\r\n63, 78, 83, 84, 79\r\n64, 79, 84, 85, 80\r\n65, 81, 86, 87, 82\r\n66, 82, 87, 88, 83\r\n67, 83, 88, 89, 84\r\n68, 84, 89, 90, 85\r\n69, 86, 91, 92, 87\r\n70, 87, 92, 93, 88\r\n71, 88, 93, 94, 89\r\n72, 89, 94, 95, 90\r\n73, 91, 96, 97, 92\r\n74, 92, 97, 98, 93\r\n75, 93, 98, 99, 94\r\n76, 94, 99, 100, 95\r\n77, 96, 101, 102, 97\r\n78, 97, 102, 103, 98\r\n79, 98, 103, 104, 99\r\n80, 99, 104, 105, 100\r\n*ELEMENT,TYPE=S4,ELSET=SEC3\r\n81, 101, 106, 107, 102\r\n82, 102, 107, 108, 103\r\n83, 103, 108, 109, 104\r\n84, 104, 109, 110, 105\r\n85, 106, 111, 112, 107\r\n86, 107, 112, 113, 108\r\n87, 108, 113, 114, 109\r\n88, 109, 114, 115, 110\r\n89, 111, 116, 117, 112\r\n90, 112, 117, 118, 113\r\n91, 113, 118, 119, 114\r\n92, 114, 119, 120, 115\r\n93, 116, 121, 122, 117\r\n94, 117, 122, 123, 118\r\n95, 118, 123, 124, 119\r\n96, 119, 124, 125, 120\r\n97, 121, 126, 127, 122\r\n98, 122, 127, 128, 123\r\n99, 123, 128, 129, 124\r\n100, 124, 129, 130, 125\r\n101, 126, 131, 132, 127\r\n102, 127, 132, 133, 128\r\n103, 128, 133, 134, 129\r\n104, 129, 134, 135, 130\r\n105, 131, 136, 137, 132\r\n106, 132, 137, 138, 133\r\n107, 133, 138, 139, 134\r\n108, 134, 139, 140, 135\r\n109, 136, 141, 142, 137\r\n110, 137, 142, 143, 138\r\n111, 138, 143, 144, 139\r\n112, 139, 144, 145, 140\r\n113, 141, 146, 147, 142\r\n114, 142, 147, 148, 143\r\n115, 143, 148, 149, 144\r\n116, 144, 149, 150, 145\r\n117, 146, 151, 152, 147\r\n118, 147, 152, 153, 148\r\n119, 148, 153, 154, 149\r\n120, 149, 154, 155, 150\r\n*ELSET,ELSET=EALL\r\nSEC1, SEC2, SEC3\r\n*NSET,NSET=FIX\r\n1, 2, 3, 4, 5\r\n*MATERIAL,NAME=STEEL\r\n*ELASTIC\r\n210000.0, 0.3\r\n*DENSITY\r\n7.85e-9\r\n*SHELL SECTION,ELSET=SEC1,MATERIAL=STEEL\r\n<T1>\r\n*SHELL SECTION,ELSET=SEC2,MATERIAL=STEEL\r\n<T2>\r\n*SHELL SECTION,ELSET=SEC3,MATERIAL=STEEL\r\n<T3>\r\n*BOUNDARY\r\nFIX, 1, 6, 0.0\r\n*STEP\r\n*STATIC\r\n*CLOAD\r\n151, 3, -20.0\r\n152, 3, -20.0\r\n153, 3, -20.0\r\n154, 3, -20.0\r\n155, 3, -20.0\r\n*NODE FILE,OUTPUT=3D\r\nU\r\n*EL FILE\r\nS,NOE\r\n*EL PRINT,ELSET=EALL,TOTALS=ONLY\r\nEMAS\r\n*END STEP\r\n",
+  "source_revisions": {
+    "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\stepped_cantilever_template.inp": "fbe4fc934bb0aaad7a5a87e31a5c4cb920e3c8223fddde35f3471c19c86cf965"
+  },
+  "response_units": {
+    "mass_eall": "kg",
+    "disp": "mm",
+    "stress": "MPa"
+  },
+  "variables": [
+    {
+      "id": "t1",
+      "name": "T1",
+      "unit": "mm",
+      "lower": 2.0,
+      "upper": 20.0,
+      "initial": 12.0,
+      "transform": "linear"
+    },
+    {
+      "id": "t2",
+      "name": "T2",
+      "unit": "mm",
+      "lower": 2.0,
+      "upper": 20.0,
+      "initial": 12.0,
+      "transform": "linear"
+    },
+    {
+      "id": "t3",
+      "name": "T3",
+      "unit": "mm",
+      "lower": 2.0,
+      "upper": 20.0,
+      "initial": 12.0,
+      "transform": "linear"
+    }
+  ],
+  "objectives": [
+    {
+      "id": "mass",
+      "response_id": "mass_eall",
+      "sense": "MIN",
+      "target": null,
+      "target_band": null,
+      "offset": 0.0,
+      "scale": 0.001,
+      "weight": 1.0
+    },
+    {
+      "id": "disp",
+      "response_id": "disp",
+      "sense": "MIN",
+      "target": null,
+      "target_band": null,
+      "offset": 0.0,
+      "scale": 1.0,
+      "weight": 1.0
+    }
+  ],
+  "constraints": [
+    {
+      "id": "stress_limit",
+      "response_id": "stress",
+      "kind": "UPPER",
+      "limit": 120.0,
+      "scale": 120.0,
+      "tolerance": 0.0,
+      "marginal_band": 0.0,
+      "weight": 1.0,
+      "expression": null,
+      "dependencies": [],
+      "unit": "MPa"
+    }
+  ],
+  "records": [
+    {
+      "point_id": "DP_0001",
+      "index": 1,
+      "name": "Baseline",
+      "physical_values": {
+        "t1": 12.0,
+        "t2": 12.0,
+        "t3": 12.0
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 10.898844568785083,
+        "stress": 39.51805596698721,
+        "mass_eall": 0.00942
+      },
+      "feasibility": "FEASIBLE",
+      "total_violation": 0.0,
+      "objectives": {
+        "mass": 9.42,
+        "disp": 10.898844568785083
+      },
+      "is_pareto": true,
+      "duration_sec": 0.4761411000508815,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0002",
+      "index": 2,
+      "name": "Point 2",
+      "physical_values": {
+        "t1": 14.562824274774284,
+        "t2": 18.5944049644995,
+        "t3": 10.350293246878522
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 5.663147773324316,
+        "stress": 26.81563397998733,
+        "mass_eall": 0.01138446
+      },
+      "feasibility": "FEASIBLE",
+      "total_violation": 0.0,
+      "objectives": {
+        "mass": 11.38446,
+        "disp": 5.663147773324316
+      },
+      "is_pareto": true,
+      "duration_sec": 0.4429540999699384,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0003",
+      "index": 3,
+      "name": "Point 3",
+      "physical_values": {
+        "t1": 19.32447538337275,
+        "t2": 7.20352031008678,
+        "t3": 17.539467695889616
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 14.87168224659322,
+        "stress": 70.74344948228634,
+        "mass_eall": 0.011531
+      },
+      "feasibility": "FEASIBLE",
+      "total_violation": 0.0,
+      "objectives": {
+        "mass": 11.530999999999999,
+        "disp": 14.87168224659322
+      },
+      "is_pareto": false,
+      "duration_sec": 0.4692532999906689,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0004",
+      "index": 4,
+      "name": "Point 4",
+      "physical_values": {
+        "t1": 10.410889811892753,
+        "t2": 12.97576452929531,
+        "t3": 13.03134036274575
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 14.245974736826081,
+        "stress": 52.45806223466001,
+        "mass_eall": 0.009529377
+      },
+      "feasibility": "FEASIBLE",
+      "total_violation": 0.0,
+      "objectives": {
+        "mass": 9.529377,
+        "disp": 14.245974736826081
+      },
+      "is_pareto": false,
+      "duration_sec": 0.4681303999386728,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0005",
+      "index": 5,
+      "name": "Point 5",
+      "physical_values": {
+        "t1": 9.305151768722856,
+        "t2": 4.544006944212381,
+        "t3": 15.758919611205325
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 67.91400605391416,
+        "stress": 175.72066449320752,
+        "mass_eall": 0.007747442
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.46433887077672936,
+      "objectives": {
+        "mass": 7.747442,
+        "disp": 67.91400605391416
+      },
+      "is_pareto": false,
+      "duration_sec": 0.41058819997124374,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0006",
+      "index": 6,
+      "name": "Point 6",
+      "physical_values": {
+        "t1": 5.014510311664408,
+        "t2": 17.85290816574409,
+        "t3": 4.647411109984475
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 110.56558229843756,
+        "stress": 222.2343870309327,
+        "mass_eall": 0.007199712
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.8519532252577726,
+      "objectives": {
+        "mass": 7.199712,
+        "disp": 110.56558229843756
+      },
+      "is_pareto": false,
+      "duration_sec": 0.5070181000046432,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0007",
+      "index": 7,
+      "name": "Point 7",
+      "physical_values": {
+        "t1": 17.994524304728202,
+        "t2": 3.1665055174126646,
+        "t3": 3.2895816894014835
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 172.84815636249652,
+        "stress": 363.5551934529981,
+        "mass_eall": 0.006397904
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 2.0296266121083173,
+      "objectives": {
+        "mass": 6.3979040000000005,
+        "disp": 172.84815636249652
+      },
+      "is_pareto": false,
+      "duration_sec": 0.5322209999430925,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0008",
+      "index": 8,
+      "name": "Point 8",
+      "physical_values": {
+        "t1": 3.069364451192167,
+        "t2": 9.137959553608813,
+        "t3": 8.024668653482626
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 453.15430581628254,
+        "stress": 590.950908336979,
+        "mass_eall": 0.005294038
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 3.924590902808158,
+      "objectives": {
+        "mass": 5.294038,
+        "disp": 453.15430581628254
+      },
+      "is_pareto": false,
+      "duration_sec": 0.6584318999666721,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0009",
+      "index": 9,
+      "name": "Point 9",
+      "physical_values": {
+        "t1": 7.77434646431033,
+        "t2": 11.66056464085541,
+        "t3": 18.43028399970932
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 31.138640187647503,
+        "stress": 93.54283801383312,
+        "mass_eall": 0.009908074
+      },
+      "feasibility": "FEASIBLE",
+      "total_violation": 0.0,
+      "objectives": {
+        "mass": 9.908074,
+        "disp": 31.138640187647503
+      },
+      "is_pareto": false,
+      "duration_sec": 0.6980226000305265,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0010",
+      "index": 10,
+      "name": "Point 10",
+      "physical_values": {
+        "t1": 12.102779139448602,
+        "t2": 14.00663617256263,
+        "t3": 6.341405037255914
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 11.92775313026889,
+        "stress": 44.003861821346995,
+        "mass_eall": 0.008491296
+      },
+      "feasibility": "FEASIBLE",
+      "total_violation": 0.0,
+      "objectives": {
+        "mass": 8.491296,
+        "disp": 11.92775313026889
+      },
+      "is_pareto": true,
+      "duration_sec": 0.6650894999038428,
+      "error_message": ""
+    }
+  ],
+  "point_sources": {
+    "DP_0001": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "202c594ae29d4cb586e8f061a08123dc",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc",
+      "values": {
+        "t1": 12.0,
+        "t2": 12.0,
+        "t3": 12.0
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\job.json": "e17df335e3e4110b23b02c1d3e37fb1bb6823deaf3dd70e087b97c5b186287ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\model.inp": "2fa35da8835eb26ad09d2aa4b300dd4313b39194ab1aab9e5a6894088230823d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\source\\000000.inp": "2fa35da8835eb26ad09d2aa4b300dd4313b39194ab1aab9e5a6894088230823d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\model.frd": "0af896ddca9bb0fa132f9abff1edbe7fbc859e1c1c6644ace615c56e477f73a3",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\model.dat": "037d72ba7d11bb0037b54cbcb8162403f29990dfb11ce01693450db81f8c0ff9",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\202c594ae29d4cb586e8f061a08123dc\\results\\frame-000000.vtu": "a1fbf8305af25b55bae3fc66abd9eef02927c14948c0c7d5c0654a42d9c2bc2f"
+      }
+    },
+    "DP_0002": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "1fbe37606aef4b5bb17c6b43115a8842",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842",
+      "values": {
+        "t1": 14.562824274774284,
+        "t2": 18.5944049644995,
+        "t3": 10.350293246878522
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\job.json": "3f7b64135548e22e82cd22a55d25350fade816d85b97fc3fea513560c8182873",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\model.inp": "b4ccfeae237b484a9ec0481ea56409dfa30562c9101b910c575a34b6012517f9",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\source\\000000.inp": "b4ccfeae237b484a9ec0481ea56409dfa30562c9101b910c575a34b6012517f9",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\model.frd": "93d810b044a2ada0ebf3cfaada84660b6968596d09ced7f9ee28eee2df74cd8d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\model.dat": "387f5110ee9250575728532d4199cc13414566af05971b1750afb4d6d1f96a6e",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\1fbe37606aef4b5bb17c6b43115a8842\\results\\frame-000000.vtu": "ecc3e6193da50467467063aa35c7ab85cebbf41d278badcd4e90afe694dddafd"
+      }
+    },
+    "DP_0003": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "145bd8acdc5a4d91b905fb1aff9e87c6",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6",
+      "values": {
+        "t1": 19.32447538337275,
+        "t2": 7.20352031008678,
+        "t3": 17.539467695889616
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\job.json": "43f02b7ea43e38debbcd6442d0da9ac568bbd07fb4fc615f2750d1e38e442c65",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\model.inp": "9b13bf575d52a866b27b3a7e96075c7e9ee999d9200bd5a14f03799a1467fac5",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\source\\000000.inp": "9b13bf575d52a866b27b3a7e96075c7e9ee999d9200bd5a14f03799a1467fac5",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\model.frd": "608e6bc15b61199a219afc1d922d89fbe4d0466432526af4848d5e8821c29601",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\model.dat": "b2188b228a207eb680e479d63183e811caf5c6888bdda6f09a428b10d73742c2",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\145bd8acdc5a4d91b905fb1aff9e87c6\\results\\frame-000000.vtu": "bb7b2b0c8068830251a3a1986e68cb63722de243471dccb3447068626969cd6b"
+      }
+    },
+    "DP_0004": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "887f5e6250ad4da6b7e3e05fa82eef60",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60",
+      "values": {
+        "t1": 10.410889811892753,
+        "t2": 12.97576452929531,
+        "t3": 13.03134036274575
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\job.json": "537ce9ac24d47c75225e7c5907269a4a32f394050f2bb4372624ede72d09ab6f",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\model.inp": "937814be6ef22ba25ea8899c168981c32c3a2c9c0209c910f58c917d524efb9b",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\source\\000000.inp": "937814be6ef22ba25ea8899c168981c32c3a2c9c0209c910f58c917d524efb9b",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\model.frd": "069dca01b072ec3cea705db2717a0104e455b9ccf38bd1e13decbbbd4ceccc32",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\model.dat": "a41396ce5c726f59af3dbee8f2de35ec2921a012619947970887f42b52f7c73b",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\887f5e6250ad4da6b7e3e05fa82eef60\\results\\frame-000000.vtu": "2e7d8723c6d24c00b810fd85fd944b0548eaaf55227dd8940d83935479d1cf1c"
+      }
+    },
+    "DP_0005": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "200e1ddb8c82448fab4511e27a2cce94",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94",
+      "values": {
+        "t1": 9.305151768722856,
+        "t2": 4.544006944212381,
+        "t3": 15.758919611205325
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\job.json": "e6f5789cf4b1b2a721aa42673edaa8d9d2c95e1a23c787b7ee71ce82c79179f7",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\model.inp": "b517893ae7c09aaa731f4fdb2d4b5f8994311008e6b93ef70ea706bcbfb85784",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\source\\000000.inp": "b517893ae7c09aaa731f4fdb2d4b5f8994311008e6b93ef70ea706bcbfb85784",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\model.frd": "fe1c0638ff8c9f6f6b4217a5208e462abfa181ccacd679177f47ba4c1ccf20be",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\model.dat": "d5ae36330143ac71b73b9fc9bfdf44f4f5946d8286ebdd531e8f7c3c464f118a",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\200e1ddb8c82448fab4511e27a2cce94\\results\\frame-000000.vtu": "440df0ce53826be0d478dc0a7a9120460c12092fbbfa3d50178eefba277933ec"
+      }
+    },
+    "DP_0006": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "ed8c9297a1b64d10a7e0b7c274f79615",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615",
+      "values": {
+        "t1": 5.014510311664408,
+        "t2": 17.85290816574409,
+        "t3": 4.647411109984475
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\job.json": "4beca341765c59223571e0b52cb18e2e5f875287deedec0ed5417382d3042ee7",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\model.inp": "a6c677e9f8f2cf91d195b940948cc3450bbf6a3f14052cedc247f0e722a2ead6",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\source\\000000.inp": "a6c677e9f8f2cf91d195b940948cc3450bbf6a3f14052cedc247f0e722a2ead6",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\model.frd": "7571602b976dd7eb0d0e2b2be17931f6a842fce9825c4a21b01840f5680872a2",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\model.dat": "9c76419128c852b8bd082c93c380efe23a9319cec0ec778285b49128c18ed99c",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\ed8c9297a1b64d10a7e0b7c274f79615\\results\\frame-000000.vtu": "72d074eceb8c6ac632afb99c6bc8408c61c1f4b226bbaebebd04f9ebed91e9ad"
+      }
+    },
+    "DP_0007": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "963d34ee58454a90a11c79bc613e2a9b",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b",
+      "values": {
+        "t1": 17.994524304728202,
+        "t2": 3.1665055174126646,
+        "t3": 3.2895816894014835
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\job.json": "b42fd87d3307ad850c04939c5767df350755bc1925f23567d0df7d10cfec6226",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\model.inp": "5f4c843f53591240c29e4397201d9e693222127f29d636fb5cadbc6f6cae1704",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\source\\000000.inp": "5f4c843f53591240c29e4397201d9e693222127f29d636fb5cadbc6f6cae1704",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\model.frd": "c970a6136e053bc5b45a019418862c8eba9d2777988eced232c70a51474b336e",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\model.dat": "e8a6426bde41c5808f5982883d7bf75fd46f6a972942b16613e0b129d1d72062",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\963d34ee58454a90a11c79bc613e2a9b\\results\\frame-000000.vtu": "de2b7e26021b777b77023e343a2b68b9f0320e6e3379b0547e338a9eaa7fe2c4"
+      }
+    },
+    "DP_0008": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "523f836f966d4c589860419b5d3a0d50",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50",
+      "values": {
+        "t1": 3.069364451192167,
+        "t2": 9.137959553608813,
+        "t3": 8.024668653482626
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\job.json": "5df9af14a886286a5fd98ba3269b53c5c686f800f55847a7d521511b0dc3e6c8",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\model.inp": "07dfa8a26da630f287e636e9d21718d8a0fdbe8bb5c7af7ffbffc07942ec3d8c",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\source\\000000.inp": "07dfa8a26da630f287e636e9d21718d8a0fdbe8bb5c7af7ffbffc07942ec3d8c",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\model.frd": "26ab6f4c177d2b679c04dac2b61c6d80870c8d590371809f5059ab37920a39fe",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\model.dat": "7401d12236c9ded7590bc94105271f03744578d5f13508b47186617e5610e7db",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\523f836f966d4c589860419b5d3a0d50\\results\\frame-000000.vtu": "fbf036c92e5b7419e57ab3f2dce74a4f7e8f5f98b1267d567f079d412d7528ba"
+      }
+    },
+    "DP_0009": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "7676a9224c9849b2b606ca391e5b5a10",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10",
+      "values": {
+        "t1": 7.77434646431033,
+        "t2": 11.66056464085541,
+        "t3": 18.43028399970932
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\job.json": "48791523f3fa3bf745907650fb49f88f7de38fe068ec44f75193b9ec8ae72137",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\model.inp": "e2813ceb458baf0f58da42c5b4d1d058116c85d08af80e722fe6eb51c876fd37",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\source\\000000.inp": "e2813ceb458baf0f58da42c5b4d1d058116c85d08af80e722fe6eb51c876fd37",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\model.frd": "ed0f9887f79330839bc5cd569f9fbb3dfbf0c730963daf151f16e2dde04d8715",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\model.dat": "bdb1186533528e6b393bafbd1ea55e4c0479115ed8bd4aec0a6ea82078ec4fbc",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\7676a9224c9849b2b606ca391e5b5a10\\results\\frame-000000.vtu": "61fe2d3daa8153d57e8d45e634e952817659d8847cb82275a26c78a0f2e7b424"
+      }
+    },
+    "DP_0010": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json",
+      "run_id": "9a9d915a0d2944ba9dfdf379c575d7c9",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9",
+      "values": {
+        "t1": 12.102779139448602,
+        "t2": 14.00663617256263,
+        "t3": 6.341405037255914
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\job.json": "5acac372f6d2af0f7b1935d4aa8173ee136cdb83bd441a68b2d2284d4fcdd696",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\model.inp": "3d9a663de4473e91463df9729aa637da7d0f26a9b3d3fab36ba4a654469a44fa",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\source\\000000.inp": "3d9a663de4473e91463df9729aa637da7d0f26a9b3d3fab36ba4a654469a44fa",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\model.frd": "792adaa8efb3ad441fbc1be99d7dc249b054064d77ec8ee2fd5de60677b315a9",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\model.dat": "c5b4260aa749b5fdd57e861cc49b676b99801bd80301f5cbb613877d7c0607f6",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\job.log": "3afd63c2b32324d1f061bd4577f3686ee7ac011a419e40ef28a22048ce75f7ca",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\study-input.json": "8572335c98dcf5d2d2b83ec52dc15ab3448f02537d2ef8bef11865ec8d8644fb",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_stepped_rp27x5wn\\.caelab_mdo\\4496942c8c7346f49bc92499fcb4f816\\runs\\9a9d915a0d2944ba9dfdf379c575d7c9\\results\\frame-000000.vtu": "b05d53d1b3eae7269bd82c0cc386ed17e2a107ca914816d6e89d552593c4adbf"
+      }
+    }
+  }
+}

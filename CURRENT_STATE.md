@@ -1,5 +1,12 @@
 # 현재 상태
 
+## CalculiX 네이티브 치수 최적화(Sizing Optimization) 벤치마크 완료 (2026-10-27)
+
+- **3D 솔리드 캔틸레버 전단 잠김 극복 및 수렴 검증**: 99절점 40 C3D8 요소 모델의 30.5% 처짐 과소 평가는 완전적분 1차 6면체 요소의 전단 잠김(shear locking)이 원인이었음을 확인하고, 40×8×8 수렴 격자(`cantilever_3d_converged.inp`, 2,560개 C3D8 요소, 3,321절점)를 구축하여 CalculiX 2.22로 검증 완료. **0.915초 만에 Euler-Bernoulli 보 이론 대비 97.20% 일치(처짐 -0.1852 mm vs 이론 -0.1905 mm, 오차 2.80%)**를 달성했으며, 잔여 2.8%는 3D 티모셴코 전단 변형 및 푸아송 횡구속 효과로 완벽히 설명됨 (`benchmarks/runs/cantilever_3d_converged_receipt.json`).
+- **10-절점 트러스(10-Bar Truss) 단면적 치수 최적화 실측 (제품 라이브러리 연동)**: Schmit/Haftka 표준 벤치마크를 기반으로 T3D2 요소 기반 10개 단면적($A_1 \sim A_{10}$)을 설계변수로 설정하고, 끝단 처짐 $u_y \le 2.0\text{ in}$ 제약 조건 하에서 질량 최소화 수행. 범용 제품 라이브러리(`caelab.mdo.optimize` 및 `caelab.mdo.calculix_evaluator.CalculiXEvaluator`)를 통해 **총 501회 CalculiX 해석을 43.94초에 완료**, 초기 질량 5,710.48 kg에서 **2,421.46 kg으로 57.60% 경량화 달성**, 처짐 허용치(50.80 mm / 2.0 in) 경계면인 50.78 mm에 정확히 수렴하는 최적 하중 경로 도출 (`benchmarks/runs/truss_10bar_optimization_receipt.json`).
+- **3단 단차 캔틸레버 셸(Stepped Cantilever) 두께 치수 최적화 실측 (제품 라이브러리 연동)**: S4 셸 요소 기반 3개 단차 두께($T_1, T_2, T_3$)를 설계변수로 설정하고, 끝단 처짐 $\le 15.0\text{ mm}$ 및 최대 응력 $\le 120\text{ MPa}$ 제약 하에서 질량 최소화 수행. 범용 제품 라이브러리(`caelab.mdo.optimize` 및 `CalculiXEvaluator`)를 통해 **총 92회 CalculiX 해석을 13.53초에 완료**, 초기 질량 9.420 kg에서 **7.438 kg으로 21.04% 경량화 달성**, 굽힘 모멘트 구배에 부합하는 계단형 테이퍼링($T_1=12.62\text{ mm} > T_2=9.84\text{ mm} > T_3=5.97\text{ mm}$) 형성 (`benchmarks/runs/stepped_cantilever_optimization_receipt.json`).
+- **범용 제품 코드 아키텍처 및 재현성 검증**: 예제 전용 우회 스크립트를 배제하고(DESIGN.md 규칙 5 준수), 범용 `TemplateDeck`, `VariableSpace`, `CalculiXEvaluator`, `optimize`를 통해 총 594회의 실제 CalculiX 2.22 해석을 58.78초 만에 완료. 재현 스크립트 `benchmarks/run_sizing_benchmarks.py`, 단위 테스트 `tests/test_mdo_calculix_evaluator.py`, 상세 보고서 [docs/benchmarks/01_sizing_optimization_benchmarks.md](docs/benchmarks/01_sizing_optimization_benchmarks.md) 제공.
+
 ## MDO 정직화 작업 (2026-10-27, TASK-CODEX-HONEST-REMEDIATION-001)
 
 기준 `6a7bd95`에 대한 시정 작업이다. [README·벤치마크 감사](docs/review/2026-10-27-readme-benchmark-audit.md)의 합성 GE 응답·난수 시간·암묵적 큐브 대체·출처 오류·이미지 불일치·재현 불가능한 튜토리얼 지적을 수용했다. 이 절 아래 과거 세션의 결과는 해당 날짜·대상의 기록이며 이번 후보의 검증 결과로 합산하지 않는다.

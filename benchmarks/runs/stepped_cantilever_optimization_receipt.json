@@ -1,0 +1,108 @@
+{
+  "benchmark_name": "3-Segment Stepped Cantilever Shell Sizing Optimization",
+  "formulation": "Minimize Shell Mass subject to Tip Disp <= 15.0 mm and Max Stress <= 120.0 MPa",
+  "element_type": "S4 (Shell)",
+  "framework": "caelab.mdo.optimize with CalculiXEvaluator",
+  "design_variables": [
+    "T1",
+    "T2",
+    "T3"
+  ],
+  "initial_thicknesses_mm": [
+    12.0,
+    12.0,
+    12.0
+  ],
+  "initial_mass_kg": 9.42,
+  "initial_disp_mm": 10.898844568785083,
+  "initial_stress_mpa": 39.51805596698721,
+  "optimal_thicknesses_mm": [
+    12.619,
+    9.838,
+    5.968
+  ],
+  "optimal_mass_kg": 7.438003,
+  "optimal_disp_mm": 14.999814101110367,
+  "optimal_stress_mpa": 49.85137334809957,
+  "mass_reduction_percent": 21.040307855626324,
+  "total_evaluations": 92,
+  "wall_time_sec": 13.531368732452393,
+  "solver": "CalculiX 2.22",
+  "optimizer": "caelab.mdo.optimize (SLSQP)",
+  "engineering_note": "Bending moment is largest at the root and zero at the tip. The optimizer naturally formed a stepped taper: T1=12.62 mm > T2=9.84 mm > T3=5.97 mm, reducing mass by 21.0% while keeping stress and deflection within bounds.",
+  "template_sha256": "fbe4fc934bb0aaad7a5a87e31a5c4cb920e3c8223fddde35f3471c19c86cf965",
+  "history_sample": [
+    {
+      "eval_index": 1,
+      "thicknesses_mm": [
+        12.0,
+        12.0,
+        12.0
+      ],
+      "mass_kg": 9.42,
+      "disp_mm": 10.899,
+      "stress_mpa": 39.52,
+      "feasible": true
+    },
+    {
+      "eval_index": 2,
+      "thicknesses_mm": [
+        12.18,
+        12.0,
+        12.0
+      ],
+      "mass_kg": 9.4671,
+      "disp_mm": 10.566,
+      "stress_mpa": 38.36,
+      "feasible": true
+    },
+    {
+      "eval_index": 3,
+      "thicknesses_mm": [
+        12.0,
+        12.18,
+        12.0
+      ],
+      "mass_kg": 9.4671,
+      "disp_mm": 10.774,
+      "stress_mpa": 39.52,
+      "feasible": true
+    },
+    {
+      "eval_index": 90,
+      "thicknesses_mm": [
+        12.799,
+        9.838,
+        5.969
+      ],
+      "mass_kg": 7.4851,
+      "disp_mm": 14.726,
+      "stress_mpa": 49.85,
+      "feasible": true
+    },
+    {
+      "eval_index": 91,
+      "thicknesses_mm": [
+        12.619,
+        10.018,
+        5.969
+      ],
+      "mass_kg": 7.4851,
+      "disp_mm": 14.726,
+      "stress_mpa": 49.81,
+      "feasible": true
+    },
+    {
+      "eval_index": 92,
+      "thicknesses_mm": [
+        12.619,
+        9.838,
+        6.149
+      ],
+      "mass_kg": 7.4851,
+      "disp_mm": 14.726,
+      "stress_mpa": 47.05,
+      "feasible": true
+    }
+  ]
+}

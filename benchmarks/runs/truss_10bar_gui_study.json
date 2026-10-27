@@ -1,0 +1,621 @@
+{
+  "format": "caelab-mdo-study",
+  "version": 1,
+  "name": "Study: truss_10bar_template.inp",
+  "deck_path": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\truss_10bar_template.inp",
+  "template": "*HEADING\n10-Bar Truss Sizing Optimization Benchmark\n*NODE\n1, 18.288, 9.144, 0.0\n2, 18.288, 0.0, 0.0\n3, 9.144, 9.144, 0.0\n4, 9.144, 0.0, 0.0\n5, 0.0, 9.144, 0.0\n6, 0.0, 0.0, 0.0\n*ELEMENT,TYPE=T3D2,ELSET=E1\n1, 3, 1\n*ELEMENT,TYPE=T3D2,ELSET=E2\n2, 1, 2\n*ELEMENT,TYPE=T3D2,ELSET=E3\n3, 4, 2\n*ELEMENT,TYPE=T3D2,ELSET=E4\n4, 3, 4\n*ELEMENT,TYPE=T3D2,ELSET=E5\n5, 5, 3\n*ELEMENT,TYPE=T3D2,ELSET=E6\n6, 6, 4\n*ELEMENT,TYPE=T3D2,ELSET=E7\n7, 4, 1\n*ELEMENT,TYPE=T3D2,ELSET=E8\n8, 3, 2\n*ELEMENT,TYPE=T3D2,ELSET=E9\n9, 6, 3\n*ELEMENT,TYPE=T3D2,ELSET=E10\n10, 5, 4\n*ELSET,ELSET=EALL\nE1, E2, E3, E4, E5, E6, E7, E8, E9, E10\n*NSET,NSET=FIX\n5, 6\n*NSET,NSET=TIP\n2\n*MATERIAL,NAME=ALU\n*ELASTIC\n6.895E10, 0.3\n*DENSITY\n2768.0\n*SOLID SECTION,ELSET=E1,MATERIAL=ALU\n<A1>\n*SOLID SECTION,ELSET=E2,MATERIAL=ALU\n<A2>\n*SOLID SECTION,ELSET=E3,MATERIAL=ALU\n<A3>\n*SOLID SECTION,ELSET=E4,MATERIAL=ALU\n<A4>\n*SOLID SECTION,ELSET=E5,MATERIAL=ALU\n<A5>\n*SOLID SECTION,ELSET=E6,MATERIAL=ALU\n<A6>\n*SOLID SECTION,ELSET=E7,MATERIAL=ALU\n<A7>\n*SOLID SECTION,ELSET=E8,MATERIAL=ALU\n<A8>\n*SOLID SECTION,ELSET=E9,MATERIAL=ALU\n<A9>\n*SOLID SECTION,ELSET=E10,MATERIAL=ALU\n<A10>\n*BOUNDARY\nFIX, 1, 3, 0.0\n1, 3, 3, 0.0\n2, 3, 3, 0.0\n3, 3, 3, 0.0\n4, 3, 3, 0.0\n*STEP\n*STATIC\n*CLOAD\n2, 2, -444822.0\n4, 2, -444822.0\n*NODE FILE\nU, RF\n*EL FILE\nS\n*EL PRINT,ELSET=EALL,TOTALS=ONLY\nEMAS\n*END STEP\n",
+  "execution_template": "*HEADING\n10-Bar Truss Sizing Optimization Benchmark\n*NODE\n1, 18.288, 9.144, 0.0\n2, 18.288, 0.0, 0.0\n3, 9.144, 9.144, 0.0\n4, 9.144, 0.0, 0.0\n5, 0.0, 9.144, 0.0\n6, 0.0, 0.0, 0.0\n*ELEMENT,TYPE=T3D2,ELSET=E1\n1, 3, 1\n*ELEMENT,TYPE=T3D2,ELSET=E2\n2, 1, 2\n*ELEMENT,TYPE=T3D2,ELSET=E3\n3, 4, 2\n*ELEMENT,TYPE=T3D2,ELSET=E4\n4, 3, 4\n*ELEMENT,TYPE=T3D2,ELSET=E5\n5, 5, 3\n*ELEMENT,TYPE=T3D2,ELSET=E6\n6, 6, 4\n*ELEMENT,TYPE=T3D2,ELSET=E7\n7, 4, 1\n*ELEMENT,TYPE=T3D2,ELSET=E8\n8, 3, 2\n*ELEMENT,TYPE=T3D2,ELSET=E9\n9, 6, 3\n*ELEMENT,TYPE=T3D2,ELSET=E10\n10, 5, 4\n*ELSET,ELSET=EALL\nE1, E2, E3, E4, E5, E6, E7, E8, E9, E10\n*NSET,NSET=FIX\n5, 6\n*NSET,NSET=TIP\n2\n*MATERIAL,NAME=ALU\n*ELASTIC\n6.895E10, 0.3\n*DENSITY\n2768.0\n*SOLID SECTION,ELSET=E1,MATERIAL=ALU\n<A1>\n*SOLID SECTION,ELSET=E2,MATERIAL=ALU\n<A2>\n*SOLID SECTION,ELSET=E3,MATERIAL=ALU\n<A3>\n*SOLID SECTION,ELSET=E4,MATERIAL=ALU\n<A4>\n*SOLID SECTION,ELSET=E5,MATERIAL=ALU\n<A5>\n*SOLID SECTION,ELSET=E6,MATERIAL=ALU\n<A6>\n*SOLID SECTION,ELSET=E7,MATERIAL=ALU\n<A7>\n*SOLID SECTION,ELSET=E8,MATERIAL=ALU\n<A8>\n*SOLID SECTION,ELSET=E9,MATERIAL=ALU\n<A9>\n*SOLID SECTION,ELSET=E10,MATERIAL=ALU\n<A10>\n*BOUNDARY\nFIX, 1, 3, 0.0\n1, 3, 3, 0.0\n2, 3, 3, 0.0\n3, 3, 3, 0.0\n4, 3, 3, 0.0\n*STEP\n*STATIC\n*CLOAD\n2, 2, -444822.0\n4, 2, -444822.0\n*NODE FILE\nU, RF\n*EL FILE\nS\n*EL PRINT,ELSET=EALL,TOTALS=ONLY\nEMAS\n*END STEP\n",
+  "source_revisions": {
+    "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\truss_10bar_template.inp": "a229e0e7589a330d8a2355e21e5db3fd9adb5d55ac5c8c0bf9a5c0564df29a3e"
+  },
+  "response_units": {
+    "mass_eall": "kg",
+    "disp": "m",
+    "stress": "Pa"
+  },
+  "variables": [
+    {
+      "id": "a1",
+      "name": "A1",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a2",
+      "name": "A2",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a3",
+      "name": "A3",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a4",
+      "name": "A4",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a5",
+      "name": "A5",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a6",
+      "name": "A6",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a7",
+      "name": "A7",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a8",
+      "name": "A8",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a9",
+      "name": "A9",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    },
+    {
+      "id": "a10",
+      "name": "A10",
+      "unit": "m**2",
+      "lower": 0.00064516,
+      "upper": 0.0225806,
+      "initial": 0.0129032,
+      "transform": "linear"
+    }
+  ],
+  "objectives": [
+    {
+      "id": "mass",
+      "response_id": "mass_eall",
+      "sense": "MIN",
+      "target": null,
+      "target_band": null,
+      "offset": 0.0,
+      "scale": 1000.0,
+      "weight": 1.0
+    },
+    {
+      "id": "disp",
+      "response_id": "disp",
+      "sense": "MIN",
+      "target": null,
+      "target_band": null,
+      "offset": 0.0,
+      "scale": 0.05,
+      "weight": 1.0
+    }
+  ],
+  "constraints": [
+    {
+      "id": "disp_limit",
+      "response_id": "disp",
+      "kind": "UPPER",
+      "limit": 0.0508,
+      "scale": 0.0508,
+      "tolerance": 0.0,
+      "marginal_band": 0.0,
+      "weight": 1.0,
+      "expression": null,
+      "dependencies": [],
+      "unit": "m"
+    }
+  ],
+  "records": [
+    {
+      "point_id": "DP_0001",
+      "index": 1,
+      "name": "Baseline",
+      "physical_values": {
+        "a1": 0.0129032,
+        "a2": 0.0129032,
+        "a3": 0.0129032,
+        "a4": 0.0129032,
+        "a5": 0.0129032,
+        "a6": 0.0129032,
+        "a7": 0.0129032,
+        "a8": 0.0129032,
+        "a9": 0.0129032,
+        "a10": 0.0129032
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.051471561056956494,
+        "stress": 47051653.26383165,
+        "mass_eall": 3806.984
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.013219705845600319,
+      "objectives": {
+        "mass": 3.806984,
+        "disp": 1.0294312211391299
+      },
+      "is_pareto": false,
+      "duration_sec": 0.46677549998275936,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0002",
+      "index": 2,
+      "name": "Point 2",
+      "physical_values": {
+        "a1": 0.004660637007846772,
+        "a2": 0.020378289602462917,
+        "a3": 0.016862176892807786,
+        "a4": 0.0027203707359607096,
+        "a5": 0.008798124825049285,
+        "a6": 0.003057224376794637,
+        "a7": 0.013823486343956056,
+        "a8": 0.0021740045918918244,
+        "a9": 0.011661984617613402,
+        "a10": 0.021491899879551007
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.11839825531231446,
+        "stress": 149713682.6393665,
+        "mass_eall": 3188.816
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 1.3306743171715445,
+      "objectives": {
+        "mass": 3.1888159999999997,
+        "disp": 2.367965106246289
+      },
+      "is_pareto": false,
+      "duration_sec": 0.3934653999749571,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0003",
+      "index": 3,
+      "name": "Point 3",
+      "physical_values": {
+        "a1": 0.007764787977453859,
+        "a2": 0.019069236828315555,
+        "a3": 0.005368346433635421,
+        "a4": 0.016082865421084967,
+        "a5": 0.014194071968456989,
+        "a6": 0.006903849158207657,
+        "a7": 0.01187376369906246,
+        "a8": 0.008932967269497492,
+        "a9": 0.01485519569694705,
+        "a10": 0.0055617688221866355
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.06791651745562342,
+        "stress": 64860808.80208183,
+        "mass_eall": 3231.716
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.33693931999258714,
+      "objectives": {
+        "mass": 3.231716,
+        "disp": 1.3583303491124683
+      },
+      "is_pareto": false,
+      "duration_sec": 0.5358722000382841,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0004",
+      "index": 4,
+      "name": "Point 4",
+      "physical_values": {
+        "a1": 0.019485616983453496,
+        "a2": 0.015959773600506526,
+        "a3": 0.022048766860400384,
+        "a4": 0.010720239204184556,
+        "a5": 0.010207098974759032,
+        "a6": 0.01319009481179123,
+        "a7": 0.007447347836458919,
+        "a8": 0.011007735391313212,
+        "a9": 0.008141837224543615,
+        "a10": 0.017516677857299247
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.0556007181148769,
+        "stress": 52033862.27823103,
+        "mass_eall": 3897.771
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.09450232509600201,
+      "objectives": {
+        "mass": 3.897771,
+        "disp": 1.112014362297538
+      },
+      "is_pareto": false,
+      "duration_sec": 0.635301300091669,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0005",
+      "index": 5,
+      "name": "Point 5",
+      "physical_values": {
+        "a1": 0.01570311220059831,
+        "a2": 0.011651714450180347,
+        "a3": 0.009171854793331128,
+        "a4": 0.004123231653740392,
+        "a5": 0.005899858143224278,
+        "a6": 0.011841519650705753,
+        "a7": 0.01653694266474103,
+        "a8": 0.018118835283984367,
+        "a9": 0.016463748086476177,
+        "a10": 0.009072590817841637
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.06879145539854496,
+        "stress": 88931954.51051572,
+        "mass_eall": 3632.464
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.35416250784537334,
+      "objectives": {
+        "mass": 3.632464,
+        "disp": 1.375829107970899
+      },
+      "is_pareto": false,
+      "duration_sec": 0.31899229995906353,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0006",
+      "index": 6,
+      "name": "Point 6",
+      "physical_values": {
+        "a1": 0.011247464498549064,
+        "a2": 0.00672457187343324,
+        "a3": 0.012178649143907785,
+        "a4": 0.019511560167061934,
+        "a5": 0.020724583936691177,
+        "a6": 0.01726403873488091,
+        "a7": 0.0017872837721431799,
+        "a8": 0.006115934399197108,
+        "a9": 0.021554642023153225,
+        "a10": 0.002980967101939961
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.0585883583907281,
+        "stress": 50513517.066622354,
+        "mass_eall": 3379.628
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.15331414154976586,
+      "objectives": {
+        "mass": 3.3796280000000003,
+        "disp": 1.171767167814562
+      },
+      "is_pareto": false,
+      "duration_sec": 0.5660535998176783,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0007",
+      "index": 7,
+      "name": "Point 7",
+      "physical_values": {
+        "a1": 0.0017937216422395234,
+        "a2": 0.009506567194094595,
+        "a3": 0.003611261275543839,
+        "a4": 0.00767999394649633,
+        "a5": 0.0009407583661856036,
+        "a6": 0.02080192410586567,
+        "a7": 0.020620288810114264,
+        "a8": 0.014800247636338979,
+        "a9": 0.0037612576459153495,
+        "a10": 0.01239442192827884
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.13465808086349665,
+        "stress": 215443821.55114296,
+        "mass_eall": 2968.272
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 1.6507496232971783,
+      "objectives": {
+        "mass": 2.968272,
+        "disp": 2.693161617269933
+      },
+      "is_pareto": false,
+      "duration_sec": 0.6640357999131083,
+      "error_message": ""
+    },
+    {
+      "point_id": "DP_0008",
+      "index": 8,
+      "name": "Point 8",
+      "physical_values": {
+        "a1": 0.018248691903173925,
+        "a2": 0.001639246848490141,
+        "a3": 0.013477731353408207,
+        "a4": 0.017692180010607645,
+        "a5": 0.018639358784822535,
+        "a6": 0.009693446790347308,
+        "a7": 0.006572348556159722,
+        "a8": 0.019487747108298908,
+        "a9": 0.005643404391959238,
+        "a10": 0.013909398881215406
+      },
+      "status": "COMPLETED",
+      "observations": {
+        "disp": 0.0608546953679829,
+        "stress": 74614094.82229075,
+        "mass_eall": 3642.119
+      },
+      "feasibility": "INFEASIBLE",
+      "total_violation": 0.19792707417289182,
+      "objectives": {
+        "mass": 3.642119,
+        "disp": 1.217093907359658
+      },
+      "is_pareto": false,
+      "duration_sec": 0.42629200010560453,
+      "error_message": ""
+    }
+  ],
+  "point_sources": {
+    "DP_0001": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "c10d19b8ed64444d817e1a1c880671c0",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0",
+      "values": {
+        "a1": 0.0129032,
+        "a2": 0.0129032,
+        "a3": 0.0129032,
+        "a4": 0.0129032,
+        "a5": 0.0129032,
+        "a6": 0.0129032,
+        "a7": 0.0129032,
+        "a8": 0.0129032,
+        "a9": 0.0129032,
+        "a10": 0.0129032
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\job.json": "94f4126b42a66d456221c5b2f5704ef77d3e78cb6771d23ec3f35ba45346c1c9",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\model.inp": "5da73a62100d41f3abd6ecdc97e3fd3c9553bb9db7819a922d120c548a1068c4",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\source\\000000.inp": "5da73a62100d41f3abd6ecdc97e3fd3c9553bb9db7819a922d120c548a1068c4",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\model.frd": "9dda9b662a1f479252f4c07bf45abdeabc047add7bce5cc8cfb0f08a7f91f5ae",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\model.dat": "8abbf027a88ceec4aa5f1a40623ccd5421d470ab167215ed00b63fb7615d9280",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\c10d19b8ed64444d817e1a1c880671c0\\results\\frame-000000.vtu": "3f73e615635dfdb64978967d440df1e2728aa9ddce1dcba0b08965aa9d6eb7cf"
+      }
+    },
+    "DP_0002": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "fc55cc74527c455796142d41bfc7a5c4",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4",
+      "values": {
+        "a1": 0.004660637007846772,
+        "a2": 0.020378289602462917,
+        "a3": 0.016862176892807786,
+        "a4": 0.0027203707359607096,
+        "a5": 0.008798124825049285,
+        "a6": 0.003057224376794637,
+        "a7": 0.013823486343956056,
+        "a8": 0.0021740045918918244,
+        "a9": 0.011661984617613402,
+        "a10": 0.021491899879551007
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\job.json": "65bf0dd1b85fb1db7900e3781987c349a81bd515cd70f7233f5de5c1daa2d54d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\model.inp": "f5e25dcdc88521bb5a582d3f7c52c944e3c885fe5e32a40c2bb3d11c2ecd8b32",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\source\\000000.inp": "f5e25dcdc88521bb5a582d3f7c52c944e3c885fe5e32a40c2bb3d11c2ecd8b32",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\model.frd": "6c3d9eff3b047a1216e6a4adff418fb9ce46f8cf01a72f68b0be357161189577",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\model.dat": "e564fbbeeff4aa5cba7ed7a708d470ef3b4a816d600e92950fde5be348f71b87",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\fc55cc74527c455796142d41bfc7a5c4\\results\\frame-000000.vtu": "da15ef912e8a4087f888cf3df957cc0fd78acc4dd0d77b75de285a00d824b061"
+      }
+    },
+    "DP_0003": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "b9f5a5fca9924887acb63fd75b3adf25",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25",
+      "values": {
+        "a1": 0.007764787977453859,
+        "a2": 0.019069236828315555,
+        "a3": 0.005368346433635421,
+        "a4": 0.016082865421084967,
+        "a5": 0.014194071968456989,
+        "a6": 0.006903849158207657,
+        "a7": 0.01187376369906246,
+        "a8": 0.008932967269497492,
+        "a9": 0.01485519569694705,
+        "a10": 0.0055617688221866355
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\job.json": "9e6c5ea67c18ff0917829d34679ef183e4a94546762397ada2af37bc7d9b4818",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\model.inp": "a9c721e72d21f22d1d9292cac2234b19b635f51568b42e23b98a667da23a893d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\source\\000000.inp": "a9c721e72d21f22d1d9292cac2234b19b635f51568b42e23b98a667da23a893d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\model.frd": "0de22287d1af095a7772991bed74757f1e890096be8c6e8c8cf9f6497b8e772f",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\model.dat": "46d1dde3e150d422b77fccc0a4c3fb5398cedaa36128c492bf0216b2c7ecf08e",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\b9f5a5fca9924887acb63fd75b3adf25\\results\\frame-000000.vtu": "de19deaa1b649a44b5844f78e3535cfc6c3a695e6dd974727db90b7d7705d91b"
+      }
+    },
+    "DP_0004": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "d340b8a629204e3b998cc5e5444afd92",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92",
+      "values": {
+        "a1": 0.019485616983453496,
+        "a2": 0.015959773600506526,
+        "a3": 0.022048766860400384,
+        "a4": 0.010720239204184556,
+        "a5": 0.010207098974759032,
+        "a6": 0.01319009481179123,
+        "a7": 0.007447347836458919,
+        "a8": 0.011007735391313212,
+        "a9": 0.008141837224543615,
+        "a10": 0.017516677857299247
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\job.json": "177cb23c916ce015e225a90af8db323b9475ff49a299e8bc157d9065363cc473",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\model.inp": "978dc9d21f0cf592d9a0a384d46e2488a526d77b4ea4ef92099fbf3ace3e8833",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\source\\000000.inp": "978dc9d21f0cf592d9a0a384d46e2488a526d77b4ea4ef92099fbf3ace3e8833",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\model.frd": "e7d830d55fd4bded1af0c653cc79936b62d0a68724b99672e06eb59725ce427a",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\model.dat": "b472ed83fdfc9e496c7bed6535c5f686df07fd94a6a609a549282cd713e45209",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\d340b8a629204e3b998cc5e5444afd92\\results\\frame-000000.vtu": "72129ab5b4d378737d404e35808ab1045ea86cb10838c3f8b41f7f429634b96f"
+      }
+    },
+    "DP_0005": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "151bb133e0614d74a11ed58a5e1c5524",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524",
+      "values": {
+        "a1": 0.01570311220059831,
+        "a2": 0.011651714450180347,
+        "a3": 0.009171854793331128,
+        "a4": 0.004123231653740392,
+        "a5": 0.005899858143224278,
+        "a6": 0.011841519650705753,
+        "a7": 0.01653694266474103,
+        "a8": 0.018118835283984367,
+        "a9": 0.016463748086476177,
+        "a10": 0.009072590817841637
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\job.json": "a9cf5982e178f0d92c7bbb604ab5e685c68adb65b45d18f47ab2836f56aab65d",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\model.inp": "cee07a4f6665f708f3a7088f8d7df23ed472af681a14c0bf201f45632ce53b7b",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\source\\000000.inp": "cee07a4f6665f708f3a7088f8d7df23ed472af681a14c0bf201f45632ce53b7b",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\model.frd": "8dc719b18b0f3003a7510b977e0dfccc9031d1e553fca8aa875fd17805c61ec4",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\model.dat": "6ecc06a51260c3ddff8aae2f7ab544081bdd7bc5532fb8750465d87323207669",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\151bb133e0614d74a11ed58a5e1c5524\\results\\frame-000000.vtu": "c00fbc2b9f352a0ef8399820bfda1faeb667439854b11bc03f9970fe23eb800a"
+      }
+    },
+    "DP_0006": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "ad7137ce8bb74c1e8499edd5dd16c1d8",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8",
+      "values": {
+        "a1": 0.011247464498549064,
+        "a2": 0.00672457187343324,
+        "a3": 0.012178649143907785,
+        "a4": 0.019511560167061934,
+        "a5": 0.020724583936691177,
+        "a6": 0.01726403873488091,
+        "a7": 0.0017872837721431799,
+        "a8": 0.006115934399197108,
+        "a9": 0.021554642023153225,
+        "a10": 0.002980967101939961
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\job.json": "6ced293d9ab2feefc2f61d60ff71687f28a4a54ee489d494fd343c2e19be0440",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\model.inp": "ba684ec7ecdde515547179105061d3a4c64034ff60cb4167dafcca5d7140a4c4",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\source\\000000.inp": "ba684ec7ecdde515547179105061d3a4c64034ff60cb4167dafcca5d7140a4c4",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\model.frd": "5006974cbc12e356e628d19866e985c5328ca97c5dbe7a1458a35e32c30434b0",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\model.dat": "d3612075b2fcb759ba03f3a75d3e4567c66cad226645237904bb439f07f2b7b3",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\ad7137ce8bb74c1e8499edd5dd16c1d8\\results\\frame-000000.vtu": "d8112701a4fd9c1b2896659589a74c7393fa24c66b8f0354478c0a077dc5812d"
+      }
+    },
+    "DP_0007": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "f3be7503b49e4b65a8e7188935e14048",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048",
+      "values": {
+        "a1": 0.0017937216422395234,
+        "a2": 0.009506567194094595,
+        "a3": 0.003611261275543839,
+        "a4": 0.00767999394649633,
+        "a5": 0.0009407583661856036,
+        "a6": 0.02080192410586567,
+        "a7": 0.020620288810114264,
+        "a8": 0.014800247636338979,
+        "a9": 0.0037612576459153495,
+        "a10": 0.01239442192827884
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\job.json": "9fed003e081b2da54c5e0c33630e7205ffada2a89750fedcc64c7ba29509de62",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\model.inp": "773122a0946bb48651a0a53a600fe0bf16a0e46ffe2a354a2f9ae9ef2b94e2bf",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\source\\000000.inp": "773122a0946bb48651a0a53a600fe0bf16a0e46ffe2a354a2f9ae9ef2b94e2bf",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\model.frd": "eedfb0c0e55e9c249fefb1735a0198d43010409e1ac303a85fe56d3604f56d04",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\model.dat": "abb0625e89726db6086f8ddd9de6f6b319511fd76d7068c308dbc61327a82eee",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\f3be7503b49e4b65a8e7188935e14048\\results\\frame-000000.vtu": "81690345f48964c87e796fd6e2020d022a7a23c8b77db78a9dc5a6baf84cb67e"
+      }
+    },
+    "DP_0008": {
+      "study_manifest": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json",
+      "run_id": "05de6ac746864a759b9334a7e7639747",
+      "workdir": "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747",
+      "values": {
+        "a1": 0.018248691903173925,
+        "a2": 0.001639246848490141,
+        "a3": 0.013477731353408207,
+        "a4": 0.017692180010607645,
+        "a5": 0.018639358784822535,
+        "a6": 0.009693446790347308,
+        "a7": 0.006572348556159722,
+        "a8": 0.019487747108298908,
+        "a9": 0.005643404391959238,
+        "a10": 0.013909398881215406
+      },
+      "files": {
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\job.json": "80a868c8d9644b12622a5325ab398463bcb30f9278b689214b51129245deaa71",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\model.inp": "b6419d99931fe740475a07a0656f1eeaa710cf907b693b3410ef29714881475c",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\source\\000000.inp": "b6419d99931fe740475a07a0656f1eeaa710cf907b693b3410ef29714881475c",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\model.frd": "c0029f25ed3248ab612e912600f2f824caad9058e3549abcc4dfdf0fc71d92cd",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\model.dat": "cb71c24fecb77a49bac09dd34dd62f2c20fe31ca649808961d5fc16a021a16f8",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\job.log": "7db857b778057714ff2b3742827193427a7894b3b53e18bd8093d42959a3e561",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\study-input.json": "95e38296565609edee8f3e418e541e48848668e10e596cba379a73a645279390",
+        "C:\\Users\\pikac\\AppData\\Local\\Temp\\gui_demo_truss_32wql3fs\\.caelab_mdo\\57358a04db4b44b0b28f26c23a17bee3\\runs\\05de6ac746864a759b9334a7e7639747\\results\\frame-000000.vtu": "530fab375b7e21220d45d9cbf5697e4f68988ab1c04dcc70025ca407f41ab3b5"
+      }
+    }
+  }
+}
