@@ -290,6 +290,36 @@ def test_failed_apply_keeps_prior_separate_current_rerun_openable(service,monkey
     assert service.input_path.read_bytes() == original and service.result_file(current=True).is_file()
 
 
+def test_interrupted_apply_recovers_durable_prior_current_rerun_on_reopen(service,monkeypatch):
+    first,second = measured(service)
+    service.apply(service.prepare_apply(first.point_id))
+    service.rerun_current()
+    prior = service.current_rerun_id
+    original = service.input_path.read_bytes()
+    class AbruptExit(BaseException):
+        pass
+    finish = transaction.finish
+    recover = transaction.recover
+    def stop_at_receipt(root,receipt):
+        raise AbruptExit()
+    def unavailable_recovery(*args,**kwargs):
+        raise AbruptExit()
+    monkeypatch.setattr(transaction,"finish",stop_at_receipt)
+    monkeypatch.setattr(transaction,"recover",unavailable_recovery)
+    with pytest.raises(AbruptExit):
+        service.apply(service.prepare_apply(second.point_id))
+    journal = json.loads((service._root/"apply-pending.json").read_text(encoding="utf-8"))
+    assert journal["previous_current_rerun_id"] == prior
+    saved = service._root/"study.json"
+    service.close()
+    monkeypatch.setattr(transaction,"finish",finish)
+    monkeypatch.setattr(transaction,"recover",recover)
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.current_point_id == first.point_id and reopened.current_rerun_id == prior
+    assert reopened.input_path.read_bytes() == original and reopened.result_file(current=True).is_file()
+    reopened.close()
+
+
 @pytest.mark.parametrize("damage", ["point_sources","error_message","physical_values"])
 def test_saved_schema_rejects_corruption_before_adoption(service,tmp_path,damage):
     measured(service,(2.,))

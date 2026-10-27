@@ -786,6 +786,7 @@ class MDOStudyService:
         old_project = copy.deepcopy(self.project.__dict__) if self.project is not None else None
         project_saved = False
         try:
+            metadata = dict(metadata,previous_current_rerun_id=old_rerun)
             receipt = transaction.replace_closure(self._root, replacements, expected, metadata,target_locks_owned=True)
             self._current_hashes = {p: transaction.digest(Path(p).read_bytes()) for p in expected}
             self.current_point_id = metadata.get("point_id")
@@ -872,7 +873,7 @@ class MDOStudyService:
             if result:
                 self._current_hashes = {p:transaction.digest(Path(p).read_bytes()) for p in self._current_hashes}
                 self.current_point_id = result.get("previous_point_id")
-                self.current_rerun_id = None
+                self.current_rerun_id = result.get("previous_current_rerun_id")
                 self._apply_receipts.append(result)
                 self._undo_stack = [i for i in self._undo_stack if i != result["id"]]
                 if result.get("operation") == "undo" and result.get("undo_receipt_id") not in self._undo_stack:
