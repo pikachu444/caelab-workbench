@@ -87,7 +87,7 @@ class SensitivityTornadoWidget(QWidget):
             self.ax.text(
                 width + 0.015,
                 bar.get_y() + bar.get_height() / 2,
-                f"{width * 100:.1f}%",
+                f"{width:.3f}",
                 va="center",
                 ha="left",
                 fontsize=8.5,
@@ -95,8 +95,8 @@ class SensitivityTornadoWidget(QWidget):
                 fontweight="bold",
             )
 
-        self.ax.set_xlabel("Sensitivity Impact / Relative Contribution", fontsize=9.5)
-        self.ax.set_title(f"Global Sensitivity Tornado Diagram ({target_name})", fontsize=11, fontweight="bold")
+        self.ax.set_xlabel("Absolute Spearman rank correlation |rho|", fontsize=9.5)
+        self.ax.set_title(f"Observed Rank Correlation ({target_name})", fontsize=11, fontweight="bold")
         self.ax.set_xlim(0, max(magnitudes) * 1.25 if magnitudes else 1.0)
         self.fig.tight_layout()
         self.canvas.draw_idle()

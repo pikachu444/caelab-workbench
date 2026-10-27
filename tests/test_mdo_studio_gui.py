@@ -20,14 +20,17 @@ def app():
 def test_mdo_studio_window_creation(app):
     win = MDOStudioWindow()
     assert win.windowTitle().startswith("CAELab MDO Studio")
-    assert win.tdp_model.rowCount() == 25
+    assert win.tdp_model.rowCount() == 0
     assert win.tdp_model.columnCount() > 5
     assert win.viz_tabs.count() == 3
 
-    # Select row and check setup dock
+    win._on_load_demo()
+    assert win.tdp_model.rowCount() == 25
+    assert all(r.status == "PENDING" and not r.observations for r in win.study.records)
+    # Select uncomputed point and check setup dock
     win.tdp_table.selectRow(0)
     assert win.setup_widget.lbl_title.text().startswith("DP_0001")
-    assert win.setup_widget.btn_apply_current.isEnabled()
+    assert not win.setup_widget.btn_apply_current.isEnabled()
 
     win.close()
 

@@ -47,29 +47,12 @@ class StudyTreeWidget(QWidget):
             QTreeWidgetItem(crit_item, [f"Con: {c.id} ({c.kind} {c.limit})"])
         crit_item.setExpanded(True)
 
-        # 4. DOE
-        doe_item = QTreeWidgetItem(self.tree, ["🎲 Design of Experiments (DOE)"])
-        QTreeWidgetItem(doe_item, ["Optimal Latin Hypercube (Opt-LHS)"])
-        QTreeWidgetItem(doe_item, ["Sobol Quasi-Random Sequence"])
-        QTreeWidgetItem(doe_item, ["Central Composite Design (CCD)"])
-
-        # 5. Surrogates
-        surr_item = QTreeWidgetItem(self.tree, ["📈 Surrogate Models"])
-        QTreeWidgetItem(surr_item, ["Gaussian Process / Kriging (σ² bounds)"])
-        QTreeWidgetItem(surr_item, ["Radial Basis Function (RBF)"])
-        QTreeWidgetItem(surr_item, ["Quadratic Polynomial (PRS)"])
-
-        # 6. Optimization
-        opt_item = QTreeWidgetItem(self.tree, ["🚀 Optimization Solvers"])
-        QTreeWidgetItem(opt_item, ["NSGA-II (Multi-Objective Pareto)"])
-        QTreeWidgetItem(opt_item, ["SLSQP (Gradient-based Constrained)"])
-        QTreeWidgetItem(opt_item, ["Differential Evolution (Global)"])
-
-        # 7. Sensitivity
-        sens_item = QTreeWidgetItem(self.tree, ["🌪️ Sensitivity Analysis"])
-        QTreeWidgetItem(sens_item, ["Sobol Variance Decomposition"])
-        QTreeWidgetItem(sens_item, ["Tornado Impact Ranking"])
-        QTreeWidgetItem(sens_item, ["Spearman Rank Correlation"])
+        doe_item = QTreeWidgetItem(self.tree, ["Design of Experiments"])
+        QTreeWidgetItem(doe_item, ["Baseline + Latin Hypercube (Generate DoE)"])
+        surr_item = QTreeWidgetItem(self.tree, ["Measured-data Analysis"])
+        QTreeWidgetItem(surr_item, ["Sampled Pareto Front"])
+        QTreeWidgetItem(surr_item, ["Gaussian Process: 1D response slice"])
+        QTreeWidgetItem(surr_item, ["Spearman rank correlation"])
 
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         text = item.text(0)

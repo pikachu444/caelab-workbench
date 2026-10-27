@@ -105,6 +105,10 @@ class SetupDockWidget(QWidget):
             self.lbl_feasibility.setText("—")
             self.lbl_violation.setText("0.0")
             self.btn_apply_current.setEnabled(False)
+            while self.param_layout.rowCount():
+                self.param_layout.removeRow(0)
+            while self.resp_layout.rowCount():
+                self.resp_layout.removeRow(0)
             return
 
         self.lbl_title.setText(f"{record.point_id}: {record.name}")
@@ -135,7 +139,7 @@ class SetupDockWidget(QWidget):
         for k, v in record.observations.items():
             self.resp_layout.addRow(f"{k}:", QLabel(f"{v:.4g}"))
 
-        self.btn_apply_current.setEnabled(record.status == "COMPLETED")
+        self.btn_apply_current.setEnabled(False)  # Window enables only verified native results.
 
     def _on_apply_clicked(self) -> None:
         if self._current_record:

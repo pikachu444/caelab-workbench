@@ -140,9 +140,9 @@ class DesignPointsTableModel(QAbstractTableModel):
                 val = rec.observations.get(rkey)
                 return f"{val:.4g}" if val is not None else "—"
             elif col == num_fixed + num_params + num_responses:
-                return f"{rec.total_violation:.4g}" if rec.total_violation > 0 else "0.0"
+                return "—" if rec.feasibility in (None, "NOT_ASSESSED") else f"{rec.total_violation:.4g}"
             elif col == num_fixed + num_params + num_responses + 1:
-                return f"{rec.duration_sec:.2f}"
+                return "—" if rec.status in ("PENDING", "QUEUED") else f"{rec.duration_sec:.2f}"
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             if col in (0, 2, 3, 4):
