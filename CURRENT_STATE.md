@@ -1,18 +1,19 @@
 # 현재 상태
 
-## MDO Phase 3 구현·인도 검증 진행 중 (2026-10-27)
+## MDO Phase 3 구현·수치 검증, Windows 최종 인도 대기 (2026-10-27)
 
 기준 main `7bfcdd4`에서 시작한 로컬 `codex/mdo-phase3` 작업이다. 아래 과거 실행 기록과 구분한다. 원격 게시·main 병합·Windows GUI 최종 인도를 완료한 상태가 아니다.
 
 - 독립 부모/Studio 진입점, Workbench 서비스, 네이티브 JobManager 계산, 저장된 대리모델 탐색, 실제 확인, Pareto/설계점 ID 선택 연동, 현재 설계 적용/Undo/별도 재해석, 결과 파일 전달, 독립 Save As와 재열기를 연결했다. 원본/INCLUDE 백업·저널·잠금과 읽기 전용 검토를 포함한다. 프로젝트의 `mdo_study` 관계가 재열기를 막던 결함과 복사 중 편집 충돌도 수정했다.
 - 실행 후보 `200526c`에서 공개 CalculiX 테스트 `beamlin.inp`를 사용해 **실제 CalculiX 2.22 실행 22건**을 완료했다: LHS16, 독립 모서리 검증4, 새 실제 확인1, 적용 후 별도 재해석1. 대리모델 예측240행을 실제22행과 구분하고 262행·모델·현재 설계·VTU·백업/Undo·Save As·읽기 전용 재열기를 대조했다. 사용자 작성 입력으로 주장하지 않으며 원본 메시·재료·하중을 보존하고 두 단면 폭, 단위/출력 요청만 명시했다.
 - 독립 QA는 최종 연구의 **22/22 실제 행과 산출물 해시154개**를 검증했고 검토 중 솔버 호출·자료 쓰기는 없었다. 별도 CAE 검토자는 최종 단계/시간, 40절점 필드, 원 DAT/FRD 수치, 백업 바이트, 확인/재해석 일치를 확인했다. 학습12/내부검증4 외의 독립4점 최대 상대오차는 질량0.00009136%, 변위0.510315%, 응력0.123655%로 사전 한도1%/5%/10% 이내였다. 이 결과를 메시 수렴·전역 최적해·일반 구조 안전성으로 확대하지 않는다.
-- 합성 **10,000행×30열**의 offscreen 검사: 첫 표229.976 ms, 스크롤/선택 p95 48.7145 ms, 이벤트 지연 p95 39.0215 ms, 최대 필터53.052 ms, RSS222,527,488 bytes. Windows11 build26200, i9-11900H, 약16 GB RAM, Python3.13.5/Qt6.9.1에서 측정했다. 실제 데스크톱 성능 인도 검사를 대신하지 않는다.
-- 독립 검토의 미해결 GUI 지적을 수정 중이다: 검증 분할/응답별 오차 한도 편집, 민감도 방법/실험 확인, 필터의 모든 뷰 연동, 과거 revision별 단위·기준 표시, 실행 시간/배치 예산, 표면 작업 수 제한, 정확한 숫자 토큰 미리보기와 CRLF 선택, 초기 선택 행 및960px 배치. 적용 중 강제 프로세스 종료 후 이전 재실행 관계 복원도 별도 재검토 중이다. 기존 테스트 통과를 이 항목들의 통과로 간주하지 않는다.
+- 최종 실행 코드 후보는 `9f813dd`다. 검증 분할/응답별 오차 한도, 민감도 실험·출처, 모든 뷰의 필터 연동, 고정된 revision별 단위·기준, 실행 시간/배치 예산, 표면 작업 수 제한, 정확한 숫자 토큰 미리보기, 초기 선택 행과 960px 배치를 보완했다. 적용 중 강제 종료 후 이전 현재 설계/재실행 관계 복구, 작업 중 writer 잠금 유지, 오래된 비동기 결과 거부도 검증했다. 독립 QA는 선행 통합 후보 `0587dcd`의 기능 관련 비판을 모두 명시적으로 해소했고, 마지막 표 성능 수정도 동일 후보 `9f813dd`에서 관련 검사 46개와 독립 정렬·필터·선택·표시값 검사로 통과시켰다. 원 비판자인 메인도 같은 조건의 offscreen 성능 재검사로 해당 지적을 해소했다.
+- 합성 **10,000행×30열**의 최종 offscreen 검사(`9f813dd`): 첫 표219.575 ms, 스크롤/선택 p95 **37.052 ms**(목표50 ms 미만), 이벤트 지연 p95 26.303 ms, 최대 필터28.691 ms, RSS222,781,440 bytes. 10회/초 결과 갱신50건을 포함한다. 선행 후보의61.206 ms 실패를 보존하고 불필요한 전체 행 재정렬·반복 객체 생성·개별 표시 역할 요청을 줄인 뒤 같은 검사로 확인했다. Windows11 build26200, i9-11900H, 약16 GB RAM, Python3.13.5/Qt6.9.1에서 측정했으며 실제 데스크톱 검사를 대신하지 않는다.
+- 실제 최종 연구를 읽기 전용으로 연 offscreen 캡처는 다섯 뷰와 정상/960×720 배치, DPR1/1.5/2를 확인했다. Surface는 명시적인2D 대체 화면이다. 설치된 ParaView6.2의 `pvpython`으로 적용 후 재해석 VTU의40절점/2요소, 변위3성분·응력6성분·전체 범위의 유한 값을 읽었다. 이는 ParaView 실화면 조작이나 VTK3D 회전 검증이 아니다.
 - **Windows가 잠겨 있어 실화면 검증은 미완료**다. 검은 캡처를 성공 화면으로 쓰지 않았으며 잠금 해제 요청은 대기 중이다. 실제 VTK 3D 회전·ParaView 전체 필드, 한글 OS IME,100/150/200% DPI, 키보드/독 복원, 실환경10k 검사를 끝내기 전에는 Phase3 최종 인도를 선언하지 않는다. 현재 실제 자료를 그린 캡처는 offscreen 2D 대체 렌더로 명시한다.
-- 전체 제품 회귀는 통합 후보에서 실행 중이다. 최종 관련 검사·문서 동기화·원 비판자의 재검토 결과를 확인한 뒤 이 절을 갱신한다.
+- 관련 검사: `0587dcd`에서 **354 passed**, 마지막 표 수정 후 `9f813dd`에서 관련 GUI **38 passed**(서로 겹치는 검사이므로 합산하지 않음). 독립 QA 관련 검사98개 및 별도 고장 주입·저장·정렬·읽기 전용 검사도 통과했다. 전체 제품 회귀는 앞선 실행 후보 `200526c`에서 **945 passed, 4 failed, 11 skipped**(3656.20초)다. 실패3개는 기준 main에서도 재현된 Windows 설치 도우미 기대값 문제이며, 나머지 저장 실패 테스트의 모의 함수가 새 `expected_revision` 인자를 받지 못한 문제는 수정 후 관련 검사에서 통과했다. 건너뛴 CalculiX 검사6개는 PATH를 지정해 최종 후보에서 **6 passed**로 별도 확인했다. 나머지5개는 FEniCSx/OpenCourant/Code_Aster/Salome 부재와 POSIX 전용 검사다. 전체 제품100% 통과로 보고하지 않는다.
 
-이번 실행의 원자료와 작업 기록은 저장소 밖 `C:/SourceCodes/caelab-phase3-evidence-20261027/`에 보존한다. 주요 영수증은 `native-service-final/workflow-receipt.json`, `qa/native-receipt-audit-200526c.json`, `cae/native-service-final-assessment.json`, `table-offscreen-main-final.json`, `session-log.md`다. 앞선 `native-service-01` 자료는 새 STA 해시 검증 계약 이전 실행이며 최종 후보의 검증된 재열기 증거로 사용하지 않는다.
+이번 실행의 원자료와 작업 기록은 저장소 밖 `C:/SourceCodes/caelab-phase3-evidence-20261027/`에 보존한다. 주요 근거는 `native-service-final/workflow-receipt.json`, `qa/final-review-9f813dd.md`, `qa/native-receipt-audit-0587dcd.json`, `cae/native-service-final-assessment.json`, `paraview-reader-receipt.json`, `table-offscreen-9f813dd.json`, `accepted-offscreen-{100,150,200}/`, `full-regression-200526c.log`, `final-related-0587dcd.log`, `final-gui-9f813dd.log`, `native-result-regression-9f813dd.log`, `session-log.md`다. 앞선 `native-service-01` 자료는 새 STA 해시 검증 계약 이전 실행이며 최종 후보의 검증된 재열기 증거로 사용하지 않는다.
 
 ## CalculiX 네이티브 치수 최적화(Sizing Optimization) 벤치마크 완료 (2026-10-27)
 
