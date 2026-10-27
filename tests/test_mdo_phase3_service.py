@@ -709,4 +709,109 @@ def test_native_verification_rejects_corrupted_frozen_assessment(service,field):
         service.prepare_apply(row.point_id)
 
 
+def test_writable_sensitivity_keeps_lease_until_worker_finishes_and_blocks_second_writer(service,monkeypatch):
+    import threading
+    from filelock import Timeout
+    service.add_point(dict(width=2.))
+    saved = service.save()
+    entered,release = threading.Event(),threading.Event()
+    original = service._verified_run
+    results,errors = [],[]
+    def delayed(*args,**kwargs):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("test worker was not released")
+        return original(*args,**kwargs)
+    monkeypatch.setattr(service,"_verified_run",delayed)
+    def analyze():
+        try:
+            results.append(service.analyze_sensitivity("disp"))
+        except BaseException as error:
+            errors.append(error)
+    worker = threading.Thread(target=analyze)
+    worker.start()
+    try:
+        assert entered.wait(5) and service.busy_operation == "sensitivity"
+        assert service.close() is False
+        assert service._lease is not None and service._lease.is_locked
+        competing = MDOStudyService(service.workbench)
+        with pytest.raises(Timeout):
+            competing.open(saved)
+        assert competing.close() is True and competing._lease is None
+    finally:
+        release.set(); worker.join(10)
+    assert not worker.is_alive() and not errors and results
+    assert service.busy_operation is None and service._lease.is_locked
+    assert service.sensitivity_report()["experiment_id"] == results[0]["experiment_id"]
+    assert service.close() is True
+    replacement = MDOStudyService(service.workbench).open(saved)
+    assert replacement._lease.is_locked
+    replacement.close()
+
+
+def test_successful_close_rejects_worker_queued_before_admission(service,monkeypatch):
+    import threading
+    service.add_point(dict(width=2.))
+    saved = service.save()
+    before = saved.read_bytes()
+    entered,release = threading.Event(),threading.Event()
+    begin = service._begin_operation
+    errors = []
+    def delayed_begin(*args,**kwargs):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("test worker was not released")
+        return begin(*args,**kwargs)
+    monkeypatch.setattr(service,"_begin_operation",delayed_begin)
+    def analyze():
+        try:
+            service.analyze_sensitivity("disp")
+        except BaseException as error:
+            errors.append(error)
+    worker = threading.Thread(target=analyze)
+    worker.start()
+    try:
+        assert entered.wait(5) and service.busy_operation is None
+        assert service.close() is True and service._lease is None
+    finally:
+        release.set(); worker.join(10)
+    assert not worker.is_alive() and len(errors) == 1
+    assert isinstance(errors[0],ValueError) and "closed" in str(errors[0])
+    assert saved.read_bytes() == before and not service.sensitivity_reports
+    with pytest.raises(ValueError,match="lease"):
+        service._persist()
+
+
+def test_readonly_sensitivity_can_finish_after_detach_without_writes(service,monkeypatch):
+    import threading
+    service.add_point(dict(width=2.))
+    saved = service.save(); service.close()
+    observer = MDOStudyService(service.workbench).open(saved,read_only=True)
+    entered,release = threading.Event(),threading.Event()
+    original = observer._verified_run
+    results,errors = [],[]
+    before = {str(p):p.read_bytes() for p in observer._root.rglob("*") if p.is_file() and not p.name.endswith(".lock")}
+    def delayed(*args,**kwargs):
+        entered.set()
+        if not release.wait(10):
+            raise RuntimeError("test worker was not released")
+        return original(*args,**kwargs)
+    monkeypatch.setattr(observer,"_verified_run",delayed)
+    def analyze():
+        try:
+            results.append(observer.analyze_sensitivity("disp"))
+        except BaseException as error:
+            errors.append(error)
+    worker = threading.Thread(target=analyze)
+    worker.start()
+    try:
+        assert entered.wait(5) and observer.busy_operation == "sensitivity"
+        assert observer.close() is True and observer._lease is None
+    finally:
+        release.set(); worker.join(10)
+    assert not worker.is_alive() and results and not errors
+    assert not observer.sensitivity_reports
+    assert before == {str(p):p.read_bytes() for p in observer._root.rglob("*") if p.is_file() and not p.name.endswith(".lock")}
+
+
 import numpy as np

@@ -11,7 +11,7 @@ import shutil
 import threading
 import uuid
 from dataclasses import asdict
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -244,6 +244,7 @@ class MDOStudyService:
         self._stop_requested = False
         self._lease = None
         self._busy = None
+        self._closed = False
         self._lock = threading.RLock()
         self._project_revision = (transaction.digest(project.path.read_bytes())
                                   if project is not None and project.path and project.path.is_file() else None)
@@ -264,11 +265,41 @@ class MDOStudyService:
     def source_revisions(self):
         return dict(self._current_hashes)
 
+    @property
+    def busy_operation(self):
+        with self._lock:
+            return self._busy or ("evaluation" if self.active_batch_id else None)
+
     def _writable(self, *, idle=True):
+        if self._closed:
+            raise ValueError("This study service is closed")
         if self.read_only:
             raise PermissionError("This study was opened read-only")
         if idle and (self.active_batch_id or self._busy):
             raise ValueError("Finish or cancel the active study operation first")
+
+    def _begin_operation(self,name,*,allow_read_only=False):
+        with self._lock:
+            if self._closed:
+                raise ValueError("This study service is closed")
+            if self.read_only and allow_read_only:
+                if self.active_batch_id or self._busy:
+                    raise ValueError("Finish the active study operation first")
+            else:
+                self._writable()
+            self._busy = name
+
+    def _end_operation(self):
+        with self._lock:
+            self._busy = None
+
+    @contextmanager
+    def _operation(self,name,*,allow_read_only=False):
+        self._begin_operation(name,allow_read_only=allow_read_only)
+        try:
+            yield
+        finally:
+            self._end_operation()
 
     def _acquire(self):
         if self._lease is None:
@@ -543,6 +574,10 @@ class MDOStudyService:
         if self._root is None:
             raise ValueError("Open a native input before running")
         self.recover_apply()
+        with self._operation("preparing evaluation"):
+            return self._submit(point_ids,fresh=fresh,on_progress=on_progress,on_item=on_item,on_finished=on_finished)
+
+    def _submit(self,point_ids=None,*,fresh=False,on_progress=None,on_item=None,on_finished=None):
         self._require_sources()
         if self.revision == "0":
             raise ValueError("Configure the study before running")
@@ -845,13 +880,13 @@ class MDOStudyService:
         self._verified_run(plan["point_id"])
         if plan["feasibility"] != "FEASIBLE" and not allow_infeasible:
             raise ValueError("Explicit acceptance of displayed violated criteria is required")
-        self._busy = "apply"
+        self._begin_operation("apply")
         try:
             return self._commit_current(rendered, {t["path"]:t["before_sha256"] for t in plan["targets"]},
                                         dict(point_id=plan["point_id"],run_id=plan["run_id"],revision=self.revision,
                                              previous_point_id=self.current_point_id,operation="apply"))
         finally:
-            self._busy = None
+            self._end_operation()
             self._plans.clear()
 
     def undo(self):
@@ -862,20 +897,20 @@ class MDOStudyService:
         replacements = {f["path"]:Path(f["backup"]).read_bytes() for f in previous["files"]}
         if any(transaction.digest(replacements[f["path"]]) != f["before_sha256"] for f in previous["files"]):
             raise ValueError("Undo backup is damaged")
-        self._busy = "apply"
+        self._begin_operation("apply")
         try:
             return self._commit_current(replacements, dict(self._current_hashes),
                                         dict(point_id=previous.get("previous_point_id"),run_id=previous.get("run_id"),
                                              revision=self.revision, previous_point_id=self.current_point_id,
                                              undo_receipt_id=previous["id"],operation="undo"))
         finally:
-            self._busy = None
+            self._end_operation()
 
     def recover_apply(self):
         self._writable()
         if self._root is None:
             raise ValueError("Open a native input before recovering an apply")
-        with ExitStack() as locks:
+        with self._operation("recovery"), ExitStack() as locks:
             if (self._root / "apply-pending.json").exists():
                 for path in sorted(self._current_hashes):
                     locks.enter_context(FileLock(path+".caelab-apply.lock",timeout=0))
@@ -922,7 +957,7 @@ class MDOStudyService:
         seed = (config.seed if config else 0) if validation_seed is None else validation_seed
         if type(seed) is not int or seed < 0 or type(chronological) is not bool:
             raise ValueError("Validation needs a nonnegative integer seed and explicit chronological policy")
-        self._busy = "train"
+        self._begin_operation("train")
         try:
             response_ids = (response_ids,) if isinstance(response_ids,str) else tuple(response_ids or self.response_units)
             rows = [r for r in self.study.records if r.mode == "ACTUAL" and r.revision == self.revision and self.is_verified(r.point_id,require_feasible=False)]
@@ -958,17 +993,15 @@ class MDOStudyService:
             self._persist()
             return model
         finally:
-            self._busy = None
+            self._end_operation()
 
     def analyze_sensitivity(self,response_id,*,method="spearman",point_ids=None,config=None):
         """Analyze existing actual ranks or a frozen predictor's complete paired design."""
         from .sensitivity import (spearman,SensitivityConfig,generate_sensitivity_design,
                                   SensitivityObservation,analyze_sensitivity)
-        if self.active_batch_id or self._busy:
-            raise ValueError("Finish the active study operation before sensitivity analysis")
         if response_id not in self.response_units or method not in ("spearman","sobol","morris"):
             raise ValueError("Choose a declared response and Spearman, Sobol or Morris")
-        self._busy = "sensitivity"
+        self._begin_operation("sensitivity",allow_read_only=True)
         try:
             experiment_id = uuid.uuid4().hex
             report = dict(experiment_id=experiment_id,method=method,response_id=response_id,unit=self.response_units[response_id],
@@ -1076,7 +1109,7 @@ class MDOStudyService:
             self.last_sensitivity_report = copy.deepcopy(report)
             return copy.deepcopy(report)
         finally:
-            self._busy = None
+            self._end_operation()
 
     def sensitivity_report(self,experiment_id=None):
         experiment_id = experiment_id or (self.sensitivity_reports[-1]["id"] if self.sensitivity_reports else None)
@@ -1105,7 +1138,7 @@ class MDOStudyService:
                 result = predict(model,np.array([service.study.space.encode(r.values).vector for r in requests]))
                 return {r.id:EvaluationObservation(request_id=r.id,point_id=r.point_id,mode="SURROGATE",source_id=model.id,
                                                    responses=dict(zip(result.response_ids,result.mean[i]))) for i,r in enumerate(requests)}
-        self._busy = "optimize"
+        self._begin_operation("optimize")
         try:
             problem = OptimizationProblem(space=self.study.space,objectives=tuple(self.study.objectives),constraints=tuple(self.study.constraints),
                                           mode="SURROGATE",revision=self.revision,criteria_revision=self.revision,response_units=self.response_units)
@@ -1124,7 +1157,7 @@ class MDOStudyService:
             self._persist()
             return result
         finally:
-            self._busy = None
+            self._end_operation()
 
     def _document(self, destination=None):
         destination = Path(destination or self._root/"study.json")
@@ -1152,9 +1185,12 @@ class MDOStudyService:
     def _persist(self):
         if self.read_only or self._root is None:
             return
-        atomic_json(self._root / "study.json",self._document())
-        if self.study_file and self.study_file != self._root / "study.json":
-            atomic_json(self.study_file,self._document(self.study_file))
+        with self._lock:
+            if self._closed or self._lease is None or not self._lease.is_locked:
+                raise ValueError("A live study writer lease is required to save")
+            atomic_json(self._root / "study.json",self._document())
+            if self.study_file and self.study_file != self._root / "study.json":
+                atomic_json(self.study_file,self._document(self.study_file))
 
     def _associate(self):
         if self.project is not None and self.node_id:
@@ -1175,21 +1211,26 @@ class MDOStudyService:
         self._writable()
         if path is not None and Path(path).resolve() != self.study_file:
             return self.save_as(path)
-        if self._root is None:
-            raise ValueError("Open a native input before saving")
-        self.study_file = self.study_file or self._root / "study.json"
-        self._persist(); self._associate()
-        return self.study_file
+        with self._operation("save"):
+            if self._root is None:
+                raise ValueError("Open a native input before saving")
+            self.study_file = self.study_file or self._root / "study.json"
+            self._persist(); self._associate()
+            return self.study_file
 
     def save_as(self, path):
         self._writable()
+        if Path(path).expanduser().resolve() == self.study_file:
+            return self.save()
+        with self._operation("save"):
+            return self._save_as(path)
+
+    def _save_as(self, path):
         if self._root is None:
             raise ValueError("Open a native input before saving")
         if (self._root / "apply-pending.json").exists():
             raise ValueError("Recover the interrupted current-design transaction before Save As")
         destination = Path(path).expanduser().resolve()
-        if destination == self.study_file:
-            return self.save()
         target = destination.with_suffix(".mdo-data")
         if destination.exists() or target.exists() or target.is_relative_to(self._root):
             raise ValueError("Save As requires a new independent file and sidecar directory")
@@ -1347,11 +1388,18 @@ class MDOStudyService:
         return path
 
     def close(self):
-        if self.read_only:
+        with self._lock:
+            if self._closed:
+                return True
+            if self.read_only:
+                self._closed = True
+                return True
+            if self._busy:
+                return False
+            if self.active_batch_id:
+                self.cancel()
+                return False
+            if self._lease:
+                self._lease.release(); self._lease = None
+            self._closed = True
             return True
-        if self.active_batch_id:
-            self.cancel()
-            return False
-        if self._lease:
-            self._lease.release(); self._lease = None
-        return True
