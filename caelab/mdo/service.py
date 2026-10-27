@@ -5,6 +5,7 @@ import copy
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import threading
@@ -64,7 +65,7 @@ def _validate_saved(data):
         text(data.get(key),key)
     if not re.fullmatch("[0-9a-f]{32}",data["study_id"]) or not data["revision"].isdigit():
         raise ValueError("Invalid study identity/revision")
-    for key in ("input_path","run_root","data_root"):
+    for key in ("input_path",):
         if not Path(data[key]).is_absolute():
             raise ValueError(f"{key}: absolute persisted path required")
     for key in ("originals","templates","definition","revisions","point_sources"):
@@ -179,6 +180,7 @@ class MDOStudyService:
         self.optimization_result = None
         self.optimization_history = []
         self.view_state = {}
+        self.origin_association = None
         self._root = None
         self._run_root = None
         self._originals = {}
@@ -697,6 +699,7 @@ class MDOStudyService:
             raise
         old_hashes = dict(self._current_hashes)
         old_point = self.current_point_id
+        old_rerun = self.current_rerun_id
         old_stack = list(self._undo_stack)
         old_project = copy.deepcopy(self.project.__dict__) if self.project is not None else None
         project_saved = False
@@ -723,6 +726,7 @@ class MDOStudyService:
             except BaseException:
                 rollback = transaction.recover(self._root,finalize=False)
                 self._current_hashes, self.current_point_id = old_hashes, old_point
+                self.current_rerun_id = old_rerun
                 self._apply_receipts.pop()
                 self._undo_stack = old_stack
                 self._persist()
@@ -767,7 +771,8 @@ class MDOStudyService:
         try:
             return self._commit_current(replacements, dict(self._current_hashes),
                                         dict(point_id=previous.get("previous_point_id"),run_id=previous.get("run_id"),
-                                             revision=self.revision, previous_point_id=self.current_point_id,operation="undo"))
+                                             revision=self.revision, previous_point_id=self.current_point_id,
+                                             undo_receipt_id=previous["id"],operation="undo"))
         finally:
             self._busy = None
 
@@ -779,16 +784,20 @@ class MDOStudyService:
             if (self._root / "apply-pending.json").exists():
                 for path in sorted(self._current_hashes):
                     locks.enter_context(FileLock(path+".caelab-apply.lock",timeout=0))
+                store_lease = RunStore(self._run_root).lease()
+                locks.callback(store_lease.release)
             result = transaction.recover(self._root,finalize=False)
-        if result:
-            self._current_hashes = {p:transaction.digest(Path(p).read_bytes()) for p in self._current_hashes}
-            self.current_point_id = result.get("previous_point_id")
-            self.current_rerun_id = None
-            self._apply_receipts.append(result)
-            self._undo_stack = [i for i in self._undo_stack if i != result["id"]]
-            self._persist()
-            transaction.finish(self._root,result)
-        return result
+            if result:
+                self._current_hashes = {p:transaction.digest(Path(p).read_bytes()) for p in self._current_hashes}
+                self.current_point_id = result.get("previous_point_id")
+                self.current_rerun_id = None
+                self._apply_receipts.append(result)
+                self._undo_stack = [i for i in self._undo_stack if i != result["id"]]
+                if result.get("operation") == "undo" and result.get("undo_receipt_id") not in self._undo_stack:
+                    self._undo_stack.append(result["undo_receipt_id"])
+                self._persist()
+                transaction.finish(self._root,result)
+            return result
 
     def rerun_current(self, **callbacks):
         self._writable()
@@ -873,24 +882,32 @@ class MDOStudyService:
         finally:
             self._busy = None
 
-    def _document(self):
+    def _document(self, destination=None):
+        destination = Path(destination or self._root/"study.json")
+        records = [asdict(r) for r in self.study.records]
+        sources = copy.deepcopy(self._point_sources)
+        for evidence in [*sources.values(),*(a for r in records for a in r["attempts"])]:
+            evidence["workdir"] = evidence["run_id"]
+            evidence["log_path"] = "job.log" if evidence.get("log_path") else ""
         return dict(format="caelab-mdo-study",version=2,study_id=self.study_id,name=self.study.name,revision=self.revision,
                     input_path=str(self.input_path),templates={p:b.hex() for p,b in self._templates.items()},
                     originals={p:b.hex() for p,b in self._originals.items()},current_hashes=self._current_hashes,
-                    definition=self._definition(),revisions=self._revisions,records=[asdict(r) for r in self.study.records],
-                    point_sources=self._point_sources,current_point_id=self.current_point_id,current_rerun_id=self.current_rerun_id,
-                    apply_receipts=self._apply_receipts,undo_stack=self._undo_stack,run_root=str(self._run_root),data_root=str(self._root),
+                    definition=self._definition(),revisions=self._revisions,records=records,
+                    point_sources=sources,current_point_id=self.current_point_id,current_rerun_id=self.current_rerun_id,
+                    apply_receipts=self._apply_receipts,undo_stack=self._undo_stack,
+                    run_root=os.path.relpath(self._run_root,destination.parent),data_root=os.path.relpath(self._root,destination.parent),
+                    run_references="relative-to-run-root",
                     surrogate_id=self.surrogate.id if self.surrogate else None,view_state=self.view_state,
                     optimization_history=self.optimization_history,
+                    origin_association=self.origin_association,
                     project_path=str(self.project.path) if self.project and self.project.path else None,node_id=self.node_id)
 
     def _persist(self):
         if self.read_only or self._root is None:
             return
-        data = self._document()
-        atomic_json(self._root / "study.json",data)
+        atomic_json(self._root / "study.json",self._document())
         if self.study_file and self.study_file != self._root / "study.json":
-            atomic_json(self.study_file,data)
+            atomic_json(self.study_file,self._document(self.study_file))
 
     def _associate(self):
         if self.project is not None and self.node_id:
@@ -923,7 +940,6 @@ class MDOStudyService:
             raise ValueError("Open a native input before saving")
         if (self._root / "apply-pending.json").exists():
             raise ValueError("Recover the interrupted current-design transaction before Save As")
-        self._ensure_project_unchanged()
         destination = Path(path).expanduser().resolve()
         if destination == self.study_file:
             return self.save()
@@ -932,6 +948,7 @@ class MDOStudyService:
             raise ValueError("Save As requires a new independent file and sidecar directory")
         destination.parent.mkdir(parents=True,exist_ok=True)
         old_root, old_runs, old_file = self._root,self._run_root,self.study_file
+        old_project,old_node,old_project_revision,old_origin = self.project,self.node_id,self._project_revision,self.origin_association
         old_sources = copy.deepcopy(self._point_sources)
         old_attempts = {r.point_id:copy.deepcopy(r.attempts) for r in self.study.records}
         lease = RunStore(old_runs).lease()
@@ -955,10 +972,12 @@ class MDOStudyService:
                 for evidence in row.attempts:
                     rebase(evidence)
             self._root,self._run_root,self.study_file = target,run_target,destination
+            if old_project is not None:
+                self.origin_association = dict(project_path=str(old_project.path),node_id=old_node,study_file=str(old_file or old_root/"study.json"))
+                self.project,self.node_id,self._project_revision = None,None,None
             target_lease = FileLock(target / "study.lock",timeout=0,thread_local=False)
             target_lease.acquire()
             self._persist()
-            self._associate()
             if self._lease:
                 self._lease.release()
             self._lease = target_lease
@@ -967,6 +986,7 @@ class MDOStudyService:
             if target_lease is not None:
                 target_lease.release()
             self._root,self._run_root,self.study_file = old_root,old_runs,old_file
+            self.project,self.node_id,self._project_revision,self.origin_association = old_project,old_node,old_project_revision,old_origin
             self._point_sources = old_sources
             for row in self.study.records:
                 row.attempts = old_attempts[row.point_id]
@@ -982,12 +1002,12 @@ class MDOStudyService:
             raise ValueError("Open a saved study in a new service")
         path = Path(path).expanduser().resolve()
         data = json.loads(path.read_text(encoding="utf-8"),parse_constant=lambda x: (_ for _ in ()).throw(ValueError("Nonfinite study data")))
-        if data.get("format") != "caelab-mdo-study" or data.get("version") != 2:
+        if not isinstance(data,dict) or data.get("format") != "caelab-mdo-study" or data.get("version") != 2:
             raise ValueError("Unsupported study format; open the original deck to create a current service study")
         _validate_saved(data)
         self.study_id,self.revision,self.read_only = data["study_id"],data["revision"],read_only
         self.input_path,self.study_file = Path(data["input_path"]),path
-        self._root,self._run_root = Path(data["data_root"]),Path(data["run_root"])
+        self._root,self._run_root = (path.parent/Path(data["data_root"])).resolve(),(path.parent/Path(data["run_root"])).resolve()
         if not self._root.is_dir():
             raise ValueError("Study sidecar directory is missing")
         self._originals = {p:bytes.fromhex(b) for p,b in data["originals"].items()}
@@ -1010,6 +1030,10 @@ class MDOStudyService:
                 raise ValueError("Duplicate saved point IDs")
             self.study.records.append(row); self.study._record_map[row.point_id] = row
         self._point_sources = data["point_sources"]
+        if data.get("run_references") == "relative-to-run-root":
+            for evidence in [*self._point_sources.values(),*(a for r in self.study.records for a in r.attempts)]:
+                evidence["workdir"] = str(self._run_root/evidence["run_id"])
+                evidence["log_path"] = str(self._run_root/evidence["run_id"]/"job.log") if evidence.get("log_path") else ""
         self.current_point_id,self.current_rerun_id = data["current_point_id"],data["current_rerun_id"]
         self._apply_receipts = data["apply_receipts"]
         self._undo_stack = data.get("undo_stack",[])
@@ -1017,6 +1041,7 @@ class MDOStudyService:
         if not isinstance(self.view_state,dict) or len(json.dumps(self.view_state)) > 120000:
             raise ValueError("Saved view state must be a bounded JSON object")
         self.optimization_history = data.get("optimization_history",[])
+        self.origin_association = data.get("origin_association")
         if data.get("surrogate_id"):
             from .surrogate import load_surrogate
             self.surrogate = load_surrogate(self._root / "models" / data["surrogate_id"])

@@ -254,6 +254,42 @@ def test_finish_fault_restores_durable_metadata_and_retains_target_locks(service
     reopened.close()
 
 
+def test_recovery_retains_target_ownership_through_corrected_metadata(service,monkeypatch):
+    from filelock import FileLock,Timeout
+    (row,) = measured(service,(2.,))
+    expected = service.source_revisions
+    transaction.replace_closure(service._root,service._render(row.physical_values),expected,
+                                dict(point_id=row.point_id,previous_point_id=None,operation="apply"))
+    persist = service._persist
+    observed = []
+    def check_ownership():
+        with pytest.raises(Timeout):
+            FileLock(str(service.input_path)+".caelab-apply.lock",timeout=0).acquire()
+        observed.append(True)
+        persist()
+    monkeypatch.setattr(service,"_persist",check_ownership)
+    assert service.recover_apply()["state"] == "rolled_back"
+    assert observed and service.current_point_id is None
+
+
+def test_failed_apply_keeps_prior_separate_current_rerun_openable(service,monkeypatch):
+    first,second = measured(service)
+    service.apply(service.prepare_apply(first.point_id))
+    service.rerun_current()
+    prior = service.current_rerun_id
+    original = service.input_path.read_bytes()
+    finish = transaction.finish
+    def fault(root,receipt):
+        if receipt["state"] == "committed":
+            raise OSError("new receipt fault")
+        finish(root,receipt)
+    monkeypatch.setattr(transaction,"finish",fault)
+    with pytest.raises(OSError):
+        service.apply(service.prepare_apply(second.point_id))
+    assert service.current_point_id == first.point_id and service.current_rerun_id == prior
+    assert service.input_path.read_bytes() == original and service.result_file(current=True).is_file()
+
+
 @pytest.mark.parametrize("damage", ["point_sources","error_message","physical_values"])
 def test_saved_schema_rejects_corruption_before_adoption(service,tmp_path,damage):
     measured(service,(2.,))
@@ -389,6 +425,51 @@ def test_response_endpoint_subset_and_stress_semantics_are_explicit(service):
     (folder/"model.inp").write_bytes(original+b'*EL FILE,SECTION FORCES\nS\n')
     with pytest.raises(ValueError,match="SECTION FORCES"):
         extract_native_responses(folder,service.response_selectors)
+
+
+def test_save_as_detaches_copy_and_preserves_parent_and_original_study(service,tmp_path):
+    wb = Workbench(); wb.jobs = service.workbench.jobs; wb.programs = service.workbench.programs
+    project = wb.new_native_project()
+    node = project.add_node("analysis","calculix")
+    project.set_file(node.id,service.input_path)
+    wb.save_native_project(project,tmp_path/"associated.json")
+    owner = MDOStudyService(wb,project=project,node_id=node.id)
+    owner.open_input(service.input_path)
+    owner.configure(service.study.space,service.study.objectives,service.study.constraints,service.response_units)
+    measured(owner,(2.,))
+    original = owner.save()
+    parent_bytes,study_bytes = project.path.read_bytes(),original.read_bytes()
+    original_reference = project.nodes[node.id].files["mdo_study"].path
+    copied = owner.save_as(tmp_path/"detached.json")
+    assert owner.project is None and owner.node_id is None
+    assert project.path.read_bytes() == parent_bytes and original.read_bytes() == study_bytes
+    assert project.nodes[node.id].files["mdo_study"].path == original_reference
+    owner.close()
+    reopened_parent = wb.open_native_project(project.path)
+    reopened_original = wb.create_mdo_study(project=reopened_parent,node_id=node.id)
+    assert reopened_original.is_verified("DP_0001")
+    reopened_original.close()
+    independent = wb.open_mdo_study(copied)
+    fresh = independent.clone_point("DP_0001")
+    independent.submit([fresh.point_id])
+    assert independent.is_verified(fresh.point_id)
+    assert Path(independent.point_evidence(fresh.point_id)["workdir"]).parent == copied.with_suffix(".mdo-data")/"runs"
+    assert project.path.read_bytes() == parent_bytes
+    independent.close()
+
+
+def test_relative_owned_paths_survive_sidecar_relocation(service,tmp_path):
+    import shutil
+    measured(service,(2.,))
+    saved = service.save_as(tmp_path/"portable.json")
+    service.close()
+    relocated = tmp_path/"relocated"; relocated.mkdir()
+    shutil.move(str(saved),str(relocated/saved.name))
+    shutil.move(str(saved.with_suffix(".mdo-data")),str(relocated/saved.with_suffix(".mdo-data").name))
+    reopened = MDOStudyService(service.workbench).open(relocated/saved.name)
+    assert reopened.is_verified("DP_0001")
+    assert reopened.result_file("DP_0001").is_relative_to(relocated)
+    reopened.close()
 
 
 import numpy as np
