@@ -445,3 +445,75 @@ def test_async_open_failure_retains_service_draft_layout_and_selection(win,qapp,
     assert ('failed' if failure=='open_error' else 'Retry opening') in win.status_bar.currentMessage()
     assert closed==([True] if failure=='close_busy' else [])
     monkeypatch.setattr(original,'close',original_close)
+
+
+def test_queued_ten_hz_results_keep_flush_cadence_and_stop_after_final_flush(win,qapp,monkeypatch):
+    from copy import deepcopy
+    from threading import Thread,Event,get_ident
+    service=win.service; service.active_batch_id='cadence'
+    for i in range(3,12):
+        record=service.study.add_point(dict(x=i+1.,y=2.)); record.status='COMPLETED'; record.observations=dict(mass=0.,disp=0.)
+    for record in service.study.records:
+        record.study_id=service.study_id; record.revision=service.revision; record.batch_id='cadence'
+    # Isolate the scheduling boundary. Native/10k probes retain the real plot work.
+    monkeypatch.setattr(win,'_update_visualizations',lambda:None)
+    win._viz_timer.timeout.disconnect(); win._viz_timer.timeout.connect(lambda:None)
+    win._populate_study(); qapp.processEvents()
+    selected=service.study.records[1].point_id; win.select_point(selected)
+    original_item=win._on_item_finished; original_flush=win._flush_deltas; original_finish=win._on_batch_finished
+    received=[]; timer_ids=[]; applied=[]; flushes=[]; errors=[]
+    source_finished=Event(); terminal=Event(); worker_done=Event(); stop=Event(); owner=get_ident()
+    def receive(point_id,record,run):
+        original_item(point_id,record,run)
+        accepted=win._pending_records.get(point_id) is record
+        received.append((point_id,accepted,get_ident()))
+        if accepted: timer_ids.append(win._delta_timer.timerId())
+    def flush():
+        pending=list(win._pending_records.values()); original_flush()
+        if pending:
+            applied.extend((record.point_id,record.observations['mass']) for record in pending)
+            flushes.append((time.monotonic(),source_finished.is_set()))
+    def finish(*args):
+        original_finish(*args); service.active_batch_id=None; win._sync_actions(); terminal.set()
+    win.bridge.itemFinished.disconnect(); win.bridge.itemFinished.connect(receive,Qt.ConnectionType.QueuedConnection)
+    win._delta_timer.timeout.disconnect(); win._delta_timer.timeout.connect(flush)
+    # The production final-flush method dispatches self._flush_deltas directly.
+    monkeypatch.setattr(win,'_flush_deltas',flush)
+    win.bridge.batchFinished.disconnect(); win.bridge.batchFinished.connect(finish,Qt.ConnectionType.QueuedConnection)
+    callbacks=win._callbacks(); expected={}
+    def source():
+        try:
+            for i,record in enumerate(service.study.records):
+                if stop.is_set(): return
+                record.observations['mass']=100.+i; snapshot=deepcopy(record); expected[record.point_id]=100.+i
+                callbacks['on_item'](record.point_id,snapshot,None)
+                if i<11 and stop.wait(.1): return
+            for field,value in (('study_id','stale'),('revision','stale'),('batch_id','stale')):
+                stale=deepcopy(service.study.records[0]); setattr(stale,field,value); stale.observations['mass']=999.
+                callbacks['on_item'](stale.point_id,stale,None)
+            source_finished.set(); callbacks['on_finished']('cadence','COMPLETED',12,0)
+            if not terminal.wait(3): raise RuntimeError('Queued batch completion was not delivered')
+            late=deepcopy(service.study.records[0]); late.observations['mass']=999.
+            callbacks['on_item'](late.point_id,late,None)
+        except Exception as error: errors.append(str(error))
+        finally: worker_done.set()
+    worker=Thread(target=source,daemon=True); worker.start()
+    try:
+        deadline=time.monotonic()+5
+        while (not worker_done.is_set() or not terminal.is_set()) and time.monotonic()<deadline:
+            qapp.processEvents(); time.sleep(.002)
+        for _ in range(3): qapp.processEvents(); time.sleep(.01)
+        assert worker_done.is_set() and terminal.is_set() and not errors
+        assert win._delta_timer.interval()==100 and not win._delta_timer.isSingleShot()
+        assert len(timer_ids)==12 and len(set(timer_ids))==1 and timer_ids[0]>=0
+        assert sum(not after_source for _,after_source in flushes)>=3
+        assert len(applied)==12 and len({point_id for point_id,_ in applied})==12
+        assert dict(applied)==expected
+        assert all(thread==owner for _,_,thread in received)
+        assert sum(accepted for _,accepted,_ in received)==12 and len(received)==16
+        assert not win._delta_timer.isActive() and not win._pending_records
+        assert win._selected_ids=={selected}
+        assert {record.point_id:record.observations['mass'] for record in win.tdp_model.records}==expected
+        assert not service.calls
+    finally:
+        stop.set(); terminal.set(); worker.join(1); service.active_batch_id=None; win._delta_timer.stop()

@@ -592,7 +592,8 @@ class MDOStudioWindow(QMainWindow):
     def _on_item_finished(self,point_id,record,run):
         if getattr(record,'study_id',self.service.study_id)!=self.service.study_id or getattr(record,'revision',self.service.revision)!=self.service.revision: return
         if getattr(record,'batch_id',self._active_batch_id) not in (None,self._active_batch_id): return
-        self._pending_records[point_id]=record; self._delta_timer.start()
+        self._pending_records[point_id]=record
+        if not self._delta_timer.isActive(): self._delta_timer.start()
 
     def _flush_deltas(self):
         if not self._pending_records: return
