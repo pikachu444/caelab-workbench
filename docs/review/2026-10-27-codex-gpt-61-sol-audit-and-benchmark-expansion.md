@@ -1,5 +1,8 @@
 # 2026-10-27 Codex CLI v0.164.0 업데이트 및 gpt-6.1-sol 심층 감사 보고서
 
+> **후속 정정 (2026-10-27):** 이 문서는 당시 작성된 역사적 보고다. 본문의 상용/공인 벤치마크 수치와 검증 완료 주장은 실행 원자료로 뒷받침되지 않아 철회했다. CLI/단위 검사 통과를 실제 GE·로어 암 또는 상용 비교 완료의 근거로 사용하지 않는다. [후속 감사](2026-10-27-readme-benchmark-audit.md), [정정한 목표 사양](../benchmarks/commercial_mdo_benchmark_calculix.md), [현재 상태](../../CURRENT_STATE.md)를 우선한다.
+
+
 - **작성일시**: 2026-10-27
 - **검토 주체**: Main Team Lead & Team B Reviewer (`gpt-6.1-sol`, `reasoning_effort: high`, Codex CLI v0.164.0)
 - **작업 공간**: `C:\SourceCodes\caelab-workbench\.worktrees\codex-mdo-team`

@@ -1,6 +1,6 @@
 # 구조
 
-2026-10-27 최신 설계 반영: 기존 `caelab/numerical/`과 레거시 최적화 패널은 [새 MDO 명세](docs/specs/spec-clean-slate-mdo-design.md)에 따라 전면 퇴출 및 교체 완료되었다. 8대 수치 코어를 갖춘 `caelab/mdo/` 엔진과 3대 작업 영역의 독립 MDO Studio(`apps/workbench_qt/mdo_studio/`)가 새로 구축되었으며, Workbench·JobManager·네이티브 판독 경계를 유지한다. 독립 실행(`python -m apps.workbench_qt.mdo_studio`) 및 메인 윈도우 메뉴 연동이 완료되었다.
+2026-10-27 최신 설계 반영: 기존 `caelab/numerical/`과 레거시 최적화 패널은 [새 MDO 명세](docs/specs/spec-clean-slate-mdo-design.md)에 따라 제거되어 수치 API가 `caelab/mdo/`로 옮겨졌다. 8대 수치 코어를 갖춘 `caelab/mdo/` 엔진과 3대 작업 영역의 독립 MDO Studio(`apps/workbench_qt/mdo_studio/`)가 새로 구축되었으며, Workbench·JobManager·네이티브 판독 경계를 유지한다. 독립 실행(`python -m apps.workbench_qt.mdo_studio`) 및 메인 윈도우 메뉴 연동이 완료되었다.
 
 기준은 이 저장소 DESIGN.md의 제품 정의와 5가지 결정입니다. 본문 정합성 개정일은 2026-10-23입니다. 목표 구조와 현재 구현을 구분하며, 기존 저장소의 문서는 이식 근거 자료로만 사용합니다.
 
@@ -26,10 +26,17 @@
 - 독립 전문가: `apps/workbench_qt/expert_window.py` → Workbench → `assist/discussions.py` → 기존 Discussion/공급자/검색 경로입니다. `expert_chat.py`는 저장 원문을 바꾸지 않고 Markdown 대화·사람용 출처와 제안·입력 동작을 표시합니다. HTML과 외부 리소스를 불러오지 않으며 제품 내부 덤프는 화면에 표시하지 않습니다. 문서별 읽던 위치와 하단 따라가기 상태는 로컬 Qt 설정에 저장하며 대화 문서의 원문과 스키마는 변경하지 않습니다. 대화 JSON과 상대경로 자산은 질문별 근거·실제 제공자료·역할·공급자·인용 검사·미적용 제안을 유지합니다. 원자 저장·개정 대조·OS 잠금으로 동시 저장/질문을 제한하고, 일반 저장은 기존 발언·제안·근거를 변경하지 못합니다. 모델 호출은 명시적인 질문에서만 시작하며 전체 요청은 60초 뒤 대기를 끝냅니다. 취소·시간 초과 이후 늦은 응답은 문서에 쓰지 않습니다. 표준 HTTP에는 소켓 제한 시간도 적용하지만 임의 Python 공급자 스레드 자체를 강제 종료하지는 않습니다.
 - 제안 검토: 명시적인 원본 대조·거절만 제안 상태와 검토 이력을 갱신합니다. 대상은 보존 근거의 원본 input/include이며, 실행용 복사본을 편집 대상으로 삼지 않습니다. 원본 전체 입력/INCLUDE와 보존 자산이 유효해도 상태는 전용 프로그램 수정 필요이며 자동 적용은 지원하지 않습니다. 실제 파일 수정과 다음 계산은 별도 사용자 행동입니다. 과거 제안의 파일 출처는 프로젝트 이동이나 새 결과 첨부로 다시 쓰지 않습니다.
 - 보조 변환기: CalculiX 1종. 입력·지원 검사 뒤 덱을 생성하고 ccx를 실행한다. 미방출 조건·옵션은 객체 위치와 함께 거부한다. FRD/DAT의 최종 프레임·요청 필드를 검사하며 실행·판독 오류는 failed와 디스크 로그로 남긴다. 이 지원표는 네이티브 덱 실행에 적용하지 않는다.
-- 새 MDO 수치 엔진 (`caelab/mdo`): 변수·목적함수·제약·DOE·대리모델(Kriging/RBF/PRS)·최적화(SLSQP/DE/NSGA-II)·Pareto·민감도(Sobol/Morris) 8대 코어와 StudyManager, INP 파라메트릭 덱 바인딩(`TemplateDeck`), 결과 스칼라 축소 추출(`responses.py`)을 완전 구현했다. Qt나 레거시 코드를 일절 가져오지 않으며, 선택적 라이브러리는 안전한 런타임 검사로 관리된다.
-- 기존 수치 경로: 레거시 `caelab/numerical` 패키지와 `optimization_panel.py`는 완전히 영구 삭제되었다. `caelab/numerical`에는 보존용 `__init__.py`와 안내용 AGENTS만 남았으며, 모든 기능은 `caelab/mdo/`로 전면 이관되었다.
+- 새 MDO 수치 엔진 (`caelab/mdo`): 변수·목적함수·제약·DOE·대리모델(Kriging/RBF/PRS)·최적화(SLSQP/DE/NSGA-II)·Pareto·민감도(Sobol/Morris) 8대 코어와 StudyManager, INP 파라메트릭 덱 바인딩(`TemplateDeck`), 결과 스칼라 축소 추출(`responses.py`)의 구현을 제공한다. API 존재와 GUI 연결·실제 솔버 검증 완료는 구분한다. Qt나 레거시 코드를 일절 가져오지 않으며, 선택적 라이브러리는 안전한 런타임 검사로 관리된다.
+- 기존 수치 경로: 레거시 수치 구현과 `optimization_panel.py`는 제거되었다. `caelab/numerical`에는 보존용 `__init__.py`와 안내용 AGENTS만 남았으며, 모든 기능은 `caelab/mdo/`로 전면 이관되었다.
 - PDE 라인: `caelab/pde` — FEniCSx(dolfinx) 실행 환경. 공통 모델 스키마에 넣지 않고 자체 형식을 유지한다.
-- GUI: PySide6 (`apps/workbench_qt`). 부모는 빈 프로젝트에서 사용자 파일과 여러 프로그램 상자를 등록·연결하는 화면입니다. `native_analysis`의 별도 프로세스에서 실제 INP를 읽기 전용으로 확인하고 비동기 계산·취소·실행 선택·로그·결과 프레임을 조회합니다. 현재 입력과 조회 중인 과거 실행은 구분하며 파일 선택이나 프로젝트 재열기로 계산하지 않습니다. `expert_window`는 별도 진입점과 대화 문서를 가지며 자료 미리보기와 질문 근거 선택을 분리합니다. MDO Studio(`apps/workbench_qt/mdo_studio/`)는 독립 프로세스 실행(`python -m apps.workbench_qt.mdo_studio`)과 `MainWindow` 메뉴 액션 연동이 완료되어, 스터디 설정 독, 평가 매트릭스 테이블, 3-Tab 분석 대시보드(Pareto, Kriging Response Surface, Sobol Tornado)를 제공합니다.
+- GUI: PySide6 (`apps/workbench_qt`). 부모는 빈 프로젝트에서 사용자 파일과 여러 프로그램 상자를 등록·연결하는 화면입니다. `native_analysis`의 별도 프로세스에서 실제 INP를 읽기 전용으로 확인하고 비동기 계산·취소·실행 선택·로그·결과 프레임을 조회합니다. 현재 입력과 조회 중인 과거 실행은 구분하며 파일 선택이나 프로젝트 재열기로 계산하지 않습니다. `expert_window`는 별도 진입점과 대화 문서를 가지며 자료 미리보기와 질문 근거 선택을 분리합니다. MDO Studio(`apps/workbench_qt/mdo_studio/`)는 독립 프로세스 실행(`python -m apps.workbench_qt.mdo_studio`)과 `MainWindow` 메뉴 액션 연동이 완료되어, 스터디 설정 독, 평가 매트릭스 테이블, 3-Tab 분석 대시보드(Pareto, Kriging Response Surface, Spearman 순위 상관)를 제공합니다.
+
+## MDO 입력·출처 경계
+
+- 연구는 사용자 CalculiX 덱의 명시적 토큰을 바인딩한다. 토큰 치환으로 외부 CAD가 갱신되거나 재메시된다고 가정하지 않는다.
+- GE 예제는 미계산 목표 사양이다. 합성 관측값·난수 시간과 암묵적 테스트 큐브 실행은 제품 결과 경로에 두지 않는다.
+- GUI 차트는 계산 표본의 Pareto, GP 예측 슬라이스, Spearman 상관을 구분한다. 코어의 NSGA-II·Sobol API가 있다는 이유로 GUI에서 자동 실행된다고 설명하지 않는다.
+- 실제 사용자 절차와 출력 단위는 [CalculiX MDO 가이드](docs/tutorials/01_end_to_end_calculix_mdo_guide.md), 검증 상태는 CURRENT_STATE를 따른다.
 
 ## 아직 없는 것
 
