@@ -36,7 +36,25 @@ def cleanup_events(qapp):
 @pytest.fixture
 def mock_solver_probe(monkeypatch):
     import caelab.connections as connections
-    script = ["print('mdo gui probe done', flush=True)"]
+    script = [
+        "from pathlib import Path\n"
+        "frd = '''    1PSTEP                           1           1\\n"
+        "  100C            1.00000E+00           2\\n"
+        " -4  DISP         3    1\\n"
+        " -5  DISP     1    1    1    0    0\\n"
+        " -1         1  1.20000E-01  0.00000E+00  4.50000E-02\\n"
+        " -1         2  1.85000E-01  0.00000E+00  6.20000E-02\\n"
+        " -3\\n"
+        " -4  STRESS       6    1\\n"
+        " -5  SXX      1    4    1    0    0\\n"
+        " -1         1  4.50000E+02  1.20000E+02  8.00000E+01  2.50000E+01  1.00000E+01  1.50000E+01\\n"
+        " -1         2  5.20000E+02  1.50000E+02  9.50000E+01  3.00000E+01  1.20000E+01  1.80000E+01\\n"
+        " -3\\n'''\n"
+        "Path('model.frd').write_text(frd, encoding='utf-8')\n"
+        "print('Total mass: 1.482', flush=True)\n"
+        "print('CalculiX Version 2.21 finished successfully.', flush=True)\n"
+        "print('mdo genuine ccx probe done', flush=True)\n"
+    ]
 
     def fake_request(status, workdir):
         return LaunchRequest(

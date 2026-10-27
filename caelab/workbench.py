@@ -208,9 +208,10 @@ class Workbench:
 
     def submit_batch(self, project: NativeProject, items: Sequence[Any], **kwargs) -> Any:
         import uuid
-        batch_id = kwargs.get("batch_id") or uuid.uuid4().hex
-        store = RunStore(project.run_store / "mdo_runs" / batch_id)
-        return self.jobs.submit_batch(store, items, batch_id=batch_id, **kwargs)
+        kwargs_clean = dict(kwargs)
+        batch_id = kwargs_clean.pop("batch_id", None) or uuid.uuid4().hex
+        store = kwargs_clean.pop("store", None) or RunStore(project.run_store / "mdo_runs" / batch_id)
+        return self.jobs.submit_batch(store, items, batch_id=batch_id, **kwargs_clean)
 
     def cancel_batch(self, batch_id: str) -> bool:
         return self.jobs.cancel_batch(batch_id)

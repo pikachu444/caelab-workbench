@@ -42,6 +42,7 @@ class BatchItem:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     # Runtime state:
+    batch_id: str | None = None
     state: str = "queued"
     run_id: str | None = None
     duration_sec: float = 0.0
@@ -195,7 +196,7 @@ class JobManager:
             run = self._native.get(run_id)
             return copy.deepcopy(run) if run is not None else None
 
-    def submit_native(self, store: RunStore, node_id: str, reference, status, timeout=3600, prerequisites=()) -> NativeRun:
+    def submit_native(self, store: RunStore, node_id: str, reference, status, timeout=3600, prerequisites=(), suppress_select: bool = False) -> NativeRun:
         if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout은 양의 유한한 초 단위 값이어야 합니다.")
         with self._native_lock:
@@ -214,7 +215,8 @@ class JobManager:
                 try:
                     run.workdir.mkdir(parents=True)
                     store.write(run)
-                    store.select(node_id, run.id)
+                    if not suppress_select:
+                        store.select(node_id, run.id)
                 except Exception as exc:
                     run.state, run.error, run.finished_at = "failed", f"실행 기록 준비 실패: {exc}", utc_now()
                     try:
@@ -508,130 +510,153 @@ class JobManager:
 
         emit_progress(None, "STARTING")
 
-        for idx, item in enumerate(batch.items):
-            with self._batch_lock:
-                batch.current_item_index = idx
+        try:
+            for idx, item in enumerate(batch.items):
+                item.batch_id = batch_id
+                with self._batch_lock:
+                    batch.current_item_index = idx
 
-            if control["cancel"].is_set():
-                item.state = "cancelled"
-                item.error = "사용자가 배치를 취소했습니다."
-                batch.cancelled_count += 1
-                continue
-
-            item.state = "preparing"
-            emit_progress(item, "PREPARING")
-
-            input_path = Path(item.input_path)
-            if not input_path.is_file():
-                item.state = "failed"
-                item.error = f"입력 파일이 존재하지 않습니다: {input_path}"
-                batch.failed_count += 1
-                emit_progress(item, "FAILED")
-                if stop_on_failure:
-                    break
-                continue
-
-            ref = FileReference(
-                path=str(input_path),
-                revision=file_revision(input_path),
-                units=dict(item.units),
-                unit_source=item.unit_source,
-                stale=False,
-            )
-
-            t_item_0 = time.monotonic()
-            try:
-                run = self.submit_native(
-                    store,
-                    item.node_id,
-                    ref,
-                    item.status,
-                    timeout=item.timeout,
-                )
-            except Exception as exc:
-                item.state = "failed"
-                item.error = f"제출 실패: {exc}"
-                batch.failed_count += 1
-                emit_progress(item, "FAILED")
-                if stop_on_failure:
-                    break
-                continue
-
-            item.run_id = run.id
-            with self._batch_lock:
-                control["current_run_id"] = run.id
-
-            item.state = "running"
-            emit_progress(item, f"RUNNING {item.status.spec.id}")
-
-            run_control = self._controls.get(run.id)
-            run_thread = run_control["thread"] if run_control else None
-            while run_thread and run_thread.is_alive():
                 if control["cancel"].is_set():
-                    self.cancel_native(run.id)
-                    run_thread.join(timeout=3.0)
-                    break
-                run_thread.join(timeout=0.05)
-
-            item.duration_sec = time.monotonic() - t_item_0
-            with self._batch_lock:
-                control["current_run_id"] = None
-
-            final_run = self.native_snapshot(run.id)
-            if final_run is None:
-                item.state = "failed"
-                item.error = "실행 스냅샷을 찾을 수 없습니다."
-                batch.failed_count += 1
-            elif final_run.state == "cancelled" or control["cancel"].is_set():
-                item.state = "cancelled"
-                item.error = final_run.error or "사용자가 취소했습니다."
-                batch.cancelled_count += 1
-            elif final_run.state == "completed":
-                item.state = "completed"
-                batch.completed_count += 1
-            else:
-                item.state = "failed"
-                item.error = final_run.error or f"종료 코드 {final_run.returncode}"
-                batch.failed_count += 1
-
-            if on_item_finished and final_run is not None:
-                try:
-                    on_item_finished(item, final_run)
-                except Exception as exc:
-                    item.error = (item.error + f" (on_item_finished 오류: {exc})").strip()
-
-            if cleanup_policy and final_run is not None:
-                try:
-                    cleanup_policy(item, final_run)
-                except Exception as exc:
-                    item.error = (item.error + f" (cleanup_policy 오류: {exc})").strip()
-
-            emit_progress(item, item.state.upper())
-
-            if control["cancel"].is_set():
-                for rem_idx in range(idx + 1, len(batch.items)):
-                    rem_item = batch.items[rem_idx]
-                    rem_item.state = "cancelled"
-                    rem_item.error = "사용자가 배치를 취소했습니다."
+                    item.state = "cancelled"
+                    item.error = "사용자가 배치를 취소했습니다."
                     batch.cancelled_count += 1
-                break
+                    continue
 
-            if item.state == "failed" and stop_on_failure:
-                break
+                item.state = "preparing"
+                emit_progress(item, "PREPARING")
 
-        batch.finished_at = utc_now()
-        if control["cancel"].is_set() or batch.cancelled_count == total:
-            batch.state = "cancelled"
-        elif (stop_on_failure and batch.failed_count > 0) or (batch.failed_count == total and total > 0):
-            batch.state = "failed"
-        else:
-            batch.state = "completed"
-        emit_progress(None, "DONE")
-        if on_batch_finished:
-            try:
-                on_batch_finished(copy.deepcopy(batch))
-            except Exception:
-                pass
+                try:
+                    input_path = Path(item.input_path)
+                    if not input_path.is_file():
+                        item.state = "failed"
+                        item.error = f"입력 파일이 존재하지 않습니다: {input_path}"
+                        batch.failed_count += 1
+                        emit_progress(item, "FAILED")
+                        if stop_on_failure:
+                            break
+                        continue
+
+                    ref = FileReference(
+                        path=str(input_path),
+                        revision=file_revision(input_path),
+                        units=dict(item.units),
+                        unit_source=item.unit_source,
+                        stale=False,
+                    )
+                except Exception as prep_exc:
+                    item.state = "failed"
+                    item.error = f"입력 파일 준비 실패: {prep_exc}"
+                    batch.failed_count += 1
+                    emit_progress(item, "FAILED")
+                    if stop_on_failure:
+                        break
+                    continue
+
+                t_item_0 = time.monotonic()
+                try:
+                    run = self.submit_native(
+                        store,
+                        item.node_id,
+                        ref,
+                        item.status,
+                        timeout=item.timeout,
+                        suppress_select=True,
+                    )
+                except Exception as exc:
+                    item.state = "failed"
+                    item.error = f"제출 실패: {exc}"
+                    batch.failed_count += 1
+                    emit_progress(item, "FAILED")
+                    if stop_on_failure:
+                        break
+                    continue
+
+                item.run_id = run.id
+                with self._batch_lock:
+                    control["current_run_id"] = run.id
+
+                item.state = "running"
+                emit_progress(item, f"RUNNING {item.status.spec.id}")
+
+                run_control = self._controls.get(run.id)
+                run_thread = run_control["thread"] if run_control else None
+                while run_thread and run_thread.is_alive():
+                    if control["cancel"].is_set():
+                        self.cancel_native(run.id)
+                        run_thread.join(timeout=3.0)
+                        break
+                    run_thread.join(timeout=0.05)
+
+                item.duration_sec = time.monotonic() - t_item_0
+                with self._batch_lock:
+                    control["current_run_id"] = None
+
+                final_run = self.native_snapshot(run.id)
+                run_control = self._controls.get(run.id)
+                cleanup_failed = bool(run_control and run_control.get("cleanup_failed"))
+
+                if run_thread and run_thread.is_alive():
+                    item.state = "failed"
+                    item.error = "워커 스레드가 취소 대기 시간 내에 종료되지 않았습니다."
+                    batch.failed_count += 1
+                elif cleanup_failed:
+                    item.state = "failed"
+                    item.error = (final_run.error if final_run else "") or "소유 프로세스 정리 확인 실패"
+                    batch.failed_count += 1
+                elif final_run is None:
+                    item.state = "failed"
+                    item.error = "실행 스냅샷을 찾을 수 없습니다."
+                    batch.failed_count += 1
+                elif final_run.state == "cancelled" or control["cancel"].is_set():
+                    item.state = "cancelled"
+                    item.error = final_run.error or "사용자가 취소했습니다."
+                    batch.cancelled_count += 1
+                elif final_run.state == "completed":
+                    item.state = "completed"
+                    batch.completed_count += 1
+                else:
+                    item.state = "failed"
+                    item.error = final_run.error or f"종료 코드 {final_run.returncode}"
+                    batch.failed_count += 1
+
+                if on_item_finished and final_run is not None:
+                    try:
+                        on_item_finished(item, final_run)
+                    except Exception as exc:
+                        item.error = (item.error + f" (on_item_finished 오류: {exc})").strip()
+
+                if cleanup_policy and final_run is not None:
+                    try:
+                        cleanup_policy(item, final_run)
+                    except Exception as exc:
+                        item.error = (item.error + f" (cleanup_policy 오류: {exc})").strip()
+
+                emit_progress(item, item.state.upper())
+
+                if control["cancel"].is_set():
+                    for rem_idx in range(idx + 1, len(batch.items)):
+                        rem_item = batch.items[rem_idx]
+                        rem_item.state = "cancelled"
+                        rem_item.error = "사용자가 배치를 취소했습니다."
+                        batch.cancelled_count += 1
+                    break
+
+                if item.state == "failed" and stop_on_failure:
+                    break
+        finally:
+            batch.finished_at = utc_now()
+            if control["cancel"].is_set() or batch.cancelled_count == total:
+                batch.state = "cancelled"
+            elif (stop_on_failure and batch.failed_count > 0) or (batch.failed_count == total and total > 0) or (batch.completed_count + batch.cancelled_count < total and not control["cancel"].is_set()):
+                batch.state = "failed"
+            else:
+                batch.state = "completed"
+            emit_progress(None, "DONE")
+            if on_batch_finished:
+                try:
+                    on_batch_finished(copy.deepcopy(batch))
+                except Exception:
+                    pass
 
     def close(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout

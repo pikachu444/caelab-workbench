@@ -64,9 +64,15 @@ class TemplateDeck:
                     else:
                         token_to_value[b.token_name] = str(val)
 
+        lower_values = {k.lower(): v for k, v in values.items()}
         for token in self.token_names:
-            if token not in token_to_value and token in values:
-                val = values[token]
+            if token not in token_to_value:
+                if token in values:
+                    val = values[token]
+                elif token.lower() in lower_values:
+                    val = lower_values[token.lower()]
+                else:
+                    continue
                 if isinstance(val, (int, float)):
                     token_to_value[token] = f"{float(val):.6g}"
                 else:

@@ -81,6 +81,17 @@ class DesignPointsTableModel(QAbstractTableModel):
         bottom_right = self.index(row, self.columnCount() - 1)
         self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole])
 
+    def update_pareto_front(self, pareto_ids: set[str] | Sequence[str]) -> None:
+        """Update Pareto flags for all records and emit dataChanged for affected rows."""
+        target_ids = set(pareto_ids)
+        for row, rec in enumerate(self.records):
+            should_be_pareto = rec.point_id in target_ids
+            if rec.is_pareto != should_be_pareto:
+                rec.is_pareto = should_be_pareto
+                col_pareto = 4
+                idx = self.index(row, col_pareto)
+                self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DisplayRole])
+
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
             return 0

@@ -1,5 +1,33 @@
 # 현재 상태
 
+## MDO Studio 실제 CalculiX 솔버 파싱 연동, 코덱스 감사 결함 수리 및 저장소 문서 5대 기둥 개편 (2026-10-27)
+
+- **CalculiX 원 덱 네이티브 솔버 결과 추출 파이프라인 완성 및 가짜 수식 전면 박멸 (pps/workbench_qt/mdo_studio/window.py)**:
+  - extract_calculix_responses() 신설 및 고도화:
+    - 표준 FRD 메타데이터 헤더( -4  STRESS       6    1) 토큰 분리 및 12글자 고정폭 파싱 구현으로 실제 ccx 솔버 출력 포맷 완벽 대응.
+    - 절점 변위(, u_y, u_z$, 합성 변위 $|u|$), 6대 응력 성분($\sigma_{xx}, \sigma_{yy}, \sigma_{zz}, 	au_{xy}, 	au_{yz}, 	au_{zx}$) 및 폰 미세스 등가응력($\sigma_v$) 정확 연산.
+    - .dat 파일에서 임의의 절점 셋(NSET)에 대한 지점 반력 총합($\sum R_x, \sum R_y, \sum R_z, |R|$) 파싱.
+    - 요소 체적/밀도 기반 질량($) 및 체적($) 계산 연동.
+    - ResponseSpec 기반 임의 정규식/CSV/JSON 물리량 스칼라 리덕션(max, min, last, sum, mean) 연동.
+  - 가짜 수식(	b * 120 등) 및 하드코딩 응답 키('disp', 'mass', 'stress') 전면 박멸.
+  - Kriging 3D 반응 곡면, Pareto 프론트, Spearman 민감도 순위, 설계점 매트릭스의 StudyManager (목적함수/제약조건/파라미터) 동적 바인딩.
+  - 제약조건 누락 시 NOT_ASSESSED 유지(거짓 FEASIBLE 승격 버그 수정) 및 해석 실패 시 FAILED 상태 전파.
+- **코덱스 CLI(codex review) 및 적대적 감사 결함 4건 전면 수리**:
+  1. [P1] 표준 CalculiX FRD 메타데이터 헤더 토큰 분리 및 파싱 실패 해결.
+  2. [P1] 미평가 제약조건 발생 시 FEASIBLE로 잘못 승격되던 결함을 NOT_ASSESSED로 유지하도록 수정.
+  3. [P2] Spearman 상관계수 계산 시 객체 속성 참조 오류(p.statistic -> p.rho) 수정.
+  4. [P2] 런타임 결과 수신 시 테이블 응답 컬럼 동적 재구성 및 Pareto 프론트 실시간 갱신 버그 해결.
+- **외부/가짜 합성 이미지 전면 퇴출 및 100% 진품 실화면 캡처본 교체**:
+  - 과거 GrabCAD/SimJEB 등 외부 합성 이미지 5종 삭제.
+  - 실제 워크벤치 런타임에서 직접 캡처한 진품 화면 8종 배치 (screen_project_launcher.png, screen_cae_main_window.png, screen_expert_window.png, screen_mdo_studio_*.png).
+- **저장소 문서(README.md 등) 5대 핵심 기둥 전면 개편**:
+  - 최적화(MDO) 편중을 탈피하고 caelab-workbench 5대 기둥(Project Launcher, FreeCAD, CalculiX Solver, ParaView, AI Expert & MDO) 중심으로 재구성.
+  - 무거운 벤치마크 표는 docs/benchmarks/commercial_mdo_benchmark_calculix.md로 분리/이관.
+- **테스트 슈트 12/12 100% 통과**:
+  - 	ests/test_mdo_studio_gui_live.py (3 passed)
+  - 	ests/test_job_batch.py (6 passed)
+  - 	ests/test_mdo_deck_and_responses.py (3 passed)
+
 ## JobManager 비동기 배치 인프라 및 MDO Studio 실시간 GUI 연동 완료 (2026-10-27)
 
 - **JobManager 비동기 배치 인프라 구축 (`caelab/jobs.py`, `caelab/workbench.py`)**:
