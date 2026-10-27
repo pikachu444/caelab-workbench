@@ -33,8 +33,9 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
 - **사용자 설명서 및 튜토리얼**:
   - [그림으로 보는 MDO Studio 비주얼 퀵스타트 가이드](docs/tutorials/visual_mdo_guide.md): 5대 실사 캡처 및 3대 영역 3분 조작법
   - [박스 거더 캔틸레버 단면 치수 최적화 튜토리얼](docs/tutorials/mdo_cantilever_quickstart.md): 현업 실무 엔지니어 핸즈온 가이드
-  - [3D 산업 표준 대형 벤치마크 계획서](docs/benchmarks/commercial_mdo_benchmark_calculix.md): GE 제트 엔진 브래킷 및 로어 컨트롤 암 비교 사양서
-  - [7대 다분야 산업 종합 벤치마크 사양서](docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md): 항공우주, 자동차, 파워트레인, 기체주익, 충돌안전, 압력용기, 교량보 7대 산업 모델
+  - [3D 산업 표준 대형 벤치마크 계획서](docs/benchmarks/commercial_mdo_benchmark_calculix.md): GE 제트 엔진 브래킷 및 로어 컨트롤 암 비교 사양서 (3D 형상, 4대 하중, OptiStruct/Tosca 패리티 비교 차트 수록)
+  - [7대 다분야 산업 종합 벤치마크 사양서](docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md): 항공우주, 자동차, 파워트레인, 기체주익, 충돌안전, 압력용기, 교량보 7대 산업 모델 (전체 인포그래픽 및 부품별 역학 직관 수록)
+  - [Codex v0.164.0 업데이트 및 gpt-6.1-sol 심층 감사 보고서](docs/review/2026-10-27-codex-gpt-61-sol-audit-and-benchmark-expansion.md): 이전 모델 간과 결함 7종 적발 및 개선 검증 보고서
 - **핵심 수치 모듈 ([`caelab.mdo`](caelab/mdo/__init__.py))**:
   - [`VariableSpace`](caelab/mdo/variables.py): 연속형(`ContinuousVariable`), 이산 규격형(`DiscreteVariable`), 범주형(`CategoricalVariable`), 수식 연동형(`LinkedVariable`) 설계 공간 정의.
   - [`ObjectiveSpec`](caelab/mdo/objectives.py) 및 [`ConstraintSpec`](caelab/mdo/constraints.py): 3상태([`Feasibility`](caelab/mdo/constraints.py): FEASIBLE / MARGINAL / INFEASIBLE) 판정 및 오차 대역 평가.

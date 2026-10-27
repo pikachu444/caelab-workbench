@@ -6,5 +6,5 @@
 - 화면은 Workbench 서비스의 상태와 실제 파일·실행 결과를 표시한다. 설치됨·입력 준비·실행 종료·결과 유효를 구분하고, 예제 수치로 상자 완료 상태를 만들지 않는다.
 - 전처리·정밀 후처리의 편집 동작은 전용 프로그램으로 연결한다. GUI 안에 솔버 변환·프로세스 관리·모델 변경의 별도 경로를 추가하지 않는다.
 - 해석 창은 전문가 UI·공급자·토론 서비스 없이 동작해야 한다. 전문가 상자는 독립 전문가 프로그램으로 연결하며 해석 창의 모듈 전환으로 대체하지 않는다. 연결 전에는 미구현을 표시하고 계산 완료를 전문가 준비 상태로 바꾸지 않는다.
-- 기존 최적화 패널은 DESIGN §11.5의 후속 사용자 지시에 따라 폐기한다. 새 독립 MDO Studio의 데이터 계약과 호출부 전환은 `docs/specs/spec-clean-slate-mdo-design.md` 및 해당 코어 담당과 맞춘다.
+- 기존 최적화 패널(`optimization_panel.py`)은 폐기 완료되었으며, 독립 MDO Studio(`apps/workbench_qt/mdo_studio/`)로 전면 대체되었다. MDO Studio 관련 개발·테마·검증 규칙은 하위 `apps/workbench_qt/mdo_studio/AGENTS.md`를 따른다. 메인 윈도우에서의 호출은 `MainWindow` 메뉴/툴바 액션을 통해 독립 창(`MDOStudioWindow`)으로 구동한다.
 - 변경한 사용자 흐름을 실제 화면에서 확인하고, Qt offscreen 검사는 그 범위를 구분한다. 전체 GUI 완료 판정은 DESIGN의 기준을 따른다.

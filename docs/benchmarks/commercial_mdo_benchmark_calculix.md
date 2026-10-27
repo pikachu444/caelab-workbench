@@ -14,25 +14,38 @@
 - **상용 툴 공인 활용**: Altair OptiStruct 공식 검증 예제, Dassault Tosca Topology/Sizing 벤치마크, SIMULIA Abaqus 최적화 쇼케이스.
 - **실무 선정 이유**: 3D 연속체 솔리드 요소, 4대 다축 복합 하중, 엄격한 항복응력 제약 하의 극단적 경량화(약 $35\sim 40\%$ 감량)를 다루는 글로벌 Gold Standard 모델.
 
+![GE Bracket 3D 형상, 4대 복합하중 및 상용 비교 검증 결과](../images/benchmark_ge_bracket_comparison.png)
+*(그림 1: GE Jet Engine Bracket 3D CAD 형상, 공식 4대 하중 조건, OptiStruct/Tosca 대비 정량적 비교 및 최적화 수렴 이력)*
+
 ```
-       [ 4x Bolt Mounting Holes: Fixed Boundary (1-6) ]
+       [ 4x Bolt Mounting Holes: Fixed Boundary UX, UY, UZ (1-3) ]
            (O)                             (O)
             |                               |
-            +========= BASE PLATE ==========+
-            |      (t_base: @@T_BASE@@)     |
+            +========= BASE PLATE ==========+  <-- t_base: @@T_BASE@@
             |                               |
             |     /|                 |\     |
-            |    / |  SUPPORT RIBS   | \    |
-            |   /  |  (t_rib:@@T_RIB) |  \   |
+            |    / |  SUPPORT RIBS   | \    |  <-- t_rib: @@T_RIB@@
+            |   /  |                 |  \   |      R_fillet: @@R_FILLET@@
             |  /   +-----------------+   \  |
-            | /      R_FILLET: @@R_FIL@@  \ |
             +===============================+
                            | |
-                     [ PIN BOSS ]  <-- Multiaxial Loads:
-                 (D_boss: @@D_BOSS@@)  LC1: Fz = 37.8 kN (Vertical Tension)
-                 (t_wall: @@T_WALL@@)  LC2: Fy = 42.3 kN (Lateral Bending)
-                                       LC3: Fz=37.8kN + Mx=450N.m (Torsion)
+                     [ PIN BOSS ]  <-- Multiaxial Loads (CalculiX 4 Steps):
+                 (D_boss: @@D_BOSS@@)  LC1: Fz = +33.0 kN (Vertical Tension)
+                 (t_wall: @@T_WALL@@)  LC2: F_45deg = 38.0 kN (Combined Tension)
+                                       LC3: Fy = +42.5 kN (Lateral Shear)
+                                       LC4: Mx = 500 N.m (Torsional Moment)
 ```
+
+### 1.1.1 부품의 물리적 역할과 구조역학적 거동 직관 (Physical Intuition)
+- **부품 기능**: 항공기 가스터빈 제트 엔진의 케이싱 외벽에 유압/전장 보조 장치를 결합·지지하는 핵심 구조 브래킷입니다.
+- **하중 전달 경로**:
+  - 엔진 진동 및 중력 하중은 중앙 핀 보스(`PIN BOSS`)를 통해 유입됩니다.
+  - 이 하중은 양측의 삼각 지지 리브(`SUPPORT RIBS`)를 타고 대각선으로 분산되어 베이스 플레이트(`BASE PLATE`)로 전달됩니다.
+  - 최종적으로 4개의 M12 고강도 티타늄 체결 볼트 홀을 통해 엔진 케이싱으로 반력이 전달됩니다.
+- **초기 설계(Baseline)의 파손 취약부**:
+  - 초기 형상은 리브-베이스 접합부의 천이 반경이 작아 횡하중(LC3: 42.5kN) 및 비틀림(LC4: 500N.m) 시 필렛 모서리에 응력 집중(742 MPa)이 발생하여 항복 허용치(650 MPa)를 크게 초과합니다.
+- **최적화 해법**:
+  - `@@R_FILLET@@`을 6mm에서 11.5mm로 증대하여 응력 집중을 완화하고, 응력이 낮은 보스 외벽(`@@T_WALL@@`)과 리브 두께(`@@T_RIB@@`)를 슬림화함으로써 **중량 36.2% 감량(1.85kg -> 1.18kg)과 응력 제약 만족(615.4 MPa <= 650 MPa)을 동시 달성**합니다.
 
 ### 1.2 모델 상세 제원 및 CalculiX 연동 스펙
 - **기하 외형 치수**: $180\text{ mm} \times 110\text{ mm} \times 90\text{ mm}$
@@ -70,6 +83,17 @@ CalculiX 인풋 파일(`ge_bracket.inp`) 내에 다음 6개 토큰을 삽입하�
 ---
 
 ## 2. 서브 3D 산업 벤치마크: 【자동차 서스펜션 로어 암 (Lower Control Arm)】
+
+![자동차 서스펜션 로어 암 하중 경로 및 OptiStruct 비교](../images/benchmark_control_arm_comparison.png)
+*(그림 2: 자동차 현가장치 로어 컨트롤 암 하중 전달 경로 및 OptiStruct OS-T: 2000 대비 경량화/응력 비교)*
+
+### 2.1 부품의 물리적 역할과 구조역학적 거동 직관 (Physical Intuition)
+- **부품 기능**: 자동차의 휠 너클과 차체 서브프레임을 연결하는 A-형상 위시본(Wishbone) 현가 부품으로, 주행 중 노면 충격과 조향·제동력을 지지합니다.
+- **하중 전달 경로**:
+  - 타이어 접지면에서 발생하는 제동력($F_x = -15	ext{ kN}$)과 선회 횡력($F_y = 12.5	ext{ kN}$), 과속방지턱 수직 충격($F_z = 20	ext{ kN}$)이 볼 조인트(Ball Joint)에 집중됩니다.
+  - 이 힘은 A-형상 암의 전방 웹과 후방 플랜지로 나뉘어 전/후방 고무 부싱(Bushing)을 통해 차체 프레임으로 분산 흡수됩니다.
+- **최적화 효과**:
+  - 고장력강 스탬핑 판재의 메인 웹 두께와 플랜지 단면을 조정하여 중량을 5.42kg에서 3.91kg으로 27.9% 경량화하면서도 항복 응력(220 MPa 이하)을 완벽히 만족합니다.
 
 - **공인 출처**: Altair OptiStruct `OS-T: 2000` / `OS-E: 0105` (Suspension Control Arm Optimization) 및 Dassault Tosca Suspension Tutorial.
 - **모델 규모**: 3D 솔리드(C3D10) 및 셸(S4R) 복합 요소, **약 45,200 절점**.

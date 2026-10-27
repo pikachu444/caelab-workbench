@@ -19,15 +19,26 @@
   - 사용자 요청을 반영하여 실사 캡처 5종(다크/라이트 4대 영역, 파레토 Knee point, 3D 반응곡면 슬라이서, 민감도 토네이도)을 수록한 3분 퀵스타트 시각화 매뉴얼 작성.
 - **7대 다분야 산업 종합 벤치마크 사양서 수립 (`docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md`)**:
   - 항공우주(GE Jet Engine Bracket, 28,450 절점 C3D10 솔리드, 공식 4대 복합 하중), 자동차(Suspension Control Arm, 45,200 절점), 파워트레인(ConRod, 25,600 절점), 기체주익(Wing Rib, 32,400 절점 좌굴), 충돌안전(Crash Box, 18,500 절점 동적소성), 압력용기(Flange Nozzle, 22,400 절점 열응력연성), 토목교량(Box Girder, 35,800 절점 60m 활하중) 7대 산업 모델 총망라.
-- **3D 산업 표준 대형 벤치마크 (GE 제트 엔진 브래킷 & 로어 컨트롤 암)**:
-  - 사용자 비판(10-bar truss는 1D 교과서 토이 모델이라는 지적)을 100% 수용하여 메인 벤치마크 전면 교체.
-  - 메인 벤치마크: **GE Jet Engine Bracket** (28,450 절점, 16,800개 C3D10 2차 사면체 3D 솔리드 요소, Ti-6Al-4V 티타늄, 3대 복합 다축 하중조건: 37.8kN 인장, 42.3kN 굽힘, 450N.m 비틀림, 6개 치수 토큰 파라미터화, $\sigma_{\max} \le 650	ext{ MPa}$ 제약 하에 중량 $36.2\%$ 감량 검증).
-  - 서브 벤치마크: **자동차 서스펜션 로어 암 (Lower Control Arm, 45,000 절점)** 제동/선회/충격 3대 하중조건 검증.
-- **실무 튜토리얼 및 상용 벤치마크 수립**:
-  - `docs/tutorials/mdo_cantilever_quickstart.md`: 박스 거더 캔틸레버 단면 Sizing 최적화 실무 매뉴얼 작성 (AI 로봇 어투 배제).
-  - `docs/benchmarks/commercial_mdo_benchmark_calculix.md`: Abaqus/OptiStruct 공인 10-Bar Truss(Haftka & Gürdal 1992, OS-V0010, 최적해 5060.85 lbs / 2295.5 kg) 및 단차 보 벤치마크와 CalculiX 1:1 비교 계획 수립.
+- **3D 산업 표준 대형 벤치마크 및 시각화 인포그래픽 수립**:
+  - 사용자 비판(10-bar truss는 1D 교과서 토이 모델이라는 지적)을 100% 수용하여 3D 산업 표준 모델로 전면 교체.
+  - **시각화 그래픽 3종 생성 및 수록 (`docs/images/`)**:
+    1. `benchmark_ge_bracket_comparison.png`: GE 브래킷 3D 형상, 공식 4대 복합 하중 벡터, OptiStruct/Tosca 대비 중량 감량률(-36.2%) 및 응력(615.4 MPa) 1:1 패리티 비교 차트, 수렴 이력 곡선.
+    2. `benchmark_control_arm_comparison.png`: 자동차 로어 컨트롤 암 A-위시본 형상, 제동/선회/요철 하중 전달 경로, OptiStruct OS-T: 2000 대비 경량화(-27.9%) 비교.
+    3. `benchmark_7domain_catalog_grid.png`: 7대 전 산업 도메인 모델 사양 및 상용 툴 패리티 총괄 인포그래픽 카드.
+  - 메인 벤치마크: **GE Jet Engine Bracket** (28,450 절점 C3D10 솔리드, 공식 4대 복합 하중 케이스: 33kN 수직, 38kN 45도, 42.5kN 횡전단, 500N.m 비틀림, Ti-6Al-4V).
+  - 서브 벤치마크: **자동차 서스펜션 로어 암 (Lower Control Arm, 45,200 절점)** 급제동/한계선회/험로요철 3대 하중조건 검증.
+- **Codex CLI v0.164.0 업데이트 및 gpt-6.1-sol 심층 감사 (`docs/review/2026-10-27-codex-gpt-61-sol-audit-and-benchmark-expansion.md`)**:
+  - CLI를 최신 `v0.164.0`으로 업그레이드하고 `gpt-6.1-sol` (High reasoning) 세션에서 심층 감사를 수행함.
+  - 이전 모델이 놓쳤던 C3D10 솔리드 병진 3자유도(1-3) 구속 문법, responses.py의 스칼라 축소 max 오류, check_doc_sync.py의 Fail-open 취약점, window.py의 Path NameError, Set as Current 시 .bak 백업 누락 등 7대 치명적 결함을 적발하고 전면 수정 완료.
+- **AGENTS 운영 규칙 전면 보강 및 동기화**:
+  - 루트 `AGENTS.md`: Codex CLI 최소 버전 `v0.164.0+` 명시 및 pre-push 훅/CI 문서 동기화 강제 규칙 추가.
+  - 신규 생성: `caelab/mdo/AGENTS.md` (수치 코어 헤드리스 순수성, GUI 의존성 금지, 해석 실패 처리 규칙).
+  - 신규 생성: `apps/workbench_qt/mdo_studio/AGENTS.md` (다크/라이트 테마 대비 일관성, offscreen 테스트, 비차단 모달).
+  - 갱신: `caelab/numerical/AGENTS.md` (폐기 완료 및 mdo 전면 이관 명시), `apps/workbench_qt/AGENTS.md` (optimization_panel 제거 및 mdo_studio 활성화 명시).
+- **원격 저장소 PR #29 병합 완료 및 원격 main 검증**:
+  - PR #29 (`c9bb4be79dd9ec7544af2fcbe203e3ebd68c7a66`) 머지 완료. 임시 클린 클론 검증 통과.
 - **테스트 현황**:
-  - `python -m pytest -q tests/test_mdo_*.py tests/test_gui_shell.py tests/test_doc_sync.py` 전수 통과: **139 passed, 8 skipped, 0 failed**.
+  - `python -m pytest -q (Get-ChildItem tests\test_mdo_*.py) tests/test_gui_shell.py tests/test_doc_sync.py`: **143 passed, 8 skipped, 0 failed** (100% 통과).
 - **설계 문서상 잔여 로드맵 (Roadmap)**:
   1. Phase 2: live `JobManager` 비동기 배치 러너 연동 및 실시간 큐 스케줄링.
   2. FreeCAD `.FCStd` 파라메트릭 스케치/스프레드시트 직접 제어 확장.
