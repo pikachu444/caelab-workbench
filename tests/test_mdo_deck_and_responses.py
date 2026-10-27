@@ -87,7 +87,7 @@ def test_extract_scalar_reductions(tmp_path: Path):
     assert pytest.approx(extract_scalar(spec_sum, tmp_path), 0.01) == 2371.2
 
 
-def test_mdo_studio_apply_as_current_with_backup(tmp_path: Path, monkeypatch):
+def test_mdo_studio_rejects_unmeasured_point_apply(tmp_path: Path, monkeypatch):
     import apps.workbench_qt.mdo_studio.window as win_mod
     from PySide6.QtWidgets import QApplication
     from caelab.mdo.study_manager import DesignPointRecord
@@ -130,14 +130,8 @@ def test_mdo_studio_apply_as_current_with_backup(tmp_path: Path, monkeypatch):
     # Apply design point DP-001
     win._on_apply_as_current("DP-001")
 
-    # Verify backup file created
-    bak_file = tmp_path / "test_active.inp.bak"
-    assert bak_file.is_file()
-    assert bak_file.read_text(encoding="utf-8") == deck_content
-
-    # Verify input file updated with new parameter values
-    updated_content = inp_file.read_text(encoding="utf-8")
-    assert "E = 210000" in updated_content
-    assert "NU = 0.3" in updated_content
+    # An unmeasured injected point must never update the native input.
+    assert not (tmp_path / "test_active.inp.bak").exists()
+    assert inp_file.read_text(encoding="utf-8") == deck_content
 
     win.close()

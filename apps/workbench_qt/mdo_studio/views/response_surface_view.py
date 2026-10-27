@@ -1,8 +1,8 @@
-"""Response surface slice with Kriging predictive variance (±1.96σ confidence band)."""
+"""Response surface slice with Kriging predictive variance (±1.96σ model uncertainty band)."""
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Sequence, Mapping
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -49,6 +49,12 @@ class ResponseSurfaceWidget(QWidget):
         for spine in self.ax.spines.values():
             spine.set_color(grid_color)
         self.ax.grid(True, linestyle="--", alpha=0.5, color=grid_color)
+        legend = self.ax.get_legend()
+        if legend is not None:
+            legend.get_frame().set_facecolor(bg_color)
+            legend.get_frame().set_edgecolor(grid_color)
+            for label in legend.get_texts():
+                label.set_color(text_color)
 
     def plot_kriging_slice(
         self,
@@ -68,7 +74,7 @@ class ResponseSurfaceWidget(QWidget):
         if pts:
             ax_vals = [r.physical_values[var_id] for r in pts]
             ay_vals = [r.observations[resp_id] for r in pts]
-            self.ax.scatter(ax_vals, ay_vals, color="#f59e0b", marker="o", s=45, label="Actual CAE Evaluations", zorder=4)
+            self.ax.scatter(ax_vals, ay_vals, color="#f59e0b", marker="o", s=45, label="FE samples (all other-variable settings)", zorder=4)
 
         if surrogate is not None:
             # Predict grid along var_id
@@ -76,13 +82,13 @@ class ResponseSurfaceWidget(QWidget):
             fixed = dict(fixed_values or {})
 
             # Multi-dimensional feature layout
-            feat_order = surrogate.dataset.feature_order or ("width", "height")
+            feat_order = surrogate.dataset.feature_order
             cols = []
             for f in feat_order:
                 if f == var_id:
                     cols.append(grid_x)
                 else:
-                    cols.append(np.full(len(grid_x), fixed.get(f, 25.0)))
+                    cols.append(np.full(len(grid_x), fixed[f]))
             X_pred = np.column_stack(cols)
 
             try:
@@ -100,7 +106,7 @@ class ResponseSurfaceWidget(QWidget):
                     mean + 1.96 * std,
                     color="#0284c7",
                     alpha=0.25,
-                    label="±1.96σ Predictive Uncertainty (95% CI)",
+                    label="GP ±1.96σ (model uncertainty)",
                 )
             except Exception:
                 pass
@@ -110,9 +116,11 @@ class ResponseSurfaceWidget(QWidget):
 
         self.ax.set_xlabel(f"Design Variable: {var_id}", fontsize=9.5)
         self.ax.set_ylabel(f"Predicted Response: {resp_id}", fontsize=9.5)
-        self.ax.set_title("Kriging Response Surface & Uncertainty Bounds (GPR)", fontsize=11, fontweight="bold")
+        self.ax.set_title("Kriging response slice\n(other variables fixed at initial values)", fontsize=11, fontweight="bold")
         legend = self.ax.legend(loc="best", framealpha=0.8, fontsize=8.5)
         if legend:
+            legend.get_frame().set_facecolor(self.ax.get_facecolor())
+            legend.get_frame().set_edgecolor("#1e293b" if self.is_dark else "#e2e8f0")
             for text in legend.get_texts():
                 text.set_color("#e2e8f0" if self.is_dark else "#0f172a")
 

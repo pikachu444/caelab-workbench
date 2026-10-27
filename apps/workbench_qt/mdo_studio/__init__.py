@@ -1,5 +1,1 @@
-"""CAELab MDO Studio — Commercial-grade Multi-Disciplinary Optimization GUI."""
-
-from .window import MDOStudioWindow
-
-__all__ = ["MDOStudioWindow"]
+"""CAELab MDO Studio: native-deck parameter studies and measured responses."""

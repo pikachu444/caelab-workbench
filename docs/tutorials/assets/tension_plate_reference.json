@@ -1,0 +1,125 @@
+{
+  "scope": "Native t=1,2,3 mm shell tension input verification; not GE or commercial benchmark",
+  "date": "2026-10-27",
+  "solver_version": "CalculiX 2.22",
+  "solver_sha256": "a7c351a332373e3075029b7986ea4c9e878789c5b4d2feaed1ef83703624fff5",
+  "template": "tension_plate_template.inp",
+  "template_sha256": "e097abb734b858b8e0a15cf7a6fa7d374a31e6de4502b089ebd9ed9cb12532c5",
+  "runner": "JobManager.submit_batch (no mocks)",
+  "batch_id": "18351978c89a4962a66e666e30c09265",
+  "units": {
+    "length": "mm",
+    "force": "N",
+    "time": "s",
+    "mass": "tonne",
+    "stress": "N/mm**2"
+  },
+  "runs": [
+    {
+      "thickness_mm": 1.0,
+      "run_id": "6a167750628a4210bb62cd1e37a894b9",
+      "returncode": 0,
+      "parse_state": "readable",
+      "mass_eall": 1.57e-05,
+      "volume_eall": 2000.0,
+      "dat_force_totals": {
+        "FIX": [
+          -1000.0,
+          -8.569734e-12,
+          2.736728e-13
+        ]
+      },
+      "frd_frame": {
+        "step": 1,
+        "increment": 1,
+        "value": 1.0,
+        "analysis_type": 0,
+        "kode": 1,
+        "description": "",
+        "text": "",
+        "parameters": {}
+      },
+      "disp": 0.023852345335545613,
+      "max_ux": 0.0238095,
+      "stress": 49.99800000000035,
+      "files_sha256": {
+        "model.inp": "84bf52414838749053c7caee4233a4e54f4986053404ef31e7e0ceccc9b90a34",
+        "model.dat": "a256b5e60fecf9864c684daddad809f01b705067820c1df68d58750b8e0024f9",
+        "model.frd": "dfc540e84934331a39a1eeb0561ee65075b9f2afdc71c362c6a84c08fccc8634",
+        "job.log": "27803cebec70990cb86e32be41ea4ff92afa76d6517290c6c150f5f3efb9a2c0",
+        "job.json": "6174111ce86d77a5d1065a221b2fa88d0014a251c54eaf55fbd91316dff02d49"
+      }
+    },
+    {
+      "thickness_mm": 2.0,
+      "run_id": "c028da47ca874905a0cb3a80c3c6a6ab",
+      "returncode": 0,
+      "parse_state": "readable",
+      "mass_eall": 3.14e-05,
+      "volume_eall": 4000.0,
+      "dat_force_totals": {
+        "FIX": [
+          -1000.0,
+          1.087786e-12,
+          -5.494515e-15
+        ]
+      },
+      "frd_frame": {
+        "step": 1,
+        "increment": 1,
+        "value": 1.0,
+        "analysis_type": 0,
+        "kode": 1,
+        "description": "",
+        "text": "",
+        "parameters": {}
+      },
+      "disp": 0.011926262744087961,
+      "max_ux": 0.0119048,
+      "stress": 24.99900000000013,
+      "files_sha256": {
+        "model.inp": "23cc8d8b4482251f63551d0a33789b2794ba522070a56bf99cc76551aab462dc",
+        "model.dat": "567e751f181e3134bf3cec1cf61c0b03fd08f97be92e8793baf3de261b396fb7",
+        "model.frd": "feffe603c935485303db9b01130299a531891427e7bfaffa7f9ac701eddb0cae",
+        "job.log": "27803cebec70990cb86e32be41ea4ff92afa76d6517290c6c150f5f3efb9a2c0",
+        "job.json": "438be1c3087d193a6afa032e3e885fa3af1499c6a1a04cecaa0198b35626870e"
+      }
+    },
+    {
+      "thickness_mm": 3.0,
+      "run_id": "0fe43ad62ec746e5a6eac638c08353e0",
+      "returncode": 0,
+      "parse_state": "readable",
+      "mass_eall": 4.71e-05,
+      "volume_eall": 6000.0,
+      "dat_force_totals": {
+        "FIX": [
+          -1000.0,
+          -2.026386e-12,
+          -1.00633e-13
+        ]
+      },
+      "frd_frame": {
+        "step": 1,
+        "increment": 1,
+        "value": 1.0,
+        "analysis_type": 0,
+        "kode": 1,
+        "description": "",
+        "text": "",
+        "parameters": {}
+      },
+      "disp": 0.0079508630605378,
+      "max_ux": 0.00793651,
+      "stress": 16.666000000000047,
+      "files_sha256": {
+        "model.inp": "d250f9257322d0282163f0731a3f2e158935923591d40cc199bd6b3b57e8b3c7",
+        "model.dat": "2745829caf0098ffb9bc1aee280c3d5ca08f95e69b122bc1879df3f098e5d8eb",
+        "model.frd": "3b64ec41edb4d48cbef6c45e5f8bdf3c69fcc240ea3f923e2b24031866cf925e",
+        "job.log": "27803cebec70990cb86e32be41ea4ff92afa76d6517290c6c150f5f3efb9a2c0",
+        "job.json": "f5bd0e0cd27fb8dfcf2495712a6d4016c3e7007008e219ba789afe3e3d7b6baf"
+      }
+    }
+  ],
+  "template_hash_encoding": "UTF-8 with LF line endings in native verification input; checkout CRLF may differ bytewise"
+}

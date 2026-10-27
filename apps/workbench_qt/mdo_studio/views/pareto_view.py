@@ -49,6 +49,12 @@ class ParetoFrontWidget(QWidget):
         for spine in self.ax.spines.values():
             spine.set_color(grid_color)
         self.ax.grid(True, linestyle="--", alpha=0.5, color=grid_color)
+        legend = self.ax.get_legend()
+        if legend is not None:
+            legend.get_frame().set_facecolor(bg_color)
+            legend.get_frame().set_edgecolor(grid_color)
+            for label in legend.get_texts():
+                label.set_color(text_color)
 
     def plot_study(
         self,
@@ -89,7 +95,7 @@ class ParetoFrontWidget(QWidget):
             # Extract Pareto Front
             vecs = np.array([[r.observations[obj_x_id], r.observations[obj_y_id]] for r in feasible])
             p_ids = [r.point_id for r in feasible]
-            p_indices = pareto_front(vecs, p_ids)
+            p_indices = np.array([i for i, r in enumerate(feasible) if r.is_pareto], dtype=int)
 
             if len(p_indices) > 0:
                 # Sort along front for smooth line
@@ -100,31 +106,14 @@ class ParetoFrontWidget(QWidget):
                 self.ax.plot(sorted_front[:, 0], sorted_front[:, 1], color="#38bdf8", linestyle="-", linewidth=2.2, label="Pareto Frontier")
                 self.ax.scatter(sorted_front[:, 0], sorted_front[:, 1], c="#38bdf8", edgecolors="white", s=70, zorder=4)
 
-                # Knee Point Recommendation
-                scales = [np.ptp(vecs[:, 0]) or 1.0, np.ptp(vecs[:, 1]) or 1.0]
-                kp_id = knee_point(vecs, p_ids, scales=scales)
-                if kp_id:
-                    kp_rec = next((r for r in feasible if r.point_id == kp_id), None)
-                    if kp_rec:
-                        kx = kp_rec.observations[obj_x_id]
-                        ky = kp_rec.observations[obj_y_id]
-                        self.ax.scatter([kx], [ky], c="#f59e0b", marker="*", s=220, edgecolors="white", zorder=5, label=f"Knee Point ({kp_id})")
-                        self.ax.annotate(
-                            f"Knee Point ({kp_id})",
-                            (kx, ky),
-                            textcoords="offset points",
-                            xytext=(10, 10),
-                            ha="left",
-                            color="#f59e0b",
-                            fontweight="bold",
-                            arrowprops=dict(arrowstyle="->", color="#f59e0b", lw=1.2),
-                        )
 
-        self.ax.set_xlabel(f"{x_name} (Minimize)", fontsize=9.5)
-        self.ax.set_ylabel(f"{y_name} (Minimize)", fontsize=9.5)
-        self.ax.set_title("Multi-Objective Pareto Trade-off & Compromise Frontier", fontsize=11, fontweight="bold")
+        self.ax.set_xlabel(x_name, fontsize=9.5)
+        self.ax.set_ylabel(y_name, fontsize=9.5)
+        self.ax.set_title("Sampled Pareto Front", fontsize=11, fontweight="bold")
         legend = self.ax.legend(loc="upper right", framealpha=0.8, fontsize=8.5)
         if legend:
+            legend.get_frame().set_facecolor(self.ax.get_facecolor())
+            legend.get_frame().set_edgecolor("#1e293b" if self.is_dark else "#e2e8f0")
             for text in legend.get_texts():
                 text.set_color("#e2e8f0" if self.is_dark else "#0f172a")
 
