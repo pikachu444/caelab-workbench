@@ -109,7 +109,7 @@ class ParetoFrontWidget(QWidget):
 
         self.ax.set_xlabel(x_name, fontsize=9.5)
         self.ax.set_ylabel(y_name, fontsize=9.5)
-        self.ax.set_title("Evaluated Design Points & Sampled Pareto Front", fontsize=11, fontweight="bold")
+        self.ax.set_title("Sampled Pareto Front", fontsize=11, fontweight="bold")
         legend = self.ax.legend(loc="upper right", framealpha=0.8, fontsize=8.5)
         if legend:
             legend.get_frame().set_facecolor(self.ax.get_facecolor())

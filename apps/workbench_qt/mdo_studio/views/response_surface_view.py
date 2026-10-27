@@ -116,7 +116,7 @@ class ResponseSurfaceWidget(QWidget):
 
         self.ax.set_xlabel(f"Design Variable: {var_id}", fontsize=9.5)
         self.ax.set_ylabel(f"Predicted Response: {resp_id}", fontsize=9.5)
-        self.ax.set_title("Kriging 1D Slice (other variables fixed at initial values)", fontsize=11, fontweight="bold")
+        self.ax.set_title("Kriging response slice\n(other variables fixed at initial values)", fontsize=11, fontweight="bold")
         legend = self.ax.legend(loc="best", framealpha=0.8, fontsize=8.5)
         if legend:
             legend.get_frame().set_facecolor(self.ax.get_facecolor())
