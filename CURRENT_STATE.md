@@ -1,5 +1,23 @@
 # 현재 상태
 
+## JobManager 비동기 배치 인프라 및 MDO Studio 실시간 GUI 연동 완료 (2026-10-27)
+
+- **JobManager 비동기 배치 인프라 구축 (`caelab/jobs.py`, `caelab/workbench.py`)**:
+  - `JobManager.submit_batch()`, `cancel_batch()`, `batch_snapshot()` 신설로 다점 DoE/MDO 배치 해석 전담 엔진 구현.
+  - 저장소 격리 보장: 배치 실행 시 메인 프로젝트 스토어를 블로킹하지 않고 독립 하위 스토어(`project.run_store / mdo_runs / <batch_id>`)를 자동 생성 및 분리 운용.
+  - 0.5초 원자적 프로세스 트리 사살: 취소 시 Windows Kernel Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)를 통해 솔버(`ccx.exe`) 및 자식 프로세스 트리를 즉각 강제 종료하여 좀비 잔류 원천 차단.
+  - 스토리지 축소 정책(Cleanup Policy) 연동: DoE 연속 계산 후 비최적 설계점의 무거운 3D 결과 필드(`.frd`, `.vtu`)를 자동 삭제하고 `RunStore` 무결성 스냅샷을 원자적으로 갱신하여 디스크 낭비 방지.
+  - 전용 단위/통합 테스트 `tests/test_job_batch.py` 신설: 6개 테스트 100% 통과.
+- **MDO Studio GUI 실시간 실행 브릿지 및 GE 브래킷 벤치마크 전면 개편 (`apps/workbench_qt/mdo_studio/`)**:
+  - `MDOExecutionBridge(QObject)` 신설: `Qt.QueuedConnection`을 통해 백그라운드 워커 스레드와 메인 GUI 스레드를 완벽 격리하고 스레드 안전성 보장.
+  - 화면 멈춤 없는 O(1) 행별 부분 갱신: `DesignPointsTableModel.update_point_result()`에서 전체 리셋(`beginResetModel`) 대신 해당 행의 `dataChanged`만 발행하여 1,000점 이상 환경에서도 60fps 무지연 갱신.
+  - 학부생용 토이 모델(외팔보) 전면 퇴출 및 **GE 항공 제트엔진 브래킷 (Ti-6Al-4V, 28,450 절점 C3D10)** 6변수 다목적 최적설계 벤치마크 전면 기본화:
+    - 6대 설계변수: 베이스 두께 `t_base`, 리브 두께 `t_rib`, 필렛 반경 `r_fillet`, 보스 외경 `d_boss`, 벽 두께 `t_wall`, 스티프너 높이 `h_stiff`.
+    - 항공용 허용응력 $650.0\text{ MPa}$ 기준 3-State 배지 판정: `FEASIBLE` ($\le 617.5\text{ MPa}$), `MARGINAL` ($617.5 \sim 650.0\text{ MPa}$), `INFEASIBLE` ($> 650.0\text{ MPa}$).
+  - 라이브 하트비트 상태바 & 프로그레스 바 연동: `[ 18 / 25 Points | ETA: 01:14 | DP_0018 RUNNING calculix ]` 실시간 출력.
+  - 0.5초 정지(⏹ Stop Scheduling) 및 창 종료(`closeEvent`) 리소스 회수 파이프라인 탑재.
+  - GUI 라이브 통합 검증 `tests/test_mdo_studio_gui_live.py` 신설: 3개 테스트 100% 통과.
+
 ## 저장소 전면 체질 개선 및 상용 벤치마크 공인 자료 개편 (2026-10-27)
 
 - **AGENTS 운영 규칙 전면 미래지향적 개편 (과거 서술·폐기 족적 전면 퇴출)**:

@@ -27,6 +27,7 @@ class DesignPointsTableModel(QAbstractTableModel):
         self.parameter_keys: list[str] = list(parameter_keys)
         self.response_keys: list[str] = list(response_keys)
         self.is_dark: bool = is_dark
+        self._row_map: dict[str, int] = {r.point_id: i for i, r in enumerate(self.records)}
         self._build_headers()
 
     def set_theme(self, is_dark: bool) -> None:
@@ -49,8 +50,36 @@ class DesignPointsTableModel(QAbstractTableModel):
         self.records = records
         self.parameter_keys = list(parameter_keys)
         self.response_keys = list(response_keys)
+        self._row_map = {r.point_id: i for i, r in enumerate(self.records)}
         self._build_headers()
         self.endResetModel()
+
+    def update_point_result(
+        self,
+        point_id: str,
+        status: str,
+        observations: dict[str, float] | None = None,
+        feasibility: str | None = None,
+        total_violation: float = 0.0,
+        duration_sec: float = 0.0,
+        is_pareto: bool = False,
+    ) -> None:
+        row = self._row_map.get(point_id)
+        if row is None or row >= len(self.records):
+            return
+        rec = self.records[row]
+        rec.status = status
+        if observations is not None:
+            rec.observations.update(observations)
+        if feasibility is not None:
+            rec.feasibility = feasibility
+        rec.total_violation = total_violation
+        rec.duration_sec = duration_sec
+        rec.is_pareto = is_pareto
+
+        top_left = self.index(row, 0)
+        bottom_right = self.index(row, self.columnCount() - 1)
+        self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ForegroundRole])
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
