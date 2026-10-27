@@ -323,7 +323,7 @@ def test_broken_open_and_failed_save_preserve_project_selection_and_dirty_state(
     assert not window.open_project(broken)
     assert window.project is current and window.boxes[box.node_id].isSelected()
     assert window._dirty
-    def failed_save(*args):
+    def failed_save(*args, **kwargs):
         raise OSError("disk full")
     monkeypatch.setattr(window.workbench, "save_native_project", failed_save)
     assert not window.save_project(tmp_path / "save.json")
