@@ -350,7 +350,8 @@ class MDOStudioWindow(QMainWindow):
         for view, text in ((self.surface_view, "No measured data for a response slice"), (self.pareto_view, "Two objective responses are required")):
             view.ax.clear()
             view._apply_theme()
-            view.ax.text(.5, .5, text, ha="center", va="center", transform=view.ax.transAxes)
+            view.ax.text(.5, .5, text, ha="center", va="center", transform=view.ax.transAxes,
+                         color="#e2e8f0" if self.is_dark else "#0f172a", gid="mdo_empty")
             view.canvas.draw_idle()
         if len(self.study.objectives) >= 2:
             ox, oy = self.study.objectives[:2]
@@ -381,7 +382,8 @@ class MDOStudioWindow(QMainWindow):
                                                     fixed_values={v.id: v.initial for v in self.study.space.variables[1:]})
             except (ValueError, ImportError, ArithmeticError) as exc:
                 self.surface_view.ax.clear()
-                self.surface_view.ax.text(.5, .5, f"Surrogate unavailable: {exc}", ha="center", va="center", wrap=True, transform=self.surface_view.ax.transAxes)
+                self.surface_view.ax.text(.5, .5, f"Surrogate unavailable: {exc}", ha="center", va="center", wrap=True, transform=self.surface_view.ax.transAxes,
+                                          color="#e2e8f0" if self.is_dark else "#0f172a", gid="mdo_empty")
                 self.surface_view.canvas.draw_idle()
         self.tornado_view.plot_tornado(items, target_name=f"Spearman |rho|: {target or 'no response'}")
         if self.study.records and not self.tdp_table.selectionModel().hasSelection():
@@ -834,3 +836,7 @@ class MDOStudioWindow(QMainWindow):
         self.pareto_view.set_theme(self.is_dark)
         self.tornado_view.set_theme(self.is_dark)
         self.surface_view.set_theme(self.is_dark)
+        for view in (self.pareto_view, self.surface_view):
+            for text in view.ax.texts:
+                if text.get_gid() == "mdo_empty":
+                    text.set_color("#e2e8f0" if self.is_dark else "#0f172a")
