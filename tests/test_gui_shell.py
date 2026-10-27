@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QAction
 
 from apps.workbench_qt.main_window import MainWindow, TREE_GROUPS
 from conftest import cantilever_model
@@ -80,7 +81,8 @@ def test_analysis_runs_without_expert_provider_or_proposal_editor(app, monkeypat
     assert "전문가" not in window._module_buttons
     assert all("전문가" not in action.text() for action in window.menuBar().actions())
     assert all("토론" not in chip.text() and "제안" not in chip.text() for chip in window.flow_labels)
-    assert window.optimization_panel is not None
+    assert not hasattr(window, "optimization_panel")
+    assert any(action.text() == "MDO Studio 열기" for action in window.findChildren(QAction))
 
 
 def test_props_panel_is_display_only(app):

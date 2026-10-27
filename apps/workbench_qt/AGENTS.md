@@ -10,7 +10,7 @@
 ## 2. 모듈 분리 및 독립 실행
 - 해석 작업 창은 전문가 UI, AI 공급자, 외부 네트워크 없이 완전히 독립 동작한다.
 - 전문가 프로그램은 독립 창(`expert_window.py`)으로 구동하며, 해석 창의 모듈 전환으로 대체하지 않는다.
-- 다분야 최적화 및 파라메트릭 탐색은 독립 창인 MDO Studio([`apps/workbench_qt/mdo_studio/`](mdo_studio/))를 통해 제공된다. 메인 윈도우에서는 메뉴 및 툴바 액션을 통해 `MDOStudioWindow`를 호출하며, 상세 개발 규칙은 하위 [`apps/workbench_qt/mdo_studio/AGENTS.md`](mdo_studio/AGENTS.md)를 따른다.
+- 다분야 최적화 및 파라메트릭 탐색은 독립 프로그램 MDO Studio([`apps/workbench_qt/mdo_studio/`](mdo_studio/))를 통해 제공된다. 부모 메뉴는 Workbench를 통해 독립 프로세스에 프로젝트·노드·스터디 파일 참조를 전달하며, 상세 개발 규칙은 하위 [`apps/workbench_qt/mdo_studio/AGENTS.md`](mdo_studio/AGENTS.md)를 따른다.
 
 ## 3. 검증 및 테마 원칙
 - 모든 화면은 라이트 및 다크 테마([`theme.py`](theme.py))에서 텍스트 대비와 뷰포트 가독성을 보장해야 한다.

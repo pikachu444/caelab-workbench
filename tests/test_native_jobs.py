@@ -416,7 +416,6 @@ def test_include_snapshot_preserves_tokens_order_and_top_level_cwd(tmp_path):
     (source / "nested/a.inc").write_bytes(b"** inside\r\n*INCLUDE,INPUT=b.inc\r\n")
     (source / "b.inc").write_bytes(b"*CONTACT PAIR,INTERACTION=F\nA,B\n")
     root = source / "main.inp"
-    # Original absolute paths with spaces are ambiguous to ccx and rejected separately.
     outside = tmp_path / "outside.inc"
     outside.write_bytes(b"** outside")
     root.write_bytes(b'** source\r\n*INCLUDE, INPUT= "nested/a.inc" \r\n*INCLUDE,INPUT=b.inc\n*INCLUDE,INPUT=b.inc\n*INCLUDE,INPUT=../outside.inc\n*RESTART,WRITE,FREQUENCY=0\n')
@@ -444,7 +443,7 @@ def test_include_snapshot_preserves_tokens_order_and_top_level_cwd(tmp_path):
 
 
 @pytest.mark.parametrize("text,reason", [
-    (b'*INCLUDE,INPUT="a b.inc"\n', "공백"),
+    (b'*INCLUDE,INPUT=a b.inc\n', "공백"),
     (b'*INCLUDE,INPUT=a.inc,b.inc\n', "쉼표"),
     (b'*RESTART,READ\n', "외부/restart"),
     (b'*TEMPERATURE,FILE=other\n', "외부 파일"),
@@ -469,6 +468,22 @@ def test_cycle_depth_limit_and_absolute_include(tmp_path):
     snapshot_input(tmp_path / "1.inc", tmp_path / "allowed")
     root.write_text(f'*INCLUDE,INPUT="{tmp_path / "10.inc"}"\n')
     snapshot_input(root, tmp_path / "absolute")
+
+
+def test_quoted_include_spaces_preserve_source_and_quote_spans(tmp_path):
+    root = tmp_path / "main.inp"
+    include = tmp_path / "material properties.inc"
+    include.write_bytes(b"** unchanged\r\n*ELASTIC\r\n210000, 0.3\r\n")
+    original = b'** deck\r\n*INCLUDE, INPUT = "material properties.inc"  \r\n'
+    root.write_bytes(original)
+    run_dir = tmp_path / "run with spaces"
+    manifest = snapshot_input(root, run_dir)
+    assert root.read_bytes() == original
+    assert (run_dir / "source/000000.inp").read_bytes() == original
+    assert (run_dir / "source/000001.inp").read_bytes() == include.read_bytes()
+    assert (run_dir / "model.inp").read_bytes() == original.replace(
+        b"material properties.inc", b"includes/000001.inp")
+    assert bytes.fromhex(manifest["includes"][0]["original_token_hex"]) == b"material properties.inc"
 
 
 def test_change_during_collection_refuses_start(tmp_path, monkeypatch):

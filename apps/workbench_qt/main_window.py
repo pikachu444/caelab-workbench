@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         analysis_menu = menu.addMenu("해석")
         analysis_menu.addAction("입력 검사", self.run_check)
         analysis_menu.addAction("실행", self.run_solve)
-        analysis_menu.addAction("최적화 패널 열기", self.open_optimization_panel)
+        analysis_menu.addAction("MDO Studio 열기", self.open_optimization_panel)
         results_menu = menu.addMenu("결과")
         results_menu.addAction("ParaView에서 열기 (다음 단계)",
                                lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
@@ -224,9 +224,6 @@ class MainWindow(QMainWindow):
         props_dock.setWidget(self.props_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
         self.props_dock = props_dock
-
-        self.optimization_panel = object()
-        self.optimization_dock = None
 
         # bottom dock: messages + flow
         bottom = QWidget()
@@ -511,14 +508,17 @@ class MainWindow(QMainWindow):
         if self._issue_target:
             self.select_path(self._issue_target)
 
-    # -- optimization panel ---------------------------------------------------
+    # -- independent MDO Studio ---------------------------------------------
     def open_optimization_panel(self) -> None:
-        from .mdo_studio.window import MDOStudioWindow
-        if not hasattr(self, '_mdo_studio_window') or self._mdo_studio_window is None:
-            self._mdo_studio_window = MDOStudioWindow()
-        self._mdo_studio_window.show()
-        self._mdo_studio_window.raise_()
-        self._mdo_studio_window.activateWindow()
+        try:
+            record = self.workbench.launch_mdo_studio()
+            if record.state == "failed":
+                raise ValueError(record.error)
+        except Exception as error:
+            self.statusBar().showMessage(f"MDO Studio를 열지 못했습니다: {error}")
+            return
+        self.statusBar().showMessage("독립 MDO Studio를 열었습니다.")
+
     def run_solve(self) -> None:
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
@@ -604,8 +604,6 @@ class MainWindow(QMainWindow):
             item.setIcon(0, icon(LEAF_ICONS.get(kind, "folder"), resolved))
         if hasattr(self, "viewport") and self.viewport is not None:
             self.viewport.apply_theme(resolved)
-        if hasattr(self, 'optimization_panel') and hasattr(self.optimization_panel, 'apply_theme'):
-            self.optimization_panel.apply_theme(resolved)
         for chip in getattr(self, "flow_labels", []):
             chip.style().unpolish(chip)
             chip.style().polish(chip)

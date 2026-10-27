@@ -267,6 +267,23 @@ def launch_request(status: ProgramStatus, file: str | Path) -> LaunchRequest:
     return LaunchRequest(argv, document.parent, environment, status.spec.id)
 
 
+def mdo_launch_request(study_file=None, project_file=None, node_id=None) -> LaunchRequest:
+    """Open the independent Studio with explicit file and project references."""
+    if bool(project_file) != bool(node_id):
+        raise ValueError("MDO 프로젝트와 노드 참조를 함께 지정하세요.")
+    argv = [sys.executable, "-m", "apps.workbench_qt.mdo_studio"]
+    for flag, value in (("--study", study_file), ("--project", project_file)):
+        if value is not None:
+            path = Path(value).expanduser().resolve()
+            if not path.is_file():
+                raise ValueError(f"MDO에 전달할 파일이 없습니다: {path}")
+            argv.extend([flag, str(path)])
+    if node_id is not None:
+        argv.extend(["--node", node_id])
+    return LaunchRequest(argv, Path(__file__).resolve().parent.parent,
+                         dict(os.environ), "mdo_studio")
+
+
 def analysis_launch_request(project_file: str | Path, node_id: str) -> LaunchRequest:
     project_file = Path(project_file).resolve()
     if not project_file.is_file():

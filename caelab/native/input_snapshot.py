@@ -39,13 +39,15 @@ def _includes(data: bytes, path: Path):
         while end > start and body[end - 1:end] in (b" ", b"\t"):
             end -= 1
         raw = body[start:end]
-        if raw.startswith(b'"'):
+        quoted = raw.startswith(b'"')
+        if quoted:
             close = raw.find(b'"', 1)
             if close < 0 or raw[close + 1:].strip():
                 raise ValueError(f"{path}:{number}: INCLUDE 따옴표 또는 줄 끝 표기가 모호합니다.")
             end = start + close
             start += 1
-        if any(char in body[start:end] for char in (b" ", b"\t", b",", b'"', b"'")):
+        forbidden = (b",", b'"', b"'") if quoted else (b" ", b"\t", b",", b'"', b"'")
+        if any(char in body[start:end] for char in forbidden):
             raise ValueError(f"{path}:{number}: 공백/쉼표/따옴표가 있는 INCLUDE 경로를 추측하지 않습니다.")
         try:
             filename = body[start:end].decode("utf-8")
