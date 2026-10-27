@@ -60,51 +60,7 @@ from .views.pareto_view import ParetoFrontWidget
 from .views.response_surface_view import ResponseSurfaceWidget
 
 
-def extract_calculix_responses(workdir: Path, run_result: dict | None) -> dict[str, float]:
-    """Final FRD nodal fields and same-time DAT set totals, in declared deck units."""
-    from caelab.native.results import _Reader
-    obs = {}
-    frd_path = workdir / "model.frd"
-    final_time = None
-    if frd_path.is_file():
-        try:
-            with frd_path.open(encoding="utf-8", errors="strict") as stream:
-                reader = _Reader(stream, lambda: None)
-                reader.read()
-            if reader.frames:
-                frame = reader.frames[-1]
-                final_time = frame.metadata["value"]
-                for result in frame.fields:
-                    if result.warnings or not result.values or set(result.values) != set(reader.nodes):
-                        continue
-                    names = [c["name"].upper() for c in result.stored]
-                    values = list(result.values.values())
-                    if not all(math.isfinite(v) for row in values for v in row):
-                        continue
-                    if result.name == "DISP" and all(k in names for k in ("D1", "D2", "D3")):
-                        obs["disp"] = max(math.hypot(*(row[names.index(k)] for k in ("D1", "D2", "D3"))) for row in values)
-                    elif result.name == "STRESS" and all(k in names for k in ("SXX", "SYY", "SZZ", "SXY", "SYZ", "SZX")):
-                        vm = []
-                        for row in values:
-                            xx, yy, zz, xy, yz, zx = [row[names.index(k)] for k in ("SXX", "SYY", "SZZ", "SXY", "SYZ", "SZX")]
-                            vm.append(math.sqrt(.5 * ((xx-yy)**2 + (yy-zz)**2 + (zz-xx)**2) + 3 * (xy**2 + yz**2 + zx**2)))
-                        obs["stress"] = max(vm)
-        except (OSError, ValueError, OverflowError):
-            return {}
-    dat_path = workdir / "model.dat"
-    if dat_path.is_file() and final_time is not None:
-        text = dat_path.read_text(encoding="utf-8", errors="replace")
-        # CalculiX printout.f EMAS TOTALS=ONLY: header, blank line, scalar.
-        pattern = r"total mass for set\s+(\S+)\s+and time\s+([+\-\d.eEdD]+)\s*\n\s*([+\-\d.eEdD]+)"
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            name, stamp, raw = match.groups()
-            try:
-                stamp, mass = float(stamp.replace("D", "E")), float(raw.replace("D", "E"))
-                if math.isclose(stamp, final_time, rel_tol=1e-6, abs_tol=1e-12) and math.isfinite(mass) and mass >= 0:
-                    obs[f"mass_{name.lower()}"] = mass
-            except ValueError:
-                pass
-    return {key: value for key, value in obs.items() if math.isfinite(value)}
+from caelab.mdo.calculix_evaluator import extract_calculix_responses
 
 
 class MDOStudioWindow(QMainWindow):

@@ -1,0 +1,167 @@
+{
+  "benchmark_name": "10-Bar Truss Sizing Optimization",
+  "formulation": "Minimize Structural Mass subject to Tip Displacement <= 2.0 in (0.0508 m)",
+  "element_type": "T3D2 (Truss)",
+  "framework": "caelab.mdo.optimize with CalculiXEvaluator",
+  "design_variables": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "A8",
+    "A9",
+    "A10"
+  ],
+  "initial_areas_in2": [
+    30.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0,
+    30.0
+  ],
+  "initial_mass_kg": 5710.477,
+  "initial_mass_lb": 12589.431803739999,
+  "initial_tip_uy_mm": 34.31440408880941,
+  "initial_tip_uy_in": 1.3509607908980084,
+  "optimal_areas_in2": [
+    0.1,
+    4.791,
+    14.863,
+    0.1,
+    32.697,
+    28.989,
+    0.1,
+    21.149,
+    20.321,
+    5.629
+  ],
+  "optimal_mass_kg": 2421.464,
+  "optimal_mass_lb": 5338.40796368,
+  "optimal_tip_uy_mm": 50.77616687590744,
+  "optimal_tip_uy_in": 1.999061688027852,
+  "mass_reduction_percent": 57.59611675171794,
+  "total_evaluations": 501,
+  "wall_time_sec": 43.935823917388916,
+  "solver": "CalculiX 2.22",
+  "optimizer": "caelab.mdo.optimize (SLSQP)",
+  "constraint_status": "SATISFIED (Max displacement within 0.0508 m limit)",
+  "template_sha256": "a229e0e7589a330d8a2355e21e5db3fd9adb5d55ac5c8c0bf9a5c0564df29a3e",
+  "history_sample": [
+    {
+      "eval_index": 1,
+      "areas_in2": [
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0
+      ],
+      "mass_kg": 5710.48,
+      "disp_mm": 34.314,
+      "feasible": true
+    },
+    {
+      "eval_index": 2,
+      "areas_in2": [
+        30.349,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0
+      ],
+      "mass_kg": 5716.18,
+      "disp_mm": 34.308,
+      "feasible": true
+    },
+    {
+      "eval_index": 3,
+      "areas_in2": [
+        30.0,
+        30.349,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0,
+        30.0
+      ],
+      "mass_kg": 5716.18,
+      "disp_mm": 34.308,
+      "feasible": true
+    },
+    {
+      "eval_index": 499,
+      "areas_in2": [
+        0.1,
+        4.802,
+        14.518,
+        0.1,
+        32.693,
+        28.987,
+        0.1,
+        21.502,
+        20.328,
+        5.605
+      ],
+      "mass_kg": 2423.69,
+      "disp_mm": 50.932,
+      "feasible": false
+    },
+    {
+      "eval_index": 500,
+      "areas_in2": [
+        0.1,
+        4.802,
+        14.518,
+        0.1,
+        32.693,
+        28.987,
+        0.1,
+        21.153,
+        20.677,
+        5.605
+      ],
+      "mass_kg": 2423.69,
+      "disp_mm": 50.921,
+      "feasible": false
+    },
+    {
+      "eval_index": 501,
+      "areas_in2": [
+        0.1,
+        4.802,
+        14.518,
+        0.1,
+        32.693,
+        28.987,
+        0.1,
+        21.153,
+        20.328,
+        5.954
+      ],
+      "mass_kg": 2423.69,
+      "disp_mm": 50.893,
+      "feasible": false
+    }
+  ]
+}

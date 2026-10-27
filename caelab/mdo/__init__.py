@@ -34,6 +34,7 @@ from caelab.mdo.pareto import pareto_front, knee_point, hypervolume, crowding_di
 from caelab.mdo.surrogate import SurrogateDataset, SurrogateConfig, fit_surrogate, predict
 from caelab.mdo.sensitivity import SensitivityConfig, analyze_sensitivity
 from caelab.mdo.optimize import OptimizationProblem, OptimizationConfig, optimize
+from caelab.mdo.calculix_evaluator import CalculiXEvaluator, extract_calculix_responses
 
 __all__ = [
     "VariableSpace",
@@ -66,4 +67,6 @@ __all__ = [
     "OptimizationProblem",
     "OptimizationConfig",
     "optimize",
+    "CalculiXEvaluator",
+    "extract_calculix_responses",
 ]
