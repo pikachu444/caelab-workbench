@@ -227,6 +227,34 @@ def test_invalid_surface_dispatch_invalidates_cached_scene(vtk_widget,invalid):
     view.close()
 
 
+@pytest.mark.parametrize('change',('response','fixed_value'))
+def test_surface_request_change_clears_old_identity_until_current_result(vtk_widget,change):
+    from caelab.mdo.variables import ContinuousVariable,VariableSpace
+    space=VariableSpace(variables=tuple(ContinuousVariable(id=key,name=key,unit='mm',lower=1,upper=5,initial=2) for key in ('x','y','fixed')))
+    artifact=SimpleNamespace(config=SimpleNamespace(method='gp'),dataset=SimpleNamespace(training_revision='1',response_ids=('disp','stress')),qualified=True,metrics=[],id='model')
+    view=ResponseSurfaceWidget(); view.set_study(artifact,space,[],dict(disp='mm',stress='MPa')); view.timer.stop()
+    x,y=np.meshgrid([1.,2.],[3.,4.]); old=(x,y,np.array([[.1,.2],[.3,.4]]),np.full((2,2),.01))
+    view._result=old; view._draw_result(); camera=camera_state(view.native.renderer.GetActiveCamera())
+    previous=view._token; view._running=True; view._running_token=previous
+    if change=='response': view.response.setCurrentIndex(view.response.findData('stress'))
+    else: view._controls['fixed'].setValue(3.)
+    view.timer.stop()
+    assert view._result is None and view.native.axes is None
+    assert view.native.renderer.GetViewProps().GetNumberOfItems()==0
+    assert 'Computing the current response' in view.native.message.text()
+    view.uncertainty.setChecked(True)
+    assert view.native.renderer.GetViewProps().GetNumberOfItems()==0 and not view.native.message.isHidden()
+    assert camera_state(view.native.renderer.GetActiveCamera())==camera
+    view._receive(previous,old,None)  # Completion from the replaced request remains inadmissible.
+    assert view._result is None and not view.native.message.isHidden()
+    current=(x,y,np.array([[100.,200.],[300.,400.]]),np.full((2,2),.1))
+    view._running=True; view._running_token=view._token; view._receive(view._token,current,None)
+    assert view._result is current and view.native.message.isHidden()
+    assert 'Z: '+('stress [MPa]' if change=='response' else 'disp [mm]') in view.native.axis_key.text()
+    assert view.native.physical_ranges[4]>99 and camera_state(view.native.renderer.GetActiveCamera())==camera
+    view.close()
+
+
 def test_study_tree_separates_sixteen_actual_and_two_hundred_predictions(qapp):
     manager=StudyManager()
     for i in range(216):

@@ -101,6 +101,12 @@ class ResponseSurfaceWidget(PlotWidget):
     def schedule(self,*args):
         self._token+=1
         if self._cancel: self._cancel.set()
+        self._result=None; self._pending=None
+        text='Computing the current response slice. Wait for the selected response and fixed inputs. Solver is not called.'
+        if not self.artifact: text='Train and validate a surrogate to view a response slice.'
+        elif not self.xaxis.currentData() or not self.yaxis.currentData() or self.xaxis.currentData()==self.yaxis.currentData():
+            text='A 3D slice requires two different continuous variables.'
+        self.empty(text); self.note.setText(text)
         self.timer.start()
 
     def _dispatch(self):
