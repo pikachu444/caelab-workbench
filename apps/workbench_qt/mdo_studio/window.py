@@ -202,7 +202,7 @@ class MDOStudioWindow(QMainWindow):
                 QMessageBox.warning(self,name,error); self.status_bar.showMessage(error)
             else:
                 self.service=result; self._display_revision=result.revision
-                self._generation+=1; self._selected_ids.clear(); self._clear_filters(); self._restore_study_view()
+                self._generation+=1; self._selected_ids.clear(); self._clear_filters()
         elif name=='Clone candidate':
             self._display_revision=self.service.revision; self._selected_ids={result.point_id}
         else:
@@ -210,7 +210,12 @@ class MDOStudioWindow(QMainWindow):
         if name in ('Open input','Parameterize','Configure','Open study') and not error:
             self._editor=None
             self._input_context()
-        self._populate_study(); self._sync_actions()
+        self._populate_study()
+        if name in ('Open study','Open input') and not error:
+            # Editor creation can reveal Setup; saved layout must be the final authority.
+            self._restore_study_view()
+            self.status_bar.showMessage(f'{name} completed. No calculation starts unless explicitly requested.')
+        self._sync_actions()
         if name in ('Open study','Open input','Clone candidate') and not error: QTimer.singleShot(0,self._reveal_selection)
         if self._active_batch_id: self._delta_timer.start()
 

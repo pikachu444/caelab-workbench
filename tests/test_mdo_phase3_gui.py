@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt,QEvent,QPersistentModelIndex,QModelRoleData,QModelRoleDataSpan
 from PySide6.QtGui import QInputMethodEvent
-from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox,QPushButton,QDialog,QFormLayout
+from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox,QPushButton,QDialog,QFormLayout,QLabel
 from caelab.workbench import Workbench
 from caelab.mdo.study_manager import StudyManager,DesignPointRecord
 from caelab.mdo.variables import ContinuousVariable,VariableSpace
@@ -372,3 +372,76 @@ def test_open_candidate_is_closed_when_current_service_cannot_close(win,monkeypa
     win._task_finished(win._generation,'Open study',candidate,None)
     assert win.service is original and closed==[True]
     monkeypatch.setattr(original,'close',previous_close)
+
+
+@pytest.mark.parametrize('floating,visible',[(False,False),(False,True),(True,False),(True,True)])
+def test_async_open_study_restores_saved_view_after_editor_creation(win,qapp,monkeypatch,floating,visible):
+    from pathlib import Path
+    win.show(); win._default_layout(); win.setup_dock.setFloating(floating); win.setup_dock.setVisible(visible)
+    win.center_splitter.setSizes([230,410]); qapp.processEvents()
+    candidate=ServiceSpy(); candidate.workbench=win.workbench; candidate.input_path=Path('C:/new-study/model.inp')
+    selected=candidate.study.records[1].point_id
+    candidate.view_state=win._view_state(); candidate.view_state.update(selected_ids=[selected],tab=1)
+    saved_splitter=win.center_splitter.sizes()
+    win.setup_dock.setFloating(not floating); win.setup_dock.show(); win.center_splitter.setSizes([410,230])
+    win.service.input_path=Path('C:/old-study/model.inp'); win._input_context(); win.select_point(win.study.records[0].point_id)
+    monkeypatch.setattr(win.workbench,'open_mdo_study',lambda *args,**kwargs:candidate)
+    win._on_open_study('new-study.json')
+    deadline=time.monotonic()+5
+    while win._busy and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    for _ in range(5): qapp.processEvents(); time.sleep(.01)
+    assert win.service is candidate and not win._busy
+    assert win.setup_dock.isFloating()==floating and win.setup_dock.isHidden()==(not visible)
+    assert win._selected_ids=={selected} and win.viz_tabs.currentIndex()==1
+    assert win.tdp_table.selectionModel().selectedRows()[0].data(DesignPointsTableModel.PointIdRole)==selected
+    assert win.center_splitter.sizes()==pytest.approx(saved_splitter,abs=2)
+    editor_text=' '.join(label.text() for label in win.setup_widget.context_tabs.widget(1).findChildren(QLabel))
+    assert 'new-study' in editor_text and 'old-study' not in editor_text
+    assert win.status_bar.currentMessage().startswith('Open study completed.')
+
+
+@pytest.mark.parametrize('operation',('Open input','Open study'))
+def test_async_open_without_saved_view_keeps_layout_and_shows_input_guidance(win,qapp,monkeypatch,operation):
+    candidate=ServiceSpy(); candidate.workbench=win.workbench
+    win.show(); win.setup_dock.setFloating(True); win.setup_dock.hide(); win.tree_dock.hide()
+    win.center_splitter.setSizes([240,400]); qapp.processEvents(); splitter=win.center_splitter.sizes(); position=win.setup_dock.pos()
+    if operation=='Open study':
+        monkeypatch.setattr(win.workbench,'open_mdo_study',lambda *args,**kwargs:candidate)
+        win._on_open_study('no-saved-layout.json')
+    else: win._background(operation,lambda:candidate)
+    deadline=time.monotonic()+5
+    while win._busy and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    qapp.processEvents()
+    assert win.service is candidate and not win.setup_dock.isHidden()
+    assert win.setup_dock.isFloating() and win.tree_dock.isHidden()
+    assert win.setup_dock.pos()==position
+    assert win.center_splitter.sizes()==pytest.approx(splitter,abs=2)
+    assert win.setup_widget.context_tabs.tabText(1)=='Input'
+    assert win.status_bar.currentMessage().startswith(operation+' completed.')
+
+
+@pytest.mark.parametrize('failure',('open_error','close_busy'))
+def test_async_open_failure_retains_service_draft_layout_and_selection(win,qapp,monkeypatch,failure):
+    win.show(); win._on_configure(); editor=win._editor; editor.variables.item(0,5).setText('Retained draft')
+    win.setup_dock.setFloating(True); win.setup_dock.hide(); win.viz_tabs.setCurrentIndex(1)
+    selected=win.study.records[1].point_id; win.select_point(selected)
+    original=win.service; original_close=original.close; candidate=ServiceSpy(); closed=[]
+    candidate.close=lambda:closed.append(True) or True
+    if failure=='open_error':
+        def fail(*args,**kwargs): raise ValueError('Invalid study document')
+        monkeypatch.setattr(win.workbench,'open_mdo_study',fail)
+    else:
+        monkeypatch.setattr(win.workbench,'open_mdo_study',lambda *args,**kwargs:candidate)
+        monkeypatch.setattr(original,'close',lambda:False)
+    win._on_open_study('invalid-or-busy.json')
+    deadline=time.monotonic()+5
+    while win._busy and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    for _ in range(3): qapp.processEvents()
+    assert win.service is original and win._editor is editor
+    assert editor.variables.item(0,5).text()=='Retained draft'
+    assert win.setup_dock.isFloating() and win.setup_dock.isHidden()
+    assert win._selected_ids=={selected} and win.viz_tabs.currentIndex()==1
+    assert 'completed' not in win.status_bar.currentMessage()
+    assert ('failed' if failure=='open_error' else 'Retry opening') in win.status_bar.currentMessage()
+    assert closed==([True] if failure=='close_busy' else [])
+    monkeypatch.setattr(original,'close',original_close)
