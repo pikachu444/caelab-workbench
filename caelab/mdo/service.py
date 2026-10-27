@@ -23,12 +23,33 @@ from caelab.native.run_store import RunStore, atomic_json
 from . import apply_transaction as transaction
 from .constraints import ConstraintSpec
 from .doe import DOEConfig, generate_design
-from .inp_binder import TemplateDeck
+from .inp_binder import TemplateDeck, scalar_literal_occurrences
 from .native_responses import default_selector, validate_selector, extract_native_responses
 from .objectives import ObjectiveSpec, evaluate_criteria
 from .study_manager import StudyManager, DesignPointRecord
 from .variables import (VariableSpace, ContinuousVariable, DiscreteVariable,
                         CategoricalVariable, LinkedVariable)
+
+
+def _decode_definition(definition):
+    classes = {t.__name__:t for t in (ContinuousVariable,DiscreteVariable,CategoricalVariable,LinkedVariable)}
+    variables = []
+    for raw in definition["variables"]:
+        raw = dict(raw)
+        variables.append(classes[raw.pop("type")](**raw))
+    return dict(space=VariableSpace(variables=tuple(variables)),
+                objectives=tuple(ObjectiveSpec(**o) for o in definition["objectives"]),
+                constraints=tuple(ConstraintSpec(**c) for c in definition["constraints"]),
+                response_units=copy.deepcopy(definition["response_units"]),
+                response_selectors=copy.deepcopy(definition["response_selectors"]))
+
+
+def _resource_policy(timeout_seconds,max_batch_calls):
+    if isinstance(timeout_seconds,bool) or not isinstance(timeout_seconds,(int,float)) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("Timeout must be finite positive seconds")
+    if type(max_batch_calls) is not int or max_batch_calls < 1:
+        raise ValueError("Actual calls per batch must be a positive integer")
+    return dict(timeout_seconds=float(timeout_seconds),max_batch_calls=max_batch_calls)
 
 
 def _validate_saved(data):
@@ -90,6 +111,8 @@ def _validate_saved(data):
     classes = {t.__name__:t for t in (ContinuousVariable,DiscreteVariable,CategoricalVariable,LinkedVariable)}
     spaces = {}
     for revision,definition in data["revisions"].items():
+        if not isinstance(revision,str) or not revision.isdigit():
+            raise ValueError("Saved study revisions require numeric identities")
         variables = []
         for raw in definition["variables"]:
             mapping(raw,"variable")
@@ -160,6 +183,17 @@ def _validate_saved(data):
     require(data.get("view_state",{}),dict,"view_state")
     if len(json.dumps(data.get("view_state",{}))) > 120000:
         raise ValueError("Saved view state is too large")
+    if data.get("training_report") is not None:
+        mapping(data["training_report"],"training_report")
+    require(data.get("sensitivity_reports",[]),list,"sensitivity_reports")
+    for entry in data.get("sensitivity_reports",[]):
+        mapping(entry,"sensitivity report index")
+        if not re.fullmatch("[0-9a-f]{32}",str(entry.get("id"))):
+            raise ValueError("Invalid saved sensitivity identity")
+        hashes({k:entry.get(k) for k in ("report_sha256","experiment_sha256")},"sensitivity report hashes")
+    policy = data.get("resource_policy",dict(timeout_seconds=300,max_batch_calls=1000))
+    mapping(policy,"resource_policy")
+    _resource_policy(**policy)
 
 
 class MDOStudyService:
@@ -191,6 +225,10 @@ class MDOStudyService:
         self.view_state = {}
         self.origin_association = None
         self.parameter_bindings = []
+        self.training_report = None
+        self.sensitivity_reports = []
+        self.last_sensitivity_report = None
+        self.resource_policy = _resource_policy(300,1000)
         self._root = None
         self._run_root = None
         self._originals = {}
@@ -345,14 +383,12 @@ class MDOStudyService:
             if card not in allowed or lines[index].lstrip().startswith("*"):
                 raise ValueError("Only scalar material/property/load data can be parameterized; geometry and topology require native regeneration")
             literal = binding["old_literal"]
-            if not literal or not re.fullmatch(r"[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+\-]?\d+)?", literal):
-                raise ValueError("Select an exact numeric scalar literal")
-            matches = list(re.finditer(r"(?<![\w.])"+re.escape(literal)+r"(?![\w.])", lines[index]))
+            matches = scalar_literal_occurrences(lines[index],literal)
             occurrence = binding["occurrence"]-1
             if occurrence < 0 or occurrence >= len(matches):
                 raise ValueError("Scalar occurrence is missing from selected line")
-            match = matches[occurrence]
-            grouped.setdefault((p,index), []).append((match.start(),match.end(),"<"+token+">"))
+            start,end = matches[occurrence]
+            grouped.setdefault((p,index), []).append((start,end,"<"+token+">"))
         for (p,index), changes in grouped.items():
             lines = templates[p].decode("utf-8").splitlines(keepends=True)
             intervals = sorted(changes)
@@ -400,6 +436,25 @@ class MDOStudyService:
         return dict(variables=[dict(type=type(v).__name__, **asdict(v)) for v in self.study.space.variables],
                     objectives=[asdict(o) for o in self.study.objectives], constraints=[asdict(c) for c in self.study.constraints],
                     response_units=self.response_units, response_selectors=self.response_selectors)
+
+    def revision_definition(self,revision=None):
+        revision = self.revision if revision is None else revision
+        if revision == "0" and self.revision == "0":
+            definition = self._definition()
+        elif revision in self._revisions:
+            definition = self._revisions[revision]
+        else:
+            raise ValueError("Unknown immutable study revision")
+        return dict(revision=revision,**_decode_definition(definition))
+
+    def revision_ids(self):
+        return tuple(sorted(set(self._revisions)|{self.revision},key=int))
+
+    def set_resource_policy(self,timeout_seconds=300,max_batch_calls=1000):
+        self._writable()
+        self.resource_policy = _resource_policy(timeout_seconds,max_batch_calls)
+        self._persist()
+        return dict(self.resource_policy)
 
     def _add_point(self, values, *, mode="ACTUAL", source_point_id=None):
         values = self.study.space._physical(values)
@@ -492,6 +547,8 @@ class MDOStudyService:
             raise ValueError("Select current-revision actual candidates; confirm predictions separately")
         if len({r.point_id for r in rows}) != len(rows):
             raise ValueError("Duplicate selected point")
+        if len(rows) > self.resource_policy["max_batch_calls"]:
+            raise ValueError(f"Batch needs {len(rows)} actual calls; allowance is {self.resource_policy['max_batch_calls']}. Split the selection or change the batch allowance.")
         solver = next((s for s in self.workbench.programs() if s.spec.id == "calculix"), None)
         if solver is None or not solver.available:
             raise ValueError("Configure an available CalculiX executable")
@@ -506,7 +563,7 @@ class MDOStudyService:
             row.status, row.batch_id = "QUEUED", batch_id
             items.append(BatchItem(item_id=row.point_id, input_path=input_path, status=solver,
                                    node_id=f"mdo:{self.study_id}:{row.point_id}", units=dict(self.response_units),
-                                   unit_source="MDO declared native deck units", timeout=300,
+                                   unit_source="MDO declared native deck units", timeout=self.resource_policy["timeout_seconds"],
                                    parameters=dict(row.physical_values), metadata=dict(study_id=self.study_id,revision=revision,fresh=fresh)))
         self._dispatch_locks = ExitStack()
         try:
@@ -695,6 +752,8 @@ class MDOStudyService:
 
     def confirm(self, point_ids, **callbacks):
         self._writable()
+        if len(point_ids) > self.resource_policy["max_batch_calls"]:
+            raise ValueError("Fresh confirmation exceeds the actual calls per batch allowance")
         clones = [self._add_point(self._record(p).physical_values, source_point_id=p) for p in point_ids]
         return self.submit([r.point_id for r in clones], fresh=True, **callbacks)
 
@@ -844,15 +903,22 @@ class MDOStudyService:
         status = next(s for s in self.workbench.programs() if s.spec.id == "paraview")
         return self.workbench.jobs.launch(launch_request(status, document))
 
-    def train(self, response_ids=None, config=None):
+    def train(self, response_ids=None, config=None, *, holdout_fraction=.2,validation_seed=None,chronological=False):
         from .surrogate import SurrogateDataset, fit_surrogate, save_surrogate, grouped_holdout
         self._writable()
+        seed = (config.seed if config else 0) if validation_seed is None else validation_seed
+        if type(seed) is not int or seed < 0 or type(chronological) is not bool:
+            raise ValueError("Validation needs a nonnegative integer seed and explicit chronological policy")
         self._busy = "train"
         try:
             response_ids = (response_ids,) if isinstance(response_ids,str) else tuple(response_ids or self.response_units)
             rows = [r for r in self.study.records if r.mode == "ACTUAL" and r.revision == self.revision and self.is_verified(r.point_id,require_feasible=False)]
             if not rows:
                 raise ValueError("Verified actual native rows are required for training")
+            if chronological:
+                if any(not r.attempts or not r.attempts[-1].get("finished_at") for r in rows):
+                    raise ValueError("Chronological holdout requires native completion timestamps")
+                rows.sort(key=lambda r:(r.attempts[-1]["finished_at"],r.index))
             encoded = [self.study.space.encode(r.physical_values) for r in rows]
             dataset = SurrogateDataset(x=np.array([p.vector for p in encoded]),
                                        y=np.array([[r.observations[k] for k in response_ids] for r in rows]),
@@ -860,13 +926,155 @@ class MDOStudyService:
                                        response_ids=response_ids,units=tuple(self.response_units[k] for k in response_ids),
                                        feature_order=encoded[0].feature_order, training_revision=self.revision,
                                        continuous_only=all(isinstance(v,ContinuousVariable) for v in self.study.space.independent_variables))
-            model = fit_surrogate(dataset,config,grouped_holdout(dataset,seed=config.seed if config else 0),model_id=uuid.uuid4().hex)
+            split = grouped_holdout(dataset,fraction=holdout_fraction,seed=seed,chronological=chronological)
+            model = fit_surrogate(dataset,config,split,model_id=uuid.uuid4().hex)
             save_surrogate(model,self._root / "models" / model.id)
+            report = dict(model_id=model.id,revision=self.revision,
+                          split_policy=dict(method=split.method,fraction=holdout_fraction,seed=seed,chronological=chronological),
+                          ordering="native attempt completion time" if chronological else "study record order",
+                          train_point_ids=[dataset.point_ids[i] for i in split.train_indices],
+                          validation_point_ids=[dataset.point_ids[i] for i in split.validation_indices],
+                          train_run_ids=[dataset.run_ids[i] for i in split.train_indices],
+                          validation_run_ids=[dataset.run_ids[i] for i in split.validation_indices],
+                          response_ids=list(dataset.response_ids),units=list(dataset.units),
+                          qualification_limits=list(model.config.qualification_rmse),metrics=[asdict(m) for m in model.metrics],
+                          qualified=model.qualified,warnings=list(model.warnings))
+            atomic_json(self._root/"models"/model.id/"validation.json",report)
             self.surrogate = model
+            self.training_report = report
             self._persist()
             return model
         finally:
             self._busy = None
+
+    def analyze_sensitivity(self,response_id,*,method="spearman",point_ids=None,config=None):
+        """Analyze existing actual ranks or a frozen predictor's complete paired design."""
+        from .sensitivity import (spearman,SensitivityConfig,generate_sensitivity_design,
+                                  SensitivityObservation,analyze_sensitivity)
+        if self.active_batch_id or self._busy:
+            raise ValueError("Finish the active study operation before sensitivity analysis")
+        if response_id not in self.response_units or method not in ("spearman","sobol","morris"):
+            raise ValueError("Choose a declared response and Spearman, Sobol or Morris")
+        self._busy = "sensitivity"
+        try:
+            experiment_id = uuid.uuid4().hex
+            report = dict(experiment_id=experiment_id,method=method,response_id=response_id,unit=self.response_units[response_id],
+                          revision=self.revision,model_id=None,qualified=None,qualification_limits=[],seed=None,
+                          native_calls=0,point_ids=[],excluded_rows=[],paired_rows=[],metadata={},warnings=[])
+            experiment = dict(id=experiment_id,method=method,revision=self.revision,response_id=response_id)
+            if method == "spearman":
+                if config is not None:
+                    raise ValueError("Spearman uses existing actual pairs and has no stochastic configuration")
+                rows = [self._record(p) for p in point_ids] if point_ids is not None else [
+                    r for r in self.study.records if r.mode == "ACTUAL" and r.revision == self.revision]
+                if len({r.point_id for r in rows}) != len(rows) or any(r.mode != "ACTUAL" or r.revision != self.revision for r in rows):
+                    raise ValueError("Spearman selection must contain distinct ACTUAL points from the current revision")
+                variables = [v for v in self.study.space.variables if not isinstance(v,CategoricalVariable)]
+                if not rows or not variables:
+                    raise ValueError("Spearman needs actual rows and ordered numeric variables; categories are not numeric distances")
+                x = np.array([[r.physical_values[v.id] for v in variables] for r in rows],dtype=float)
+                y = np.full(len(rows),np.nan)
+                included = []
+                replicates = {}
+                for i,row in enumerate(rows):
+                    try:
+                        self._verified_run(row.point_id,require_feasible=False)
+                        value = row.observations[response_id]
+                        if not math.isfinite(value):
+                            raise ValueError("Requested response is not finite")
+                        y[i] = value; included.append(row.point_id)
+                        key = json.dumps(row.physical_values,sort_keys=True,allow_nan=False)
+                        replicates.setdefault(key,[]).append(row.point_id)
+                    except (ValueError,OSError,KeyError,TypeError) as error:
+                        report["excluded_rows"].append(dict(point_id=row.point_id,reason=str(error)))
+                pairs = spearman(x,y,variable_ids=[v.id for v in variables],response_ids=[response_id])
+                pair_details = []
+                for pair in pairs:
+                    detail = asdict(pair)
+                    detail.update(point_ids=[rows[i].point_id for i in pair.row_indices],run_ids=[rows[i].run_id for i in pair.row_indices])
+                    pair_details.append(detail)
+                groups = [ids for ids in replicates.values() if len(ids)>1]
+                report.update(source_mode="ACTUAL",variable_ids=[v.id for v in variables],sample_count=len(included),
+                              point_ids=[r.point_id for r in rows],
+                              estimates={k:[getattr(pair,k) for pair in pairs] for k in ("rho","pvalue","sample_count","missing_count")},
+                              metadata=dict(pairs=pair_details,requested_count=len(rows),included_point_ids=included,
+                                            response_unit=self.response_units[response_id],metric_unit="1",interval_method=None,
+                                            excluded_variables=[v.id for v in self.study.space.variables if isinstance(v,CategoricalVariable)],
+                                            replicated_point_groups=groups,replicate_count=sum(len(g)-1 for g in groups)))
+                if groups:
+                    report["warnings"].append("Replicate rows are retained; rank p-values assume independent observations and are not confidence intervals")
+                experiment.update(point_ids=report["point_ids"],rows=[dict(point_id=r.point_id,run_id=r.run_id,values=r.physical_values,
+                                                                          response=None if not np.isfinite(y[i]) else float(y[i])) for i,r in enumerate(rows)])
+            else:
+                if point_ids is not None:
+                    raise ValueError("Paired Sobol/Morris uses a complete generated design, unaffected by table selection or filtering")
+                model = self.surrogate
+                if model is None or model.dataset.training_revision != self.revision or not model.metrics:
+                    raise ValueError("Train and validate a surrogate at the current revision before paired sensitivity")
+                if response_id not in model.dataset.response_ids:
+                    raise ValueError("The captured surrogate does not contain the requested response")
+                config = config or SensitivityConfig(method=method)
+                if config.method != method:
+                    raise ValueError("Sensitivity configuration and selected method disagree")
+                design = generate_sensitivity_design(self.study.space,config)
+                physical = [self.study.space._physical(dict(zip(design.variable_ids,row))) for row in design.values]
+                encoded = [self.study.space.encode(values,purpose="surrogate") for values in physical]
+                if any(point.feature_order != model.dataset.feature_order for point in encoded):
+                    raise ValueError("Captured surrogate feature order differs from the sensitivity design")
+                from .surrogate import predict
+                prediction = predict(model,np.array([point.vector for point in encoded]))
+                if prediction.model_id != model.id or prediction.training_revision != self.revision or prediction.response_ids != model.dataset.response_ids or prediction.units != model.dataset.units:
+                    raise ValueError("Prediction provenance differs from the captured validated surrogate")
+                column = prediction.response_ids.index(response_id)
+                observations = {row_id:SensitivityObservation(value=float(prediction.mean[i,column]),mode="SURROGATE",source_id=model.id)
+                                for i,row_id in enumerate(design.row_ids)}
+                result = analyze_sensitivity(design,observations,output_unit=self.response_units[response_id])
+                report.update(source_mode="SURROGATE",variable_ids=list(result.variable_ids),
+                              estimates={k:v.tolist() for k,v in result.estimates.items()},sample_count=result.sample_count,
+                              model_id=model.id,qualified=model.qualified,qualification_limits=list(model.config.qualification_rmse),
+                              model_response_ids=list(model.dataset.response_ids),model_response_units=list(model.dataset.units),
+                              qualification_limit=model.config.qualification_rmse[column] if model.config.qualification_rmse else None,
+                              seed=result.seed,analyzer_seed=result.analyzer_seed,output_variance=result.output_variance,
+                              metadata=dict(result.metadata),warnings=list(result.warnings),
+                              paired_rows=[dict(row_id=row_id,physical_values=physical[i],prediction=float(prediction.mean[i,column]),
+                                                model_id=model.id,mode="SURROGATE",domain_warning=bool(prediction.domain_warning[i]))
+                                           for i,row_id in enumerate(design.row_ids)])
+                report["metadata"].update(interval_scope="sampling/bootstrap confidence interval conditional on this surrogate; excludes surrogate/model error",
+                                          outside_training_count=int(np.count_nonzero(prediction.domain_warning)),
+                                          training_revision=model.dataset.training_revision,current_revision=self.revision,
+                                          validation_metrics=[asdict(metric) for metric in model.metrics])
+                report["warnings"].append("Sensitivity uses deterministic surrogate means; bootstrap intervals exclude surrogate/model error")
+                if not model.qualified:
+                    report["warnings"].append("Surrogate is unqualified; this sensitivity is conditional exploratory prediction")
+                if np.any(prediction.domain_warning):
+                    report["warnings"].append("Some paired predictions are outside the observed training range")
+                experiment.update(config=asdict(config),variable_ids=list(design.variable_ids),bounds=design.bounds.tolist(),
+                                  values=design.values.tolist(),row_ids=list(design.row_ids),sampler_version=design.sampler_version,
+                                  analyzer_seed=design.analyzer_seed,distribution=design.distribution,model_id=model.id)
+            if not self.read_only:
+                folder = self._root/"sensitivity"/experiment_id
+                atomic_json(folder/"experiment.json",experiment)
+                atomic_json(folder/"report.json",report)
+                self.sensitivity_reports.append(dict(id=experiment_id,method=method,response_id=response_id,revision=self.revision,
+                                                     source_mode=report["source_mode"],model_id=report["model_id"],
+                                                     report_sha256=transaction.digest((folder/"report.json").read_bytes()),
+                                                     experiment_sha256=transaction.digest((folder/"experiment.json").read_bytes())))
+                self._persist()
+            self.last_sensitivity_report = copy.deepcopy(report)
+            return copy.deepcopy(report)
+        finally:
+            self._busy = None
+
+    def sensitivity_report(self,experiment_id=None):
+        experiment_id = experiment_id or (self.sensitivity_reports[-1]["id"] if self.sensitivity_reports else None)
+        entry = next((item for item in self.sensitivity_reports if item["id"] == experiment_id),None)
+        if entry is None or not re.fullmatch("[0-9a-f]{32}",experiment_id):
+            raise ValueError("Unknown saved sensitivity experiment")
+        folder = self._root/"sensitivity"/experiment_id
+        for name,key in (("report.json","report_sha256"),("experiment.json","experiment_sha256")):
+            if transaction.digest((folder/name).read_bytes()) != entry[key]:
+                raise ValueError("Saved sensitivity experiment/report integrity failed")
+        return json.loads((folder/"report.json").read_text(encoding="utf-8"))
 
     def optimize(self, config=None):
         from .optimize import OptimizationProblem, EvaluationObservation, optimize
@@ -924,6 +1132,8 @@ class MDOStudyService:
                     optimization_history=self.optimization_history,
                     origin_association=self.origin_association,
                     parameter_bindings=self.parameter_bindings,
+                    training_report=self.training_report,sensitivity_reports=self.sensitivity_reports,
+                    resource_policy=self.resource_policy,
                     project_path=str(self.project.path) if self.project and self.project.path else None,node_id=self.node_id)
 
     def _persist(self):
@@ -1038,16 +1248,10 @@ class MDOStudyService:
         self._templates = {p:bytes.fromhex(b) for p,b in data["templates"].items()}
         self._current_hashes,self._revisions = data["current_hashes"],data["revisions"]
         self._refresh_template()
-        classes = {t.__name__:t for t in (ContinuousVariable,DiscreteVariable,CategoricalVariable,LinkedVariable)}
         definition = data["definition"]
-        variables = []
-        for raw in definition["variables"]:
-            raw = dict(raw)
-            variables.append(classes[raw.pop("type")](**raw))
-        self.study = StudyManager(data["name"],space=VariableSpace(variables=tuple(variables)),
-                                  objectives=[ObjectiveSpec(**o) for o in definition["objectives"]],
-                                  constraints=[ConstraintSpec(**c) for c in definition["constraints"]])
-        self.response_units,self.response_selectors = definition["response_units"],definition["response_selectors"]
+        decoded = _decode_definition(definition)
+        self.study = StudyManager(data["name"],space=decoded["space"],objectives=decoded["objectives"],constraints=decoded["constraints"])
+        self.response_units,self.response_selectors = decoded["response_units"],decoded["response_selectors"]
         for raw in data["records"]:
             row = DesignPointRecord(**raw)
             if row.point_id in self.study._record_map:
@@ -1067,6 +1271,9 @@ class MDOStudyService:
         self.optimization_history = data.get("optimization_history",[])
         self.origin_association = data.get("origin_association")
         self.parameter_bindings = data.get("parameter_bindings",[])
+        self.training_report = data.get("training_report")
+        self.sensitivity_reports = data.get("sensitivity_reports",[])
+        self.resource_policy = _resource_policy(**data.get("resource_policy",dict(timeout_seconds=300,max_batch_calls=1000)))
         if data.get("surrogate_id"):
             from .surrogate import load_surrogate
             self.surrogate = load_surrogate(self._root / "models" / data["surrogate_id"])
@@ -1105,17 +1312,22 @@ class MDOStudyService:
             self._persist()
         return copy.deepcopy(self.study.records)
 
-    def export_csv(self, path, point_ids=None):
+    def export_csv(self, path, point_ids=None, *, revision=None):
         selected = [self._record(p) for p in point_ids] if point_ids is not None else self.study.records
+        revisions = {r.revision for r in selected}
+        if len(revisions)>1 or (revision is not None and revisions and revisions != {revision}):
+            raise ValueError("Export one frozen study revision at a time to preserve units and definitions")
+        revision = revision or (next(iter(revisions)) if revisions else self.revision)
+        definition = self.revision_definition(revision)
         def safe(value):
             text = str(value)
             return "'"+text if text.lstrip().startswith(("=","+","-","@")) and not isinstance(value,(int,float)) else value
         path = Path(path)
         with path.open("w",encoding="utf-8-sig",newline="") as stream:
             writer = csv.writer(stream)
-            variables = list(self.study.space.variables)
-            responses = list(self.response_units)
-            writer.writerow(["Point","Mode","Status","Feasibility","Revision","Run","Attempts",*[safe(f"{v.id} [{getattr(v,'unit','')}]") for v in variables],*[safe(f"{k} [{self.response_units[k]}]") for k in responses]])
+            variables = list(definition["space"].variables)
+            responses = list(definition["response_units"])
+            writer.writerow(["Point","Mode","Status","Feasibility","Revision","Run","Attempts",*[safe(f"{v.id} [{getattr(v,'unit','')}]") for v in variables],*[safe(f"{k} [{definition['response_units'][k]}]") for k in responses]])
             for row in selected:
                 writer.writerow([safe(v) for v in [row.point_id,row.mode,row.status,row.feasibility,row.revision,row.run_id,len(row.attempts),*[row.physical_values.get(v.id,"") for v in variables],*[row.observations.get(k,"") for k in responses]]])
         return path

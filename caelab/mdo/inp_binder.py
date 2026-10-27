@@ -18,6 +18,14 @@ from typing import Mapping
 TOKEN_PATTERN = re.compile(r"(?:<([A-Za-z0-9_]+)>|@@([A-Za-z0-9_]+)@@|\{\{\s*([A-Za-z0-9_]+)\s*\}\})")
 
 
+def scalar_literal_occurrences(line: str, literal: str) -> tuple[tuple[int,int], ...]:
+    """Character spans shared by immutable-source preview and scalar binding."""
+    if not isinstance(line,str) or not isinstance(literal,str) or not re.fullmatch(
+            r"[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+\-]?\d+)?",literal):
+        raise ValueError("Select an exact numeric scalar literal")
+    return tuple((m.start(),m.end()) for m in re.finditer(r"(?<![\w.])"+re.escape(literal)+r"(?![\w.])",line))
+
+
 @dataclass(frozen=True, kw_only=True)
 class BindingSpec:
     variable_id: str

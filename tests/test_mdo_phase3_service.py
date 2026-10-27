@@ -517,4 +517,129 @@ def test_parameterized_include_closure_backs_up_and_undoes_exact_bytes(service):
     assert all(Path(p).read_bytes() == content for p,content in originals.items())
 
 
+def test_train_exposes_and_persists_explicit_grouped_validation_policy(service,tmp_path):
+    measured(service,np.linspace(1,3.2,12))
+    config = SurrogateConfig(method="prs",seed=4,qualification_rmse=(1e-6,1e-6,1e-6))
+    model = service.train(config=config,holdout_fraction=.25,validation_seed=9,chronological=True)
+    report = service.training_report
+    assert model.split.seed == 9 and model.split.method == "chronological_grouped_holdout"
+    assert report["split_policy"] == dict(method=model.split.method,fraction=.25,seed=9,chronological=True)
+    assert report["validation_point_ids"] == [r.point_id for r in service.study.records[-3:]]
+    assert not set(report["train_point_ids"]) & set(report["validation_point_ids"])
+    assert report["response_ids"] == ["disp","mass_eall","stress"]
+    assert report["units"] == ["mm","kg","MPa"]
+    assert report["qualification_limits"] == [1e-6]*3 and report["qualified"]
+    saved = service.save_as(tmp_path/"validated.json")
+    service.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.training_report == report and reopened.surrogate.split == model.split
+    reopened.close()
+
+
+def test_actual_spearman_retains_infeasible_rows_and_reports_missing_pairs(service):
+    rows = measured(service,(1.,2.,4.))
+    assert rows[-1].feasibility == "INFEASIBLE"
+    pending = service.add_point(dict(width=3.))
+    before = service.workbench.jobs.count
+    report = service.analyze_sensitivity("disp")
+    assert report["source_mode"] == "ACTUAL" and report["native_calls"] == 0
+    assert report["estimates"]["rho"] == [1.] and report["estimates"]["sample_count"] == [3]
+    assert report["estimates"]["missing_count"] == [1]
+    assert report["metadata"]["included_point_ids"] == [r.point_id for r in rows]
+    assert report["excluded_rows"][0]["point_id"] == pending.point_id
+    assert service.sensitivity_report()["experiment_id"] == report["experiment_id"]
+    assert service.workbench.jobs.count == before
+
+
+@pytest.mark.parametrize("method",["sobol","morris"])
+def test_paired_sensitivity_uses_captured_surrogate_complete_design_and_persists(service,tmp_path,method):
+    from caelab.mdo.sensitivity import SensitivityConfig
+    measured(service,np.linspace(1,3.2,12))
+    model = service.train(config=SurrogateConfig(method="prs",qualification_rmse=(1e-6,1e-6,1e-6)))
+    count = service.workbench.jobs.count
+    config = SensitivityConfig(method=method,base_samples=16,trajectories=4,resamples=32,seed=7)
+    report = service.analyze_sensitivity("disp",method=method,config=config)
+    expected = 48 if method == "sobol" else 8
+    assert report["sample_count"] == expected and len(report["paired_rows"]) == expected
+    assert report["source_mode"] == "SURROGATE" and report["model_id"] == model.id
+    assert report["metadata"]["distribution"] == "independent physical uniform"
+    assert "excludes surrogate/model error" in report["metadata"]["interval_scope"]
+    assert report["metadata"]["outside_training_count"] > 0
+    assert report["native_calls"] == 0 and service.workbench.jobs.count == count
+    assert {row["mode"] for row in report["paired_rows"]} == {"SURROGATE"}
+    assert set(report["estimates"]) == ({"S1","ST","S1_conf","ST_conf"} if method == "sobol" else {"mu","mu_star","sigma","mu_star_conf"})
+    with pytest.raises(ValueError,match="unaffected by table"):
+        service.analyze_sensitivity("disp",method=method,point_ids=["DP_0001"],config=config)
+    saved = service.save_as(tmp_path/(method+".json")); service.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.sensitivity_report()["paired_rows"] == report["paired_rows"]
+    reopened.close()
+
+
+def test_readonly_sensitivity_is_ephemeral_and_model_revision_is_frozen(service,tmp_path):
+    from caelab.mdo.sensitivity import SensitivityConfig
+    measured(service,np.linspace(1,3.2,12))
+    service.train(config=SurrogateConfig(method="prs"))
+    saved = service.save_as(tmp_path/"read-analysis.json"); service.close()
+    observer = MDOStudyService(service.workbench).open(saved,read_only=True)
+    before = {str(p):p.read_bytes() for p in saved.parent.rglob("*") if p.is_file() and not p.name.endswith(".lock")}
+    observer.analyze_sensitivity("disp",method="morris",config=SensitivityConfig(method="morris",trajectories=4,resamples=16))
+    assert not observer.sensitivity_reports
+    assert before == {str(p):p.read_bytes() for p in saved.parent.rglob("*") if p.is_file() and not p.name.endswith(".lock")}
+    observer.close()
+    writer = MDOStudyService(service.workbench).open(saved)
+    writer.configure(writer.study.space,writer.study.objectives,writer.study.constraints,writer.response_units)
+    with pytest.raises(ValueError,match="current revision"):
+        writer.analyze_sensitivity("disp",method="sobol")
+    writer.close()
+
+
+def test_shared_scalar_matcher_keeps_preview_and_original_binding_coordinates_equal(service,tmp_path):
+    from caelab.mdo.inp_binder import scalar_literal_occurrences
+    assert scalar_literal_occurrences("10,1,1","1") == ((3,4),(5,6))
+    assert scalar_literal_occurrences("-1,1.0,1e2,11,1","1") == ((1,2),(14,15))
+    with pytest.raises(ValueError):
+        scalar_literal_occurrences("1","nan")
+    path = tmp_path/"scalars.inp"; path.write_text("*BEAM SECTION,SECTION=RECT\n10,1,1\n",encoding="utf-8")
+    owner = MDOStudyService(service.workbench); owner.open_input(path)
+    owner.parameterize([dict(token="W",source_path=str(path),line_number=2,expected_line="10,1,1",old_literal="1",occurrence=2)])
+    assert "10,1,<W>" in owner.template.original_text
+    owner.close()
+
+
+def test_frozen_revision_export_and_actual_batch_allowance(service,tmp_path):
+    first = service.add_point(dict(width=2.))
+    old = service.revision
+    service.configure(service.study.space,service.study.objectives,service.study.constraints,
+                      dict(disp="m",mass_eall="kg",stress="MPa"))
+    current = service.add_point(dict(width=3.))
+    assert service.revision_ids() == (old,service.revision)
+    definition = service.revision_definition(old)
+    definition["response_units"]["disp"] = "corrupted"
+    assert service.revision_definition(old)["response_units"]["disp"] == "mm"
+    export = service.export_csv(tmp_path/"old.csv",[first.point_id],revision=old)
+    assert "disp [mm]" in export.read_text(encoding="utf-8-sig")
+    with pytest.raises(ValueError,match="one frozen"):
+        service.export_csv(tmp_path/"mixed.csv",[first.point_id,current.point_id])
+    service.set_resource_policy(timeout_seconds=7.5,max_batch_calls=1)
+    another = service.add_point(dict(width=2.5))
+    with pytest.raises(ValueError,match="allowance"):
+        service.submit([current.point_id,another.point_id])
+    with pytest.raises(ValueError,match="allowance"):
+        service.confirm([current.point_id,another.point_id])
+    assert service.workbench.jobs.count == 0
+    captured = []
+    submit = service.workbench.jobs.submit_batch
+    def capture(store,items,**kwargs):
+        captured.extend(item.timeout for item in items)
+        return submit(store,items,**kwargs)
+    service.workbench.jobs.submit_batch = capture
+    service.submit([current.point_id])
+    assert captured == [7.5]
+    saved = service.save_as(tmp_path/"limited.json"); service.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.resource_policy == dict(timeout_seconds=7.5,max_batch_calls=1)
+    reopened.close()
+
+
 import numpy as np
