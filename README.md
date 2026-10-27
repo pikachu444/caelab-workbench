@@ -1,6 +1,6 @@
 # caelab-workbench
 
-> **caelab-workbench**는 FreeCAD 등에서 작성한 CAD 모델을 솔버(CalculiX·OpenFOAM)·ParaView·전문가 AI 프로그램에 유기적으로 연결하고, 실행 결과를 근거로 다분야 최적화(MDO)와 재계산을 이어가는 Windows용 차세대 Qt 엔지니어링 워크벤치입니다.
+> **caelab-workbench**는 FreeCAD 등에서 작성한 CAD 모델을 솔버(CalculiX·Code_Aster)·ParaView·전문가 AI 프로그램에 유기적으로 연결하고, 실행 결과를 근거로 다분야 최적화(MDO)와 재계산을 이어가는 Windows용 차세대 Qt 엔지니어링 워크벤치입니다.
 
 ---
 
@@ -10,7 +10,7 @@ caelab-workbench는 엔지니어가 복잡한 스크립트 작성 없이도 **�
 
 ```mermaid
 flowchart LR
-    A["FreeCAD / Gmsh<br/>(CAD 기하 & 메쉬)"] -->|"*.inp / *.cas"| B["CalculiX / OpenFOAM<br/>(해석 실행 & 모니터링)"]
+    A["FreeCAD / Gmsh<br/>(CAD 기하 & 메쉬)"] -->|"*.inp / *.comm"| B["CalculiX / Code_Aster<br/>(해석 실행 & 모니터링)"]
     B -->|"*.frd / *.vtu"| C["ParaView<br/>(3D 후처리 및 응력 가시화)"]
     B -->|".dat / 로그 응답"| D["MDO Studio<br/>(Kriging 대리모델 & NSGA-II)"]
     D -->|"Set as Current<br/>(최적 치수 피드백)"| A
