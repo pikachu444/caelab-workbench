@@ -733,6 +733,7 @@ class ProjectWindow(QMainWindow):
         super().__init__()
         self.workbench = workbench or Workbench()
         self.project = self.workbench.new_native_project()
+        self._project_revision = None
         self.boxes: dict[str, SystemBox] = {}
         self.connectors: list[Connector] = []
         self._dirty = False
@@ -1187,6 +1188,7 @@ class ProjectWindow(QMainWindow):
         if not self._confirm_transition():
             return False
         self.project = self.workbench.new_native_project()
+        self._project_revision = None
         self._dirty = False
         self._show_project()
         return True
@@ -1202,6 +1204,8 @@ class ProjectWindow(QMainWindow):
             self._error("프로젝트를 열지 못했습니다", error)
             return False
         self.project = project
+        from caelab.project import file_revision
+        self._project_revision = file_revision(project.path)
         self._dirty = False
         self._show_project()
         self._message(f"프로젝트를 열었습니다: {self._short_path(self.project.path)}" +
@@ -1213,11 +1217,13 @@ class ProjectWindow(QMainWindow):
             return self.save_project_as()
         previous_path = self.project.path
         try:
-            self.workbench.save_native_project(self.project, path)
+            self.workbench.save_native_project(self.project, path, expected_revision=self._project_revision)
         except Exception as error:
             self._error("프로젝트를 저장하지 못했습니다", error)
             return False
         self._dirty = False
+        from caelab.project import file_revision
+        self._project_revision = file_revision(self.project.path)
         self._title()
         message = f"프로젝트를 저장했습니다: {self._short_path(self.project.path)}"
         if previous_path and previous_path != self.project.path:

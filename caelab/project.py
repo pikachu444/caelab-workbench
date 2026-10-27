@@ -338,7 +338,25 @@ def load_native_project(path: str | Path) -> NativeProject:
         raise ValueError(f"프로젝트 읽기 실패 ({path}): {exc}") from exc
 
 
-def save_native_project(project: NativeProject, path: str | Path | None = None) -> Path:
+def save_native_project(project: NativeProject, path: str | Path | None = None,
+                        *, expected_revision: str | None = None) -> Path:
+    """Serialize cooperating writers and reject edits based on an older file."""
+    from contextlib import ExitStack
+    from filelock import FileLock
+    destination = Path(path or project.path or PROJECT_FILENAME).expanduser().resolve()
+    if destination.is_dir():
+        destination /= PROJECT_FILENAME
+    source = Path(project.path).resolve() if project.path else destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as locks:
+        for target in sorted({source, destination}, key=str):
+            locks.enter_context(FileLock(str(target) + ".lock", timeout=0))
+        if expected_revision is not None and file_revision(source) != expected_revision:
+            raise ValueError("다른 창에서 프로젝트가 변경되었습니다. 현재 변경은 유지했습니다. 저장된 프로젝트를 다시 열어 확인하세요.")
+        return _save_native_project(project, destination)
+
+
+def _save_native_project(project: NativeProject, path: str | Path | None = None) -> Path:
     from .native.run_store import RunStore
     import shutil
     destination = Path(path or project.path or PROJECT_FILENAME).expanduser().resolve()

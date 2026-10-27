@@ -57,3 +57,37 @@ def test_parent_passes_selected_saved_project_without_owning_studio(tmp_path, mo
     window._dirty = False
     window.close()
     app.processEvents()
+
+
+def test_project_writers_lock_and_reject_stale_revision(tmp_path):
+    import threading
+    from filelock import FileLock, Timeout
+    from caelab.project import NativeProject, save_native_project, load_native_project, file_revision
+    path = tmp_path / "shared.json"
+    save_native_project(NativeProject("Original"), path)
+    parent = load_native_project(path)
+    child = load_native_project(path)
+    original_revision = file_revision(path)
+    parent.name, child.name = "Pending parent edits", "Saved child study"
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_project_lock():
+        with FileLock(str(path) + ".lock"):
+            entered.set()
+            assert release.wait(5)
+    thread = threading.Thread(target=hold_project_lock)
+    thread.start()
+    assert entered.wait(5)
+    try:
+        with pytest.raises(Timeout):
+            save_native_project(parent, expected_revision=original_revision)
+        assert file_revision(path) == original_revision
+    finally:
+        release.set()
+        thread.join(5)
+    save_native_project(child, expected_revision=original_revision)
+    with pytest.raises(ValueError, match="다른 창"):
+        save_native_project(parent, expected_revision=original_revision)
+    assert parent.name == "Pending parent edits"
+    assert load_native_project(path).name == "Saved child study"
