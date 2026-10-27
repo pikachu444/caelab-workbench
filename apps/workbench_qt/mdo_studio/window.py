@@ -314,6 +314,24 @@ class MDOStudioWindow(QMainWindow):
             data = data[:start] + layout[str(target)].encode("ascii") + data[end:]
         return data.decode("utf-8")
 
+    @staticmethod
+    def _run_files(run) -> dict[Path, str]:
+        expected = {}
+        snapshot = getattr(run, "snapshot", {})
+        for entry in snapshot.get("files", []):
+            for key, digest in (("source_copy", "original_sha256"), ("execution_path", "execution_sha256")):
+                relative = Path(entry[key])
+                path = (run.workdir / relative).resolve()
+                if relative.is_absolute() or not path.is_relative_to(run.workdir.resolve()):
+                    raise ValueError("실행 입력이 실행 폴더 밖을 참조합니다.")
+                expected[path] = entry[digest]
+        for relative, digest in snapshot.get("artifacts", {}).items():
+            path = (run.workdir / relative).resolve()
+            if Path(relative).is_absolute() or not path.is_relative_to(run.workdir.resolve()):
+                raise ValueError("실행 산출물이 실행 폴더 밖을 참조합니다.")
+            expected[path] = digest
+        return expected
+
     def _sources_unchanged(self) -> bool:
         return bool(self._source_revisions) and all(Path(p).is_file() and self._hash(Path(p)) == revision for p, revision in self._source_revisions.items())
 
@@ -335,6 +353,9 @@ class MDOStudioWindow(QMainWindow):
             run_path = Path(evidence["workdir"])
             run = RunStore(run_path.parent).read(run_path / "job.json")
             if run.state != "completed" or run.id != evidence["run_id"] or run.returncode != 0:
+                return False
+            native_files = self._run_files(run)
+            if not native_files or any(not p.is_file() or self._hash(p) != h for p, h in native_files.items()):
                 return False
             obs = extract_calculix_responses(run_path, run.result)
             assessment = evaluate_criteria(obs, self.study.objectives, self.study.constraints)
@@ -401,7 +422,8 @@ class MDOStudioWindow(QMainWindow):
         if rec:
             evidence = self._point_sources.get(rec.point_id)
             detail = f"Run: {evidence['run_id']}\n{evidence['workdir']}" if evidence else "No verified solver run"
-            self.setup_widget.lbl_guide.setText((rec.error_message + "\n" if rec.error_message else "") + detail)
+            self.setup_widget.lbl_guide.setPlainText((rec.error_message + "\n" if rec.error_message else "") + detail)
+            self.setup_widget.lbl_guide.setToolTip(detail)
             self.setup_widget.lbl_guide.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
     def _on_apply_as_current(self, point_id: str) -> None:
@@ -563,6 +585,7 @@ class MDOStudioWindow(QMainWindow):
             paths = [run.workdir / name for name in ("job.json", "model.inp", "source/000000.inp", "model.frd", "model.dat", "job.log")]
             study_manifest = run.workdir.parent.parent / "study-input.json"
             paths.append(study_manifest)
+            paths.extend(self._run_files(run))
             self._point_sources[point_id] = {"study_manifest": str(study_manifest), "run_id": run.id, "workdir": str(run.workdir), "values": dict(rec.physical_values),
                                               "files": {str(p): self._hash(p) for p in paths if p.is_file()}}
         self.study.update_pareto_front()
@@ -767,15 +790,42 @@ class MDOStudioWindow(QMainWindow):
             path, _ = QFileDialog.getOpenFileName(self, "Open Study", "", "MDO Study (*.json)")
             if not path:
                 return
+        state_fields = ("study", "current_deck_path", "template_deck", "_execution_template", "_source_revisions",
+                        "_point_sources", "response_units", "_configured", "_is_specification", "_study_file")
+        previous = {key: getattr(self, key) for key in state_fields}
+        switched = False
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
-            if data.get("format") != "caelab-mdo-study" or data.get("version") != 1:
+            if not isinstance(data, dict) or data.get("format") != "caelab-mdo-study" or data.get("version") != 1:
                 raise ValueError("지원하지 않는 스터디 형식입니다.")
+            for key in ("name", "deck_path", "template", "execution_template"):
+                if not isinstance(data[key], str) or not data[key]:
+                    raise ValueError(f"{key}: 비어 있지 않은 문자열이 필요합니다.")
+            for key in ("source_revisions", "response_units", "point_sources"):
+                if not isinstance(data[key], dict):
+                    raise ValueError(f"{key}: 사전이 필요합니다.")
+            source_revisions = dict(data["source_revisions"])
+            response_units = dict(data["response_units"])
+            point_sources = dict(data["point_sources"])
+            for name, digest in source_revisions.items():
+                if not isinstance(name, str) or not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+                    raise ValueError("입력 개정은 파일 경로와 SHA256이어야 합니다.")
+            from caelab.mdo.variables import parse_unit
+            for key, unit in response_units.items():
+                if not isinstance(key, str) or not key or not unit:
+                    raise ValueError("응답 이름과 단위를 명시하세요.")
+                parse_unit(unit)
             space = VariableSpace(variables=tuple(ContinuousVariable(**v) for v in data["variables"]))
             objectives = [ObjectiveSpec(**o) for o in data["objectives"]]
             constraints = [ConstraintSpec(**c) for c in data["constraints"]]
             deck_path = Path(data["deck_path"])
             deck = TemplateDeck.from_text(data["template"], file_path=deck_path)
+            execution_template = TemplateDeck.from_text(data["execution_template"])
+            if any(not v.unit for v in space.variables):
+                raise ValueError("변수 단위를 명시하세요.")
+            required = {o.response_id for o in objectives} | {c.response_id for c in constraints}
+            if not objectives or not required <= response_units.keys():
+                raise ValueError("목적과 제약에 대응하는 응답 단위가 없습니다.")
             if set(v.id for v in space.variables) != {t.lower() for t in deck.token_names}:
                 raise ValueError("저장된 변수와 템플릿이 일치하지 않습니다.")
             if not data["source_revisions"] or str(deck_path) not in data["source_revisions"]:
@@ -790,16 +840,29 @@ class MDOStudioWindow(QMainWindow):
                         raise ValueError("응답과 목적 값은 유한한 숫자 사전이어야 합니다.")
                 if rec.point_id in ids or rec.status not in ("PENDING", "COMPLETED", "FAILED", "CANCELLED", "STALE"):
                     raise ValueError("중복 또는 잘못된 설계점 기록입니다.")
+                if not isinstance(rec.point_id, str) or not isinstance(rec.name, str) or not isinstance(rec.error_message, str) or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in (rec.duration_sec, rec.total_violation)):
+                    raise ValueError("설계점 이름·시간·위반량이 잘못되었습니다.")
                 ids.add(rec.point_id)
                 manager.records.append(rec)
                 manager._record_map[rec.point_id] = rec
+            for point_id, evidence in point_sources.items():
+                if point_id not in ids or not isinstance(evidence, dict):
+                    raise ValueError("설계점 실행 근거가 잘못되었습니다.")
+                if any(not isinstance(evidence.get(k), str) or not evidence[k] for k in ("study_manifest", "run_id", "workdir")):
+                    raise ValueError("실행 근거 경로와 ID가 필요합니다.")
+                if not isinstance(evidence.get("values"), dict) or not isinstance(evidence.get("files"), dict):
+                    raise ValueError("실행 변수와 파일 해시 사전이 필요합니다.")
+                space.encode(evidence["values"])
+                if any(not isinstance(p, str) or not isinstance(h, str) or not re.fullmatch("[0-9a-f]{64}", h) for p, h in evidence["files"].items()):
+                    raise ValueError("실행 근거의 파일 해시가 잘못되었습니다.")
+            switched = True
             self._reset_binding()
             self.template_deck = deck
-            self._execution_template = TemplateDeck.from_text(data["execution_template"])
+            self._execution_template = execution_template
             self.current_deck_path = deck_path
-            self._source_revisions = dict(data["source_revisions"])
-            self._point_sources = dict(data["point_sources"])
-            self.response_units = dict(data["response_units"])
+            self._source_revisions = source_revisions
+            self._point_sources = point_sources
+            self.response_units = response_units
             self.study = manager
             self._configured = True
             self._study_file = Path(path).resolve()
@@ -817,7 +880,11 @@ class MDOStudioWindow(QMainWindow):
             self.study.update_pareto_front()
             self._populate_study()
             self.status_bar.showMessage("Study opened; 계산은 자동 실행하지 않습니다. 원본과 결과 파일은 저장 당시 경로를 참조합니다.")
-        except (OSError, ValueError, TypeError, KeyError) as exc:
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            if switched:
+                for key, value in previous.items():
+                    setattr(self, key, value)
+                self._populate_study()
             QMessageBox.warning(self, "스터디 열기 실패", str(exc))
 
     def _on_toggle_theme(self) -> None:

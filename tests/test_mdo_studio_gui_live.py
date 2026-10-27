@@ -224,6 +224,13 @@ def test_nested_include_snapshot_and_stale_include(window, qapp, mock_solver_pro
     window._run_all_points(); wait_batch(window, qapp)
     rec = window.study.records[0]
     assert window._point_is_verified(rec)
+    run_dir = Path(window._point_sources[rec.point_id]["workdir"])
+    execution_include = next((run_dir / "includes").glob("*.inp"))
+    original_include = execution_include.read_bytes()
+    execution_include.write_text("*NODE\n1,999,0,0\n")
+    assert not window._point_is_verified(rec)
+    execution_include.write_bytes(original_include)
+    assert window._point_is_verified(rec)
     include.write_text("*NODE\n1,1,0,0\n")
     assert not window._point_is_verified(rec)
     window._run_all_points()
@@ -267,3 +274,19 @@ def test_reopened_template_tamper_and_stale_outputs_are_not_plotted(window, qapp
         assert all(r.status != "COMPLETED" or other._point_is_verified(r) for r in other.study.records)
     finally:
         other.close()
+
+
+@pytest.mark.parametrize('invalid_field', ['point_sources', 'record_error'])
+def test_malformed_study_preserves_existing_live_state(window, tmp_path, invalid_field):
+    import json
+    path = tmp_path / 'invalid.json'
+    window._on_save_study(path)
+    prior = (window.study, window.current_deck_path, window.template_deck, window._point_sources, window._configured)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if invalid_field == 'point_sources':
+        data['point_sources'] = 1
+    else:
+        data['records'][0]['error_message'] = {'invalid': 'object'}
+    path.write_text(json.dumps(data), encoding='utf-8')
+    window._on_open_study(path)
+    assert (window.study, window.current_deck_path, window.template_deck, window._point_sources, window._configured) == prior

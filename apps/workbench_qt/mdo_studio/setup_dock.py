@@ -9,9 +9,10 @@ Includes:
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QTextOption
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFormLayout, QGroupBox, QTextEdit, QScrollArea
+    QFormLayout, QGroupBox, QTextEdit, QScrollArea, QSizePolicy
 )
 
 from caelab.mdo.study_manager import DesignPointRecord
@@ -42,12 +43,15 @@ class SetupDockWidget(QWidget):
 
         # 1. Selected Point Header
         self.lbl_title = QLabel("Selected Design Point: None")
+        self.lbl_title.setWordWrap(True)
+        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11pt;")
         layout.addWidget(self.lbl_title)
 
         # 2. Status & Feasibility Badge
         badge_box = QGroupBox("Status & Feasibility")
         b_layout = QFormLayout(badge_box)
+        b_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.lbl_status = QLabel("—")
         self.lbl_feasibility = QLabel("—")
         self.lbl_feasibility.setWordWrap(True)
@@ -60,11 +64,13 @@ class SetupDockWidget(QWidget):
         # 3. Parameters
         self.param_box = QGroupBox("Physical Parameters")
         self.param_layout = QFormLayout(self.param_box)
+        self.param_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         layout.addWidget(self.param_box)
 
         # 4. Responses
         self.resp_box = QGroupBox("Observed Responses")
         self.resp_layout = QFormLayout(self.resp_box)
+        self.resp_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         layout.addWidget(self.resp_box)
 
         layout.addStretch(1)
@@ -73,20 +79,28 @@ class SetupDockWidget(QWidget):
         act_box = QGroupBox("Engineering Actions")
         act_layout = QVBoxLayout(act_box)
 
-        self.btn_apply_current = QPushButton("★ Set as Current Design Point")
+        self.btn_apply_current = QPushButton("Set as Current\nDesign Point")
         self.btn_apply_current.setStyleSheet(
             "background-color: #2563eb; color: white; font-weight: bold; padding: 8px; border-radius: 4px;"
         )
+        self.btn_apply_current.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.btn_apply_current.setEnabled(False)
         self.btn_apply_current.clicked.connect(self._on_apply_clicked)
         act_layout.addWidget(self.btn_apply_current)
 
-        self.lbl_guide = QLabel("Safely substitutes parameters into active native deck with automatic .bak backup.")
-        self.lbl_guide.setWordWrap(True)
+        self.lbl_guide = QTextEdit()
+        self.lbl_guide.setReadOnly(True)
+        self.lbl_guide.setPlainText("Safely substitutes parameters into active native deck with automatic .bak backup.")
+        self.lbl_guide.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
+        self.lbl_guide.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.lbl_guide.setFixedHeight(120)
+        self.lbl_guide.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         act_layout.addWidget(self.lbl_guide)
 
         layout.addWidget(act_box)
 
+        for group in (badge_box, self.param_box, self.resp_box, act_box):
+            group.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
@@ -95,7 +109,7 @@ class SetupDockWidget(QWidget):
         bg_color = "#13171e" if is_dark else "#eef1f5"
         guide_color = "#94a3b8" if is_dark else "#475569"
         self.setStyleSheet(f"QWidget#setupDockContainer {{ background-color: {bg_color}; }} QScrollArea {{ background: {bg_color}; }}")
-        self.lbl_guide.setStyleSheet(f"color: {guide_color}; font-size: 8.5pt;")
+        self.lbl_guide.setStyleSheet(f"color: {guide_color}; font-size: 8.5pt; border: none; background: transparent;")
 
     def display_record(self, record: DesignPointRecord | None) -> None:
         self._current_record = record

@@ -49,6 +49,12 @@ class ParetoFrontWidget(QWidget):
         for spine in self.ax.spines.values():
             spine.set_color(grid_color)
         self.ax.grid(True, linestyle="--", alpha=0.5, color=grid_color)
+        legend = self.ax.get_legend()
+        if legend is not None:
+            legend.get_frame().set_facecolor(bg_color)
+            legend.get_frame().set_edgecolor(grid_color)
+            for label in legend.get_texts():
+                label.set_color(text_color)
 
     def plot_study(
         self,
@@ -106,6 +112,8 @@ class ParetoFrontWidget(QWidget):
         self.ax.set_title("Evaluated Design Points & Sampled Pareto Front", fontsize=11, fontweight="bold")
         legend = self.ax.legend(loc="upper right", framealpha=0.8, fontsize=8.5)
         if legend:
+            legend.get_frame().set_facecolor(self.ax.get_facecolor())
+            legend.get_frame().set_edgecolor("#1e293b" if self.is_dark else "#e2e8f0")
             for text in legend.get_texts():
                 text.set_color("#e2e8f0" if self.is_dark else "#0f172a")
 
