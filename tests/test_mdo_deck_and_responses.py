@@ -133,6 +133,15 @@ def test_mdo_studio_rejects_unmeasured_point_apply(tmp_path: Path, monkeypatch):
 
     win = win_mod.MDOStudioWindow()
     win._on_load_deck(inp_file)
+    import time
+    def await_operation():
+        deadline=time.monotonic()+5
+        while win._busy and time.monotonic()<deadline:
+            instance.processEvents()
+            time.sleep(.01)
+        instance.processEvents()
+        assert win._busy is None
+    await_operation()
 
     assert win.template_deck is not None
     assert win.current_deck_path == inp_file
@@ -149,6 +158,7 @@ def test_mdo_studio_rejects_unmeasured_point_apply(tmp_path: Path, monkeypatch):
 
     # Apply design point DP-001
     win._on_apply_as_current("DP-001")
+    await_operation()
 
     # An unmeasured injected point must never update the native input.
     assert not (tmp_path / "test_active.inp.bak").exists()

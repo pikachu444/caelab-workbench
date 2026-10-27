@@ -22,10 +22,13 @@ def test_mdo_studio_window_creation(app):
     assert win.windowTitle().startswith("CAELab MDO Studio")
     assert win.tdp_model.rowCount() == 0
     assert win.tdp_model.columnCount() > 5
-    assert win.viz_tabs.count() == 3
-
-    win._on_load_demo()
-    assert win.tdp_model.rowCount() == 25
+    assert win.viz_tabs.count() == 5
+    from caelab.mdo.study_manager import StudyManager
+    manager=StudyManager()
+    manager.add_point({'thickness':2.})
+    win.close()
+    win=MDOStudioWindow(study=manager)
+    assert win.tdp_model.rowCount() == 1
     assert all(r.status == "PENDING" and not r.observations for r in win.study.records)
     # Select uncomputed point and check setup dock
     win.tdp_table.selectRow(0)

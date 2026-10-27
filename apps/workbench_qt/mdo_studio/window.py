@@ -1,865 +1,564 @@
-"""Main window for CAELab MDO Studio (native-deck studies).
-
-Implements Section 15 of spec-clean-slate-mdo-design:
-- Area 1: Left Study Tree (Workflow navigator)
-- Area 2: Right Setup Dock (Contextual properties & Apply as Current Point)
-- Area 3: Center-Top Table of Design Points (QTableView virtual model)
-- Area 4: Center-Bottom Visualization Studio (Pareto Front, Sensitivity Tornado, Kriging ±1.96σ Surface)
-- Full Dark/Light Engineering theme synchronization
-- Live JobManager asynchronous batch execution and MDOExecutionBridge signal-slot integration
-- Explicit native-deck studies; uncomputed benchmark target specification
-"""
-
+"""Independent four-area Studio. Native state and execution belong to Workbench."""
 from __future__ import annotations
-
-import os
-import sys
-import tempfile
-import time
-import math
-import re
-import shutil
-import hashlib
 import json
-import uuid
-from dataclasses import asdict
-from typing import Sequence, Any
+from copy import deepcopy
 from pathlib import Path
 import numpy as np
-from PySide6.QtCore import Qt, QItemSelection, QTimer
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTableView, QTabWidget, QToolBar, QLabel, QDockWidget, QStatusBar,
-    QMessageBox, QHeaderView, QFileDialog, QProgressBar, QInputDialog, QDialog
-)
-from PySide6.QtGui import QAction, QCloseEvent
-
-from caelab.mdo.study_manager import StudyManager, DesignPointRecord
-from caelab.mdo.inp_binder import TemplateDeck
-from caelab.mdo.variables import ContinuousVariable, VariableSpace
-from caelab.mdo.objectives import ObjectiveSpec, evaluate_criteria
-from caelab.mdo.constraints import ConstraintSpec, assess_constraints
-from .views.sensitivity_view import SensitivityTornadoWidget, TornadoItem
-from caelab.mdo.surrogate import SurrogateDataset, SurrogateConfig, fit_surrogate
-from .bridge import MDOExecutionBridge
+from PySide6.QtCore import Qt,QTimer,QRunnable,QThreadPool,QItemSelectionModel,QSettings,QByteArray
+from PySide6.QtGui import QAction,QFont
+from PySide6.QtWidgets import (QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QTableView,QTabWidget,
+    QToolBar,QLabel,QDockWidget,QStatusBar,QMessageBox,QFileDialog,QProgressBar,QInputDialog,QDialog,
+    QLineEdit,QComboBox,QPushButton,QDialogButtonBox,QPlainTextEdit,QFormLayout,QSpinBox)
 from caelab.workbench import Workbench
-from caelab.jobs import BatchItem, BatchProgress
-from caelab.connections import ProgramSpec, ProgramStatus
-from caelab.native.run_store import RunStore, atomic_json
-from caelab.native.input_snapshot import snapshot_input, _includes
-from caelab.mdo.doe import DOEConfig, generate_design
-from .study_config import StudyConfigDialog
-
-from apps.workbench_qt.theme import (
-    get_palette, build_stylesheet, toggle_theme_mode, theme_toggle_label, current_theme_mode
-)
-from .design_points_model import DesignPointsTableModel
+from caelab.mdo.study_manager import StudyManager
+from caelab.mdo.surrogate import SurrogateConfig
+from caelab.mdo.optimize import OptimizationConfig
+from caelab.mdo.calculix_evaluator import extract_calculix_responses
+from apps.workbench_qt.theme import build_stylesheet,toggle_theme_mode,theme_toggle_label,current_theme_mode
+from .bridge import MDOExecutionBridge
+from .design_points_model import DesignPointsTableModel,DesignPointsProxyModel
 from .study_tree import StudyTreeWidget
 from .setup_dock import SetupDockWidget
+from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog
 from .views.pareto_view import ParetoFrontWidget
+from .views.parallel_view import ParallelCoordinatesWidget
 from .views.response_surface_view import ResponseSurfaceWidget
+from .views.sensitivity_view import SensitivityTornadoWidget,TornadoItem
+from .views.convergence_view import ConvergenceWidget
 
 
-from caelab.mdo.calculix_evaluator import extract_calculix_responses
+class StudioTask(QRunnable):
+    def __init__(self,generation,name,call,bridge):
+        super().__init__(); self.generation,self.name,self.call,self.bridge=generation,name,call,bridge
+    def run(self):
+        try: result,error=self.call(),None
+        except Exception as exc: result,error=None,str(exc)
+        try: self.bridge.taskFinished.emit(self.generation,self.name,result,error)
+        except RuntimeError: pass  # A closed view no longer receives numerical preview results.
+
+
+def startup_service(workbench,study=None,*,study_path=None,project=None,node_id=None,read_only=False):
+    if study_path is not None:
+        return workbench.open_mdo_study(study_path,read_only=read_only,project=project,node_id=node_id)
+    if read_only:
+        stored=project.nodes[node_id].files.get('mdo_study') if project is not None and node_id in project.nodes else None
+        if stored is None: raise ValueError('Read-only Studio requires --study or a saved MDO study on the selected project node.')
+        return workbench.open_mdo_study(stored.path,read_only=True,project=project,node_id=node_id)
+    return workbench.create_mdo_study(study,project=project,node_id=node_id)
 
 
 class MDOStudioWindow(QMainWindow):
-    def __init__(self, study: StudyManager | None = None, parent=None) -> None:
+    def __init__(self,study=None,parent=None,*,service=None,study_path=None,project=None,node_id=None,read_only=False):
         super().__init__(parent)
-        self.setWindowTitle("CAELab MDO Studio")
-        self.resize(1380, 880)
-
-        self.workbench = Workbench()
-        self.bridge = MDOExecutionBridge(self)
-        self._active_batch_id: str | None = None
-        self._active_store: RunStore | None = None
-        self.current_deck_path: Path | None = None
-        self.template_deck: TemplateDeck | None = None
-        self._execution_template: TemplateDeck | None = None
-
-        self._viz_timer = QTimer(self)
-        self._viz_timer.setSingleShot(True)
-        self._viz_timer.timeout.connect(self._deferred_update_visualizations)
-
-        # Bridge signal connections (QueuedConnection ensures main thread handling)
+        self.workbench=service.workbench if service else Workbench()
+        self.service=service or startup_service(self.workbench,study,study_path=study_path,project=project,node_id=node_id,read_only=read_only)
+        if read_only and not self.service.read_only: raise ValueError('Open the saved service read-only before attaching it to Studio.')
+        self.setWindowTitle('CAELab MDO Studio'); self.resize(1380,880)
+        self.setFont(QFont('Segoe UI',9)); self.is_dark=current_theme_mode()=='dark'
+        self._generation=0; self._busy=None; self._selected_ids=set(); self._pending_records={}; self._closing=False
+        self._is_specification=False; self._editor=None; self._hidden_selection=False; self._sensitivity_job=0
+        self.bridge=MDOExecutionBridge(self)
+        self.bridge.itemFinished.connect(self._on_item_finished)
         self.bridge.batchProgress.connect(self._on_batch_progress)
         self.bridge.batchFinished.connect(self._on_batch_finished)
-        self.bridge.itemFinished.connect(self._on_item_finished)
-        self.bridge.itemFailed.connect(self._on_item_failed)
+        self.bridge.taskFinished.connect(self._task_finished)
+        self._delta_timer=QTimer(self); self._delta_timer.setInterval(100); self._delta_timer.timeout.connect(self._flush_deltas)
+        self._viz_timer=QTimer(self); self._viz_timer.setSingleShot(True); self._viz_timer.setInterval(250); self._viz_timer.timeout.connect(self._update_visualizations)
+        self._build_ui(); self._populate_study(); self.apply_theme(); self._restore_layout()
 
-        self._source_revisions: dict[str, str] = {}
-        self._point_sources: dict[str, dict] = {}
-        self.response_units: dict[str, str] = {}
-        self._configured = False
-        self._is_specification = False
-        self._study_file: Path | None = None
-        self.study = study or StudyManager()
-        self.is_dark = current_theme_mode() == "dark"
+    @property
+    def study(self): return self.service.study
+    @property
+    def current_deck_path(self): return self.service.input_path
+    @property
+    def template_deck(self): return self.service.template
+    @property
+    def response_units(self): return self.service.response_units
+    @property
+    def _active_batch_id(self): return self.service.active_batch_id
+    @property
+    def _configured(self): return bool(self.study.objectives and self.study.space.variables)
+    @property
+    def _study_file(self): return self.service.study_file
 
-        self._build_ui()
-        self._populate_study()
-        self.apply_theme()
+    def _action(self,menu,text,slot,shortcut=None,toolbar=False):
+        action=QAction(text,self); action.triggered.connect(slot)
+        if shortcut: action.setShortcut(shortcut)
+        menu.addAction(action)
+        if toolbar: self.toolbar.addAction(action)
+        return action
 
-    def _build_ui(self) -> None:
-        # Toolbar
-        tb = QToolBar("MDO Main Toolbar")
-        tb.setMovable(False)
-        self.addToolBar(tb)
+    def _build_ui(self):
+        self.toolbar=QToolBar('Study commands',self); self.toolbar.setObjectName('mdo.commands'); self.toolbar.setMovable(False); self.addToolBar(self.toolbar)
+        file=self.menuBar().addMenu('&File'); setup=self.menuBar().addMenu('&Study'); run=self.menuBar().addMenu('&Run'); view=self.menuBar().addMenu('&View')
+        self.act_new=self._action(file,'New Study',self._on_new_study,'Ctrl+N')
+        self.act_open=self._action(file,'Open Study…',lambda:self._on_open_study(),'Ctrl+O',True)
+        self.act_input=self._action(file,'Open Native Input…',lambda:self._on_load_deck())
+        self.act_save=self._action(file,'Save',lambda:self._on_save_study(),'Ctrl+S')
+        self.act_save_as=self._action(file,'Save As…',lambda:self._on_save_study(save_as=True),'Ctrl+Shift+S')
+        self.act_export=self._action(file,'Export Filtered Table…',self._export_csv)
+        self.act_parameterize=self._action(setup,'Create Scalar Token…',self._parameterize)
+        self.act_configure=self._action(setup,'Configure Study',self._on_configure,toolbar=True)
+        self.act_generate=self._action(setup,'Generate DOE…',lambda:self._on_generate_doe(),toolbar=True)
+        self.act_train=self._action(setup,'Train / Validate Surrogate…',self._train)
+        self.act_optimize=self._action(setup,'Constrained Surrogate Search…',self._optimize)
+        self.act_run=self._action(run,'Run Selected / Pending',self._run_selected,'F5',True)
+        self.act_all=self._action(run,'Run All Pending',self._run_all_points)
+        self.act_confirm=self._action(run,'Fresh Native Confirmation',self._confirm_selected)
+        self.act_clone=self._action(run,'Clone Selected as Candidate',self._clone_selected)
+        self.act_stop=self._action(run,'Stop Scheduling',self._stop_scheduling,toolbar=True)
+        self.act_cancel=self._action(run,'Cancel Active Campaign',self._stop_evaluations)
+        self.act_current=self._action(run,'Set as Current Design Point',lambda:self._on_apply_as_current(self._first_selected()))
+        self.act_undo=self._action(run,'Undo Current Design Apply',self._undo)
+        self.act_rerun=self._action(run,'Run Current Design',self._rerun_current)
+        self.act_result=self._action(run,'Open Selected Actual Result in ParaView',lambda:self._open_result(self._first_selected()))
+        self.act_current_result=self._action(run,'Open Current Rerun in ParaView',lambda:self._open_result(current=True))
+        self.act_attempts=self._action(run,'Inspect Selected Attempts / Log',lambda:self._inspect_attempts(self._first_selected()))
+        self.status_bar=QStatusBar(); self.setStatusBar(self.status_bar)
+        self.progress_bar=QProgressBar(); self.progress_bar.setMaximumWidth(160); self.progress_bar.hide(); self.status_bar.addPermanentWidget(self.progress_bar)
+        self.tree_dock=QDockWidget('Study',self); self.tree_dock.setObjectName('mdo.study'); self.study_tree=StudyTreeWidget(); self.tree_dock.setWidget(self.study_tree)
+        self.tree_dock.setMinimumWidth(160); self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock)
+        self.setup_dock=QDockWidget('Setup',self); self.setup_dock.setObjectName('mdo.setup'); self.setup_dock.setMinimumWidth(250)
+        self.setup_widget=SetupDockWidget(self.is_dark); self.setup_dock.setWidget(self.setup_widget); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
+        self.setup_widget.apply_as_current.connect(self._on_apply_as_current); self.setup_widget.re_evaluate.connect(lambda point:self._confirm_selected([point]))
+        self.setup_widget.inspect_attempts.connect(self._inspect_attempts); self.setup_widget.open_result.connect(self._open_result)
+        self.study_tree.node_selected.connect(self._tree_selected)
+        for dock in (self.tree_dock,self.setup_dock): view.addAction(dock.toggleViewAction())
+        self._action(view,'Restore Default Layout',self._default_layout); self._action(view,'Save Layout',self._save_layout)
+        compact=self._action(view,'Compact Rows',lambda checked:self.tdp_table.verticalHeader().setDefaultSectionSize(24 if checked else 30)); compact.setCheckable(True)
+        self.act_theme=self._action(view,theme_toggle_label(),self._on_toggle_theme)
+        self.center_splitter=QSplitter(Qt.Orientation.Vertical); self.center_splitter.setObjectName('mdo.central')
+        container=QWidget(); layout=QVBoxLayout(container); layout.setContentsMargins(4,4,4,4)
+        self.study_label=QLabel(); self.study_label.setWordWrap(True); layout.addWidget(self.study_label)
+        filters=QHBoxLayout(); self.search=QLineEdit(); self.search.setPlaceholderText('Filter point name / ID'); self.search.setAccessibleName('Filter design points')
+        self.status_filter=QComboBox(); self.status_filter.addItems(['All','PENDING','RUNNING','QUEUED','COMPLETED','PREDICTED','FAILED','CANCELLED','STALE'])
+        self.feasibility_filter=QComboBox(); self.feasibility_filter.addItems(['All','FEASIBLE','MARGINAL','INFEASIBLE','NOT_ASSESSED'])
+        filters.addWidget(self.search,1); filters.addWidget(self.status_filter); filters.addWidget(self.feasibility_filter)
+        clear=QPushButton('Clear filters'); clear.clicked.connect(self._clear_filters); filters.addWidget(clear); layout.addLayout(filters)
+        self.tdp_lbl=QLabel('Design points'); layout.addWidget(self.tdp_lbl)
+        self.tdp_model=DesignPointsTableModel(is_dark=self.is_dark); self.tdp_proxy=DesignPointsProxyModel(self); self.tdp_proxy.setSourceModel(self.tdp_model)
+        self.tdp_table=QTableView(); self.tdp_table.setAccessibleName('Table of design points'); self.tdp_table.setModel(self.tdp_proxy)
+        self.tdp_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows); self.tdp_table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
+        self.tdp_table.setSortingEnabled(True); self.tdp_table.sortByColumn(0,Qt.SortOrder.AscendingOrder)
+        self.tdp_table.verticalHeader().setDefaultSectionSize(30); self.tdp_table.horizontalHeader().setDefaultSectionSize(115)
+        self.tdp_table.setColumnWidth(1,190); self.tdp_table.setAlternatingRowColors(True)
+        self.tdp_table.selectionModel().selectionChanged.connect(self._on_row_selected); layout.addWidget(self.tdp_table,1)
+        self.search.textChanged.connect(self._filters_changed); self.status_filter.currentTextChanged.connect(self._filters_changed); self.feasibility_filter.currentTextChanged.connect(self._filters_changed)
+        self.center_splitter.addWidget(container)
+        self.viz_tabs=QTabWidget(); self.pareto_view=ParetoFrontWidget(is_dark=self.is_dark); self.parallel_view=ParallelCoordinatesWidget(is_dark=self.is_dark)
+        self.surface_view=ResponseSurfaceWidget(is_dark=self.is_dark); self.tornado_view=SensitivityTornadoWidget(is_dark=self.is_dark); self.convergence_view=ConvergenceWidget(is_dark=self.is_dark)
+        self.views=[self.pareto_view,self.parallel_view,self.surface_view,self.tornado_view,self.convergence_view]
+        for widget,title in zip(self.views,('Pareto','Parallel','Surface','Sensitivity','Convergence')): self.viz_tabs.addTab(widget,title)
+        self.viz_tabs.currentChanged.connect(lambda *args:self._viz_timer.start())
+        for widget in (self.pareto_view,self.parallel_view,self.convergence_view): widget.point_selected.connect(self.select_point)
+        self.parallel_view.filter_changed.connect(self._brush_filter)
+        self.tornado_view.response_selected.connect(lambda *args:self._sensitivity(self.tdp_model.records))
+        self.center_splitter.addWidget(self.viz_tabs); self.center_splitter.setSizes([350,430]); self.setCentralWidget(self.center_splitter)
+        self._study_actions=[self.act_new,self.act_open,self.act_input,self.act_generate,self.act_parameterize,self.act_save,self.act_save_as,self.act_train,self.act_optimize]
 
-        act_new = tb.addAction("📄 새 스터디")
-        act_new.setToolTip("빈 MDO 스터디 시작 (Clean New Study)")
-        act_new.triggered.connect(self._on_new_study)
+    def _background(self,name,call):
+        if self._busy:
+            self.status_bar.showMessage('Wait for the current operation to finish.'); return
+        self._busy=name; self._sync_actions(); self.status_bar.showMessage(name+'…')
+        QThreadPool.globalInstance().start(StudioTask(self._generation,name,call,self.bridge))
 
-        act_load_deck = tb.addAction("📂 해석 덱 열기")
-        act_load_deck.setToolTip("CalculiX .inp 덱에서 <PARAM> 토큰 검색")
-        act_load_deck.triggered.connect(lambda: self._on_load_deck())
-
-        act_demo = tb.addAction("GE 목표 사양")
-        act_demo.setToolTip("미계산 변수 사양 예제입니다. GE 모델이나 해석 결과를 포함하지 않습니다.")
-        act_demo.triggered.connect(self._on_load_demo)
-
-        self.act_configure = tb.addAction("Configure Study")
-        self.act_configure.triggered.connect(self._on_configure)
-        self.act_generate = tb.addAction("Generate DoE")
-        self.act_generate.triggered.connect(lambda: self._on_generate_doe())
-        self._study_actions = [act_new, act_load_deck, act_demo, self.act_configure, self.act_generate]
-        file_menu = self.menuBar().addMenu("File")
-        open_study = file_menu.addAction("Open Study…")
-        open_study.triggered.connect(lambda: self._on_open_study())
-        save_study = file_menu.addAction("Save Study…")
-        save_study.triggered.connect(lambda: self._on_save_study())
-        self._study_actions.extend([open_study, save_study])
-        tb.addSeparator()
-        self.act_run = tb.addAction("▶ Run Evaluations")
-        self.act_run.setToolTip("Evaluate all pending design points using JobManager batch dispatch")
-        self.act_run.triggered.connect(self._run_all_points)
-
-        self.act_stop = tb.addAction("⏹ Stop Scheduling")
-        self.act_stop.setToolTip("Halt pending design point dispatches and terminate active solver process tree")
-        self.act_stop.setEnabled(False)
-        self.act_stop.triggered.connect(self._stop_evaluations)
-
-        tb.addSeparator()
-        self.act_theme = tb.addAction(theme_toggle_label())
-        self.act_theme.triggered.connect(self._on_toggle_theme)
-
-        # Status Bar
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedWidth(180)
-        self.progress_bar.setVisible(False)
-        self.status_bar.addPermanentWidget(self.progress_bar)
-        self.status_bar.showMessage("Ready. MDO Studio initialized.")
-
-        # Area 1: Left Study Tree Dock
-        self.tree_dock = QDockWidget("Study Workflow")
-        self.tree_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.study_tree = StudyTreeWidget()
-        self.tree_dock.setWidget(self.study_tree)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
-
-        # Area 2: Right Setup Dock
-        self.setup_dock = QDockWidget("Design Point Setup & Actions")
-        self.setup_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.setup_dock.setMinimumWidth(280)
-        self.setup_widget = SetupDockWidget(is_dark=self.is_dark)
-        self.setup_widget.apply_as_current.connect(self._on_apply_as_current)
-        self.setup_dock.setWidget(self.setup_widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.setup_dock)
-
-        # Center Splitter (Top: TDP, Bottom: Viz Studio)
-        center_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Area 3: Center-Top Table of Design Points
-        tdp_container = QWidget()
-        tdp_layout = QVBoxLayout(tdp_container)
-        tdp_layout.setContentsMargins(4, 4, 4, 4)
-
-        self.study_label = QLabel()
-        self.study_label.setWordWrap(True)
-        tdp_layout.addWidget(self.study_label)
-        self.tdp_lbl = QLabel("Design Points — declared deck units")
-        title_color = "#38bdf8" if self.is_dark else "#0284c7"
-        self.tdp_lbl.setStyleSheet(f"font-weight: bold; font-size: 10pt; color: {title_color};")
-        tdp_layout.addWidget(self.tdp_lbl)
-
-        self.tdp_table = QTableView()
-        self.tdp_model = DesignPointsTableModel(is_dark=self.is_dark)
-        self.tdp_table.setModel(self.tdp_model)
-        self.tdp_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.tdp_table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self.tdp_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.tdp_table.selectionModel().selectionChanged.connect(self._on_row_selected)
-        tdp_layout.addWidget(self.tdp_table)
-        center_splitter.addWidget(tdp_container)
-
-        # Area 4: Center-Bottom Visualization Studio
-        self.viz_tabs = QTabWidget()
-        self.pareto_view = ParetoFrontWidget(is_dark=self.is_dark)
-        self.tornado_view = SensitivityTornadoWidget(is_dark=self.is_dark)
-        self.surface_view = ResponseSurfaceWidget(is_dark=self.is_dark)
-
-        self.viz_tabs.addTab(self.pareto_view, "🎯 Multi-Objective Pareto Front")
-        self.viz_tabs.addTab(self.tornado_view, "🌪️ Sensitivity Tornado Diagram")
-        self.viz_tabs.addTab(self.surface_view, "📈 Kriging Response Slice (±1.96σ)")
-        center_splitter.addWidget(self.viz_tabs)
-
-        center_splitter.setStretchFactor(0, 4)
-        center_splitter.setStretchFactor(1, 5)
-        self.setCentralWidget(center_splitter)
-
-    def _create_demo_ge_bracket_study(self) -> StudyManager:
-        """Create uncomputed target-variable examples; no GE deck is supplied."""
-        v_tb = ContinuousVariable(id="t_base", name="Base Thickness", unit="mm", lower=8.0, upper=22.0, initial=15.0)
-        v_tr = ContinuousVariable(id="t_rib", name="Rib Thickness", unit="mm", lower=6.0, upper=18.0, initial=12.0)
-        v_rf = ContinuousVariable(id="r_fillet", name="Fillet Radius", unit="mm", lower=3.0, upper=14.0, initial=6.0)
-        v_db = ContinuousVariable(id="d_boss", name="Center Boss Outer Diameter", unit="mm", lower=48.0, upper=72.0, initial=60.0)
-        v_tw = ContinuousVariable(id="t_wall", name="Boss Wall Thickness", unit="mm", lower=6.0, upper=15.0, initial=10.0)
-        v_hs = ContinuousVariable(id="h_stiff", name="Stiffener Height", unit="mm", lower=20.0, upper=50.0, initial=35.0)
-        space = VariableSpace(variables=(v_tb, v_tr, v_rf, v_db, v_tw, v_hs))
-
-        # Objectives: Min Mass [kg], Min Pin Displacement [mm]
-        obj_mass = ObjectiveSpec(id="mass", response_id="mass", sense="MIN", scale=2.0)
-        obj_disp = ObjectiveSpec(id="disp", response_id="disp", sense="MIN", scale=1.0)
-
-        # Constraint: Max von Mises Stress <= 650.0 MPa (Ti-6Al-4V Yield 830 MPa, Safety Factor 1.28)
-        con_stress = ConstraintSpec(id="stress_con", response_id="stress", kind="UPPER", limit=650.0, scale=100.0)
-
-        mgr = StudyManager("GE Jet Engine Bracket MDO Benchmark Specification (Synthetic Demo)", space=space, objectives=[obj_mass, obj_disp], constraints=[con_stress])
-
-        # This is a design-space specification, never a measured campaign.
-        design = generate_design(space, DOEConfig(method="lhs", n_samples=25, seed=42))
-        for point in design.points:
-            rec = mgr.add_point(point.values)
-            rec.feasibility = "NOT_ASSESSED"
-        return mgr
-
-    def _populate_study(self) -> None:
-        self.study_tree.populate(self.study)
-        self.setup_widget.display_record(None)
-        if self._is_specification:
-            self.study_label.setText(self.study.name + "\n[미계산 목표 사양 / 비실측] GE 모델·결과 없음. 실제 .inp 덱을 여세요.")
+    def _task_finished(self,generation,name,result,error):
+        if generation!=self._generation or self._closing: return
+        if name.startswith('Sensitivity '):
+            if name!=f'Sensitivity {self._sensitivity_job}': return
+            items,target=result if result else ([],self.tornado_view.response.currentData())
+            self.tornado_view.plot_tornado(items,f'{target} [{self.response_units.get(target,"—")}]')
+            if error: self.status_bar.showMessage(error)
+            return
+        self._busy=None
+        if error:
+            QMessageBox.warning(self,name,error); self.status_bar.showMessage(f'{name} failed: {error}')
+        elif name=='Prepare current design': self._review_apply(result)
+        elif name in ('Open study','Open input'):
+            old=self.service; self.service=result
+            if hasattr(old,'close'): old.close()
+            self._generation+=1; self._selected_ids.clear(); self._clear_filters(); self._restore_study_view()
         else:
-            self.study_label.setText(self.study.name + (f"\nInput: {self.current_deck_path}" if self.current_deck_path else "\n해석 덱 열기 → Configure Study → Generate DoE → Run Evaluations"))
+            self.status_bar.showMessage(f'{name} completed. No calculation starts unless explicitly requested.')
+        if name in ('Open input','Parameterize','Configure','Open study') and not error:
+            self._editor=None
+            self._input_context()
+        self._populate_study(); self._sync_actions()
+        if name in ('Open study','Open input') and not error: self._reveal_selection()
+        if self._active_batch_id: self._delta_timer.start()
 
-        param_keys = [v.id for v in self.study.space.variables]
-        if self.study.objectives:
-            response_keys = list(dict.fromkeys([o.response_id for o in self.study.objectives] + [c.response_id for c in self.study.constraints if c.response_id]))
-        elif self.study.records and self.study.records[0].observations:
-            response_keys = list(self.study.records[0].observations.keys())
-        else:
-            response_keys = ["response"]
-        self.tdp_model.set_study_data(self.study.records, param_keys, response_keys)
-        self._update_visualizations()
+    def _sync_actions(self):
+        active=bool(self._active_batch_id); busy=bool(self._busy); writable=not self.service.read_only
+        for action in self._study_actions: action.setEnabled(not active and not busy and writable)
+        self.act_configure.setEnabled(not busy and bool(self.template_deck) and writable)
+        self.act_run.setEnabled(not active and not busy and writable and self._configured)
+        self.act_all.setEnabled(self.act_run.isEnabled()); self.act_confirm.setEnabled(self.act_run.isEnabled() and bool(self._selected_ids))
+        self.act_clone.setEnabled(not active and not busy and writable and bool(self._selected_ids))
+        self.act_stop.setEnabled(active); self.act_cancel.setEnabled(active)
+        self.progress_bar.setVisible(active or busy)
+        if busy and not active: self.progress_bar.setRange(0,0)
+        else: self.progress_bar.setRange(0,100)
+        rec=self.tdp_model.record(self._first_selected())
+        candidate=bool(rec and rec.status=='COMPLETED' and getattr(rec,'mode','ACTUAL')!='SURROGATE' and getattr(rec,'revision',self.service.revision)==self.service.revision)
+        for action in (self.act_current,self.act_result): action.setEnabled(candidate and not active and not busy and writable)
+        self.setup_widget.btn_apply_current.setEnabled(self.act_current.isEnabled())
+        self.setup_widget.btn_confirm.setEnabled(self.act_confirm.isEnabled())
+        self.setup_widget.btn_result.setEnabled(bool(rec and rec.status=='COMPLETED' and getattr(rec,'mode','ACTUAL')!='SURROGATE') and writable)
+        self.act_undo.setEnabled(bool(self.service.current_point_id) and not active and not busy and writable)
+        self.act_rerun.setEnabled(self.act_undo.isEnabled()); self.act_current_result.setEnabled(bool(self.service.current_point_id) and not busy)
+        if self._editor: self._editor.buttons.button(QDialogButtonBox.StandardButton.Apply).setEnabled(not active and not busy and writable)
 
-    @staticmethod
-    def _hash(path: Path) -> str:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+    def _populate_study(self):
+        selected=set(self._selected_ids)
+        units={v.id:getattr(v,'unit','—') for v in self.study.space.variables}; units.update(self.response_units)
+        responses=list(dict.fromkeys([o.response_id for o in self.study.objectives]+[c.response_id for c in self.study.constraints if c.response_id])) or ['response']
+        self.tdp_table.selectionModel().blockSignals(True)
+        self.tdp_model.set_study_data(self.study.records,[v.id for v in self.study.space.variables],responses,units=units,current_point_id=self.service.current_point_id)
+        self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
+        self.study_label.setText(self.study.name+(' — read only' if self.service.read_only else ''))
+        self.study_tree.populate(self.study,surrogate=self.service.surrogate,current_point_id=self.service.current_point_id)
+        self._show_selection(); self._update_visualizations(); self._sync_actions()
 
-    @staticmethod
-    def _execution_text(template: str, path: Path, manifest: dict) -> str:
-        data = template.encode("utf-8")
-        layout = {entry["source_path"]: entry["execution_path"] for entry in manifest["files"]}
-        for start, end, name, _ in reversed(list(_includes(data, path))):
-            target = Path(name)
-            target = (path.parent / target).resolve() if not target.is_absolute() else target.resolve()
-            data = data[:start] + layout[str(target)].encode("ascii") + data[end:]
-        return data.decode("utf-8")
+    def _first_selected(self): return next(iter(sorted(self._selected_ids)),None)
 
-    @staticmethod
-    def _run_files(run) -> dict[Path, str]:
-        expected = {}
-        snapshot = getattr(run, "snapshot", {})
-        for entry in snapshot.get("files", []):
-            for key, digest in (("source_copy", "original_sha256"), ("execution_path", "execution_sha256")):
-                relative = Path(entry[key])
-                path = (run.workdir / relative).resolve()
-                if relative.is_absolute() or not path.is_relative_to(run.workdir.resolve()):
-                    raise ValueError("실행 입력이 실행 폴더 밖을 참조합니다.")
-                expected[path] = entry[digest]
-        for relative, digest in snapshot.get("artifacts", {}).items():
-            path = (run.workdir / relative).resolve()
-            if Path(relative).is_absolute() or not path.is_relative_to(run.workdir.resolve()):
-                raise ValueError("실행 산출물이 실행 폴더 밖을 참조합니다.")
-            expected[path] = digest
-        return expected
+    def _restore_selection(self):
+        selection=self.tdp_table.selectionModel(); selection.clearSelection()
+        visible=0
+        for point in self._selected_ids:
+            row=self.tdp_model.row_for_id(point)
+            if row is not None:
+                proxy=self.tdp_proxy.mapFromSource(self.tdp_model.index(row,0))
+                if proxy.isValid(): selection.select(proxy,QItemSelectionModel.SelectionFlag.Select|QItemSelectionModel.SelectionFlag.Rows); visible+=1
+        self._hidden_selection=visible<len(self._selected_ids)
+        self.tdp_lbl.setText(f'{self.tdp_proxy.rowCount()} / {self.tdp_model.rowCount()} points · {len(self._selected_ids)} selected'+(' (selection hidden by filter)' if self._hidden_selection else ''))
 
-    def _sources_unchanged(self) -> bool:
-        return bool(self._source_revisions) and all(Path(p).is_file() and self._hash(Path(p)) == revision for p, revision in self._source_revisions.items())
+    def _on_row_selected(self,*args):
+        self._selected_ids={index.data(DesignPointsTableModel.PointIdRole) for index in self.tdp_table.selectionModel().selectedRows()}
+        self._show_selection(); self._sync_actions()
 
-    def _point_is_verified(self, rec, *, require_feasible=True) -> bool:
-        evidence = self._point_sources.get(rec.point_id)
-        if self._active_batch_id or self._is_specification or not evidence or rec.status != "COMPLETED" or (require_feasible and rec.feasibility != "FEASIBLE"):
-            return False
-        try:
-            if not self._sources_unchanged() or evidence["values"] != rec.physical_values:
-                return False
-            if not evidence["files"] or not all(Path(p).is_file() and self._hash(Path(p)) == h for p, h in evidence["files"].items()):
-                return False
-            receipt = json.loads(Path(evidence["study_manifest"]).read_text(encoding="utf-8"))
-            if (receipt["template"] != self.template_deck.original_text
-                    or receipt["execution_template"] != self._execution_template.original_text
-                    or receipt["points"][rec.point_id] != rec.physical_values
-                    or self._execution_text(self.template_deck.original_text, self.current_deck_path, receipt["snapshot"]) != self._execution_template.original_text):
-                return False
-            run_path = Path(evidence["workdir"])
-            run = RunStore(run_path.parent).read(run_path / "job.json")
-            if run.state != "completed" or run.id != evidence["run_id"] or run.returncode != 0:
-                return False
-            native_files = self._run_files(run)
-            if not native_files or any(not p.is_file() or self._hash(p) != h for p, h in native_files.items()):
-                return False
-            obs = extract_calculix_responses(run_path, run.result)
-            assessment = evaluate_criteria(obs, self.study.objectives, self.study.constraints)
-            expected = self._execution_template.bind(rec.physical_values).encode("utf-8")
-            source_copy = run_path / "source" / "000000.inp"
-            return (assessment.assessed and (not require_feasible or assessment.constraints.feasibility.value == "FEASIBLE")
-                    and obs == rec.observations and source_copy.read_bytes() == expected)
-        except (OSError, ValueError, TypeError, KeyError):
-            return False
-
-    def _update_visualizations(self) -> None:
-        completed = [r for r in self.study.records if r.status == "COMPLETED" and r.observations]
-        for view, text in ((self.surface_view, "No measured data for a response slice"), (self.pareto_view, "Two objective responses are required")):
-            view.ax.clear()
-            view._apply_theme()
-            view.ax.text(.5, .5, text, ha="center", va="center", transform=view.ax.transAxes,
-                         color="#e2e8f0" if self.is_dark else "#0f172a", gid="mdo_empty")
-            view.canvas.draw_idle()
-        if len(self.study.objectives) >= 2:
-            ox, oy = self.study.objectives[:2]
-            self.pareto_view.plot_study(self.study.records, ox.response_id, oy.response_id,
-                                       obj_x_name=f"{ox.response_id} [{self.response_units.get(ox.response_id, '?')}] ({ox.sense})",
-                                       obj_y_name=f"{oy.response_id} [{self.response_units.get(oy.response_id, '?')}] ({oy.sense})")
-        target = self.study.objectives[0].response_id if self.study.objectives else None
-        var_ids = [v.id for v in self.study.space.variables]
-        valid = [r for r in completed if target in r.observations and all(k in r.physical_values for k in var_ids)]
-        items = []
-        if len(valid) >= 3 and var_ids:
-            from caelab.mdo.sensitivity import spearman
-            X = np.array([[r.physical_values[k] for k in var_ids] for r in valid])
-            y = np.array([[r.observations[target]] for r in valid])
-            try:
-                for pair in spearman(X, y, variable_ids=var_ids, response_ids=(target,)):
-                    if pair.rho is not None and math.isfinite(pair.rho):
-                        items.append(TornadoItem(variable_id=pair.variable_id, metric="Spearman |rho|", magnitude=abs(pair.rho), sign=1 if pair.rho >= 0 else -1))
-            except ValueError:
-                pass
-            try:
-                ds = SurrogateDataset(x=X, y=y, point_ids=tuple(r.point_id for r in valid),
-                                      run_ids=tuple(self._point_sources.get(r.point_id, {}).get("run_id", r.point_id) for r in valid),
-                                      response_ids=(target,), units=(self.response_units.get(target, ""),), feature_order=tuple(var_ids))
-                surrogate = fit_surrogate(ds, SurrogateConfig(method="gp", gp_kernel="matern52", seed=42))
-                variable = self.study.space.variables[0]
-                self.surface_view.plot_kriging_slice(surrogate, valid, variable.id, target, variable.lower, variable.upper,
-                                                    fixed_values={v.id: v.initial for v in self.study.space.variables[1:]})
-            except (ValueError, ImportError, ArithmeticError) as exc:
-                self.surface_view.ax.clear()
-                self.surface_view.ax.text(.5, .5, f"Surrogate unavailable: {exc}", ha="center", va="center", wrap=True, transform=self.surface_view.ax.transAxes,
-                                          color="#e2e8f0" if self.is_dark else "#0f172a", gid="mdo_empty")
-                self.surface_view.canvas.draw_idle()
-        self.tornado_view.plot_tornado(items, target_name=f"Spearman |rho|: {target or 'no response'}")
-        if self.study.records and not self.tdp_table.selectionModel().hasSelection():
-            self.tdp_table.selectRow(0)
-        self._on_row_selected(None, None)
-
-    def _deferred_update_visualizations(self) -> None:
-        self._update_visualizations()
-
-    def _on_row_selected(self, selected, deselected) -> None:
-        indexes = self.tdp_table.selectionModel().selectedRows()
-        rec = self.study.records[indexes[0].row()] if indexes and indexes[0].row() < len(self.study.records) else None
-        self.setup_widget.display_record(rec)
-        self.setup_widget.btn_apply_current.setEnabled(bool(rec and self._point_is_verified(rec)))
+    def _show_selection(self):
+        rec=self.tdp_model.record(self._first_selected()); self.setup_widget.display_record(rec,self.tdp_model.units)
+        for view in (self.pareto_view,self.parallel_view): view.set_selected(self._selected_ids)
         if rec:
-            evidence = self._point_sources.get(rec.point_id)
-            detail = f"Run: {evidence['run_id']}\n{evidence['workdir']}" if evidence else "No verified solver run"
-            self.setup_widget.lbl_guide.setPlainText((rec.error_message + "\n" if rec.error_message else "") + detail)
-            self.setup_widget.lbl_guide.setToolTip(detail)
-            self.setup_widget.lbl_guide.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.setup_widget.lbl_guide.setPlainText((rec.error_message+'\n' if rec.error_message else '')+f'{getattr(rec,"mode","ACTUAL")} · revision {getattr(rec,"revision","1")}\nSelection does not apply or run this design.')
+        self._restore_selection_label()
+        self._viz_timer.start()
 
-    def _on_apply_as_current(self, point_id: str) -> None:
-        rec = next((r for r in self.study.records if r.point_id == point_id), None)
-        if not rec or not self.template_deck or not self.current_deck_path or not self._point_is_verified(rec):
-            QMessageBox.warning(self, "적용할 수 없음", "완료·적합한 실제 실행과 변경되지 않은 입력/결과가 필요합니다. 파일을 확인하고 다시 평가하세요.")
-            return
-        temporary = None
-        try:
-            path = self.current_deck_path
-            data = self.template_deck.bind(rec.physical_values).encode("utf-8")
-            original = path.read_bytes()
-            backup = path.with_name(path.name + ".bak")
-            if backup.exists():
-                backup = path.with_name(path.name + f".{uuid.uuid4().hex[:8]}.bak")
-            # Exclusive creation preserves every previous backup.
-            with backup.open("xb") as stream:
-                stream.write(original)
-                stream.flush()
-                os.fsync(stream.fileno())
-            with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
-                temporary = Path(stream.name)
-                stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-            if not self._sources_unchanged():
-                raise ValueError("백업 중 원본 입력이 변경되었습니다.")
-            os.replace(temporary, path)
-            self._source_revisions[str(path)] = self._hash(path)
-            QMessageBox.information(self, "Set as Current Design Point", f"Applied {point_id}\nINP: {path}\nBackup: {backup}\n원래 파라미터 템플릿은 스터디에 유지됩니다. CAD는 변경하지 않았습니다.")
-            self.status_bar.showMessage(f"Applied {point_id}; backup: {backup}", 8000)
-            self._on_row_selected(None, None)
-        except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "적용 실패", str(exc))
-            self.status_bar.showMessage(f"Apply failed: {exc}", 8000)
-        finally:
-            if temporary:
-                temporary.unlink(missing_ok=True)
+    def _restore_selection_label(self):
+        visible=sum(self.tdp_proxy.mapFromSource(self.tdp_model.index(self.tdp_model.row_for_id(p),0)).isValid() for p in self._selected_ids if self.tdp_model.row_for_id(p) is not None)
+        self._hidden_selection=visible<len(self._selected_ids)
+        self.tdp_lbl.setText(f'{self.tdp_proxy.rowCount()} / {self.tdp_model.rowCount()} points · {len(self._selected_ids)} selected'+(' (selection hidden by filter)' if self._hidden_selection else ''))
 
-    def _set_running(self, active: bool) -> None:
-        for action in self._study_actions:
-            action.setEnabled(not active)
-        self.act_run.setEnabled(not active)
-        self.act_stop.setEnabled(active)
-        self.progress_bar.setVisible(active)
-        self.setup_widget.btn_apply_current.setEnabled(False)
+    def select_point(self,point_id):
+        if self.tdp_model.row_for_id(point_id) is None: return
+        self._selected_ids={point_id}; self.tdp_table.selectionModel().blockSignals(True); self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
+        row=self.tdp_model.row_for_id(point_id); index=self.tdp_proxy.mapFromSource(self.tdp_model.index(row,0))
+        if index.isValid(): self.tdp_table.scrollTo(index)
+        self._show_selection(); self._sync_actions()
 
-    def _run_all_points(self) -> None:
+    def _reveal_selection(self):
+        row=self.tdp_model.row_for_id(self._first_selected())
+        if row is not None:
+            index=self.tdp_proxy.mapFromSource(self.tdp_model.index(row,0))
+            if index.isValid(): self.tdp_table.scrollTo(index,QTableView.ScrollHint.PositionAtCenter)
+
+    def _filters_changed(self,*args):
+        selected=set(self._selected_ids); self.tdp_table.selectionModel().blockSignals(True)
+        self.tdp_proxy.set_filters(text=self.search.text(),status=self.status_filter.currentText(),feasibility=self.feasibility_filter.currentText())
+        self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
+
+    def _brush_filter(self,point_ids):
+        selected=set(self._selected_ids); self.tdp_table.selectionModel().blockSignals(True); self.tdp_proxy.set_filters(point_ids=point_ids)
+        self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
+
+    def _clear_filters(self):
+        self.search.clear(); self.status_filter.setCurrentIndex(0); self.feasibility_filter.setCurrentIndex(0); self._brush_filter(None)
+        if hasattr(self,'parallel_view'): self.parallel_view.brushes.clear()
+
+    def _update_visualizations(self):
+        records=self.tdp_model.records; units=self.tdp_model.units
+        index=self.viz_tabs.currentIndex()
+        if index==0: self.pareto_view.set_study(records,self.study.objectives,units)
+        elif index==1: self.parallel_view.set_study(records,self.study.space.variables,self.tdp_model.response_keys,units)
+        elif index==2: self.surface_view.set_study(self.service.surrogate,self.study.space,records,units)
+        elif index==3:
+            self.tornado_view.set_responses(self.tdp_model.response_keys,self.response_units); self._sensitivity(records)
+        elif index==4: self.convergence_view.set_study(records,self.study.objectives,units,self.service.revision)
+
+    def _sensitivity(self,records):
+        self._sensitivity_job+=1
+        target=self.tornado_view.response.currentData()
+        variables=[v for v in self.study.space.independent_variables if not hasattr(v,'choices')]
+        rows=[r for r in records if r.status=='COMPLETED' and getattr(r,'mode','ACTUAL')!='SURROGATE' and getattr(r,'revision',self.service.revision)==self.service.revision and target in r.observations and all(v.id in r.physical_values for v in variables)]
+        def compute():
+            items=[]
+            if len(rows)>=3 and variables:
+                from caelab.mdo.sensitivity import spearman
+                pairs=spearman(np.array([[r.physical_values[v.id] for v in variables] for r in rows]),np.array([[r.observations[target]] for r in rows]),variable_ids=[v.id for v in variables],response_ids=[target])
+                items=[TornadoItem(p.variable_id,'Spearman rho (dimensionless)',abs(p.rho),sign=1 if p.rho>=0 else -1) for p in pairs if p.rho is not None]
+            return items,target
+        QThreadPool.globalInstance().start(StudioTask(self._generation,f'Sensitivity {self._sensitivity_job}',compute,self.bridge))
+
+    def _tree_selected(self,category,key):
+        if category in ('variables','criteria'): self._on_configure(tab=0 if category=='variables' else 1)
+        elif category=='input': self._input_context()
+        elif category=='doe': self._method_context('DOE')
+        elif category=='surrogates': self._method_context('Surrogate')
+        elif category=='optimization': self._method_context('Optimization')
+        elif category=='sensitivity': self.viz_tabs.setCurrentIndex(3)
+        elif category=='evaluations':
+            self.status_filter.setCurrentText(key or 'All'); self.setup_widget.context_tabs.setCurrentIndex(0)
+        elif category=='selection': self.setup_widget.context_tabs.setCurrentIndex(0)
+        elif category=='view' and key in ('Pareto','Parallel','Surface','Sensitivity','Convergence'): self.viz_tabs.setCurrentIndex(('Pareto','Parallel','Surface','Sensitivity','Convergence').index(key))
+
+    def _input_context(self):
+        widget=QWidget(); layout=QVBoxLayout(widget); label=QLabel(str(self.current_deck_path or 'Open a native CalculiX input.')); label.setWordWrap(True); layout.addWidget(label)
+        for text,slot in [('Open Native Input…',lambda:self._on_load_deck()),('Create Scalar Token…',self._parameterize),('Configure Variables / Responses',self._on_configure)]:
+            button=QPushButton(text); button.clicked.connect(slot); layout.addWidget(button)
+        layout.addStretch(); self.setup_widget.set_editor(widget,'Input'); self.setup_dock.show()
+
+    def _method_context(self,kind):
+        widget=QWidget(); layout=QVBoxLayout(widget)
+        if kind=='Surrogate' and self.service.surrogate:
+            artifact=self.service.surrogate; text=f'Saved {artifact.config.method.upper()} model · study revision {artifact.dataset.training_revision}\nQualified: {artifact.qualified}\n'+ '\n'.join(f'{m.response_id}: RMSE {m.rmse:.6g} {m.unit}; holdout n={m.n}' for m in artifact.metrics)
+            label=QLabel(text); label.setToolTip(artifact.id); label.setWordWrap(True); layout.addWidget(label)
+        labels={'DOE':('Generate DOE…',lambda:self._on_generate_doe()),'Surrogate':('Train / Validate…',self._train),'Optimization':('Constrained Search…',self._optimize)}
+        text,slot=labels[kind]; button=QPushButton(text); button.clicked.connect(slot); layout.addWidget(button); layout.addStretch(); self.setup_widget.set_editor(widget,kind); self.setup_dock.show()
+
+    def _on_configure(self,*args,tab=0):
+        if not self.template_deck: self._input_context(); return
+        if self._editor is None:
+            self._editor=StudyConfigEditor(self.template_deck.token_names,self.study,self.response_units,getattr(self.service,'response_selectors',{}))
+            self._editor.applied.connect(lambda config:self._configure_study(*config))
+        self.setup_widget.set_editor(self._editor,'Setup')
+        self._editor.tabs.setCurrentIndex(tab); self.setup_widget.context_tabs.setCurrentIndex(1); self.setup_dock.show(); self._sync_actions()
+
+    def _configure_study(self,space,objectives,constraints,response_units,response_selectors=None):
         if self._active_batch_id:
+            if self._editor: self._editor.error.setText('Campaign revision is locked; retain this draft and Apply after it finishes.')
             return
-        if self._is_specification or not self.current_deck_path or not self.template_deck:
-            QMessageBox.warning(self, "CalculiX 입력 필요", "No CalculiX .inp deck loaded. 실제 .inp 덱을 열고 변수를 설정하세요. 목표 사양은 해석 모델이 아닙니다.")
+        try: self.service.configure(space,objectives,constraints,response_units,response_selectors=response_selectors)
+        except (ValueError,TypeError,OSError) as exc:
+            if self._editor: self._editor.error.setText(str(exc))
+            else: QMessageBox.warning(self,'Study configuration',str(exc))
             return
-        if not self._configured or not self.study.records:
-            QMessageBox.warning(self, "평가 준비", "Configure Study와 Generate DoE를 먼저 실행하세요.")
-            return
-        solver = next((p for p in self.workbench.programs() if p.spec.id == "calculix"), None)
-        if not solver or not solver.available:
-            QMessageBox.warning(self, "CalculiX 없음", "CalculiX 연결을 확인하세요. CAELAB_CCX에 실제 ccx 실행 파일을 지정하세요.")
-            return
-        try:
-            if not self._sources_unchanged():
-                raise ValueError("원본 입력 또는 INCLUDE가 변경되었습니다. 덱을 다시 열고 설정하세요.")
-            batch_id = uuid.uuid4().hex
-            batch_dir = self.current_deck_path.parent / ".caelab_mdo" / batch_id
-            snapshot_dir = batch_dir / "template"
-            manifest = snapshot_input(self.current_deck_path, snapshot_dir)
-            # The saved immutable template remains authoritative after Set as Current.
-            effective = self._execution_template
-            if self._execution_text(self.template_deck.original_text, self.current_deck_path, manifest) != effective.original_text:
-                raise ValueError("원본 템플릿과 실행 템플릿이 일치하지 않습니다. 덱을 다시 여세요.")
-            items = []
-            for rec in self.study.records:
-                self.study.space.encode(rec.physical_values)
-                folder = batch_dir / "inputs" / rec.point_id
-                shutil.copytree(snapshot_dir, folder)
-                content = effective.bind(rec.physical_values)
-                if TemplateDeck.from_text(content).token_names:
-                    raise ValueError("미치환 파라미터가 있습니다.")
-                (folder / "model.inp").write_text(content, encoding="utf-8", newline="")
-                items.append(BatchItem(item_id=rec.point_id, input_path=folder / "model.inp", status=solver,
-                                       node_id="mdo_batch", parameters=dict(rec.physical_values), timeout=300,
-                                       units=dict(self.response_units), unit_source="MDO Configure Study (declared deck units)"))
-            atomic_json(batch_dir / "study-input.json", {"source_revisions": self._source_revisions, "snapshot": manifest,
-                                                       "template": self.template_deck.original_text, "execution_template": self._execution_template.original_text,
-                                                       "variables": [asdict(v) for v in self.study.space.variables],
-                                                       "objectives": [asdict(o) for o in self.study.objectives],
-                                                       "constraints": [asdict(c) for c in self.study.constraints],
-                                                       "points": {r.point_id: r.physical_values for r in self.study.records}})
-        except (OSError, ValueError, TypeError) as exc:
-            QMessageBox.warning(self, "배치 준비 실패", str(exc))
-            return
-        self._point_sources.clear()
-        for rec in self.study.records:
-            rec.status = "QUEUED"
-            rec.observations.clear(); rec.objectives.clear()
-            rec.feasibility = "NOT_ASSESSED"
-            rec.is_pareto = False; rec.duration_sec = 0; rec.error_message = ""
-        self._populate_study()
-        self._active_batch_id = batch_id
-        self._active_store = RunStore(batch_dir / "runs")
-        self._set_running(True)
-        self.progress_bar.setValue(0)
-        self.status_bar.showMessage(f"Batch outputs: {batch_dir}")
+        self._populate_study(); self.status_bar.showMessage('New study revision applied. Historical rows retain their original revision.')
+        if self._editor:
+            self._editor.study=self.study; self._editor.response_units=dict(self.response_units); self._editor.selectors=dict(getattr(self.service,'response_selectors',{}))
 
-        def finished(item, run):
-            item.scalar_responses = extract_calculix_responses(run.workdir, run.result) if item.state == "completed" else {}
-            self.bridge.itemFinished.emit(item.item_id, item, run)
-        try:
-            self.workbench.jobs.submit_batch(self._active_store, items, name=self.study.name, batch_id=batch_id,
-                                            on_item_finished=finished, on_progress=self.bridge.batchProgress.emit,
-                                            on_batch_finished=lambda b: self.bridge.batchFinished.emit(b.id, b.state, b.completed_count, b.failed_count))
-        except Exception as exc:
-            self._active_batch_id = None
-            self._set_running(False)
-            for rec in self.study.records:
-                rec.status = "FAILED"; rec.error_message = str(exc)
-            self._populate_study()
-            QMessageBox.warning(self, "배치 제출 실패", str(exc))
+    def _parameterize(self):
+        if not self.current_deck_path: self._on_load_deck(); return
+        dialog=ParameterizeDialog(self.service.input_sources(),self)
+        if dialog.exec()==QDialog.DialogCode.Accepted:
+            self._background('Parameterize',lambda:self.service.parameterize([dialog.binding]))
 
-    def _stop_evaluations(self) -> None:
-        if self._active_batch_id:
-            self.act_stop.setEnabled(False)
-            self.workbench.jobs.cancel_batch(self._active_batch_id)
-            self.status_bar.showMessage("배치 취소 요청 중…")
+    def _on_new_study(self):
+        if self._active_batch_id or self._busy: return
+        old=self.service
+        if hasattr(old,'close'): old.close()
+        self.service=self.workbench.create_mdo_study(); self._generation+=1; self._selected_ids.clear(); self._editor=None; self._clear_filters(); self._populate_study()
 
-    def _on_batch_progress(self, prog: Any) -> None:
-        if not prog or prog.batch_id != self._active_batch_id:
-            return
-        self.status_bar.showMessage(prog.heartbeat_message)
-        if prog.total_count:
-            self.progress_bar.setValue(int(prog.completed_count / prog.total_count * 100))
-        if prog.current_item_id:
-            rec = next((r for r in self.study.records if r.point_id == prog.current_item_id), None)
-            if rec and rec.status == "QUEUED":
-                self.tdp_model.update_point_result(rec.point_id, "RUNNING")
+    def _on_load_deck(self,path=None):
+        if self._active_batch_id or self._busy: return
+        if path is None:
+            path,_=QFileDialog.getOpenFileName(self,'Open native input','','CalculiX input (*.inp)')
+            if not path: return
+        project,node=getattr(self.service,'project',None),getattr(self.service,'node_id',None)
+        def open_candidate():
+            candidate=self.workbench.create_mdo_study(project=project,node_id=node)
+            try: candidate.open_input(Path(path))
+            except Exception:
+                candidate.close(); raise
+            return candidate
+        self._background('Open input',open_candidate)
 
-    def _on_item_finished(self, point_id: str, item: Any, run: Any) -> None:
-        if self._active_batch_id is None or item.batch_id != self._active_batch_id:
-            return
-        rec = next((r for r in self.study.records if r.point_id == point_id), None)
-        if rec is None:
-            return
-        rec.observations = dict(item.scalar_responses)
-        rec.duration_sec = item.duration_sec
-        rec.status = "COMPLETED" if item.state == "completed" else item.state.upper()
-        rec.error_message = item.error
-        assessment = evaluate_criteria(rec.observations, self.study.objectives, self.study.constraints,
-                                       valid=item.state == "completed")
-        rec.feasibility = assessment.constraints.feasibility.value if assessment.assessed else "NOT_ASSESSED"
-        rec.total_violation = assessment.constraints.total_violation or 0.0
-        rec.objectives = {o.id: float(v) for o, v in zip(self.study.objectives, assessment.objectives)} if assessment.assessed else {}
-        if item.state == "completed" and not assessment.assessed:
-            required = {o.response_id for o in self.study.objectives} | {c.response_id for c in self.study.constraints}
-            missing = sorted(k for k in required if k not in rec.observations or not math.isfinite(rec.observations[k]))
-            rec.status = "FAILED"
-            rec.error_message = f"Solver completed; required responses missing/invalid: {', '.join(missing)}"
-        if rec.status == "COMPLETED":
-            paths = [run.workdir / name for name in ("job.json", "model.inp", "source/000000.inp", "model.frd", "model.dat", "job.log")]
-            study_manifest = run.workdir.parent.parent / "study-input.json"
-            paths.append(study_manifest)
-            paths.extend(self._run_files(run))
-            self._point_sources[point_id] = {"study_manifest": str(study_manifest), "run_id": run.id, "workdir": str(run.workdir), "values": dict(rec.physical_values),
-                                              "files": {str(p): self._hash(p) for p in paths if p.is_file()}}
-        self.study.update_pareto_front()
-        self.tdp_model.update_point_result(point_id, rec.status, rec.observations, rec.feasibility, rec.total_violation, rec.duration_sec, rec.is_pareto)
-        self._viz_timer.start(150)
-
-    def _on_item_failed(self, point_id: str, error_msg: str) -> None:
-        rec = next((r for r in self.study.records if r.point_id == point_id), None)
-        if rec:
-            rec.error_message = error_msg
-            rec.observations.clear(); rec.objectives.clear()
-            self.tdp_model.update_point_result(point_id, "FAILED", {}, "NOT_ASSESSED")
-
-    def _on_batch_finished(self, batch_id: str, final_state: str, completed: int, failed: int) -> None:
-        if batch_id != self._active_batch_id:
-            return
-        batch = self.workbench.jobs.batch_snapshot(batch_id)
-        if batch:
-            for item in batch.items:
-                rec = next((r for r in self.study.records if r.point_id == item.item_id), None)
-                if rec and rec.status in ("QUEUED", "RUNNING"):
-                    rec.status = item.state.upper() if item.state in ("failed", "cancelled") else "FAILED"
-                    rec.error_message = item.error or "No valid response receipt"
-                    rec.feasibility = "NOT_ASSESSED"
-        self._active_batch_id = None
-        self._set_running(False)
-        self._populate_study()
-        valid = sum(r.status == "COMPLETED" for r in self.study.records)
-        invalid = sum(r.status == "FAILED" for r in self.study.records)
-        self.status_bar.showMessage(f"배치 완료 ({final_state}): 평가 완료 {valid}, 실패/응답 오류 {invalid}. 원자료: {self._active_store.root}")
-
-    def closeEvent(self, event: QCloseEvent) -> None:
-        """Safe shutdown: cancel active batch, kill solver process tree, cleanup resources."""
-        if self._active_batch_id:
-            self.workbench.jobs.cancel_batch(self._active_batch_id)
-            self._active_batch_id = None
-        if hasattr(self, "_viz_timer") and self._viz_timer.isActive():
-            self._viz_timer.stop()
-        for view in (getattr(self, "pareto_view", None), getattr(self, "tornado_view", None), getattr(self, "surface_view", None)):
-            if view and hasattr(view, "canvas") and hasattr(view.canvas, "_draw_pending"):
-                view.canvas._draw_pending = False
-        if hasattr(self, "bridge"):
-            self.bridge.blockSignals(True)
-        if hasattr(self, "workbench"):
-            if not self.workbench.close():
-                event.ignore()
-                return
-        event.accept()
-
-    def _reset_binding(self):
-        self.current_deck_path = None
-        self.template_deck = None
-        self._execution_template = None
-        self._source_revisions = {}
-        self._point_sources = {}
-        self.response_units = {}
-        self._configured = False
-        self._is_specification = False
-        self._study_file = None
-
-    def _on_new_study(self) -> None:
-        if self._active_batch_id:
-            return
-        self._reset_binding()
-        self.study = StudyManager()
-        self._populate_study()
-
-    def _on_load_demo(self) -> None:
-        if self._active_batch_id:
-            return
-        self._reset_binding()
-        self._is_specification = True
-        self.study = self._create_demo_ge_bracket_study()
-        self._populate_study()
-        self.status_bar.showMessage("미계산 목표 사양입니다. GE 브래킷 모델이나 실측 결과를 포함하지 않습니다.")
-
-    def _on_load_deck(self, file_path: str | Path | None = None) -> None:
-        if self._active_batch_id:
-            return
-        if file_path is None:
-            file_path, _ = QFileDialog.getOpenFileName(self, "CalculiX 해석 덱 열기", "", "CalculiX Input (*.inp)")
-            if not file_path:
-                return
-        try:
-            path = Path(file_path).resolve()
-            if path.suffix.lower() != ".inp":
-                raise ValueError("CalculiX .inp 파일을 선택하세요.")
-            # Strict UTF-8 preserves invalid input as an error, not replacement bytes.
-            original = path.read_bytes().decode("utf-8")
-            deck = TemplateDeck.from_text(original, file_path=path)
-            if not deck.token_names:
-                raise ValueError("변수로 사용할 명시적 <TOKEN>이 없습니다. 원본 사본에 토큰을 추가하세요.")
-            if len(set(t.lower() for t in deck.token_names)) != len(deck.token_names):
-                raise ValueError("대소문자만 다른 토큰은 구별할 수 없습니다 (<T>/<t>).")
-            with tempfile.TemporaryDirectory(prefix="caelab_mdo_check_") as temporary:
-                folder = Path(temporary)
-                manifest = snapshot_input(path, folder)
-                for entry in manifest["files"][1:]:
-                    if TemplateDeck.from_file(folder / entry["execution_path"]).token_names:
-                        raise ValueError("INCLUDE 안의 파라미터 토큰은 아직 지원하지 않습니다. 토큰을 루트 덱에 두세요.")
-                execution = TemplateDeck.from_text(self._execution_text(original, path, manifest))
-            self._reset_binding()
-            self.template_deck = deck
-            self._execution_template = execution
-            self.current_deck_path = path
-            self._source_revisions = {f["source_path"]: f["original_sha256"] for f in manifest["files"]}
-            self.study = StudyManager(name=f"Study: {path.name}")
-            self._populate_study()
-            self.status_bar.showMessage(f"{len(deck.token_names)} tokens: {', '.join(deck.token_names)}. Configure Study에서 범위·단위·응답을 지정하세요.")
-        except (OSError, ValueError, UnicodeError) as exc:
-            QMessageBox.warning(self, "덱 로드 오류", str(exc))
-
-    def _on_configure(self):
-        if self._active_batch_id:
-            return
-        if not self.template_deck or self._is_specification:
-            QMessageBox.warning(self, "입력 필요", "먼저 실제 CalculiX .inp 템플릿을 여세요.")
-            return
-        dialog = StudyConfigDialog(self.template_deck.token_names, self.study, self.response_units, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._configure_study(*dialog.configuration())
-
-    def _configure_study(self, space, objectives, constraints, response_units):
-        if self._active_batch_id:
-            raise ValueError("실행 중에는 스터디 설정을 변경할 수 없습니다.")
-        if not self.template_deck or {v.id for v in space.variables} != {t.lower() for t in self.template_deck.token_names}:
-            raise ValueError("변수와 덱 토큰이 일치하지 않습니다.")
-        from caelab.mdo.variables import parse_unit
-        for variable in space.variables:
-            if not variable.unit:
-                raise ValueError("변수 단위를 명시하세요.")
-        required = {o.response_id for o in objectives} | {c.response_id for c in constraints}
-        if not objectives or not required <= response_units.keys() or any(not response_units[k] for k in required):
-            raise ValueError("모든 목적·제약 응답의 단위를 명시하세요.")
-        for unit in response_units.values():
-            parse_unit(unit)
-        self.study = StudyManager(self.study.name, space=space, objectives=objectives, constraints=constraints)
-        self.response_units = dict(response_units)
-        self._point_sources.clear()
-        self._configured = True
-        self._populate_study()
-        self.status_bar.showMessage("설정 저장됨. Generate DoE로 기준점과 LHS 설계점을 생성하세요.")
-
-    def _on_generate_doe(self, n_samples=None, seed=None):
-        if self._active_batch_id:
-            return
-        if not self._configured or not self.template_deck:
-            QMessageBox.warning(self, "설정 필요", "실제 덱을 열고 Configure Study를 먼저 완료하세요.")
-            return
+    def _on_generate_doe(self,n_samples=None,seed=None):
+        if self._active_batch_id or self._busy: return
+        method='lhs'
         if n_samples is None:
-            n_samples, ok = QInputDialog.getInt(self, "Generate DoE", "LHS samples (baseline is added separately)", 8, 1, 1000)
-            if not ok:
-                return
+            method,ok=QInputDialog.getItem(self,'Generate DOE','Method',['lhs','opt-lhs','full-factorial','sobol','ccd','box-behnken'],0,False)
+            if not ok: return
+            n_samples,ok=QInputDialog.getInt(self,'Generate DOE','Sample count',16,1,10000)
+            if not ok: return
         if seed is None:
-            seed, ok = QInputDialog.getInt(self, "Generate DoE", "Random seed", 42, 0, 2147483647)
-            if not ok:
-                return
-        try:
-            design = generate_design(self.study.space, DOEConfig(method="lhs", n_samples=n_samples, seed=seed))
-            study = StudyManager(self.study.name, space=self.study.space, objectives=self.study.objectives, constraints=self.study.constraints)
-            study.add_point({v.id: v.initial for v in study.space.variables}, name="Baseline")
-            for point in design.points:
-                study.add_point(point.values)
-            for rec in study.records:
-                rec.feasibility = "NOT_ASSESSED"
-            self.study = study
-            self._point_sources.clear()
-            self._populate_study()
-            self.status_bar.showMessage(f"Baseline + {n_samples} LHS points (seed {seed}); 아직 해석하지 않았습니다.")
-        except (ValueError, ImportError) as exc:
-            QMessageBox.warning(self, "DoE 생성 실패", str(exc))
+            seed,ok=QInputDialog.getInt(self,'Generate DOE','Random seed',42,0,2147483647)
+            if not ok: return
+        self._background('Generate DOE',lambda:self.service.generate_doe(n_samples,seed,method=method))
 
-    def _on_save_study(self, path=None):
-        if self._active_batch_id:
-            return
-        if not self.template_deck or not self._configured:
-            QMessageBox.warning(self, "저장 준비", "실제 덱과 스터디 설정이 필요합니다.")
-            return
+    def _callbacks(self):
+        generation=self._generation; service=self.service
+        def item(point,record,run):
+            if generation==self._generation and service is self.service: self.bridge.itemFinished.emit(point,record,run)
+        def progress(prog):
+            if generation==self._generation and service is self.service: self.bridge.batchProgress.emit(prog)
+        def done(*values):
+            if generation==self._generation and service is self.service: self.bridge.batchFinished.emit(*values)
+        return dict(on_item=item,on_progress=progress,on_finished=done)
+
+    def _run_selected(self):
+        ids=list(self._selected_ids) or [r.point_id for r in self.study.records if r.status=='PENDING' and getattr(r,'mode','ACTUAL')!='SURROGATE' and getattr(r,'revision',self.service.revision)==self.service.revision]
+        if self._hidden_selection:
+            QMessageBox.information(self,'Hidden selection','Selected points are hidden by the filter. Clear filters or select visible points before running.'); return
+        self._background('Run native evaluations',lambda:self.service.submit(ids,**self._callbacks()))
+
+    def _run_all_points(self):
+        ids=[r.point_id for r in self.study.records if r.status in ('PENDING','FAILED','CANCELLED') and getattr(r,'mode','ACTUAL')!='SURROGATE' and getattr(r,'revision',self.service.revision)==self.service.revision]
+        self._background('Run native evaluations',lambda:self.service.submit(ids,**self._callbacks()))
+
+    def _confirm_selected(self,point_ids=None):
+        ids=list(point_ids if isinstance(point_ids,(list,tuple)) else self._selected_ids)
+        self._background('Fresh native confirmation',lambda:self.service.confirm(ids,**self._callbacks()))
+
+    def _clone_selected(self):
+        point=self._first_selected()
+        if point: self._background('Clone candidate',lambda:self.service.clone_point(point))
+
+    def _rerun_current(self): self._background('Run current design',lambda:self.service.rerun_current(**self._callbacks()))
+    def _stop_scheduling(self):
+        QThreadPool.globalInstance().start(StudioTask(self._generation,'Stop scheduling',self.service.stop_scheduling,self.bridge))
+        self.status_bar.showMessage('Scheduling stop requested. The current owned attempt may finish.')
+    def _stop_evaluations(self):
+        QThreadPool.globalInstance().start(StudioTask(self._generation,'Cancel campaign',self.service.cancel,self.bridge))
+        self.status_bar.showMessage('Cancellation requested for this campaign.')
+
+    def _on_item_finished(self,point_id,record,run):
+        if getattr(record,'study_id',self.service.study_id)!=self.service.study_id or getattr(record,'revision',self.service.revision)!=self.service.revision: return
+        if getattr(record,'batch_id',self._active_batch_id) not in (None,self._active_batch_id): return
+        self._pending_records[point_id]=record; self._delta_timer.start()
+
+    def _flush_deltas(self):
+        if not self._pending_records: return
+        selected=set(self._selected_ids); position=self.tdp_table.verticalScrollBar().value()
+        self.tdp_table.selectionModel().blockSignals(True)
+        for record in self._pending_records.values(): self.tdp_model.update_record(record)
+        self._pending_records.clear(); self._selected_ids=selected; self._restore_selection()
+        self.tdp_table.verticalScrollBar().setValue(position); self.tdp_table.selectionModel().blockSignals(False)
+        self._show_selection(); self._sync_actions(); self._viz_timer.start()
+
+    def _on_batch_progress(self,prog):
+        if getattr(prog,'study_id',self.service.study_id)!=self.service.study_id or getattr(prog,'revision',self.service.revision)!=self.service.revision: return
+        if prog.batch_id!=self._active_batch_id: return
+        self.progress_bar.setRange(0,100); self.progress_bar.setValue(int(prog.completed_count/max(1,prog.total_count)*100)); self.status_bar.showMessage(prog.heartbeat_message)
+
+    def _on_batch_finished(self,batch_id,state,completed,failed):
+        self._flush_deltas(); self._delta_timer.stop(); self._populate_study()
+        self.status_bar.showMessage(f'배치 완료 ({state}): {completed} completed, {failed} failed. Actual attempts remain available.'); self._sync_actions()
+
+    def _point_is_verified(self,record,*,require_feasible=True): return self.service.is_verified(record.point_id,require_feasible=require_feasible)
+
+    def _on_apply_as_current(self,point_id):
+        if point_id: self._background('Prepare current design',lambda:self.service.prepare_apply(point_id))
+
+    def _review_apply(self,plan):
+        text='\n'.join(f'{key}: {value}' for key,value in plan['values'].items())+'\n\nTargets:\n'+'\n'.join(t['path'] for t in plan['targets'])
+        if plan['violations']: text+='\n\nViolated criteria:\n'+'\n'.join(plan['violations'])
+        text+='\n\nCreate verified backups and apply these values? This does not run the solver or update CAD.'
+        if QMessageBox.question(self,'Set as Current Design Point',text,QMessageBox.StandardButton.Apply|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)==QMessageBox.StandardButton.Apply:
+            self._background('Apply current design',lambda:self.service.apply(plan,allow_infeasible=bool(plan['violations'])))
+
+    def _undo(self): self._background('Undo current design',self.service.undo)
+    def _open_result(self,point_id=None,*,current=False): self._background('Open actual result',lambda:self.service.open_result(point_id,current=current))
+
+    def _inspect_attempts(self,point_id):
+        rec=self.service.point_details(point_id)
+        if not rec: return
+        dialog=QDialog(self); dialog.setWindowTitle(f'Actual attempts — {rec.name}'); dialog.resize(800,600); layout=QVBoxLayout(dialog)
+        text=QPlainTextEdit(); text.setReadOnly(True); text.setPlainText(json.dumps(getattr(rec,'attempts',[]),ensure_ascii=False,indent=2,default=str)); layout.addWidget(text,1)
+        attempts=getattr(rec,'attempts',[])
+        attempt_choice=QComboBox()
+        for i,attempt in enumerate(attempts): attempt_choice.addItem(f'Attempt {i+1} — {attempt.get("status","unknown")} — {attempt.get("run_id","")}',i)
+        if attempts: attempt_choice.setCurrentIndex(len(attempts)-1)
+        layout.addWidget(attempt_choice)
+        log=QPlainTextEdit(); log.setReadOnly(True); log.setPlaceholderText('Choose Open Latest Log to inspect retained native output.'); layout.addWidget(log,1)
+        button=QPushButton('Open Latest Log')
+        def read_log():
+            try:
+                evidence=attempts[attempt_choice.currentIndex()] if attempts else self.service.point_evidence(point_id)
+                folder=Path(evidence['workdir']); paths=[Path(evidence['log_path'])] if evidence.get('log_path') else [folder/'job.log',folder/'solver.log',folder/'stdout.log',folder/'stderr.log']
+                available=[p for p in paths if p.is_file()]
+                if not available: log.setPlainText('No retained log file is available for this attempt.'); return
+                log.setPlainText('\n'.join(p.name+'\n'+p.read_text(encoding='utf-8',errors='replace')[-200000:] for p in available))
+            except (ValueError,KeyError,OSError) as exc: log.setPlainText(str(exc))
+        button.clicked.connect(read_log); layout.addWidget(button); buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons); dialog.exec()
+
+    def _train(self):
+        method,ok=QInputDialog.getItem(self,'Train surrogate','Method',['gp','rbf','prs'],0,False)
+        if ok: self._background('Train surrogate',lambda:self.service.train(config=SurrogateConfig(method=method,seed=42)))
+
+    def _optimize(self):
+        dialog=QDialog(self); dialog.setWindowTitle('Constrained surrogate search'); layout=QVBoxLayout(dialog); form=QFormLayout(); layout.addLayout(form)
+        algorithm=QComboBox(); algorithm.addItems(['nsga2','slsqp','de']); form.addRow('Algorithm',algorithm)
+        controls={}
+        for name,value,minimum,maximum in [('max_evaluations',200,4,100000),('population_size',20,4,10000),('max_iterations',30,1,10000),('seed',42,0,2147483647)]:
+            widget=QSpinBox(); widget.setRange(minimum,maximum); widget.setValue(value); form.addRow(name.replace('_',' ').title(),widget); controls[name]=widget
+        label=QLabel('Search uses saved surrogate predictions and constraints. Candidates require fresh native confirmation before current-design apply.'); label.setWordWrap(True); layout.addWidget(label)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
+        if dialog.exec()==QDialog.DialogCode.Accepted:
+            config=OptimizationConfig(algorithm=algorithm.currentText(),**{k:w.value() for k,w in controls.items()}); self._background('Constrained search',lambda:self.service.optimize(config))
+
+    def _view_state(self):
+        return dict(layout=bytes(self.saveState()).hex(),splitter=bytes(self.center_splitter.saveState()).hex(),selected_ids=sorted(self._selected_ids),tab=self.viz_tabs.currentIndex(),convergence=dict(metric=self.convergence_view.metric_selector.currentIndex(),reference=self.convergence_view.reference.text(),axis=self.convergence_view.xaxis.currentIndex()))
+
+    def _on_save_study(self,path=None,*,save_as=False):
+        if save_as and path is None:
+            QMessageBox.information(self,'Save Independent Study Copy','The copy is independent. The original project keeps its study relation. External INP source files remain shared.')
+        if path is None and (save_as or not self._study_file):
+            path,_=QFileDialog.getSaveFileName(self,'Save Study As' if save_as else 'Save Study',str(self._study_file or (self.current_deck_path.with_suffix('.mdo.json') if self.current_deck_path else 'study.json')),'MDO Study (*.json)')
+            if not path: return
+        self.service.view_state=self._view_state()
+        self._background('Save study as' if save_as else 'Save study',lambda:self.service.save_as(path) if save_as else self.service.save(path))
+
+    def _on_open_study(self,path=None,*,read_only=False):
         if path is None:
-            path, _ = QFileDialog.getSaveFileName(self, "Save Study", str(self._study_file or self.current_deck_path.with_suffix(".mdo.json")), "MDO Study (*.json)")
-            if not path:
-                return
-        try:
-            atomic_json(Path(path), {
-                "format": "caelab-mdo-study", "version": 1, "name": self.study.name,
-                "deck_path": str(self.current_deck_path), "template": self.template_deck.original_text,
-                "execution_template": self._execution_template.original_text,
-                "source_revisions": self._source_revisions, "response_units": self.response_units,
-                "variables": [asdict(v) for v in self.study.space.variables],
-                "objectives": [asdict(o) for o in self.study.objectives], "constraints": [asdict(c) for c in self.study.constraints],
-                "records": [asdict(r) for r in self.study.records], "point_sources": self._point_sources,
-            })
-            self._study_file = Path(path).resolve()
-            self.status_bar.showMessage(f"Study saved: {self._study_file}")
-        except (OSError, ValueError, TypeError) as exc:
-            QMessageBox.warning(self, "저장 실패", str(exc))
+            path,_=QFileDialog.getOpenFileName(self,'Open Study','','MDO Study (*.json)')
+            if not path: return
+        self._background('Open study',lambda:self.workbench.open_mdo_study(path,read_only=read_only))
 
-    def _on_open_study(self, path=None):
+    def _export_csv(self):
+        path,_=QFileDialog.getSaveFileName(self,'Export filtered table','','CSV (*.csv)')
+        if path:
+            ids=[self.tdp_proxy.index(row,0).data(DesignPointsTableModel.PointIdRole) for row in range(self.tdp_proxy.rowCount())]
+            self._background('Export CSV',lambda:self.service.export_csv(path,ids))
+
+    def _save_layout(self):
+        settings=QSettings('CAELab','MDO Studio'); settings.setValue('layout',self.saveState()); settings.setValue('splitter',self.center_splitter.saveState())
+
+    def _restore_layout(self):
+        settings=QSettings('CAELab','MDO Studio'); state=settings.value('layout'); splitter=settings.value('splitter')
+        if isinstance(state,QByteArray) and state.size()<100000: self.restoreState(state)
+        if isinstance(splitter,QByteArray) and splitter.size()<10000: self.center_splitter.restoreState(splitter)
+        self._restore_study_view()
+
+    def _restore_study_view(self):
+        state=getattr(self.service,'view_state',{})
+        try:
+            for key,restore,limit in [('layout',self.restoreState,100000),('splitter',self.center_splitter.restoreState,10000)]:
+                value=bytes.fromhex(state.get(key,''))
+                if value and len(value)<limit: restore(QByteArray(value))
+            self._selected_ids=set(state.get('selected_ids',[])); self._restore_selection(); self.viz_tabs.setCurrentIndex(int(state.get('tab',0)))
+            convergence=state.get('convergence',{}); self.convergence_view.reference.setText(convergence.get('reference',''))
+            self.convergence_view.metric_selector.setCurrentIndex(int(convergence.get('metric',0))); self.convergence_view.xaxis.setCurrentIndex(int(convergence.get('axis',0)))
+            self._show_selection(); self._reveal_selection()
+        except (ValueError,TypeError): pass
+
+    def _default_layout(self):
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
+        self.tree_dock.show(); self.setup_dock.show(); self.center_splitter.setSizes([350,430])
+
+    def _on_toggle_theme(self): toggle_theme_mode(); self.apply_theme()
+    def apply_theme(self):
+        self.is_dark=current_theme_mode()=='dark'; self.setStyleSheet(build_stylesheet(current_theme_mode())); self.act_theme.setText(theme_toggle_label())
+        self.setup_widget.set_theme(self.is_dark); self.tdp_model.set_theme(self.is_dark)
+        for view in self.views: view.set_theme(self.is_dark)
+
+    def closeEvent(self,event):
+        if self._busy:
+            self.status_bar.showMessage('Wait for the current operation before closing.'); event.ignore(); return
         if self._active_batch_id:
-            return
-        if path is None:
-            path, _ = QFileDialog.getOpenFileName(self, "Open Study", "", "MDO Study (*.json)")
-            if not path:
-                return
-        state_fields = ("study", "current_deck_path", "template_deck", "_execution_template", "_source_revisions",
-                        "_point_sources", "response_units", "_configured", "_is_specification", "_study_file")
-        previous = {key: getattr(self, key) for key in state_fields}
-        switched = False
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            if not isinstance(data, dict) or data.get("format") != "caelab-mdo-study" or data.get("version") != 1:
-                raise ValueError("지원하지 않는 스터디 형식입니다.")
-            for key in ("name", "deck_path", "template", "execution_template"):
-                if not isinstance(data[key], str) or not data[key]:
-                    raise ValueError(f"{key}: 비어 있지 않은 문자열이 필요합니다.")
-            for key in ("source_revisions", "response_units", "point_sources"):
-                if not isinstance(data[key], dict):
-                    raise ValueError(f"{key}: 사전이 필요합니다.")
-            source_revisions = dict(data["source_revisions"])
-            response_units = dict(data["response_units"])
-            point_sources = dict(data["point_sources"])
-            for name, digest in source_revisions.items():
-                if not isinstance(name, str) or not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
-                    raise ValueError("입력 개정은 파일 경로와 SHA256이어야 합니다.")
-            from caelab.mdo.variables import parse_unit
-            for key, unit in response_units.items():
-                if not isinstance(key, str) or not key or not unit:
-                    raise ValueError("응답 이름과 단위를 명시하세요.")
-                parse_unit(unit)
-            space = VariableSpace(variables=tuple(ContinuousVariable(**v) for v in data["variables"]))
-            objectives = [ObjectiveSpec(**o) for o in data["objectives"]]
-            constraints = [ConstraintSpec(**c) for c in data["constraints"]]
-            deck_path = Path(data["deck_path"])
-            deck = TemplateDeck.from_text(data["template"], file_path=deck_path)
-            execution_template = TemplateDeck.from_text(data["execution_template"])
-            if any(not v.unit for v in space.variables):
-                raise ValueError("변수 단위를 명시하세요.")
-            required = {o.response_id for o in objectives} | {c.response_id for c in constraints}
-            if not objectives or not required <= response_units.keys():
-                raise ValueError("목적과 제약에 대응하는 응답 단위가 없습니다.")
-            if set(v.id for v in space.variables) != {t.lower() for t in deck.token_names}:
-                raise ValueError("저장된 변수와 템플릿이 일치하지 않습니다.")
-            if not data["source_revisions"] or str(deck_path) not in data["source_revisions"]:
-                raise ValueError("원본 입력 개정이 없습니다.")
-            manager = StudyManager(data["name"], space=space, objectives=objectives, constraints=constraints)
-            ids = set()
-            for saved in data["records"]:
-                rec = DesignPointRecord(**saved)
-                space.encode(rec.physical_values)
-                for values in (rec.observations, rec.objectives):
-                    if not isinstance(values, dict) or any(not isinstance(k, str) or not isinstance(v, (int, float)) or not math.isfinite(v) for k, v in values.items()):
-                        raise ValueError("응답과 목적 값은 유한한 숫자 사전이어야 합니다.")
-                if rec.point_id in ids or rec.status not in ("PENDING", "COMPLETED", "FAILED", "CANCELLED", "STALE"):
-                    raise ValueError("중복 또는 잘못된 설계점 기록입니다.")
-                if not isinstance(rec.point_id, str) or not isinstance(rec.name, str) or not isinstance(rec.error_message, str) or any(not isinstance(v, (int, float)) or not math.isfinite(v) for v in (rec.duration_sec, rec.total_violation)):
-                    raise ValueError("설계점 이름·시간·위반량이 잘못되었습니다.")
-                ids.add(rec.point_id)
-                manager.records.append(rec)
-                manager._record_map[rec.point_id] = rec
-            for point_id, evidence in point_sources.items():
-                if point_id not in ids or not isinstance(evidence, dict):
-                    raise ValueError("설계점 실행 근거가 잘못되었습니다.")
-                if any(not isinstance(evidence.get(k), str) or not evidence[k] for k in ("study_manifest", "run_id", "workdir")):
-                    raise ValueError("실행 근거 경로와 ID가 필요합니다.")
-                if not isinstance(evidence.get("values"), dict) or not isinstance(evidence.get("files"), dict):
-                    raise ValueError("실행 변수와 파일 해시 사전이 필요합니다.")
-                space.encode(evidence["values"])
-                if any(not isinstance(p, str) or not isinstance(h, str) or not re.fullmatch("[0-9a-f]{64}", h) for p, h in evidence["files"].items()):
-                    raise ValueError("실행 근거의 파일 해시가 잘못되었습니다.")
-            switched = True
-            self._reset_binding()
-            self.template_deck = deck
-            self._execution_template = execution_template
-            self.current_deck_path = deck_path
-            self._source_revisions = source_revisions
-            self._point_sources = point_sources
-            self.response_units = response_units
-            self.study = manager
-            self._configured = True
-            self._study_file = Path(path).resolve()
-            for rec in self.study.records:
-                if rec.status == "COMPLETED" and not self._point_is_verified(rec, require_feasible=False):
-                    rec.status = "STALE"
-                    rec.feasibility = "NOT_ASSESSED"
-                    rec.objectives.clear(); rec.is_pareto = False
-                    rec.error_message = "Saved input/result provenance is stale or unverified; re-evaluate before applying."
-                elif rec.status == "COMPLETED":
-                    assessment = evaluate_criteria(rec.observations, self.study.objectives, self.study.constraints)
-                    rec.feasibility = assessment.constraints.feasibility.value
-                    rec.total_violation = assessment.constraints.total_violation or 0.0
-                    rec.objectives = {o.id: float(v) for o, v in zip(self.study.objectives, assessment.objectives)}
-            self.study.update_pareto_front()
-            self._populate_study()
-            self.status_bar.showMessage("Study opened; 계산은 자동 실행하지 않습니다. 원본과 결과 파일은 저장 당시 경로를 참조합니다.")
-        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
-            if switched:
-                for key, value in previous.items():
-                    setattr(self, key, value)
-                self._populate_study()
-            QMessageBox.warning(self, "스터디 열기 실패", str(exc))
-
-    def _on_toggle_theme(self) -> None:
-        toggle_theme_mode()
-        self.apply_theme()
-
-    def apply_theme(self) -> None:
-        mode = current_theme_mode()
-        self.is_dark = mode == "dark"
-        self.setStyleSheet(build_stylesheet(mode))
-        self.act_theme.setText(theme_toggle_label())
-        title_color = "#38bdf8" if self.is_dark else "#0284c7"
-        self.tdp_lbl.setStyleSheet(f"font-weight: bold; font-size: 10pt; color: {title_color};")
-        self.setup_widget.set_theme(self.is_dark)
-        self.tdp_model.set_theme(self.is_dark)
-        self.pareto_view.set_theme(self.is_dark)
-        self.tornado_view.set_theme(self.is_dark)
-        self.surface_view.set_theme(self.is_dark)
-        for view in (self.pareto_view, self.surface_view):
-            for text in view.ax.texts:
-                if text.get_gid() == "mdo_empty":
-                    text.set_color("#e2e8f0" if self.is_dark else "#0f172a")
+            self._stop_evaluations(); self.status_bar.showMessage('Cancelling the owned campaign; close again after it finishes.'); event.ignore(); return
+        if hasattr(self.service,'close') and self.service.close() is False: event.ignore(); return
+        self._closing=True; self._generation+=1; self._viz_timer.stop(); self._delta_timer.stop()
+        for view in self.views: view.close()
+        self._save_layout()
+        if not self.workbench.close(): self._closing=False; event.ignore(); return
+        event.accept()

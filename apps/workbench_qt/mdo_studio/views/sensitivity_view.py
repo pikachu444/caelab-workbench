@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 import numpy as np
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout,QComboBox,QHBoxLayout,QLabel
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -20,6 +21,7 @@ class TornadoItem:
 
 
 class SensitivityTornadoWidget(QWidget):
+    response_selected=Signal(str)
     def __init__(self, parent=None, is_dark: bool = True) -> None:
         super().__init__(parent)
         self.is_dark = is_dark
@@ -29,8 +31,16 @@ class SensitivityTornadoWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        row=QHBoxLayout(); row.addWidget(QLabel('Response')); self.response=QComboBox(); row.addWidget(self.response,1)
+        row.addWidget(QLabel('Spearman rho · paired actual rows')); layout.addLayout(row)
+        self.response.currentIndexChanged.connect(lambda *args:self.response_selected.emit(self.response.currentData() or ''))
         layout.addWidget(self.canvas)
         self._apply_theme()
+
+    def set_responses(self,keys,units):
+        previous=self.response.currentData(); self.response.blockSignals(True); self.response.clear()
+        for key in keys: self.response.addItem(f'{key} [{units.get(key,"—")}]',key)
+        self.response.setCurrentIndex(max(0,self.response.findData(previous))); self.response.blockSignals(False)
 
     def set_theme(self, is_dark: bool) -> None:
         self.is_dark = is_dark
@@ -62,7 +72,7 @@ class SensitivityTornadoWidget(QWidget):
         self._apply_theme()
 
         if not items:
-            self.ax.text(0.5, 0.5, "No sensitivity items computed", ha="center", va="center",
+            self.ax.text(0.5, 0.5, "At least three paired actual rows with varying inputs are required", ha="center", va="center",
                          color="#94a3b8", transform=self.ax.transAxes)
             self.canvas.draw_idle()
             return
@@ -70,7 +80,7 @@ class SensitivityTornadoWidget(QWidget):
         # Sort ascending for horizontal bar (largest at top)
         sorted_items = sorted(items, key=lambda x: x.magnitude)
         names = [it.variable_id for it in sorted_items]
-        magnitudes = [it.magnitude for it in sorted_items]
+        magnitudes = [it.magnitude * it.sign for it in sorted_items]
         y_pos = np.arange(len(names))
 
         # Color gradient: highest impact gets vivid cyan, lower gets subtle steel blue
@@ -85,18 +95,19 @@ class SensitivityTornadoWidget(QWidget):
         for bar in bars:
             width = bar.get_width()
             self.ax.text(
-                width + 0.015,
+                width + (0.015 if width >= 0 else -0.015),
                 bar.get_y() + bar.get_height() / 2,
                 f"{width:.3f}",
                 va="center",
-                ha="left",
+                ha="left" if width >= 0 else "right",
                 fontsize=8.5,
                 color="#e2e8f0" if self.is_dark else "#0f172a",
                 fontweight="bold",
             )
 
-        self.ax.set_xlabel("Absolute Spearman rank correlation |rho|", fontsize=9.5)
+        self.ax.set_xlabel(items[0].metric, fontsize=9.5)
         self.ax.set_title(f"Observed Rank Correlation ({target_name})", fontsize=11, fontweight="bold")
-        self.ax.set_xlim(0, max(magnitudes) * 1.25 if magnitudes else 1.0)
+        self.ax.axvline(0, color="#64748b", linewidth=.8)
+        self.ax.set_xlim(min(0, min(magnitudes)) * 1.25 - .1, max(0, max(magnitudes)) * 1.25 + .1)
         self.fig.tight_layout()
         self.canvas.draw_idle()

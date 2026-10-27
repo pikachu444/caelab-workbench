@@ -24,3 +24,4 @@ class MDOExecutionBridge(QObject):
     itemStarted = Signal(str, int)                # (point_id, index)
     itemFinished = Signal(str, object, object)    # (point_id, BatchItem, NativeRun)
     itemFailed = Signal(str, str)                 # (point_id, error_message)
+    taskFinished = Signal(int, str, object, object) # generation, task, result, error
