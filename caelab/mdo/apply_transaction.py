@@ -31,7 +31,7 @@ def write_staged(path, data):
             temporary.unlink(missing_ok=True)
 
 
-def recover(root):
+def recover(root, *, finalize=True):
     journal = Path(root) / "apply-pending.json"
     if not journal.is_file():
         return None
@@ -46,28 +46,35 @@ def recover(root):
             raise ValueError(f"Apply recovery backup is damaged: {item['backup']}")
     for item in reversed(data["files"]):
         path = Path(item["path"])
-        if digest(path.read_bytes()) == item["after_sha256"]:
+        actual = digest(path.read_bytes())
+        if actual not in (item["before_sha256"],item["after_sha256"]):
+            raise ValueError(f"Apply recovery conflict immediately before restoring: {path}")
+        if actual == item["after_sha256"]:
             write_staged(path, Path(item["backup"]).read_bytes())
     data["state"] = "rolled_back"
     atomic_json(Path(root) / "apply-history" / (data["id"]+".json"), data)
-    journal.unlink()
+    if finalize:
+        journal.unlink()
+    else:
+        atomic_json(journal,data)
     return data
 
 
-def replace_closure(root, replacements, expected, metadata):
+def replace_closure(root, replacements, expected, metadata, *, target_locks_owned=False):
     root = Path(root)
     if (root / "apply-pending.json").exists():
         raise ValueError("An interrupted apply must be recovered before applying")
     tx_id = uuid.uuid4().hex
     files = []
     with ExitStack() as locks:
-        for raw in sorted(expected):
-            locks.enter_context(FileLock(raw+".caelab-apply.lock", timeout=0))
+        if not target_locks_owned:
+            for raw in sorted(expected):
+                locks.enter_context(FileLock(raw+".caelab-apply.lock", timeout=0))
         for raw, before in expected.items():
             path = Path(raw)
             if digest(path.read_bytes()) != before:
                 raise ValueError(f"Native input changed after apply preview: {path}")
-            if not path.stat().st_mode & stat.S_IWRITE or not os.access(path, os.W_OK):
+            if raw in replacements and path.read_bytes() != replacements[raw] and (not path.stat().st_mode & stat.S_IWRITE or not os.access(path, os.W_OK)):
                 raise PermissionError(f"Native target is read-only: {path}")
         for raw, content in replacements.items():
             path = Path(raw)

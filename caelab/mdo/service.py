@@ -30,6 +30,128 @@ from .variables import (VariableSpace, ContinuousVariable, DiscreteVariable,
                         CategoricalVariable, LinkedVariable)
 
 
+def _validate_saved(data):
+    def require(value,kind,location):
+        if type(value) is not kind:
+            raise ValueError(f"{location}: expected {kind.__name__}")
+    def text(value,location):
+        if not isinstance(value,str) or not value or "\x00" in value:
+            raise ValueError(f"{location}: nonempty text required")
+    def scalar(value,location):
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):
+            raise ValueError(f"{location}: finite scalar required")
+    def mapping(value,location,*,numeric=False):
+        require(value,dict,location)
+        for key,item in value.items():
+            text(key,location)
+            if numeric:
+                scalar(item,location+"."+key)
+    def hashes(value,location):
+        mapping(value,location)
+        if any(not isinstance(h,str) or not re.fullmatch("[0-9a-f]{64}",h) for h in value.values()):
+            raise ValueError(f"{location}: SHA256 values required")
+    def evidence(value,location):
+        mapping(value,location)
+        for key in ("run_id","workdir","revision","status","parse_state","mode"):
+            text(value.get(key),location+"."+key)
+        for key in ("error","log_path"):
+            require(value.get(key),str,location+"."+key)
+        mapping(value.get("values"),location+".values")
+        mapping(value.get("responses"),location+".responses",numeric=True)
+        hashes(value.get("files"),location+".files")
+    mapping(data,"study")
+    for key in ("study_id","name","revision","input_path","run_root","data_root"):
+        text(data.get(key),key)
+    if not re.fullmatch("[0-9a-f]{32}",data["study_id"]) or not data["revision"].isdigit():
+        raise ValueError("Invalid study identity/revision")
+    for key in ("input_path","run_root","data_root"):
+        if not Path(data[key]).is_absolute():
+            raise ValueError(f"{key}: absolute persisted path required")
+    for key in ("originals","templates","definition","revisions","point_sources"):
+        mapping(data.get(key),key)
+    hashes(data.get("current_hashes"),"current_hashes")
+    if set(data["originals"]) != set(data["templates"]) or set(data["templates"]) != set(data["current_hashes"]) or data["input_path"] not in data["templates"]:
+        raise ValueError("Saved native closure keys disagree")
+    for key in ("originals","templates"):
+        for path,raw in data[key].items():
+            if not Path(path).is_absolute() or not isinstance(raw,str):
+                raise ValueError("Native closure requires absolute file paths and encoded bytes")
+            bytes.fromhex(raw).decode("utf-8")
+    for definition in (data["definition"],*data["revisions"].values()):
+        mapping(definition,"definition")
+        for key in ("variables","objectives","constraints"):
+            require(definition.get(key),list,"definition."+key)
+        mapping(definition.get("response_units"),"definition.response_units")
+        mapping(definition.get("response_selectors"),"definition.response_selectors")
+        for name,unit in definition["response_units"].items():
+            text(unit,"response unit")
+            validate_selector(definition["response_selectors"].get(name,{}),unit)
+    classes = {t.__name__:t for t in (ContinuousVariable,DiscreteVariable,CategoricalVariable,LinkedVariable)}
+    spaces = {}
+    for revision,definition in data["revisions"].items():
+        variables = []
+        for raw in definition["variables"]:
+            mapping(raw,"variable")
+            raw = dict(raw)
+            kind = raw.pop("type",None)
+            if kind not in classes:
+                raise ValueError("Unknown persisted variable domain")
+            variables.append(classes[kind](**raw))
+        spaces[revision] = VariableSpace(variables=tuple(variables))
+        for obj in definition["objectives"]:
+            ObjectiveSpec(**obj)
+        for con in definition["constraints"]:
+            ConstraintSpec(**con)
+    if data["revision"] != "0" and data["revisions"].get(data["revision"]) != data["definition"]:
+        raise ValueError("Current definition differs from its immutable saved revision")
+    require(data.get("records"),list,"records")
+    point_ids = set()
+    states = {"PENDING","QUEUED","RUNNING","COMPLETED","FAILED","CANCELLED","INTERRUPTED","STOPPED"}
+    for row in data["records"]:
+        mapping(row,"record")
+        for key in ("point_id","name","revision","study_id"):
+            text(row.get(key),"record."+key)
+        if row["point_id"] in point_ids or row["study_id"] != data["study_id"] or row["revision"] not in data["revisions"]:
+            raise ValueError("Invalid or duplicate saved point identity/revision")
+        point_ids.add(row["point_id"])
+        if row.get("status") not in states or row.get("mode") not in ("ACTUAL","SURROGATE") or row.get("feasibility") not in (None,"NOT_ASSESSED","FEASIBLE","MARGINAL","INFEASIBLE"):
+            raise ValueError("Invalid saved point evaluation state")
+        require(row.get("index"),int,"record.index")
+        require(row.get("is_pareto"),bool,"record.is_pareto")
+        require(row.get("error_message"),str,"record.error_message")
+        for key in ("duration_sec","total_violation"):
+            scalar(row.get(key),"record."+key)
+            if row[key] < 0:
+                raise ValueError("Saved duration/violation must be nonnegative")
+        for key in ("observations","objectives"):
+            mapping(row.get(key),"record."+key,numeric=True)
+        mapping(row.get("physical_values"),"record.physical_values")
+        for value in row["physical_values"].values():
+            if not isinstance(value,str):
+                scalar(value,"physical value")
+        spaces[row["revision"]]._physical(row["physical_values"])
+        require(row.get("attempts"),list,"record.attempts")
+        for attempt in row["attempts"]:
+            evidence(attempt,"attempt")
+        for key in ("run_id","source_point_id","batch_id","model_id"):
+            if row.get(key) is not None:
+                text(row[key],"record."+key)
+    for point_id,value in data["point_sources"].items():
+        if point_id not in point_ids:
+            raise ValueError("Native evidence refers to an unknown point")
+        evidence(value,"point_sources."+point_id)
+    for key in ("current_point_id","current_rerun_id"):
+        if data.get(key) is not None and data[key] not in point_ids:
+            raise ValueError("Current design refers to an unknown point")
+    for key in ("apply_receipts","undo_stack","optimization_history"):
+        require(data.get(key,[]),list,key)
+    if data.get("surrogate_id") is not None and not re.fullmatch("[0-9a-f]{32}",str(data["surrogate_id"])):
+        raise ValueError("Invalid surrogate artifact identity")
+    require(data.get("view_state",{}),dict,"view_state")
+    if len(json.dumps(data.get("view_state",{}))) > 120000:
+        raise ValueError("Saved view state is too large")
+
+
 class MDOStudyService:
     """Owns study revisions, native attempts, applicability and persisted evidence.
 
@@ -68,6 +190,8 @@ class MDOStudyService:
         self._apply_receipts = []
         self._undo_stack = []
         self._dispatch_locks = None
+        self._cancel_requested = False
+        self._stop_requested = False
         self._lease = None
         self._busy = None
         self._lock = threading.RLock()
@@ -126,21 +250,41 @@ class MDOStudyService:
         else:
             self._root = path.parent / ".caelab_mdo" / self.study_id
             self._run_root = self._root / "runs"
-        self._acquire()
-        manifest = snapshot_input(path, self._root / "template-source")
-        self._originals = {f["source_path"]: (self._root / "template-source" / f["source_copy"]).read_bytes()
-                           for f in manifest["files"]}
-        self._templates = dict(self._originals)
-        self._current_hashes = {p: transaction.digest(b) for p, b in self._originals.items()}
-        self._refresh_template()
-        self._persist()
+        try:
+            self._acquire()
+            manifest = snapshot_input(path, self._root / "template-source")
+            self._originals = {f["source_path"]: (self._root / "template-source" / f["source_copy"]).read_bytes()
+                               for f in manifest["files"]}
+            self._templates = dict(self._originals)
+            self._current_hashes = {p: transaction.digest(b) for p, b in self._originals.items()}
+            self._refresh_template()
+            self._persist()
+        except BaseException:
+            if self._lease:
+                self._lease.release(); self._lease = None
+            self.input_path,self._root,self._run_root,self.template = None,None,None,None
+            self._originals,self._templates,self._current_hashes = {},{},{}
+            raise
         return self.template
 
     def _refresh_template(self):
         root = TemplateDeck.from_text(self._templates[str(self.input_path)].decode("utf-8"), self.input_path)
         tokens = set(root.token_names)
         for content in self._templates.values():
-            tokens.update(TemplateDeck.from_text(content.decode("utf-8")).token_names)
+            text = content.decode("utf-8")
+            tokens.update(TemplateDeck.from_text(text).token_names)
+            card = ""
+            prohibited = {"*NODE","*ELEMENT","*NGEN","*NFILL","*ELGEN","*ELCOPY","*NCOPY","*SYSTEM"}
+            for line in text.splitlines():
+                line = line.strip().lstrip("\ufeff")
+                if line.startswith("**"):
+                    continue
+                if line.startswith("*"):
+                    card = line.split(",")[0].upper()
+                if card in prohibited and TemplateDeck.from_text(line).token_names:
+                    raise ValueError("Geometry/topology tokens require a native CAD/mesh regeneration adapter")
+        if len({t.lower() for t in tokens}) != len(tokens):
+            raise ValueError("Case-ambiguous native parameter tokens are not allowed")
         self.template = TemplateDeck(original_text=root.original_text, token_names=tuple(sorted(tokens)), file_path=self.input_path)
 
     def source_text(self, path=None):
@@ -312,6 +456,8 @@ class MDOStudyService:
 
     def submit(self, point_ids=None, *, fresh=False, on_progress=None, on_item=None, on_finished=None):
         self._writable()
+        if self._root is None:
+            raise ValueError("Open a native input before running")
         self.recover_apply()
         self._require_sources()
         if self.revision == "0":
@@ -330,6 +476,8 @@ class MDOStudyService:
         for row in rows:
             folder = self._root / "inputs" / batch_id / row.point_id
             input_path = self._execution_files(row.physical_values, folder)
+            from .native_endpoint import expected_static_endpoint
+            expected_static_endpoint(input_path)
             row.status, row.batch_id = "QUEUED", batch_id
             items.append(BatchItem(item_id=row.point_id, input_path=input_path, status=solver,
                                    node_id=f"mdo:{self.study_id}:{row.point_id}", units=dict(self.response_units),
@@ -344,6 +492,7 @@ class MDOStudyService:
             self._dispatch_locks.close(); self._dispatch_locks = None
             raise
         self.active_batch_id = batch_id
+        self._cancel_requested,self._stop_requested = False,False
         self._persist()
 
         def progress(prog):
@@ -357,32 +506,7 @@ class MDOStudyService:
         def item_finished(item, run):
             with self._lock:
                 row = self._record(item.item_id)
-                row.run_id, row.duration_sec = run.id, item.duration_sec
-                row.error_message = item.error or run.error
-                row.observations, row.objectives = {}, {}
-                row.feasibility, row.total_violation = "NOT_ASSESSED", 0.
-                row.status = item.state.upper()
-                try:
-                    if run.state != "completed" or run.returncode != 0:
-                        raise ValueError(row.error_message or f"Native run ended {run.state}")
-                    row.observations = extract_native_responses(run.workdir, self.response_selectors)
-                    assessment = evaluate_criteria(row.observations, self.study.objectives, self.study.constraints, units=self.response_units)
-                    if not assessment.assessed:
-                        raise ValueError("Required native responses could not be assessed")
-                    row.feasibility = assessment.constraints.feasibility.value
-                    row.total_violation = assessment.constraints.total_violation or 0.
-                    row.objectives = {o.id: float(v) for o,v in zip(self.study.objectives, assessment.objectives)}
-                    row.status = "COMPLETED"
-                except (ValueError, OSError, KeyError, OverflowError) as exc:
-                    if row.status not in ("CANCELLED", "INTERRUPTED"):
-                        row.status = "FAILED"
-                    row.error_message = str(exc)
-                evidence = dict(run_id=run.id, workdir=str(run.workdir), values=dict(row.physical_values), revision=revision,
-                                responses=dict(row.observations), files=self._run_hashes(run), batch_id=batch_id,
-                                status=row.status, parse_state=run.parse_state, error=row.error_message,
-                                log_path=run.log_path, mode="ACTUAL")
-                row.attempts.append(copy.deepcopy(evidence))
-                self._point_sources[row.point_id] = evidence
+                self._ingest_run(row,run,state=item.state,duration=item.duration_sec,error=item.error,batch_id=batch_id)
                 self.study.update_pareto_front()
                 self._persist()
                 snapshot = copy.deepcopy(row)
@@ -407,6 +531,11 @@ class MDOStudyService:
             self.workbench.jobs.submit_batch(RunStore(self._run_root), items, batch_id=batch_id,
                                              name=self.study.name, on_progress=progress,
                                              on_item_finished=item_finished, on_batch_finished=finished)
+            if self.active_batch_id == batch_id:
+                if self._cancel_requested:
+                    self.workbench.cancel_batch(batch_id)
+                elif self._stop_requested:
+                    self.workbench.jobs.stop_batch(batch_id)
         except BaseException:
             self.active_batch_id = None
             if self._dispatch_locks:
@@ -416,6 +545,38 @@ class MDOStudyService:
             self._persist()
             raise
         return batch_id
+
+    def _ingest_run(self,row,run,*,state=None,duration=0.,error="",batch_id=None):
+        definition = self._revisions[row.revision]
+        objectives = [ObjectiveSpec(**o) for o in definition["objectives"]]
+        constraints = [ConstraintSpec(**c) for c in definition["constraints"]]
+        row.run_id,row.duration_sec = run.id,duration
+        row.error_message = error or run.error
+        row.observations,row.objectives = {},{}
+        row.feasibility,row.total_violation = "NOT_ASSESSED",0.
+        row.status = (state or run.state).upper()
+        try:
+            if run.state != "completed" or run.returncode != 0:
+                raise ValueError(row.error_message or f"Native run ended {run.state}")
+            row.observations = extract_native_responses(run.workdir,definition["response_selectors"])
+            assessment = evaluate_criteria(row.observations,objectives,constraints,units=definition["response_units"])
+            if not assessment.assessed:
+                raise ValueError("Required native responses could not be assessed")
+            row.feasibility = assessment.constraints.feasibility.value
+            row.total_violation = assessment.constraints.total_violation or 0.
+            row.objectives = {o.id:float(v) for o,v in zip(objectives,assessment.objectives)}
+            row.status = "COMPLETED"
+        except (ValueError,OSError,KeyError,OverflowError) as exc:
+            if row.status not in ("CANCELLED","INTERRUPTED"):
+                row.status = "FAILED"
+            row.error_message = str(exc)
+        evidence = dict(run_id=run.id,workdir=str(run.workdir),values=dict(row.physical_values),revision=row.revision,
+                        responses=dict(row.observations),files=self._run_hashes(run),batch_id=batch_id or row.batch_id,
+                        status=row.status,parse_state=run.parse_state,error=row.error_message,log_path=run.log_path,mode="ACTUAL")
+        evidence.update(feasibility=row.feasibility,total_violation=row.total_violation,objectives=dict(row.objectives),
+                        duration_sec=row.duration_sec,finished_at=run.finished_at,sequence=len(row.attempts)+1)
+        row.attempts.append(copy.deepcopy(evidence))
+        self._point_sources[row.point_id] = evidence
 
     @staticmethod
     def _run_hashes(run):
@@ -427,10 +588,18 @@ class MDOStudyService:
             expected.update(run.snapshot.get(key, {}))
         if Path(run.log_path).is_file():
             expected["job.log"] = transaction.digest(Path(run.log_path).read_bytes())
+        if (run.workdir/"model.sta").is_file():
+            expected["model.sta"] = transaction.digest((run.workdir/"model.sta").read_bytes())
         return expected
 
     def point_evidence(self, point_id):
         return copy.deepcopy(self._point_sources.get(point_id, {}))
+
+    def point_details(self, point_id):
+        return copy.deepcopy(self._record(point_id))
+
+    def record_snapshot(self, point_id):
+        return self.point_details(point_id)
 
     def _verified_run(self, point_id, *, require_feasible=False, applicable=True):
         row = self._record(point_id)
@@ -485,11 +654,19 @@ class MDOStudyService:
 
     def stop_scheduling(self):
         self._writable(idle=False)
-        return bool(self.active_batch_id and self.workbench.jobs.stop_batch(self.active_batch_id))
+        if not self.active_batch_id:
+            return False
+        self._stop_requested = True
+        self.workbench.jobs.stop_batch(self.active_batch_id)
+        return True
 
     def cancel(self):
         self._writable(idle=False)
-        return bool(self.active_batch_id and self.workbench.cancel_batch(self.active_batch_id))
+        if not self.active_batch_id:
+            return False
+        self._cancel_requested = True
+        self.workbench.cancel_batch(self.active_batch_id)
+        return True
 
     def confirm(self, point_ids, **callbacks):
         self._writable()
@@ -510,12 +687,21 @@ class MDOStudyService:
 
     def _commit_current(self, replacements, expected, metadata):
         self._ensure_project_unchanged()
-        store_lease = RunStore(self._run_root).lease()
+        target_locks = ExitStack()
+        try:
+            for path in sorted(expected):
+                target_locks.enter_context(FileLock(path+".caelab-apply.lock",timeout=0))
+            store_lease = RunStore(self._run_root).lease()
+        except BaseException:
+            target_locks.close()
+            raise
         old_hashes = dict(self._current_hashes)
         old_point = self.current_point_id
         old_stack = list(self._undo_stack)
+        old_project = copy.deepcopy(self.project.__dict__) if self.project is not None else None
+        project_saved = False
         try:
-            receipt = transaction.replace_closure(self._root, replacements, expected, metadata)
+            receipt = transaction.replace_closure(self._root, replacements, expected, metadata,target_locks_owned=True)
             self._current_hashes = {p: transaction.digest(Path(p).read_bytes()) for p in expected}
             self.current_point_id = metadata.get("point_id")
             self.current_rerun_id = None
@@ -526,22 +712,31 @@ class MDOStudyService:
                 self._undo_stack.pop()
             try:
                 self._persist()
+                if self.project is not None and self.node_id:
+                    self.project.invalidate(self.node_id,"MDO native deck parameters changed; separate current rerun required",include_self=True)
+                    reference = self.project.input_file(self.node_id)
+                    if reference and Path(reference.path).resolve() == self.input_path:
+                        reference.revision = self._current_hashes[str(self.input_path)]
+                    self._associate()
+                    project_saved = True
                 transaction.finish(self._root, receipt)
             except BaseException:
-                transaction.recover(self._root)
+                rollback = transaction.recover(self._root,finalize=False)
                 self._current_hashes, self.current_point_id = old_hashes, old_point
                 self._apply_receipts.pop()
                 self._undo_stack = old_stack
+                self._persist()
+                if old_project is not None:
+                    self.project.__dict__.clear(); self.project.__dict__.update(old_project)
+                    if project_saved:
+                        self.workbench.save_native_project(self.project,expected_revision=self._project_revision)
+                        self._project_revision = transaction.digest(self.project.path.read_bytes())
+                transaction.finish(self._root,rollback)
                 raise
-            if self.project is not None and self.node_id:
-                self.project.invalidate(self.node_id, "MDO native deck parameters changed; separate current rerun required", include_self=True)
-                reference = self.project.input_file(self.node_id)
-                if reference and Path(reference.path).resolve() == self.input_path:
-                    reference.revision = self._current_hashes[str(self.input_path)]
-                self._associate()
             return copy.deepcopy(receipt)
         finally:
             store_lease.release()
+            target_locks.close()
 
     def apply(self, plan, *, allow_infeasible=False):
         self._writable()
@@ -578,11 +773,13 @@ class MDOStudyService:
 
     def recover_apply(self):
         self._writable()
+        if self._root is None:
+            raise ValueError("Open a native input before recovering an apply")
         with ExitStack() as locks:
             if (self._root / "apply-pending.json").exists():
                 for path in sorted(self._current_hashes):
                     locks.enter_context(FileLock(path+".caelab-apply.lock",timeout=0))
-            result = transaction.recover(self._root)
+            result = transaction.recover(self._root,finalize=False)
         if result:
             self._current_hashes = {p:transaction.digest(Path(p).read_bytes()) for p in self._current_hashes}
             self.current_point_id = result.get("previous_point_id")
@@ -590,6 +787,7 @@ class MDOStudyService:
             self._apply_receipts.append(result)
             self._undo_stack = [i for i in self._undo_stack if i != result["id"]]
             self._persist()
+            transaction.finish(self._root,result)
         return result
 
     def rerun_current(self, **callbacks):
@@ -608,6 +806,7 @@ class MDOStudyService:
         return native_results_file(self._verified_run(point_id, applicable=current))
 
     def open_result(self, point_id=None, *, current=False):
+        self._writable(idle=False)
         from caelab.connections import launch_request
         document = self.result_file(point_id, current=current)
         status = next(s for s in self.workbench.programs() if s.spec.id == "paraview")
@@ -700,7 +899,7 @@ class MDOStudyService:
             path = self.study_file or self._root / "study.json"
             self.project.nodes[self.node_id].files["mdo_study"] = FileReference(str(path),transaction.digest(path.read_bytes()))
             if self.project.path:
-                self.workbench.save_native_project(self.project)
+                self.workbench.save_native_project(self.project,expected_revision=self._project_revision)
                 self._project_revision = transaction.digest(self.project.path.read_bytes())
 
     def _ensure_project_unchanged(self):
@@ -722,6 +921,9 @@ class MDOStudyService:
         self._writable()
         if self._root is None:
             raise ValueError("Open a native input before saving")
+        if (self._root / "apply-pending.json").exists():
+            raise ValueError("Recover the interrupted current-design transaction before Save As")
+        self._ensure_project_unchanged()
         destination = Path(path).expanduser().resolve()
         if destination == self.study_file:
             return self.save()
@@ -733,6 +935,7 @@ class MDOStudyService:
         old_sources = copy.deepcopy(self._point_sources)
         old_attempts = {r.point_id:copy.deepcopy(r.attempts) for r in self.study.records}
         lease = RunStore(old_runs).lease()
+        target_lease = None
         try:
             shutil.copytree(old_root,target,ignore=shutil.ignore_patterns("*.lock","runs","inputs"))
             run_target = target / "runs"
@@ -752,13 +955,17 @@ class MDOStudyService:
                 for evidence in row.attempts:
                     rebase(evidence)
             self._root,self._run_root,self.study_file = target,run_target,destination
+            target_lease = FileLock(target / "study.lock",timeout=0,thread_local=False)
+            target_lease.acquire()
             self._persist()
-            if self._lease:
-                self._lease.release(); self._lease = None
-            self._acquire()
             self._associate()
+            if self._lease:
+                self._lease.release()
+            self._lease = target_lease
             return destination
         except BaseException:
+            if target_lease is not None:
+                target_lease.release()
             self._root,self._run_root,self.study_file = old_root,old_runs,old_file
             self._point_sources = old_sources
             for row in self.study.records:
@@ -777,6 +984,7 @@ class MDOStudyService:
         data = json.loads(path.read_text(encoding="utf-8"),parse_constant=lambda x: (_ for _ in ()).throw(ValueError("Nonfinite study data")))
         if data.get("format") != "caelab-mdo-study" or data.get("version") != 2:
             raise ValueError("Unsupported study format; open the original deck to create a current service study")
+        _validate_saved(data)
         self.study_id,self.revision,self.read_only = data["study_id"],data["revision"],read_only
         self.input_path,self.study_file = Path(data["input_path"]),path
         self._root,self._run_root = Path(data["data_root"]),Path(data["run_root"])
@@ -821,9 +1029,23 @@ class MDOStudyService:
     def reconcile(self):
         if self.active_batch_id:
             return copy.deepcopy(self.study.records)
+        # Native receipts may have committed just before the controller died.
+        # A read-only observer reads them without recovering another owner's jobs.
+        store = RunStore(self._run_root,expected=any(r.attempts for r in self.study.records))
+        if not self.read_only:
+            store.recover()
+        try:
+            native_runs = store._records()
+        except (OSError,ValueError,TypeError):
+            native_runs = []
         for row in self.study.records:
+            known = {a["run_id"] for a in row.attempts}
+            for run in native_runs:
+                if run.node_id == f"mdo:{self.study_id}:{row.point_id}" and run.id not in known and run.state not in {"queued","preparing","running"} and run.parse_state != "reading":
+                    self._ingest_run(row,run)
             if row.status in ("QUEUED","RUNNING"):
-                row.status,row.feasibility,row.error_message = "INTERRUPTED","NOT_ASSESSED","Study controller stopped before a terminal response receipt"
+                if not self.read_only:
+                    row.status,row.feasibility,row.error_message = "INTERRUPTED","NOT_ASSESSED","Study controller stopped before a terminal response receipt"
             elif row.mode == "ACTUAL" and row.status == "COMPLETED":
                 try:
                     self._verified_run(row.point_id,applicable=False)

@@ -51,6 +51,11 @@ def extract_native_responses(workdir: Path, selectors):
         reader.read()
     if not reader.frames or not reader.ended:
         raise ValueError("No readable FRD frame for requested native responses")
+    from .native_endpoint import validate_native_endpoint
+    endpoint = validate_native_endpoint(workdir,reader)
+    if any(s.get("field") == "STRESS" for s in selectors.values()):
+        if endpoint["section_forces"]:
+            raise ValueError("SECTION FORCES replaces tensor stress; nodal tensor/von Mises responses are unavailable")
     answer = {}
     for name, s in selectors.items():
         index = -1 if s["frame"] == "last" else s["frame"]

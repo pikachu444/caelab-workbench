@@ -42,10 +42,11 @@ class ReceiptJobs:
             manifest = snapshot_input(item.input_path,folder)
             x = item.parameters["width"]
             components = [(k,4,i//3+1,i%3+1,0) for i,k in enumerate(("SXX","SYY","SZZ","SXY","SYZ","SZX"))]
-            text = _geometry()+_field([(n,[x,0,0]) for n in (40,10,90,25)])
-            text += _field([(n,[10*x,0,0,0,0,0]) for n in (40,10,90,25)],name="STRESS",components=components)
+            text = _geometry()+_field([(n,[x,0,0]) for n in (40,10,90,25)],value=1.,increment=1)
+            text += _field([(n,[10*x,0,0,0,0,0]) for n in (40,10,90,25)],name="STRESS",components=components,value=1.,increment=1)
             (folder / "model.frd").write_text(text+" 9999\n",encoding="ascii")
-            (folder / "model.dat").write_text(f"total mass for set EALL and time 0.5\n\n {10-x}\n",encoding="ascii")
+            (folder / "model.dat").write_text(f"total mass for set EALL and time 1.0\n\n {10-x}\n",encoding="ascii")
+            (folder / "model.sta").write_text("STEP INC ATT ITRS TOT TIME STEP TIME INC TIME\n1 1 1 1 1.000000E+00 1.000000E+00 1.000000E+00\n",encoding="ascii")
             (folder / "job.log").write_text("synthetic format fixture\n",encoding="ascii")
             result = collect_results(folder)
             manifest["outputs"] = {p.name:transaction.digest(p.read_bytes()) for p in (folder/"model.frd",folder/"model.dat")}
@@ -69,7 +70,7 @@ def service(tmp_path):
     wb.programs = lambda: [status]
     root = tmp_path / "user.inp"
     include = tmp_path / "material.inc"
-    root.write_bytes(b'\xef\xbb\xbf** literal comment <IGNORE>\r\n*INCLUDE,INPUT=material.inc\r\n*BEAM SECTION,SECTION=RECT\r\n<WIDTH>, 2\r\n')
+    root.write_bytes(b'\xef\xbb\xbf** literal comment <IGNORE>\r\n*INCLUDE,INPUT=material.inc\r\n*BEAM SECTION,SECTION=RECT\r\n<WIDTH>, 2\r\n*STEP\r\n*STATIC\r\n*END STEP\r\n')
     include.write_bytes(b'*ELASTIC\r\n200000, .3\r\n')
     result = MDOStudyService(wb)
     result.open_input(root)
@@ -94,14 +95,14 @@ def test_native_receipt_apply_two_undo_and_result_handoff(service):
     assert service.is_verified(first.point_id)
     plan = service.prepare_apply(first.point_id)
     receipt = service.apply(plan)
-    assert service.input_path.read_bytes().endswith(b'2, 2\r\n')
+    assert b'\r\n2, 2\r\n' in service.input_path.read_bytes()
     assert Path(receipt["files"][0]["backup"]).read_bytes() == original
     assert service.input_path.with_name("user.inp.bak").read_bytes() == original
     service.apply(service.prepare_apply(second.point_id))
-    assert service.input_path.read_bytes().endswith(b'3, 2\r\n')
+    assert b'\r\n3, 2\r\n' in service.input_path.read_bytes()
     assert list(service.input_path.parent.glob("user.inp.*.previous.bak"))
     service.undo()
-    assert service.input_path.read_bytes().endswith(b'2, 2\r\n')
+    assert b'\r\n2, 2\r\n' in service.input_path.read_bytes()
     assert service.current_point_id == first.point_id
     assert service.workbench.jobs.count == 2
     service.rerun_current()
@@ -220,6 +221,174 @@ def test_readonly_target_aborts_before_target_writes(service):
     finally:
         service.input_path.chmod(mode)
     assert service.input_path.read_bytes() == original
+
+
+def test_finish_fault_restores_durable_metadata_and_retains_target_locks(service,monkeypatch):
+    from filelock import FileLock,Timeout
+    (row,) = measured(service,(2.,))
+    original = service.input_path.read_bytes()
+    persist = service._persist
+    locked = []
+    def observe_persist():
+        if service.current_point_id is not None:
+            with pytest.raises(Timeout):
+                FileLock(str(service.input_path)+".caelab-apply.lock",timeout=0).acquire()
+            locked.append(True)
+        persist()
+    monkeypatch.setattr(service,"_persist",observe_persist)
+    finish = transaction.finish
+    def fail_commit(root,receipt):
+        if receipt["state"] == "committed":
+            raise OSError("receipt write fault")
+        return finish(root,receipt)
+    monkeypatch.setattr(transaction,"finish",fail_commit)
+    with pytest.raises(OSError,match="receipt write fault"):
+        service.apply(service.prepare_apply(row.point_id))
+    assert locked and service.input_path.read_bytes() == original
+    saved = service.save()
+    assert json.loads(saved.read_text(encoding="utf-8"))["current_point_id"] is None
+    service.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.current_point_id is None and not reopened._undo_stack
+    assert reopened.is_verified(row.point_id)
+    reopened.close()
+
+
+@pytest.mark.parametrize("damage", ["point_sources","error_message","physical_values"])
+def test_saved_schema_rejects_corruption_before_adoption(service,tmp_path,damage):
+    measured(service,(2.,))
+    saved = service.save()
+    data = json.loads(saved.read_text(encoding="utf-8"))
+    if damage == "point_sources":
+        data[damage] = 1
+    elif damage == "error_message":
+        data["records"][0][damage] = {"invalid":"object"}
+    else:
+        data["records"][0][damage] = {"width":True}
+    bad = tmp_path/(damage+".json")
+    bad.write_text(json.dumps(data),encoding="utf-8")
+    other = MDOStudyService(service.workbench)
+    with pytest.raises(ValueError):
+        other.open(bad,read_only=True)
+    assert other.input_path is None and other._root is None
+
+
+def test_readonly_observer_keeps_live_pending_state_without_writes(service):
+    class PendingJobs(ReceiptJobs):
+        def submit_batch(self,store,items,**callbacks):
+            self.batch = BatchRun(callbacks["batch_id"],"live",store.root,items,state="running",total_count=len(items))
+            self.callbacks = callbacks
+            return self.batch
+        def cancel_batch(self,batch_id):
+            for item in self.batch.items:
+                item.state = "cancelled"
+            self.batch.state = "cancelled"
+            self.callbacks["on_batch_finished"](self.batch)
+            return True
+    jobs = PendingJobs()
+    service.workbench.jobs = jobs
+    row = service.add_point({"width":2.})
+    service.submit([row.point_id])
+    path = service._root/"study.json"
+    before = {str(p):p.read_bytes() for p in service._root.rglob("*") if p.is_file() and not p.name.endswith(".lock")}
+    observer = MDOStudyService(service.workbench).open(path,read_only=True)
+    assert observer.study.records[0].status == "QUEUED"
+    assert before == {str(p):p.read_bytes() for p in service._root.rglob("*") if p.is_file() and not p.name.endswith(".lock")}
+    observer.close()
+    jobs.batch.items[0].state = "stopped"; jobs.batch.state = "stopped"
+    jobs.callbacks["on_batch_finished"](jobs.batch)
+
+
+def test_reopen_recovers_completed_receipt_when_callback_metadata_was_lost(service):
+    (row,) = measured(service,(2.,))
+    saved = service.save()
+    data = json.loads(saved.read_text(encoding="utf-8"))
+    # Simulate crash after JobManager committed native receipt, before service callback.
+    data["records"][0].update(status="RUNNING",run_id=None,attempts=[],observations={},objectives={},feasibility="NOT_ASSESSED")
+    data["point_sources"] = {}
+    saved.write_text(json.dumps(data),encoding="utf-8")
+    service.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.study.records[0].status == "COMPLETED"
+    assert len(reopened.study.records[0].attempts) == 1 and reopened.is_verified(row.point_id)
+    reopened.close()
+
+
+def test_two_undo_operations_walk_history_and_include_parameter_bytes(service):
+    original = service.input_path.read_bytes()
+    first,second = measured(service)
+    service.apply(service.prepare_apply(first.point_id))
+    service.apply(service.prepare_apply(second.point_id))
+    service.undo(); service.undo()
+    assert service.current_point_id is None and service.input_path.read_bytes() == original
+
+
+def test_input_failure_preserves_empty_service_and_rejects_unsafe_tokens(tmp_path,service):
+    for name,content in (("bad",b'*NODE\n1,<T>,<t>,0\n'),("geometry",b'*NODE\n1,<X>,0,0\n')):
+        path = tmp_path/(name+".inp"); path.write_bytes(content)
+        other = MDOStudyService(service.workbench)
+        with pytest.raises(ValueError):
+            other.open_input(path)
+        assert other.input_path is None and other._lease is None
+
+
+def test_parent_project_concurrent_edit_refuses_association(service,tmp_path):
+    wb = Workbench()
+    project = wb.new_native_project()
+    node = project.add_node("analysis","calculix")
+    project.set_file(node.id,service.input_path)
+    wb.save_native_project(project,tmp_path/"parent.json")
+    owner = MDOStudyService(wb,project=project,node_id=node.id)
+    owner.open_input(service.input_path)
+    external = wb.open_native_project(project.path)
+    external.name = "other window edited name"
+    wb.save_native_project(external)
+    expected = project.path.read_bytes()
+    with pytest.raises(ValueError,match="changed"):
+        owner.save()
+    assert project.path.read_bytes() == expected
+    owner.close()
+
+
+@pytest.mark.parametrize("sta",[
+    "1 1 1 1 0.500000E+00 0.500000E+00 0.500000E+00\n",
+    "1 1 1 1 1.000000E+00 1.000000E+00 1.000000E+00\n1 2 2U 1 1.000000E+00 1.000000E+00 0.100000E+00\n",
+    "2 1 1 1 1.000000E+00 1.000000E+00 1.000000E+00\n",
+])
+def test_response_endpoint_rejects_intermediate_failed_or_wrong_step_sta(service,sta):
+    from caelab.mdo.native_responses import extract_native_responses
+    (row,) = measured(service,(2.,))
+    folder = Path(service.point_evidence(row.point_id)["workdir"])
+    (folder/"model.sta").write_text(sta,encoding="ascii")
+    with pytest.raises(ValueError,match="STA"):
+        extract_native_responses(folder,service.response_selectors)
+    assert not service.is_verified(row.point_id)
+
+
+def test_response_endpoint_accepts_recovered_attempt_but_not_terminated_intermediate_frd(service):
+    from caelab.mdo.native_responses import extract_native_responses
+    (row,) = measured(service,(2.,))
+    folder = Path(service.point_evidence(row.point_id)["workdir"])
+    (folder/"model.sta").write_text("1 1 1U 1 0.5 0.5 0.5\n1 1 2 1 1.0 1.0 1.0\n",encoding="ascii")
+    assert extract_native_responses(folder,service.response_selectors)["disp"] == 2.
+    text = _geometry()+_field([(n,[2.,0,0]) for n in (40,10,90,25)],value=.5,increment=1)+" 9999\n"
+    (folder/"model.frd").write_text(text,encoding="ascii")
+    with pytest.raises(ValueError,match="FRD"):
+        extract_native_responses(folder,{"disp":service.response_selectors["disp"]})
+
+
+def test_response_endpoint_subset_and_stress_semantics_are_explicit(service):
+    from caelab.mdo.native_responses import extract_native_responses
+    from caelab.mdo.native_endpoint import expected_static_endpoint
+    (row,) = measured(service,(2.,))
+    folder = Path(service.point_evidence(row.point_id)["workdir"])
+    original = (folder/"model.inp").read_bytes()
+    (folder/"model.inp").write_bytes(original.replace(b'*STATIC',b'*STATIC\n.1,2.'))
+    with pytest.raises(ValueError,match="non-unit"):
+        expected_static_endpoint(folder/"model.inp")
+    (folder/"model.inp").write_bytes(original+b'*EL FILE,SECTION FORCES\nS\n')
+    with pytest.raises(ValueError,match="SECTION FORCES"):
+        extract_native_responses(folder,service.response_selectors)
 
 
 import numpy as np
