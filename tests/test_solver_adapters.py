@@ -65,6 +65,7 @@ def test_codeaster_run_request(tmp_path):
     spec = ProgramSpec("codeaster", "Code_Aster", "solver", "CAELAB_CODEASTER", ("run_aster",))
     exe = tmp_path / ("run_aster.exe" if os.name == "nt" else "run_aster")
     exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)
     comm_file = tmp_path / "case.comm"
     comm_file.write_text("DEBUT()\nFIN()\n", encoding="utf-8")
     status = ProgramStatus(spec, str(exe))
@@ -79,6 +80,7 @@ def test_radioss_run_request(tmp_path):
     spec = ProgramSpec("radioss", "OpenRadioss", "solver", "CAELAB_OPENRADIOSS", ("starter",))
     exe = tmp_path / ("starter.exe" if os.name == "nt" else "starter")
     exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)
     rad_file = tmp_path / "model_0000.rad"
     rad_file.write_text("/BEGIN\n/END\n", encoding="utf-8")
     status = ProgramStatus(spec, str(exe))
@@ -93,6 +95,7 @@ def test_lsdyna_run_request(tmp_path):
     spec = ProgramSpec("lsdyna", "LS-DYNA", "solver", "CAELAB_LSDYNA", ("lsdyna",))
     exe = tmp_path / ("lsdyna.exe" if os.name == "nt" else "lsdyna")
     exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)
     k_file = tmp_path / "deck.k"
     k_file.write_text("*KEYWORD\n*END\n", encoding="utf-8")
     status = ProgramStatus(spec, str(exe))

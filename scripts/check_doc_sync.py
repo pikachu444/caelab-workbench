@@ -38,6 +38,7 @@ def get_changed_files(mode: str) -> list[str]:
         ["git", "diff", "--name-only", "origin/main...HEAD"],
         ["git", "diff", "--name-only", "main...HEAD"],
         ["git", "diff", "--name-only", "HEAD~1...HEAD"],
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
     ]
 
     last_error = ""

@@ -14,8 +14,11 @@
 - **상용 툴 공인 활용**: Altair OptiStruct 공식 검증 예제, Dassault Tosca Topology/Sizing 벤치마크, SIMULIA Abaqus 최적화 쇼케이스.
 - **실무 선정 이유**: 3D 연속체 솔리드 요소, 4대 다축 복합 하중, 엄격한 항복응력 제약 하의 극단적 경량화(약 $35\sim 40\%$ 감량)를 다루는 글로벌 Gold Standard 모델.
 
-![GE Bracket 3D 형상, 4대 복합하중 및 상용 비교 검증 결과](../images/benchmark_ge_bracket_comparison.png)
-*(그림 1: GE Jet Engine Bracket 3D CAD 형상, 공식 4대 하중 조건, OptiStruct/Tosca 대비 정량적 비교 및 최적화 수렴 이력)*
+![SimJEB GE Bracket Challenge 엔트리 카탈로그 및 공인 해석 데이터셋](../images/ge_bracket_simjeb_authentic_teaser.png)
+*(그림 1: GE Jet Engine Bracket Challenge 기반 공인 SimJEB 데이터셋의 3D 모델 및 공학 시뮬레이션 결과군)*
+
+![GE Bracket 공인 3D FEA 변위 및 응력 컨투어 해석 결과](../images/ge_bracket_simjeb_authentic_fea.png)
+*(그림 2: GE Jet Engine Bracket 공인 3D 유한요소해석(FEA) 다축 하중 변위 및 응력 컨투어 해석 결과 - 출처: MIT SimJEB)*
 
 ```
        [ 4x Bolt Mounting Holes: Fixed Boundary UX, UY, UZ (1-3) ]

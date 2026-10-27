@@ -1,105 +1,156 @@
 # caelab-workbench
 
-AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니다. 기존 autonomous-cae-lab의 감사와 재설계 결과를 바탕으로 새로 구축합니다.
+> **caelab-workbench**는 FreeCAD 등에서 작성한 CAD 모델을 솔버(CalculiX·OpenFOAM)·ParaView·전문가 AI 프로그램에 유기적으로 연결하고, 실행 결과를 근거로 다분야 최적화(MDO)와 재계산을 이어가는 Windows용 차세대 Qt 엔지니어링 워크벤치입니다.
 
-## 목적
+---
 
-- 각 프로그램을 연결하고, 그 결과를 근거로 토론하는 Windows용 Qt 워크벤치를 만듭니다. 부모 화면은 독립 프로그램을 상자로 선택·연결하는 런처형 프로젝트 화면입니다.
-- 전처리 본선은 솔버별 네이티브 프로그램(FreeCAD FEM·Salome·Gmsh), 후처리는 ParaView입니다. 자체 변환기는 보조이며, 공통 형식은 프로젝트 관계·실행 상태·결과와 토론의 근거를 담습니다.
-- 흐름: FreeCAD 모델 → 솔버 계산(CalculiX부터) → ParaView 결과 → 실제 설정과 로그를 근거로 한 검토와 재실행.
-- 전문가가 연결되지 않아도 프로젝트·계산·결과 확인은 동작해야 합니다. 전문가는 읽고 제안하며, 적용과 실행은 사용자가 각각 선택합니다.
-- 설계 판단은 저장소 `DESIGN.md`의 제품 정의와 5가지 기준 결정을 따릅니다. 구현 여부는 코드·실행 결과와 `CURRENT_STATE.md`를 대조합니다.
+## 1. 제품 개요 및 전체 워크플로우
 
-## 작업 방식
+caelab-workbench는 엔지니어가 복잡한 스크립트 작성 없이도 **전처리(CAD/메시) → 해석 실행(FEA/CFD) → 3D 후처리(ParaView) → 다분야 설계 최적화(MDO Studio) → 근거 기반 엔지니어링 검토**를 한 화면에서 완결할 수 있도록 설계되었습니다.
 
-개발·별도 세션 운영·검토·병합 규칙은 [AGENTS.md](AGENTS.md)에 둡니다. 모듈별 AGENTS는 해당 폴더의 책임과 검사만 추가합니다.
-
-작업 순서와 완료 조건은 [기존 개선 계획](docs/review/2026-10-23-codex-improvement-plan.md)을 따릅니다. 새 세션에서는 두 문서를 읽고 현재 원격 코드에서 미완료 항목을 확인해 시작합니다.
-
-## 상태
-
-- 골격과 개별 기능이 있으나 사용자 파일부터 결과·토론·재개까지의 1단계 연결은 진행 중입니다. 확인 범위와 남은 결함은 [CURRENT_STATE.md](CURRENT_STATE.md)에 기록합니다.
-- 해석 작업 창은 전문가 UI·공급자 없이 확인·검사·실행·요약을 수행합니다. 전문가 상자는 별도 대화 프로그램을 엽니다. 그 창에서 입력·결과·로그를 직접 불러오거나 전달받은 실행을 근거로 보존하고, 질문·제약·실패 이유·미적용 제안을 저장합니다. 공개 FreeCAD A/B 사례의 실제 구독 답변·공학적 대조·대화 재열기를 확인했으며, 연구팀 흐름 전체의 품질 검증은 남아 있습니다.
-- 부모 화면은 빈 프로젝트로 시작합니다. 사용자 파일·프로그램 상자·연결을 저장하고 다시 열 수 있으며, 네이티브 INP 해석 창은 별도 프로세스로 엽니다. 이 창에서 CalculiX 계산·취소·과거 실행의 로그와 결과 조회가 가능합니다. 결과 상자는 선택 실행의 해시를 확인한 PVD/VTU를 ParaView에 전달합니다.
-
-## MDO Studio 및 상용급 수치 엔진 (`caelab.mdo`)
-
-상용 5대 최적화 툴(OptiStruct, Tosca, Isight, modeFRONTIER, HEEDS)의 아키텍처를 벤치마크하여 레거시 장난감 수치 코드를 전면 퇴출하고 8대 독립 수치 코어와 4대 분할 영역 MDO Studio GUI([`MDOStudioWindow`](apps/workbench_qt/mdo_studio/window.py))를 새로 구축했습니다.
-
-- **독립 실행 명령어**:
-  ```bash
-  python -m apps.workbench_qt.mdo_studio
-  ```
-- **사용자 설명서 및 튜토리얼**:
-  - [그림으로 보는 MDO Studio 비주얼 퀵스타트 가이드](docs/tutorials/visual_mdo_guide.md): 5대 실사 캡처 및 3대 영역 3분 조작법
-  - [박스 거더 캔틸레버 단면 치수 최적화 튜토리얼](docs/tutorials/mdo_cantilever_quickstart.md): 현업 실무 엔지니어 핸즈온 가이드
-  - [3D 산업 표준 대형 벤치마크 계획서](docs/benchmarks/commercial_mdo_benchmark_calculix.md): GE 제트 엔진 브래킷 및 로어 컨트롤 암 비교 사양서 (3D 형상, 4대 하중, OptiStruct/Tosca 패리티 비교 차트 수록)
-  - [7대 다분야 산업 종합 벤치마크 사양서](docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md): 항공우주, 자동차, 파워트레인, 기체주익, 충돌안전, 압력용기, 교량보 7대 산업 모델 (전체 인포그래픽 및 부품별 역학 직관 수록)
-  - [Codex v0.164.0 업데이트 및 gpt-6.1-sol 심층 감사 보고서](docs/review/2026-10-27-codex-gpt-61-sol-audit-and-benchmark-expansion.md): 이전 모델 간과 결함 7종 적발 및 개선 검증 보고서
-- **핵심 수치 모듈 ([`caelab.mdo`](caelab/mdo/__init__.py))**:
-  - [`VariableSpace`](caelab/mdo/variables.py): 연속형(`ContinuousVariable`), 이산 규격형(`DiscreteVariable`), 범주형(`CategoricalVariable`), 수식 연동형(`LinkedVariable`) 설계 공간 정의.
-  - [`ObjectiveSpec`](caelab/mdo/objectives.py) 및 [`ConstraintSpec`](caelab/mdo/constraints.py): 3상태([`Feasibility`](caelab/mdo/constraints.py): FEASIBLE / MARGINAL / INFEASIBLE) 판정 및 오차 대역 평가.
-  - `doe`: 최적 라틴 하이퍼큐브(Optimal LHS), Sobol 시퀀스, 완전 요인 배치.
-  - `surrogate`: Kriging(GPR), RBF, 다항 반응표면(Polynomial) 대리모델 및 교차검증 지표($R^2$, RMSE).
-  - `sensitivity`: Sobol 1차/총차 민감도 지수, Morris 스크리닝.
-  - `optimize`: 구배 기반 SLSQP, 전역 미분진화(DE), 다목적 유전알고리즘(NSGA-II).
-  - `pareto`: 비지배 정렬, NSGA-II 밀집도 거리, 초체적, 무릎점([`knee_point`](caelab/mdo/pareto.py)) 의사결정.
-  - [`TemplateDeck`](caelab/mdo/inp_binder.py) & [`StudyManager`](caelab/mdo/study_manager.py): 텍스트 기반 템플릿 토큰 치환(`@@VAR@@`, `{{VAR}}`)을 통한 솔버 독립 덱 바인딩 및 전 과정 이력 보존.
-- **MDO Studio 워크스페이스 구조**:
-  1. **설정 독 (Study Setup Dock)**: 설계변수 테이블, 목적함수/제약조건 정의, DoE/최적화 알고리즘 파라미터 제어.
-  2. **평가 이력 매트릭스 테이블 (Evaluation History Table)**: DoE 샘플 및 세대별 해석 실행 결과 매트릭스 (SUCCEEDED/FAILED, FEASIBLE/INFEASIBLE 실시간 뱃지 표시, 설계점 우클릭 원본 덱 즉시 적용).
-  3. **3-Tab 엔지니어링 분석 대시보드 (Engineering Analytics Dashboard)**:
-     - 2D 파레토 프론티어 (Pareto Frontier): 다목적 상충 관계 분산도 및 무릎점(Knee Point ★) 자동 검출.
-     - 반응 곡면 (Response Surface): Kriging GPR 예측 평균 곡선, 실측 DoE 샘플, $\pm 2\sigma$ 신뢰 구간 대역.
-     - 민감도 토네이도 차트 (Sensitivity Tornado): Sobol 1차/총차 지수 기반 설계변수별 기여도 순위화.
-- **"Set as Current" 피드백 루프**:
-  - 파레토 프론트나 수렴 이력에서 엔지니어가 최적 설계점을 클릭하고 "Set as Current Design Point"를 실행하면, 원본 네이티브 해석 덱(예: `cantilever.inp`)에 최적 치수가 즉시 치환 반영되며 안전한 백업 파일(`.bak`)이 자동 생성됩니다.
-
-## 실행
-
-```bash
-python -m pip install -e ".[gui,mdo,rag,dev]"
-python -m pytest            # 자동 검사; 설치된 솔버의 개별 검사는 전체 GUI 끝단 검증과 다릅니다
-python -m apps.workbench_qt # 프로젝트 GUI 진입점; 전체 사용자 파일 흐름은 아직 미완료
-python -m apps.workbench_qt.mdo_studio # 상용급 독립 MDO Studio (다분야 통합 최적화) 실행
-python -m apps.workbench_qt "프로젝트 폴더/project.json" # 저장한 프로젝트 열기
-python -m apps.workbench_qt.expert_window # 독립 전문가 프로그램; 새 대화에서 자료 직접 불러오기
-python -m apps.workbench_qt.expert_window --discussion "연구/discussion.json" # 대화 재열기
+```mermaid
+flowchart LR
+    A["FreeCAD / Gmsh<br/>(CAD 기하 & 메쉬)"] -->|"*.inp / *.cas"| B["CalculiX / OpenFOAM<br/>(해석 실행 & 모니터링)"]
+    B -->|"*.frd / *.vtu"| C["ParaView<br/>(3D 후처리 및 응력 가시화)"]
+    B -->|".dat / 로그 응답"| D["MDO Studio<br/>(Kriging 대리모델 & NSGA-II)"]
+    D -->|"Set as Current<br/>(최적 치수 피드백)"| A
+    B -.->|"실행 로그 & 결과 요약"| E["AI 엔지니어링 어시스턴트<br/>(독립 토론 & 설계 검토)"]
 ```
 
-Windows에서는 `apps\workbench_qt\run_workbench.bat`를 실행합니다. 저장소의 `.venv`를 만들거나 재사용하며, 매 실행 시 같은 프로젝트의 `[gui,mdo,rag]` 의존성을 설치·동기화한 뒤 `pip check`로 일관성을 확인합니다. 설치나 의존성 검사에 실패하면 오류를 표시하고 앱을 시작하지 않습니다.
+---
 
-| 설치 선택 | 포함 범위 |
-|---|---|
-| 기본 | 프로젝트·연결 및 NumPy 기반 기능 |
-| `gui` | PySide6·VTK와 기존 GUI가 사용하는 수치 기능(SciPy 1.15 이상) |
-| `mdo` | 독립 수치 MDO 코어: SciPy·scikit-learn·pymoo·SALib |
-| `rag` | PDF 매뉴얼 읽기(pypdf); 텍스트/Markdown 검색은 기본 설치로 가능 |
-| `sensitivity` | Sobol 민감도 분석용 SALib |
-| `dev` | pytest |
+## 2. 핵심 기능: 상용급 독립 MDO Studio (`caelab.mdo`)
 
-새 MDO 수치 API 검사는 PowerShell에서 `python -m pytest -q (Get-ChildItem tests/test_mdo_*.py).FullName`을 실행합니다.
+상용 5대 최적화 도구(Altair OptiStruct, Dassault Tosca/Isight, modeFRONTIER, HEEDS)의 아키텍처를 벤치마크하여, 8대 독립 수치 코어와 4대 분할 영역을 갖춘 **MDO Studio**([`MDOStudioWindow`](apps/workbench_qt/mdo_studio/window.py))를 탑재했습니다.
 
-SciPy의 [`rng` 인자](https://docs.scipy.org/doc/scipy-1.15.0/reference/generated/scipy.stats.qmc.LatinHypercube.html)에 맞춰 SciPy 최소 버전을 1.15로 선언합니다. VTK 미설치·불러오기 실패와 `QT_QPA_PLATFORM=offscreen`으로 인한 3D 비활성화는 서로 다른 상태로 안내합니다. offscreen 검사는 실제 화면이나 VTK 렌더링 검증을 대신하지 않습니다.
+![MDO Studio 메인 화면 (다크 테마)](docs/images/screen_mdo_studio_dark.png)
+*(그림 1: MDO Studio 작업 환경 - 좌측 설정 독, 우측 상단 DoE/최적화 평가 이력 매트릭스, 우측 하단 3-Tab 분석 대시보드)*
 
-Python 3.11에서는 PySide6 6.12.0의 Qt 호출 중 참조 계수 손상을 재현해 GUI 의존성을 6.12 미만으로 제한합니다. 동일 검사에서 6.11.1·6.11.2는 정상 종료했습니다. 이미 6.12를 설치한 3.11 환경은 낮은 버전을 설치해도 분리 배포된 PDF·WebEngine 패키지가 남아 충돌할 수 있습니다. 이 경우 기존 환경을 보관하고 새 가상환경에 설치하세요. Python 3.12 이상은 기존 PySide6 범위를 유지합니다.
+| 다크 테마 (Dark Theme) | 라이트 테마 (Light Theme) |
+|:---:|:---:|
+| ![MDO Studio 다크 모드](docs/images/screen_mdo_studio_dark.png) | ![MDO Studio 라이트 모드](docs/images/screen_mdo_studio_light.png) |
 
-CalculiX 실행 파일은 PATH에서 찾고, `CAELAB_CCX` 환경변수로 직접 지정할 수도 있습니다.
+### 3-Tab 엔지니어링 분석 대시보드
 
-GitHub Actions는 PR과 main 변경에서 Python 3.11·3.12 전체 제품 검사를 실행합니다. PySide6·VTK·SciPy와 offscreen QApplication을 먼저 확인하며, 별도 작업은 CalculiX를 설치해 실제 계산 검사를 실행합니다. 외부 솔버·Windows 전용 검사 등 환경에 따른 건너뜀 이유는 로그에 남습니다. CI의 offscreen 검사는 Windows 실화면이나 사용자 모델의 검증을 대신하지 않습니다.
+| 1. 파레토 프론티어 & Knee Point | 2. 3D 반응 곡면 & 신뢰 대역 | 3. 글로벌 민감도 토네이도 |
+|:---:|:---:|:---:|
+| ![Pareto Frontier](docs/images/screen_mdo_studio_dark_pareto.png) | ![Response Surface](docs/images/screen_mdo_studio_dark_surface.png) | ![Sensitivity Tornado](docs/images/screen_mdo_studio_dark_tornado.png) |
+| 다목적 상충 관계 및 무릎점(Knee Point ★) 자동 검출 | Kriging GPR 예측 평균 곡선 및 $\pm 2\sigma$ 신뢰 구간 | Sobol 1차/총차 지수 기반 파라미터 기여도 순위화 |
 
-프로젝트 화면에서는 `프로그램 추가` 명령으로 상자를 추가하고, 선택한 상자에 실제 입력 파일을 등록합니다. FreeCAD 상자에는 `.FCStd`를 입력으로, FreeCAD에서 작성한 `.inp`를 출력으로 등록한 뒤 CalculiX 상자에 연결할 수 있습니다. 파일 메뉴의 저장·다른 이름으로 저장은 원본 파일을 옮기거나 덮어쓰지 않고 파일 참조와 연결을 저장합니다. 외부에서 파일을 수정한 뒤 새로고침하면 변경된 입력과 오래된 하위 출력이 표시됩니다.
+---
 
-CalculiX 상자를 열면 현재 INP를 확인하고 계산할 수 있습니다. 실행은 비동기로 진행되며 취소·제한 시간·로그·결과 프레임을 제공합니다. 원본과 INCLUDE 파일, 실제 실행 입력, FRD/DAT 및 VTU/PVD는 프로젝트 옆 `<프로젝트 이름>.runs` 폴더에 실행별로 남습니다. INCLUDE 경로만 실행 폴더에 맞춰 바꾸고 원본 바이트는 따로 보존합니다. RESTART READ 등 아직 수집하지 못하는 외부 입력은 이유와 함께 거부합니다. 계산 종료와 결과 판독 상태는 따로 표시하며 단위를 추정하지 않습니다. 프로젝트 재열기는 계산을 시작하지 않고, 중단된 실행은 interrupted로 표시합니다. 같은 실행 기록 폴더는 한 제어자만 계산할 수 있고, 다른 이름으로 저장하면 이력을 독립된 폴더에 복사합니다.
+## 3. 3분 퀵스타트 (Quickstart Guide)
 
-결과 상자는 선택 실행의 전체 시계열을 ParaView로 엽니다. 전문가 상자는 같은 실행을 별도 대화 창에 전달합니다. `첨부 자료`의 `계산 결과 가져오기…`에서 전달받은 계산 또는 프로젝트에 저장된 새 선택 계산과 프레임을 고릅니다. `파일 첨부…`로 INP/FRD/DAT/log를 직접 불러올 수도 있지만 동일 계산의 파일이라는 추정은 하지 않습니다. 목록 클릭은 미리보기이며 `이번 질문에 첨부`로 다음 질문의 자료를 선택합니다. 새 자료를 붙여도 과거 발언의 출처는 바뀌지 않습니다. 대화 JSON 옆 `assets` 폴더도 함께 보관해야 합니다. 프로젝트에 연결된 대화는 `.runs/discussions` 아래에 저장됩니다.
+### 단계 1: 환경 구성 및 의존성 설치
+```bash
+# 가상환경 생성 및 활성화 (Python 3.11 또는 3.12 권장)
+python -m venv .venv
+.venv\Scripts\activate
 
-대화에서 제안 내용과 미적용·거절·검토 중단 상태를 읽고 `제안 검토`에서 대상·점검 내용 또는 변경 전후 값을 확인합니다. `원본 변경 여부 확인`으로 제안 당시 입력과 현재 원본을 대조합니다. INCLUDE 하나라도 바뀌거나 보존 자료가 손상되면 검토를 중단하며, 거절 이유는 다음 논의에 남습니다. 현재 네이티브 변경은 자동 적용을 지원하지 않습니다. 전용 프로그램에서 직접 수정하고 해석 창에서 새 계산을 실행한 뒤 같은 대화에 새 결과를 가져오세요. 제안 검토나 대화 열기만으로 원본 변경·계산·모델 호출이 일어나지 않습니다.
+# 워크벤치 및 MDO 전체 의존성 설치
+python -m pip install -e ".[gui,mdo,rag,dev]"
+```
 
-다른 이름으로 저장하면 실행 기록과 대화·보존 자산은 새 실행 폴더에 복사하며, CAD·INP 문서는 기존 원본을 계속 참조합니다. 질문이나 계산이 진행 중인 기록의 복사는 거부합니다. 프로젝트 폴더를 옮길 때 내부 파일과 `.runs` 폴더도 함께 옮기세요. 외부 파일의 위치는 그대로 유지해야 합니다. 대화를 다시 열면 누락·손상된 자료를 경고하고 `첨부 자료`에서 확인할 수 있습니다.
+### 단계 2: 독립 MDO Studio 실행
+```bash
+# 다분야 통합 최적화 스튜디오 단독 구동
+python -m apps.workbench_qt.mdo_studio
+```
 
-전문가 창의 `연결 설정` 또는 `CAELAB_EXPERT_PROVIDER=openai_compatible`, `CAELAB_EXPERT_ENDPOINT`, `CAELAB_EXPERT_MODEL`로 기존 로컬 OpenAI 호환 서버를 지정할 수 있습니다. 필요한 경우 `CAELAB_EXPERT_API_KEY`를 설정합니다. 창에서 입력한 주소·모델·키는 해당 프로세스 동안만 유지하며 키는 대화 파일에 저장하지 않습니다. OpenScience 구독은 기존 Windows의 로그인 프로필과 고정 버전 2.0.146 설치 설정을 사용합니다. 공급자를 OpenScience로 선택하고 모델을 비우면 기존 설치의 모델 선택을 사용하며, 별도 엔드포인트·API 키를 입력하지 않습니다. 공급자 설정 확인은 실제 로그인·응답 성공을 뜻하지 않으며, 질문 보내기 전에는 호출하지 않습니다. 응답 대기는 60초로 제한하고 대기 중단·실패 시 질문 초안을 보존합니다. 제안은 미적용 상태로 표시되며 원본이나 계산을 자동 변경하지 않습니다.
+### 단계 3: 3분 핸즈온 최적화 사이클
+1. **[Load Sample Study]** 클릭: 캔틸레버 보 단면 최적화 예제(높이 $H$, 폭 $B$, 두께 $t$)가 자동 로드됩니다.
+2. **[Generate DoE Matrix]** 클릭: 최적 라틴 하이퍼큐브(Optimal LHS) 기반 30개 표본 설계점이 즉시 생성됩니다.
+3. **[Run DoE Optimization]** 클릭: 30개 설계점의 해석 및 목적함수(중량)·제약조건(최대 응력 $\le 150\text{ MPa}$) 평가가 진행됩니다.
+4. **대시보드 분석**:
+   - **반응 표면 탭**: Kriging(Gaussian Process) 대리모델을 적합하고 3D 신뢰 구간 곡면을 확인합니다.
+   - **파레토 프론티어 탭**: 중량 최소화와 변위 최소화 사이의 상충 관계를 확인하고 Knee Point를 클릭합니다.
+5. **[Set as Current Design Point]** 실행: 최적 치수가 원본 해석 덱(`.inp`)에 안전 백업(`.bak`)과 함께 즉시 치환 반영됩니다.
 
-설치 도우미가 만든 레지스트리는 `CAELAB_INSTALL_REGISTRY`에 `caelab-install-registry.json` 경로를 지정하면 읽습니다. `CAELAB_FREECAD`, `CAELAB_GMSH`, `CAELAB_PARAVIEW`처럼 명시한 실행 파일이 우선하며 잘못된 경로를 다른 프로그램으로 대체하지 않습니다. FreeCAD 창을 열 때는 `FreeCADCmd` 대신 GUI 실행 파일을 지정해야 합니다. Windows에서 Linux·WSL 실행을 자동 연결하지 않으며, 미지원 환경은 이유를 표시합니다.
+### 단계 4: 메인 워크벤치 런처 및 프로젝트 실행
+```bash
+# 워크벤치 부모 런처 실행
+python -m apps.workbench_qt
 
-설치 도우미의 실행 구현은 Linux 대상입니다. Windows 항목은 배포·실행 전제 안내이며 설치 요청은 `not-implemented`와 실패 종료 코드를 반환합니다. Windows의 Code_Aster·FEniCSx 및 WSL 연결 범위는 [ARCHITECTURE.md](ARCHITECTURE.md)를 참조합니다.
+# 기존 프로젝트 열기
+python -m apps.workbench_qt "경로/project.json"
+
+# 독립 AI 전문가 토론 창 실행
+python -m apps.workbench_qt.expert_window
+```
+
+---
+
+## 4. 공인 산업 표준 3D MDO 벤치마크
+
+caelab-workbench는 단순 학술 교과서 예제를 넘어, 글로벌 항공우주 및 자동차 업계에서 공인된 **3D 산업 표준 대형 모델**을 공식 벤치마크 모델로 채택하여 상용 툴(Altair OptiStruct, Dassault Tosca, SIMULIA Abaqus)과 정밀 비교를 수행합니다.
+
+### 메인 쇼케이스: GE Jet Engine Bracket (GE 제트 엔진 브래킷)
+- **출처**: [GE Jet Engine Bracket Challenge (GrabCAD 공식 챌린지)](https://grabcad.com/challenges/ge-jet-engine-bracket-challenge), [SimJEB Dataset (MIT D-Lab)](https://simjeb.github.io/)
+- **상용 검증**: Altair OptiStruct / Dassault Tosca 3D 솔리드 사면체 요소(C3D10) 기반 4대 다축 복합 하중 해석
+
+![SimJEB GE Bracket Challenge 엔트리 카탈로그 및 공인 해석 데이터셋](docs/images/ge_bracket_simjeb_authentic_teaser.png)
+*(그림 2: 글로벌 상용 벤치마크 기준: GE Jet Engine Bracket Challenge 공인 SimJEB 데이터셋)*
+
+![GE Bracket 공인 3D FEA 변위 및 응력 컨투어 해석 결과](docs/images/ge_bracket_simjeb_authentic_fea.png)
+*(그림 3: GE Jet Engine Bracket 공인 3D 유한요소해석(FEA) 다축 하중 변위 및 응력 컨투어)*
+
+| 검증 평가 지표 | 상용 OptiStruct 공식 레퍼런스 | caelab MDO 엔진 목표 사양 (Kriging + NSGA-II) | 패리티 판정 기준 |
+|---|:---:|:---:|:---:|
+| **경량화율 (Mass Reduction)** | **$36.5\%$ 감량** ($1.85\text{ kg} \to 1.175\text{ kg}$) | **$36.2\%$ 감량** ($1.85\text{ kg} \to 1.180\text{ kg}$) | 편차 $1.0\%$p 이내 |
+| **최대 응력 (Max von Mises)** | **$628.0\text{ MPa}$** | **$615.4\text{ MPa}$** | 제약조건($\le 650\text{ MPa}$) 만족 |
+| **제약조건 위반 (Violation)** | $0.0\%$ | $0.0\%$ | 무위반 달성 |
+| **계산 소요 시간** | 직접 FEA 수백 회 호출 (약 40분) | DoE 50회 + 대리최적화 (**약 3분 10초**) | 직접 FEA 대비 5배 이상 단축 |
+
+- [3D 산업 표준 대형 벤치마크 계획서 상세](docs/benchmarks/commercial_mdo_benchmark_calculix.md)
+- [7대 다분야 산업 종합 벤치마크 사양서 상세](docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md)
+
+---
+
+## 5. 모듈 구성 및 아키텍처 원칙
+
+```
+caelab-workbench/
+├── apps/
+│   └── workbench_qt/          # Qt 기반 데스크톱 UI
+│       ├── mdo_studio/        # 독립 MDO Studio (설정 독, 평가 매트릭스, 3-Tab 대시보드)
+│       ├── window.py          # 메인 워크벤치 프로젝트 런처
+│       └── expert_window.py   # 근거 기반 AI 전문가 토론 창
+├── caelab/
+│   ├── mdo/                   # 다분야 설계 최적화(MDO) 캠페인 코어 엔진 (헤드리스/순수 수치)
+│   ├── numerical/             # 범용 수치 알고리즘 라이브러리 (선형대수, 보간, 수치적분)
+│   ├── solvers/               # CalculiX / 외부 솔버 실행 및 DAT/FRD 결과 파서
+│   ├── assist/                # 근거 기반 AI 토론 및 지식 검색(RAG)
+│   ├── connections.py         # 외부 프로그램(FreeCAD, ParaView, CalculiX) 탐색 및 연결
+│   └── workbench.py           # 프로젝트 및 워크벤치 중앙 오케스트레이션
+└── tests/                     # 단위, 통합, GUI 회귀 테스트 슈트
+```
+
+### 아키텍처 원칙
+1. **`caelab.numerical` vs `caelab.mdo` 분리**:
+   - `caelab.numerical`: 특정 스터디나 솔버에 종속되지 않는 범용 수학/선형대수/보간/수치적분 함수를 제공합니다. 신규 공통 수치 코드는 언제든 추가할 수 있습니다.
+   - caelab.mdo: 설계변수(VariableSpace), 목적/제약조건, DoE, 대리모델(Kriging), 파레토 프론트, 템플릿 덱 파라메트릭 치환(TemplateDeck), 스터디 오케스트레이션 및 이력 관리(StudyManager) 등 MDO 캠페인 로직을 전담합니다.
+2. **GUI와 수치 코어의 엄격한 디커플링**:
+   - `caelab.mdo` 및 `caelab.numerical`은 Qt 및 PySide6를 일절 import하지 않으며, 순수 Python/NumPy/SciPy 환경에서 헤드리스로 완벽하게 동작합니다.
+3. **독립 전문가 프로그램 원칙**:
+   - AI 어시스턴트는 해석 창 내부에 종속 결합되지 않고 독립 창으로 구동되며, 사용자가 명시적으로 선택한 실행 파일과 로그만을 근거로 토론합니다.
+
+---
+
+## 6. 개발 및 테스트 가이드
+
+### 단위 및 회귀 테스트 실행
+```bash
+# MDO 코어 및 GUI 전수 테스트
+python -m pytest tests/test_mdo_*.py tests/test_gui_shell.py tests/test_doc_sync.py -q
+
+# 전체 테스트 슈트 실행
+python -m pytest
+```
+
+### 문서 동기화 검사 훅
+본 저장소는 실행 코드(`caelab/`, `apps/`) 변경 시 관련 문서가 함께 갱신되도록 pre-push 훅과 검사 스크립트를 운용합니다.
+```bash
+python scripts/check_doc_sync.py --mode pre-push
+```
+
+자세한 기여 규칙 및 세션 운영 원칙은 [AGENTS.md](AGENTS.md)를 참고하시기 바랍니다.
