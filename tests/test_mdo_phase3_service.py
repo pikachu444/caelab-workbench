@@ -472,4 +472,25 @@ def test_relative_owned_paths_survive_sidecar_relocation(service,tmp_path):
     reopened.close()
 
 
+def test_parameterization_accumulates_original_coordinates_after_reopen(service,tmp_path):
+    source = tmp_path/"ordinary-scalars.inp"
+    source.write_bytes(b'*BEAM SECTION,SECTION=RECT\r\n10,5\r\n*ELASTIC\r\n200000,.3\r\n*DENSITY\r\n7.85e-9\r\n')
+    owner = MDOStudyService(service.workbench)
+    owner.open_input(source)
+    def binding(token,line,expected,literal):
+        return dict(token=token,source_path=str(source),line_number=line,expected_line=expected,old_literal=literal,occurrence=1)
+    owner.parameterize([binding("WIDTH",2,"10,5","10")])
+    assert owner.parameterize([binding("E",4,"200000,.3","200000")]) == ("E","WIDTH")
+    saved = owner.save()
+    owner.close()
+    reopened = MDOStudyService(service.workbench).open(saved)
+    assert reopened.parameterize([binding("RHO",6,"7.85e-9","7.85e-9")]) == ("E","RHO","WIDTH")
+    before = reopened.template.original_text
+    with pytest.raises(ValueError,match="overlap"):
+        reopened.parameterize([binding("OTHER",2,"10,5","10")])
+    assert reopened.template.original_text == before
+    assert source.read_bytes().startswith(b'*BEAM SECTION,SECTION=RECT\r\n10,5\r\n')
+    reopened.close()
+
+
 import numpy as np

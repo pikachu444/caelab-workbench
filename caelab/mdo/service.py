@@ -146,6 +146,15 @@ def _validate_saved(data):
             raise ValueError("Current design refers to an unknown point")
     for key in ("apply_receipts","undo_stack","optimization_history"):
         require(data.get(key,[]),list,key)
+    require(data.get("parameter_bindings",[]),list,"parameter_bindings")
+    for binding in data.get("parameter_bindings",[]):
+        mapping(binding,"parameter binding")
+        for key in ("token","source_path","expected_line","old_literal"):
+            text(binding.get(key),"parameter binding."+key)
+        for key in ("line_number","occurrence"):
+            require(binding.get(key),int,"parameter binding."+key)
+            if binding[key] < 1:
+                raise ValueError("Parameter binding line/occurrence must be positive")
     if data.get("surrogate_id") is not None and not re.fullmatch("[0-9a-f]{32}",str(data["surrogate_id"])):
         raise ValueError("Invalid surrogate artifact identity")
     require(data.get("view_state",{}),dict,"view_state")
@@ -181,6 +190,7 @@ class MDOStudyService:
         self.optimization_history = []
         self.view_state = {}
         self.origin_association = None
+        self.parameter_bindings = []
         self._root = None
         self._run_root = None
         self._originals = {}
@@ -307,12 +317,16 @@ class MDOStudyService:
         self._require_sources()
         if self.study.records:
             raise ValueError("Parameterize before generating points; use a new study for a changed template")
+        combined = copy.deepcopy(self.parameter_bindings)
+        for binding in bindings:
+            if binding not in combined:
+                combined.append(copy.deepcopy(binding))
         templates = dict(self._originals)
         grouped = {}
         allowed = {"*ELASTIC", "*PLASTIC", "*DENSITY", "*CLOAD", "*DLOAD", "*BOUNDARY",
                    "*BEAM SECTION", "*SHELL SECTION", "*SOLID SECTION", "*SPRING", "*DASHPOT",
                    "*CONDUCTIVITY", "*SPECIFIC HEAT", "*EXPANSION", "*AMPLITUDE"}
-        for binding in bindings:
+        for binding in combined:
             p = str(Path(binding["source_path"]).resolve())
             if p not in templates:
                 raise ValueError("Parameterization target must belong to the collected input closure")
@@ -347,8 +361,15 @@ class MDOStudyService:
             for start,end,token in reversed(intervals):
                 lines[index] = lines[index][:start]+token+lines[index][end:]
             templates[p] = "".join(lines).encode("utf-8")
+        previous = self._templates
         self._templates = templates
-        self._refresh_template()
+        try:
+            self._refresh_template()
+        except BaseException:
+            self._templates = previous
+            self._refresh_template()
+            raise
+        self.parameter_bindings = combined
         self._persist()
         return self.template.token_names
 
@@ -413,6 +434,8 @@ class MDOStudyService:
         self._writable()
         if self.revision == "0":
             raise ValueError("Configure the study first")
+        if not {t.lower() for t in self.template.token_names} <= {v.id.lower() for v in self.study.space.variables}:
+            raise ValueError("Configure the newly parameterized variables before generating points")
         batch = generate_design(self.study.space, DOEConfig(method=method, n_samples=n_samples, seed=seed))
         rows = [self._add_point(p.values) for p in batch.points]
         self._persist()
@@ -900,6 +923,7 @@ class MDOStudyService:
                     surrogate_id=self.surrogate.id if self.surrogate else None,view_state=self.view_state,
                     optimization_history=self.optimization_history,
                     origin_association=self.origin_association,
+                    parameter_bindings=self.parameter_bindings,
                     project_path=str(self.project.path) if self.project and self.project.path else None,node_id=self.node_id)
 
     def _persist(self):
@@ -1042,6 +1066,7 @@ class MDOStudyService:
             raise ValueError("Saved view state must be a bounded JSON object")
         self.optimization_history = data.get("optimization_history",[])
         self.origin_association = data.get("origin_association")
+        self.parameter_bindings = data.get("parameter_bindings",[])
         if data.get("surrogate_id"):
             from .surrogate import load_surrogate
             self.surrogate = load_surrogate(self._root / "models" / data["surrogate_id"])
