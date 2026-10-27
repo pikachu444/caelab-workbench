@@ -15,6 +15,7 @@ _RIGHT=int(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
 class DesignPointsTableModel(QAbstractTableModel):
     PointIdRole = int(Qt.ItemDataRole.UserRole) + 1
     SortRole = PointIdRole + 1
+    ParameterStart=9
 
     def __init__(self, records=None, parameter_keys=(), response_keys=(), is_dark=True, parent=None):
         super().__init__(parent)
@@ -38,11 +39,11 @@ class DesignPointsTableModel(QAbstractTableModel):
         self.parameter_keys, self.response_keys = list(parameter_keys), list(response_keys)
         self.units, self.current_point_id = dict(units or {}), current_point_id
         self._row_map = {r.point_id: i for i, r in enumerate(self.records)}
-        self.headers = ["Point", "Name", "Status", "Feasibility", "Pareto", "Data", "Attempts", "Current"]
+        self.headers = ["Point", "Name", "Revision", "Status", "Feasibility", "Pareto", "Data", "Attempts", "Current"]
         self.headers += [f"{k} [{self.units.get(k, '—')}]" for k in self.parameter_keys + self.response_keys]
-        self.headers += ["Violation", "Time [s]"]
+        self.headers += ["Violation"]
         self._cells=[self._values(rec) for rec in self.records]
-        self._sort_keys=[tuple(self._sort_key(value) for value in row) for row in self._cells]
+        self._sort_keys=[self._row_sort_keys(rec,row) for rec,row in zip(self.records,self._cells)]
         self._filter_data=[self._filter_record(rec) for rec in self.records]
         self.endResetModel()
 
@@ -65,22 +66,24 @@ class DesignPointsTableModel(QAbstractTableModel):
 
     @staticmethod
     def _filter_record(rec):
-        return ((rec.name+' '+rec.point_id).casefold(),rec.status,rec.feasibility,rec.point_id)
+        return ((rec.name+' '+rec.point_id).casefold(),rec.status,rec.feasibility,rec.point_id,getattr(rec,'revision','1'))
+
+    def _row_sort_keys(self,rec,values):
+        return ((1,rec.index),*(self._sort_key(value) for value in values[1:]))
 
     def _values(self,rec):
         attempts=getattr(rec,'attempts',())
-        return (f'DP_{rec.index:04d}',rec.name,rec.status,rec.feasibility or 'NOT_ASSESSED',
+        return (f'DP_{rec.index:04d}',rec.name,getattr(rec,'revision','1'),rec.status,rec.feasibility or 'NOT_ASSESSED',
                 'Front' if rec.is_pareto else '',getattr(rec,'mode','ACTUAL'),
                 len(attempts) if isinstance(attempts,(list,tuple)) else attempts,
                 'Current' if rec.point_id==self.current_point_id else '',
                 *(rec.physical_values.get(key) for key in self.parameter_keys),
                 *(rec.observations.get(key) for key in self.response_keys),
-                None if rec.feasibility in (None,'NOT_ASSESSED') else rec.total_violation,
-                None if rec.status in ('PENDING','QUEUED') else rec.duration_sec)
+                None if rec.feasibility in (None,'NOT_ASSESSED') else rec.total_violation)
 
     def _cache_row(self,row):
         rec=self.records[row]; values=self._values(rec)
-        self._cells[row]=values; self._sort_keys[row]=tuple(self._sort_key(value) for value in values)
+        self._cells[row]=values; self._sort_keys[row]=self._row_sort_keys(rec,values)
         self._filter_data[row]=self._filter_record(rec)
 
     def row_for_id(self, point_id):
@@ -98,7 +101,7 @@ class DesignPointsTableModel(QAbstractTableModel):
             self._row_map[record.point_id] = row
             rec=self._snapshot(record); self.records.append(rec)
             values=self._values(rec); self._cells.append(values)
-            self._sort_keys.append(tuple(self._sort_key(value) for value in values)); self._filter_data.append(self._filter_record(rec))
+            self._sort_keys.append(self._row_sort_keys(rec,values)); self._filter_data.append(self._filter_record(rec))
             self.endInsertRows()
         else:
             self.records[row] = self._snapshot(record)
@@ -122,7 +125,7 @@ class DesignPointsTableModel(QAbstractTableModel):
             rec.is_pareto = rec.point_id in ids
             self._cache_row(row)
         if self.records:
-            self.dataChanged.emit(self.index(0, 4), self.index(len(self.records)-1, 4))
+            self.dataChanged.emit(self.index(0, 5), self.index(len(self.records)-1, 5))
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.records)
@@ -141,9 +144,9 @@ class DesignPointsTableModel(QAbstractTableModel):
 
     def _data_at(self,row,column,role):
         if role == self.PointIdRole: return self.records[row].point_id
-        if role == _FOREGROUND: return self._colors.get(self.records[row].feasibility) if column==3 else None
+        if role == _FOREGROUND: return self._colors.get(self.records[row].feasibility) if column==4 else None
         value = self._cells[row][column]
-        if role == self.SortRole: return value
+        if role == self.SortRole: return self.records[row].index if column==0 else value
         if role == _DISPLAY:
             return "—" if value is None or value == "" else f"{value:.6g}" if isinstance(value, float) else str(value)
         if role == _TOOLTIP:
@@ -154,7 +157,7 @@ class DesignPointsTableModel(QAbstractTableModel):
 class DesignPointsProxyModel(QAbstractProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.text, self.status, self.feasibility, self.point_ids = "", "All", "All", None
+        self.text, self.status, self.feasibility, self.point_ids, self.revision = "", "All", "All", None, None
         self._rows=[]; self._proxy_rows={}; self._column=0; self._descending=False; self._source=None
 
     def setSourceModel(self,model):
@@ -167,11 +170,12 @@ class DesignPointsProxyModel(QAbstractProxyModel):
         model.dataChanged.connect(self._source_changed)
         self._rebuild()
 
-    def set_filters(self, *, text=None, status=None, feasibility=None, point_ids=...):
+    def set_filters(self, *, text=None, status=None, feasibility=None, point_ids=...,revision=...):
         if text is not None: self.text = text.casefold()
         if status is not None: self.status = status
         if feasibility is not None: self.feasibility = feasibility
         if point_ids is not ...: self.point_ids = None if point_ids is None else set(point_ids)
+        if revision is not ...: self.revision=revision
         self._rebuild()
 
     def _mapping(self):
@@ -227,8 +231,9 @@ class DesignPointsProxyModel(QAbstractProxyModel):
         return self._source._data_at(self._rows[index.row()],index.column(),role)
 
     def filterAcceptsRow(self, row, parent):
-        text,status,feasibility,point_id=self._source._filter_data[row]
+        text,status,feasibility,point_id,revision=self._source._filter_data[row]
         return ((not self.text or self.text in text)
                 and (self.status == "All" or self.status == status)
                 and (self.feasibility == "All" or self.feasibility == feasibility)
+                and (self.revision is None or self.revision==revision)
                 and (self.point_ids is None or point_id in self.point_ids))

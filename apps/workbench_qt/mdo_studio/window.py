@@ -4,11 +4,11 @@ import json
 from copy import deepcopy
 from pathlib import Path
 import numpy as np
-from PySide6.QtCore import Qt,QTimer,QRunnable,QThreadPool,QItemSelectionModel,QSettings,QByteArray
+from PySide6.QtCore import Qt,QTimer,QRunnable,QThreadPool,QItemSelectionModel,QSettings,QByteArray,QEvent,QRect
 from PySide6.QtGui import QAction,QFont
 from PySide6.QtWidgets import (QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QTableView,QTabWidget,
     QToolBar,QLabel,QDockWidget,QStatusBar,QMessageBox,QFileDialog,QProgressBar,QInputDialog,QDialog,
-    QLineEdit,QComboBox,QPushButton,QDialogButtonBox,QPlainTextEdit,QFormLayout,QSpinBox)
+    QLineEdit,QComboBox,QPushButton,QDialogButtonBox,QPlainTextEdit,QFormLayout,QSpinBox,QDoubleSpinBox)
 from caelab.workbench import Workbench
 from caelab.mdo.study_manager import StudyManager
 from caelab.mdo.surrogate import SurrogateConfig
@@ -19,7 +19,7 @@ from .bridge import MDOExecutionBridge
 from .design_points_model import DesignPointsTableModel,DesignPointsProxyModel
 from .study_tree import StudyTreeWidget
 from .setup_dock import SetupDockWidget
-from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog
+from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog,SurrogateTrainingDialog
 from .views.pareto_view import ParetoFrontWidget
 from .views.parallel_view import ParallelCoordinatesWidget
 from .views.response_surface_view import ResponseSurfaceWidget
@@ -54,9 +54,11 @@ class MDOStudioWindow(QMainWindow):
         self.service=service or startup_service(self.workbench,study,study_path=study_path,project=project,node_id=node_id,read_only=read_only)
         if read_only and not self.service.read_only: raise ValueError('Open the saved service read-only before attaching it to Studio.')
         self.setWindowTitle('CAELab MDO Studio'); self.resize(1380,880)
+        self._display_revision=self.service.revision
         self.setFont(QFont('Segoe UI',9)); self.is_dark=current_theme_mode()=='dark'
         self._generation=0; self._busy=None; self._selected_ids=set(); self._pending_records={}; self._closing=False
-        self._is_specification=False; self._editor=None; self._hidden_selection=False; self._sensitivity_job=0
+        self._is_specification=False; self._editor=None; self._hidden_selection=False; self._sensitivity_job=0; self._initial_reveal_pending=True
+        self._sensitivity_running=False; self._sensitivity_pending=None
         self.bridge=MDOExecutionBridge(self)
         self.bridge.itemFinished.connect(self._on_item_finished)
         self.bridge.batchProgress.connect(self._on_batch_progress)
@@ -64,6 +66,8 @@ class MDOStudioWindow(QMainWindow):
         self.bridge.taskFinished.connect(self._task_finished)
         self._delta_timer=QTimer(self); self._delta_timer.setInterval(100); self._delta_timer.timeout.connect(self._flush_deltas)
         self._viz_timer=QTimer(self); self._viz_timer.setSingleShot(True); self._viz_timer.setInterval(250); self._viz_timer.timeout.connect(self._update_visualizations)
+        self._resize_reveal_pending=False
+        self._resize_reveal_timer=QTimer(self); self._resize_reveal_timer.setSingleShot(True); self._resize_reveal_timer.timeout.connect(self._finish_resize_reveal)
         self._build_ui(); self._populate_study(); self.apply_theme(); self._restore_layout()
 
     @property
@@ -108,6 +112,7 @@ class MDOStudioWindow(QMainWindow):
         self.act_clone=self._action(run,'Clone Selected as Candidate',self._clone_selected)
         self.act_stop=self._action(run,'Stop Scheduling',self._stop_scheduling,toolbar=True)
         self.act_cancel=self._action(run,'Cancel Active Campaign',self._stop_evaluations)
+        self.act_run_settings=self._action(run,'Run Settings…',self._run_settings)
         self.act_current=self._action(run,'Set as Current Design Point',lambda:self._on_apply_as_current(self._first_selected()))
         self.act_undo=self._action(run,'Undo Current Design Apply',self._undo)
         self.act_rerun=self._action(run,'Run Current Design',self._rerun_current)
@@ -130,6 +135,9 @@ class MDOStudioWindow(QMainWindow):
         self.center_splitter=QSplitter(Qt.Orientation.Vertical); self.center_splitter.setObjectName('mdo.central')
         container=QWidget(); layout=QVBoxLayout(container); layout.setContentsMargins(4,4,4,4)
         self.study_label=QLabel(); self.study_label.setWordWrap(True); layout.addWidget(self.study_label)
+        revision_row=QHBoxLayout(); revision_row.addWidget(QLabel('Study revision'))
+        self.revision_selector=QComboBox(); self.revision_selector.setAccessibleName('Study revision'); revision_row.addWidget(self.revision_selector,1); layout.addLayout(revision_row)
+        self.revision_selector.currentIndexChanged.connect(self._revision_changed)
         filters=QHBoxLayout(); self.search=QLineEdit(); self.search.setPlaceholderText('Filter point name / ID'); self.search.setAccessibleName('Filter design points')
         self.status_filter=QComboBox(); self.status_filter.addItems(['All','PENDING','RUNNING','QUEUED','COMPLETED','PREDICTED','FAILED','CANCELLED','STALE'])
         self.feasibility_filter=QComboBox(); self.feasibility_filter.addItems(['All','FEASIBLE','MARGINAL','INFEASIBLE','NOT_ASSESSED'])
@@ -138,6 +146,8 @@ class MDOStudioWindow(QMainWindow):
         self.tdp_lbl=QLabel('Design points'); layout.addWidget(self.tdp_lbl)
         self.tdp_model=DesignPointsTableModel(is_dark=self.is_dark); self.tdp_proxy=DesignPointsProxyModel(self); self.tdp_proxy.setSourceModel(self.tdp_model)
         self.tdp_table=QTableView(); self.tdp_table.setAccessibleName('Table of design points'); self.tdp_table.setModel(self.tdp_proxy)
+        self.tdp_table.viewport().installEventFilter(self)
+        self.tdp_table.verticalScrollBar().rangeChanged.connect(lambda *args:self._resize_reveal_timer.start(0) if self._resize_reveal_pending else None)
         self.tdp_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows); self.tdp_table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
         self.tdp_table.setSortingEnabled(True); self.tdp_table.sortByColumn(0,Qt.SortOrder.AscendingOrder)
         self.tdp_table.verticalHeader().setDefaultSectionSize(30); self.tdp_table.horizontalHeader().setDefaultSectionSize(115)
@@ -152,8 +162,11 @@ class MDOStudioWindow(QMainWindow):
         self.viz_tabs.currentChanged.connect(lambda *args:self._viz_timer.start())
         for widget in (self.pareto_view,self.parallel_view,self.convergence_view): widget.point_selected.connect(self.select_point)
         self.parallel_view.filter_changed.connect(self._brush_filter)
-        self.tornado_view.response_selected.connect(lambda *args:self._sensitivity(self.tdp_model.records))
-        self.center_splitter.addWidget(self.viz_tabs); self.center_splitter.setSizes([350,430]); self.setCentralWidget(self.center_splitter)
+        self.tornado_view.analysis_requested.connect(lambda:self._sensitivity(self._filtered_records()))
+        self.tornado_view.experiment_selected.connect(self._load_sensitivity_report)
+        visualization=QWidget(); visual_layout=QVBoxLayout(visualization); visual_layout.setContentsMargins(0,0,0,0)
+        self.plot_filter_label=QLabel(); self.plot_filter_label.setWordWrap(True); visual_layout.addWidget(self.plot_filter_label); visual_layout.addWidget(self.viz_tabs,1)
+        self.center_splitter.addWidget(visualization); self.center_splitter.setSizes([350,430]); self.setCentralWidget(self.center_splitter)
         self._study_actions=[self.act_new,self.act_open,self.act_input,self.act_generate,self.act_parameterize,self.act_save,self.act_save_as,self.act_train,self.act_optimize]
 
     def _background(self,name,call):
@@ -163,61 +176,95 @@ class MDOStudioWindow(QMainWindow):
         QThreadPool.globalInstance().start(StudioTask(self._generation,name,call,self.bridge))
 
     def _task_finished(self,generation,name,result,error):
-        if generation!=self._generation or self._closing: return
         if name.startswith('Sensitivity '):
-            if name!=f'Sensitivity {self._sensitivity_job}': return
-            items,target=result if result else ([],self.tornado_view.response.currentData())
-            self.tornado_view.plot_tornado(items,f'{target} [{self.response_units.get(target,"—")}]')
-            if error: self.status_bar.showMessage(error)
+            self._sensitivity_running=False
+            if generation==self._generation and not self._closing and name==f'Sensitivity {self._sensitivity_job}':
+                if error:
+                    self.tornado_view.empty('Sensitivity analysis is unavailable for this experiment.'); self.tornado_view.note.setText(error)
+                else:
+                    self.tornado_view.set_experiments([item for item in getattr(self.service,'sensitivity_reports',[]) if item['revision']==self._display_revision])
+                    self.tornado_view.set_report(result)
+            pending,self._sensitivity_pending=self._sensitivity_pending,None
+            if pending is not None and pending[0]==self._generation and not self._closing:
+                self._sensitivity_running=True; QThreadPool.globalInstance().start(StudioTask(*pending,self.bridge))
             return
+        if generation!=self._generation or self._closing: return
         self._busy=None
         if error:
             QMessageBox.warning(self,name,error); self.status_bar.showMessage(f'{name} failed: {error}')
         elif name=='Prepare current design': self._review_apply(result)
         elif name in ('Open study','Open input'):
-            old=self.service; self.service=result
+            old=self.service; self.service=result; self._display_revision=result.revision
             if hasattr(old,'close'): old.close()
             self._generation+=1; self._selected_ids.clear(); self._clear_filters(); self._restore_study_view()
+        elif name=='Clone candidate':
+            self._display_revision=self.service.revision; self._selected_ids={result.point_id}
         else:
             self.status_bar.showMessage(f'{name} completed. No calculation starts unless explicitly requested.')
         if name in ('Open input','Parameterize','Configure','Open study') and not error:
             self._editor=None
             self._input_context()
         self._populate_study(); self._sync_actions()
-        if name in ('Open study','Open input') and not error: self._reveal_selection()
+        if name in ('Open study','Open input','Clone candidate') and not error: QTimer.singleShot(0,self._reveal_selection)
         if self._active_batch_id: self._delta_timer.start()
 
     def _sync_actions(self):
         active=bool(self._active_batch_id); busy=bool(self._busy); writable=not self.service.read_only
+        current_view=self._display_revision==self.service.revision
         for action in self._study_actions: action.setEnabled(not active and not busy and writable)
         self.act_configure.setEnabled(not busy and bool(self.template_deck) and writable)
-        self.act_run.setEnabled(not active and not busy and writable and self._configured)
+        self.act_run.setEnabled(not active and not busy and writable and self._configured and current_view)
         self.act_all.setEnabled(self.act_run.isEnabled()); self.act_confirm.setEnabled(self.act_run.isEnabled() and bool(self._selected_ids))
         self.act_clone.setEnabled(not active and not busy and writable and bool(self._selected_ids))
         self.act_stop.setEnabled(active); self.act_cancel.setEnabled(active)
+        self.act_run_settings.setEnabled(not active and not busy and writable and current_view)
         self.progress_bar.setVisible(active or busy)
         if busy and not active: self.progress_bar.setRange(0,0)
         else: self.progress_bar.setRange(0,100)
         rec=self.tdp_model.record(self._first_selected())
-        candidate=bool(rec and rec.status=='COMPLETED' and getattr(rec,'mode','ACTUAL')!='SURROGATE' and getattr(rec,'revision',self.service.revision)==self.service.revision)
-        for action in (self.act_current,self.act_result): action.setEnabled(candidate and not active and not busy and writable)
+        candidate=bool(current_view and rec and rec.status=='COMPLETED' and getattr(rec,'mode','ACTUAL')!='SURROGATE' and getattr(rec,'revision',self.service.revision)==self.service.revision)
+        self.act_current.setEnabled(candidate and not active and not busy and writable)
+        self.act_result.setEnabled(bool(rec and rec.status=='COMPLETED' and getattr(rec,'mode','ACTUAL')=='ACTUAL') and not active and not busy and writable)
         self.setup_widget.btn_apply_current.setEnabled(self.act_current.isEnabled())
         self.setup_widget.btn_confirm.setEnabled(self.act_confirm.isEnabled())
         self.setup_widget.btn_result.setEnabled(bool(rec and rec.status=='COMPLETED' and getattr(rec,'mode','ACTUAL')!='SURROGATE') and writable)
         self.act_undo.setEnabled(bool(self.service.current_point_id) and not active and not busy and writable)
         self.act_rerun.setEnabled(self.act_undo.isEnabled()); self.act_current_result.setEnabled(bool(self.service.current_point_id) and not busy)
+        for action in (self.act_generate,self.act_train,self.act_optimize,self.act_current,self.act_undo,self.act_rerun):
+            if not current_view: action.setEnabled(False)
         if self._editor: self._editor.buttons.button(QDialogButtonBox.StandardButton.Apply).setEnabled(not active and not busy and writable)
 
     def _populate_study(self):
         selected=set(self._selected_ids)
-        units={v.id:getattr(v,'unit','—') for v in self.study.space.variables}; units.update(self.response_units)
-        responses=list(dict.fromkeys([o.response_id for o in self.study.objectives]+[c.response_id for c in self.study.constraints if c.response_id])) or ['response']
+        definition=self._revision_definition()
+        units={v.id:getattr(v,'unit','—') for v in definition['space'].variables}; units.update(definition['response_units'])
+        responses=list(definition['response_units']) or ['response']
+        revisions=self.service.revision_ids() if hasattr(self.service,'revision_ids') else sorted({self.service.revision,*[getattr(r,'revision',self.service.revision) for r in self.study.records]},key=int)
+        self.revision_selector.blockSignals(True); self.revision_selector.clear()
+        for revision in revisions: self.revision_selector.addItem(f'Revision {revision}'+(' (current)' if revision==self.service.revision else ' — historical'),revision)
+        self.revision_selector.setCurrentIndex(max(0,self.revision_selector.findData(self._display_revision))); self.revision_selector.blockSignals(False)
         self.tdp_table.selectionModel().blockSignals(True)
-        self.tdp_model.set_study_data(self.study.records,[v.id for v in self.study.space.variables],responses,units=units,current_point_id=self.service.current_point_id)
+        self.tdp_model.set_study_data(self.study.records,[v.id for v in definition['space'].variables],responses,units=units,current_point_id=self.service.current_point_id)
+        self.tdp_proxy.set_filters(revision=self._display_revision)
         self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
         self.study_label.setText(self.study.name+(' — read only' if self.service.read_only else ''))
-        self.study_tree.populate(self.study,surrogate=self.service.surrogate,current_point_id=self.service.current_point_id)
+        displayed=StudyManager(self.study.name,space=definition['space'],objectives=definition['objectives'],constraints=definition['constraints'])
+        displayed.records=[r for r in self.tdp_model.records if getattr(r,'revision',self.service.revision)==self._display_revision]
+        self.study_tree.populate(displayed,surrogate=self.service.surrogate if self._display_revision==self.service.revision else None,current_point_id=self.service.current_point_id)
         self._show_selection(); self._update_visualizations(); self._sync_actions()
+
+    def _revision_definition(self):
+        if hasattr(self.service,'revision_definition'): return self.service.revision_definition(self._display_revision)
+        return dict(revision=self.service.revision,space=self.study.space,objectives=self.study.objectives,constraints=self.study.constraints,response_units=self.response_units,response_selectors=getattr(self.service,'response_selectors',{}))
+
+    def _revision_changed(self,*args):
+        revision=self.revision_selector.currentData()
+        if revision is None or revision==self._display_revision: return
+        self._display_revision=revision; self._selected_ids.clear(); self._populate_study()
+        self.setup_widget.context_tabs.setCurrentIndex(0)
+
+    def _filtered_records(self):
+        return [self.tdp_model.records[row] for row in self.tdp_proxy._rows]
 
     def _first_selected(self): return next(iter(sorted(self._selected_ids)),None)
 
@@ -262,42 +309,95 @@ class MDOStudioWindow(QMainWindow):
             index=self.tdp_proxy.mapFromSource(self.tdp_model.index(row,0))
             if index.isValid(): self.tdp_table.scrollTo(index,QTableView.ScrollHint.PositionAtCenter)
 
+    def showEvent(self,event):
+        super().showEvent(event)
+        if self._initial_reveal_pending:
+            self._initial_reveal_pending=False
+            QTimer.singleShot(0,self._reveal_selection)
+
+    def resizeEvent(self,event):
+        visible=False
+        if hasattr(self,'tdp_table'):
+            selected=self.tdp_table.selectionModel().selectedRows()
+            visible=bool(selected and self.tdp_table.viewport().rect().intersects(self.tdp_table.visualRect(selected[0])))
+        if visible: self._resize_reveal_pending=True
+        super().resizeEvent(event)
+        if visible: self._resize_reveal_timer.start(20)
+
+    def eventFilter(self,watched,event):
+        if hasattr(self,'tdp_table') and watched is self.tdp_table.viewport() and event.type()==QEvent.Type.Resize:
+            selected=self.tdp_table.selectionModel().selectedRows()
+            if selected:
+                rect=self.tdp_table.visualRect(selected[0]); old=QRect(0,0,event.oldSize().width(),event.oldSize().height())
+                if old.intersects(rect) and not watched.rect().intersects(rect): self._resize_reveal_pending=True
+            if self._resize_reveal_pending: self._resize_reveal_timer.start(20)
+        return super().eventFilter(watched,event)
+
+    def _finish_resize_reveal(self):
+        self._keep_visible_selection(); self._resize_reveal_pending=False
+
+    def _keep_visible_selection(self):
+        selected=self.tdp_table.selectionModel().selectedRows()
+        if selected and not self.tdp_table.viewport().rect().intersects(self.tdp_table.visualRect(selected[0])): self._reveal_selection()
+
     def _filters_changed(self,*args):
         selected=set(self._selected_ids); self.tdp_table.selectionModel().blockSignals(True)
         self.tdp_proxy.set_filters(text=self.search.text(),status=self.status_filter.currentText(),feasibility=self.feasibility_filter.currentText())
         self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
+        self._viz_timer.start()
 
     def _brush_filter(self,point_ids):
         selected=set(self._selected_ids); self.tdp_table.selectionModel().blockSignals(True); self.tdp_proxy.set_filters(point_ids=point_ids)
         self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
+        self._viz_timer.start()
 
     def _clear_filters(self):
         self.search.clear(); self.status_filter.setCurrentIndex(0); self.feasibility_filter.setCurrentIndex(0); self._brush_filter(None)
         if hasattr(self,'parallel_view'): self.parallel_view.brushes.clear()
 
     def _update_visualizations(self):
-        records=self.tdp_model.records; units=self.tdp_model.units
+        records=self._filtered_records(); units=self.tdp_model.units; definition=self._revision_definition()
+        base=[r for r in self.tdp_model.records if getattr(r,'revision',self.service.revision)==self._display_revision]
+        descriptions=[f'revision {self._display_revision}',f'{len(records)} / {len(base)} points']
+        if self.search.text(): descriptions.append('name: '+self.search.text())
+        if self.status_filter.currentText()!='All': descriptions.append(self.status_filter.currentText())
+        if self.feasibility_filter.currentText()!='All': descriptions.append(self.feasibility_filter.currentText())
+        if self.tdp_proxy.point_ids is not None: descriptions.append('parallel axis brush')
+        self.plot_filter_label.setText('Visible population: '+', '.join(descriptions))
         index=self.viz_tabs.currentIndex()
-        if index==0: self.pareto_view.set_study(records,self.study.objectives,units)
-        elif index==1: self.parallel_view.set_study(records,self.study.space.variables,self.tdp_model.response_keys,units)
-        elif index==2: self.surface_view.set_study(self.service.surrogate,self.study.space,records,units)
+        if index==0: self.pareto_view.set_study(records,definition['objectives'],units)
+        elif index==1: self.parallel_view.set_study(records,definition['space'].variables,self.tdp_model.response_keys,units,all_records=base)
+        elif index==2: self.surface_view.set_study(self.service.surrogate if self._display_revision==self.service.revision else None,definition['space'],records,units)
         elif index==3:
-            self.tornado_view.set_responses(self.tdp_model.response_keys,self.response_units); self._sensitivity(records)
-        elif index==4: self.convergence_view.set_study(records,self.study.objectives,units,self.service.revision)
+            self.tornado_view.set_responses(self.tdp_model.response_keys,definition['response_units'])
+            self.tornado_view.set_experiments([item for item in getattr(self.service,'sensitivity_reports',[]) if item['revision']==self._display_revision])
+            if self.tornado_view.experiment.currentData(): self._load_sensitivity_report(self.tornado_view.experiment.currentData())
+            elif self.tornado_view.method_selector.currentData()=='spearman': self._sensitivity(records)
+        elif index==4: self.convergence_view.set_study(records,definition['objectives'],units,self._display_revision)
 
     def _sensitivity(self,records):
         self._sensitivity_job+=1
         target=self.tornado_view.response.currentData()
-        variables=[v for v in self.study.space.independent_variables if not hasattr(v,'choices')]
-        rows=[r for r in records if r.status=='COMPLETED' and getattr(r,'mode','ACTUAL')!='SURROGATE' and getattr(r,'revision',self.service.revision)==self.service.revision and target in r.observations and all(v.id in r.physical_values for v in variables)]
+        if self._display_revision!=self.service.revision:
+            self.tornado_view.empty('Choose the current revision to create a new sensitivity analysis. Historical rows remain available in the table and export.'); return
+        method=self.tornado_view.method_selector.currentData(); service=self.service
+        point_ids=[r.point_id for r in records if getattr(r,'mode','ACTUAL')=='ACTUAL'] if method=='spearman' else None
+        from dataclasses import replace
+        config=replace(self.tornado_view.config,method=method) if method!='spearman' else None
         def compute():
-            items=[]
-            if len(rows)>=3 and variables:
-                from caelab.mdo.sensitivity import spearman
-                pairs=spearman(np.array([[r.physical_values[v.id] for v in variables] for r in rows]),np.array([[r.observations[target]] for r in rows]),variable_ids=[v.id for v in variables],response_ids=[target])
-                items=[TornadoItem(p.variable_id,'Spearman rho (dimensionless)',abs(p.rho),sign=1 if p.rho>=0 else -1) for p in pairs if p.rho is not None]
-            return items,target
-        QThreadPool.globalInstance().start(StudioTask(self._generation,f'Sensitivity {self._sensitivity_job}',compute,self.bridge))
+            return service.analyze_sensitivity(target,method=method,point_ids=point_ids,config=config)
+        request=(self._generation,f'Sensitivity {self._sensitivity_job}',compute)
+        self._queue_sensitivity(request)
+
+    def _queue_sensitivity(self,request):
+        if self._sensitivity_running: self._sensitivity_pending=request
+        else:
+            self._sensitivity_running=True; QThreadPool.globalInstance().start(StudioTask(*request,self.bridge))
+
+    def _load_sensitivity_report(self,experiment_id):
+        if not experiment_id: self.tornado_view.report=None; self._update_visualizations(); return
+        self._sensitivity_job+=1; service=self.service
+        self._queue_sensitivity((self._generation,f'Sensitivity {self._sensitivity_job}',lambda:service.sensitivity_report(experiment_id)))
 
     def _tree_selected(self,category,key):
         if category in ('variables','criteria'): self._on_configure(tab=0 if category=='variables' else 1)
@@ -313,8 +413,10 @@ class MDOStudioWindow(QMainWindow):
 
     def _input_context(self):
         widget=QWidget(); layout=QVBoxLayout(widget); label=QLabel(str(self.current_deck_path or 'Open a native CalculiX input.')); label.setWordWrap(True); layout.addWidget(label)
-        for text,slot in [('Open Native Input…',lambda:self._on_load_deck()),('Create Scalar Token…',self._parameterize),('Configure Variables / Responses',self._on_configure)]:
-            button=QPushButton(text); button.clicked.connect(slot); layout.addWidget(button)
+        for text,action in [('Open Native Input…',self.act_input),('Create Scalar Token…',self.act_parameterize)]:
+            button=QPushButton(text); button.clicked.connect(action.trigger); button.setEnabled(action.isEnabled())
+            action.changed.connect(lambda button=button,action=action:button.setEnabled(action.isEnabled())); layout.addWidget(button)
+        inspect=QPushButton('Inspect Variables / Responses' if self.service.read_only else 'Configure Variables / Responses'); inspect.clicked.connect(self._on_configure); layout.addWidget(inspect)
         layout.addStretch(); self.setup_widget.set_editor(widget,'Input'); self.setup_dock.show()
 
     def _method_context(self,kind):
@@ -322,11 +424,18 @@ class MDOStudioWindow(QMainWindow):
         if kind=='Surrogate' and self.service.surrogate:
             artifact=self.service.surrogate; text=f'Saved {artifact.config.method.upper()} model · study revision {artifact.dataset.training_revision}\nQualified: {artifact.qualified}\n'+ '\n'.join(f'{m.response_id}: RMSE {m.rmse:.6g} {m.unit}; holdout n={m.n}' for m in artifact.metrics)
             label=QLabel(text); label.setToolTip(artifact.id); label.setWordWrap(True); layout.addWidget(label)
-        labels={'DOE':('Generate DOE…',lambda:self._on_generate_doe()),'Surrogate':('Train / Validate…',self._train),'Optimization':('Constrained Search…',self._optimize)}
-        text,slot=labels[kind]; button=QPushButton(text); button.clicked.connect(slot); layout.addWidget(button); layout.addStretch(); self.setup_widget.set_editor(widget,kind); self.setup_dock.show()
+            inspect=QPushButton('Inspect validation split / metrics'); inspect.clicked.connect(self._inspect_training); layout.addWidget(inspect)
+        actions={'DOE':self.act_generate,'Surrogate':self.act_train,'Optimization':self.act_optimize}
+        action=actions[kind]; button=QPushButton(action.text()); button.clicked.connect(action.trigger); button.setEnabled(action.isEnabled())
+        action.changed.connect(lambda:button.setEnabled(action.isEnabled())); layout.addWidget(button); layout.addStretch(); self.setup_widget.set_editor(widget,kind); self.setup_dock.show()
 
     def _on_configure(self,*args,tab=0):
         if not self.template_deck: self._input_context(); return
+        if self._display_revision!=self.service.revision:
+            definition=self._revision_definition(); frozen=StudyManager(self.study.name,space=definition['space'],objectives=definition['objectives'],constraints=definition['constraints'])
+            editor=StudyConfigEditor([v.id for v in definition['space'].variables],frozen,definition['response_units'],definition['response_selectors'])
+            editor.variables.setEditTriggers(QTableView.EditTrigger.NoEditTriggers); editor.responses.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+            editor.buttons.hide(); editor.tabs.setCurrentIndex(tab); editor.setEnabled(False); self.setup_widget.set_editor(editor,f'Revision {self._display_revision}'); self.setup_dock.show(); return
         if self._editor is None:
             self._editor=StudyConfigEditor(self.template_deck.token_names,self.study,self.response_units,getattr(self.service,'response_selectors',{}))
             self._editor.applied.connect(lambda config:self._configure_study(*config))
@@ -342,7 +451,7 @@ class MDOStudioWindow(QMainWindow):
             if self._editor: self._editor.error.setText(str(exc))
             else: QMessageBox.warning(self,'Study configuration',str(exc))
             return
-        self._populate_study(); self.status_bar.showMessage('New study revision applied. Historical rows retain their original revision.')
+        self._display_revision=self.service.revision; self._populate_study(); self.status_bar.showMessage('New study revision applied. Historical rows retain their original revision.')
         if self._editor:
             self._editor.study=self.study; self._editor.response_units=dict(self.response_units); self._editor.selectors=dict(getattr(self.service,'response_selectors',{}))
 
@@ -356,16 +465,20 @@ class MDOStudioWindow(QMainWindow):
         if self._active_batch_id or self._busy: return
         old=self.service
         if hasattr(old,'close'): old.close()
-        self.service=self.workbench.create_mdo_study(); self._generation+=1; self._selected_ids.clear(); self._editor=None; self._clear_filters(); self._populate_study()
+        self.service=self.workbench.create_mdo_study(); self._display_revision=self.service.revision; self._generation+=1; self._selected_ids.clear(); self._editor=None; self._clear_filters(); self._populate_study()
 
     def _on_load_deck(self,path=None):
         if self._active_batch_id or self._busy: return
         if path is None:
             path,_=QFileDialog.getOpenFileName(self,'Open native input','','CalculiX input (*.inp)')
             if not path: return
-        project,node=getattr(self.service,'project',None),getattr(self.service,'node_id',None)
+        path=Path(path).expanduser().resolve()
+        if self.current_deck_path is not None and path==self.current_deck_path.resolve():
+            self._input_context(); self.status_bar.showMessage('This input is already open in the current study. Use New Study to start from a changed source.'); return
+        if self.current_deck_path is not None and getattr(self.service,'project',None) is not None:
+            QMessageBox.information(self,'Open Independent Study','A different native input opens an independent study. The original project keeps its study relation. The current study and draft stay available if loading fails.')
         def open_candidate():
-            candidate=self.workbench.create_mdo_study(project=project,node_id=node)
+            candidate=self.workbench.create_mdo_study()
             try: candidate.open_input(Path(path))
             except Exception:
                 candidate.close(); raise
@@ -411,7 +524,30 @@ class MDOStudioWindow(QMainWindow):
 
     def _clone_selected(self):
         point=self._first_selected()
-        if point: self._background('Clone candidate',lambda:self.service.clone_point(point))
+        if not point: return
+        record=self.tdp_model.record(point); values=None
+        if getattr(record,'revision',self.service.revision)!=self.service.revision:
+            previous=self.service.revision_definition(record.revision)
+            previous_units={v.id:getattr(v,'unit','') for v in previous['space'].variables}
+            dialog=QDialog(self); dialog.setWindowTitle('Clone into current revision'); layout=QVBoxLayout(dialog)
+            label=QLabel('Review physical values under the current definition. Values are not converted between units. This creates a new candidate and preserves the historical point.'); label.setWordWrap(True); layout.addWidget(label)
+            form=QFormLayout(); layout.addLayout(form); controls={}
+            for variable in self.study.space.independent_variables:
+                original=record.physical_values.get(variable.id); same_unit=previous_units.get(variable.id,'')==getattr(variable,'unit','')
+                if hasattr(variable,'choices') or hasattr(variable,'values'):
+                    widget=QComboBox()
+                    for value in getattr(variable,'choices',getattr(variable,'values',())): widget.addItem(str(value),value)
+                    widget.setCurrentIndex(max(0,widget.findData(original if same_unit else variable.initial)))
+                else:
+                    widget=QDoubleSpinBox(); widget.setDecimals(12); widget.setRange(variable.lower,variable.upper)
+                    value=original if same_unit and isinstance(original,(int,float)) and variable.lower<=original<=variable.upper else variable.initial
+                    widget.setValue(value)
+                controls[variable.id]=widget
+                form.addRow(f'{variable.name} [{getattr(variable,"unit","—")}]\nHistorical: {original} {previous_units.get(variable.id,"")}',widget)
+            buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Create current candidate'); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
+            if dialog.exec()!=QDialog.DialogCode.Accepted: return
+            values={key:widget.currentData() if isinstance(widget,QComboBox) else widget.value() for key,widget in controls.items()}
+        self._background('Clone candidate',lambda:self.service.clone_point(point,values=values))
 
     def _rerun_current(self): self._background('Run current design',lambda:self.service.rerun_current(**self._callbacks()))
     def _stop_scheduling(self):
@@ -482,8 +618,31 @@ class MDOStudioWindow(QMainWindow):
         button.clicked.connect(read_log); layout.addWidget(button); buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons); dialog.exec()
 
     def _train(self):
-        method,ok=QInputDialog.getItem(self,'Train surrogate','Method',['gp','rbf','prs'],0,False)
-        if ok: self._background('Train surrogate',lambda:self.service.train(config=SurrogateConfig(method=method,seed=42)))
+        dialog=SurrogateTrainingDialog(self.response_units,self)
+        if dialog.exec()==QDialog.DialogCode.Accepted:
+            responses,config,validation=dialog.configuration()
+            self._background('Train surrogate',lambda:self.service.train(responses,config,**validation))
+
+    def _inspect_training(self):
+        dialog=QDialog(self); dialog.setWindowTitle('Surrogate validation and split'); dialog.resize(800,600); layout=QVBoxLayout(dialog)
+        report=self.service.training_report
+        if report is None and self.service.surrogate is not None:
+            from dataclasses import asdict
+            artifact=self.service.surrogate
+            report=dict(model_id=artifact.id,revision=artifact.dataset.training_revision,recorded_split=asdict(artifact.split),
+                train_point_ids=[artifact.dataset.point_ids[i] for i in artifact.split.train_indices],validation_point_ids=[artifact.dataset.point_ids[i] for i in artifact.split.validation_indices],
+                response_ids=artifact.dataset.response_ids,units=artifact.dataset.units,qualification_limits=artifact.config.qualification_rmse,metrics=[asdict(metric) for metric in artifact.metrics],qualified=artifact.qualified)
+        text=QPlainTextEdit(); text.setReadOnly(True); text.setPlainText(json.dumps(report,ensure_ascii=False,indent=2)); layout.addWidget(text)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons); dialog.exec()
+
+    def _run_settings(self):
+        policy=self.service.resource_policy
+        dialog=QDialog(self); dialog.setWindowTitle('Run Settings'); layout=QVBoxLayout(dialog); form=QFormLayout(); layout.addLayout(form)
+        timeout=QDoubleSpinBox(); timeout.setRange(.1,604800); timeout.setDecimals(1); timeout.setValue(policy['timeout_seconds']); form.addRow('Timeout per native attempt [s]',timeout)
+        calls=QSpinBox(); calls.setRange(1,1000000); calls.setValue(policy['max_batch_calls']); form.addRow('Maximum native calls per batch',calls)
+        label=QLabel('These limits apply to each explicit native batch, including confirmations and current-design reruns. They are not a lifetime study budget.'); label.setWordWrap(True); layout.addWidget(label)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
+        if dialog.exec()==QDialog.DialogCode.Accepted: self._background('Save run settings',lambda:self.service.set_resource_policy(timeout_seconds=timeout.value(),max_batch_calls=calls.value()))
 
     def _optimize(self):
         dialog=QDialog(self); dialog.setWindowTitle('Constrained surrogate search'); layout=QVBoxLayout(dialog); form=QFormLayout(); layout.addLayout(form)
@@ -518,7 +677,7 @@ class MDOStudioWindow(QMainWindow):
         path,_=QFileDialog.getSaveFileName(self,'Export filtered table','','CSV (*.csv)')
         if path:
             ids=[self.tdp_proxy.index(row,0).data(DesignPointsTableModel.PointIdRole) for row in range(self.tdp_proxy.rowCount())]
-            self._background('Export CSV',lambda:self.service.export_csv(path,ids))
+            self._background('Export CSV',lambda:self.service.export_csv(path,ids,revision=self._display_revision))
 
     def _save_layout(self):
         settings=QSettings('CAELab','MDO Studio'); settings.setValue('layout',self.saveState()); settings.setValue('splitter',self.center_splitter.saveState())
@@ -539,6 +698,7 @@ class MDOStudioWindow(QMainWindow):
             convergence=state.get('convergence',{}); self.convergence_view.reference.setText(convergence.get('reference',''))
             self.convergence_view.metric_selector.setCurrentIndex(int(convergence.get('metric',0))); self.convergence_view.xaxis.setCurrentIndex(int(convergence.get('axis',0)))
             self._show_selection(); self._reveal_selection()
+            self._sync_actions()
         except (ValueError,TypeError): pass
 
     def _default_layout(self):

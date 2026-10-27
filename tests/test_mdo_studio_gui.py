@@ -25,7 +25,7 @@ def test_mdo_studio_window_creation(app):
     assert win.viz_tabs.count() == 5
     from caelab.mdo.study_manager import StudyManager
     manager=StudyManager()
-    manager.add_point({'thickness':2.})
+    manager.add_point({'thickness':2.}).revision='0'  # Candidate belongs to this unconfigured draft.
     win.close()
     win=MDOStudioWindow(study=manager)
     assert win.tdp_model.rowCount() == 1

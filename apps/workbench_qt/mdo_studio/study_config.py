@@ -1,12 +1,16 @@
 """Native Qt draft editors; parsing happens on Apply, preserving IME preedit."""
 from __future__ import annotations
+import re
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (QWidget,QDialog,QVBoxLayout,QHBoxLayout,QLabel,QTableWidget,
     QTableWidgetItem,QHeaderView,QDialogButtonBox,QComboBox,QPushButton,QTabWidget,
-    QPlainTextEdit,QLineEdit,QSpinBox,QFormLayout)
+    QPlainTextEdit,QLineEdit,QSpinBox,QFormLayout,QDoubleSpinBox)
 from caelab.mdo.variables import ContinuousVariable,DiscreteVariable,CategoricalVariable,LinkedVariable,VariableSpace,parse_unit
 from caelab.mdo.objectives import ObjectiveSpec
 from caelab.mdo.constraints import ConstraintSpec
+from caelab.mdo.surrogate import SurrogateConfig
+from caelab.mdo.inp_binder import scalar_literal_occurrences
 
 
 def cell(table,row,col,default=''):
@@ -138,6 +142,44 @@ class StudyConfigDialog(QDialog):
         super().accept()
 
 
+class SurrogateTrainingDialog(QDialog):
+    def __init__(self,response_units,parent=None):
+        super().__init__(parent); self.setWindowTitle('Train / Validate Surrogate'); self.resize(660,530)
+        layout=QVBoxLayout(self); form=QFormLayout(); layout.addLayout(form)
+        self.method=QComboBox(); self.method.addItems(['gp','rbf','prs']); form.addRow('Method',self.method)
+        self.seed=QSpinBox(); self.seed.setRange(0,2147483647); self.seed.setValue(42); form.addRow('Model seed',self.seed)
+        self.validation_seed=QSpinBox(); self.validation_seed.setRange(0,2147483647); self.validation_seed.setValue(42); form.addRow('Validation seed',self.validation_seed)
+        self.fraction=QDoubleSpinBox(); self.fraction.setRange(.05,.95); self.fraction.setSingleStep(.05); self.fraction.setValue(.2); form.addRow('Holdout fraction',self.fraction)
+        self.policy=QComboBox(); self.policy.addItems(['Seeded grouped holdout','Chronological grouped holdout']); form.addRow('Split policy',self.policy)
+        self.responses=QTableWidget(len(response_units),4); self.responses.setHorizontalHeaderLabels(['Use','Response','Unit','Qualification RMSE ≤'])
+        for row,(key,unit) in enumerate(response_units.items()):
+            use=QTableWidgetItem(); use.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable); use.setCheckState(Qt.CheckState.Checked); self.responses.setItem(row,0,use)
+            for col,value in ((1,key),(2,unit),(3,'')):
+                item=QTableWidgetItem(value)
+                if col!=3: item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.responses.setItem(row,col,item)
+        self.responses.setColumnWidth(0,45); self.responses.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch); self.responses.setColumnWidth(3,170)
+        layout.addWidget(self.responses,1)
+        label=QLabel('Identical designs and repeated native runs stay in the same split. Leave all qualification limits blank to report an unqualified model, or enter a physical-unit RMSE limit for every selected response.'); label.setWordWrap(True); layout.addWidget(label)
+        self.error=QLabel(); self.error.setWordWrap(True); self.error.setStyleSheet('color:#ef4444'); layout.addWidget(self.error)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
+
+    def configuration(self):
+        keys=[]; limits=[]
+        for row in range(self.responses.rowCount()):
+            if self.responses.item(row,0).checkState()!=Qt.CheckState.Checked: continue
+            keys.append(cell(self.responses,row,1)); limits.append(cell(self.responses,row,3))
+        if not keys: raise ValueError('Select at least one response.')
+        if any(limits) and not all(limits): raise ValueError('Enter a qualification limit for every selected response, or leave all blank.')
+        config=SurrogateConfig(method=self.method.currentText(),seed=self.seed.value(),qualification_rmse=tuple(float(value) for value in limits) if all(limits) else ())
+        return keys,config,dict(holdout_fraction=self.fraction.value(),validation_seed=self.validation_seed.value(),chronological=self.policy.currentIndex()==1)
+
+    def accept(self):
+        try: self.configuration()
+        except (ValueError,TypeError) as exc: self.error.setText(str(exc)); return
+        super().accept()
+
+
 class ParameterizeDialog(QDialog):
     def __init__(self,sources,parent=None):
         super().__init__(parent); self.setWindowTitle('Create scalar token binding'); self.resize(900,650)
@@ -154,9 +196,14 @@ class ParameterizeDialog(QDialog):
         self.files.currentTextChanged.connect(self._source_changed)
         for widget in (self.line,self.occurrence): widget.valueChanged.connect(self._preview)
         def selected_literal():
-            cursor=self.source.textCursor(); selected=cursor.selectedText()
-            self.line.setValue(self.sources[self.files.currentText()][:cursor.selectionStart()].count('\n')+1)
-            self.literal.setText(selected); self._preview()
+            cursor=self.source.textCursor(); selected=cursor.selectedText(); start=QTextCursor(cursor)
+            start.setPosition(cursor.selectionStart()); end=QTextCursor(cursor); end.setPosition(cursor.selectionEnd())
+            if start.blockNumber()!=end.blockNumber(): self.error.setText('Select one complete numeric scalar on one source line.'); return
+            line=start.block().text(); position=len(line.encode('utf-16-le')[:start.positionInBlock()*2].decode('utf-16-le'))
+            try:
+                spans=scalar_literal_occurrences(line,selected); occurrence=spans.index((position,position+len(selected)))+1
+            except (ValueError,UnicodeError): self.error.setText('Select one complete numeric scalar on one source line.'); return
+            self.line.setValue(start.blockNumber()+1); self.literal.setText(selected); self.occurrence.setValue(occurrence); self._preview()
         use_selection.clicked.connect(selected_literal)
         # textEdited preserves native composition and only previews committed text.
         self.literal.textEdited.connect(self._preview); self.token.textEdited.connect(self._preview); self._source_changed()
@@ -167,11 +214,11 @@ class ParameterizeDialog(QDialog):
         try:
             lines=self.sources[self.files.currentText()].splitlines(); line=lines[self.line.value()-1]
             literal=self.literal.text(); token=self.token.text().strip(); occurrence=self.occurrence.value()
-            if not literal or not token.isidentifier() or '<' in token: raise ValueError('Enter an exact literal and an identifier token.')
-            pieces=line.split(literal)
-            if len(pieces)<=occurrence: raise ValueError('The requested occurrence is absent on this line.')
-            start=sum(len(piece)+len(literal) for piece in pieces[:occurrence])-len(literal)
-            self.preview.setText(line+'\n→ '+line[:start]+'<'+token+'>'+line[start+len(literal):])
+            if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*',token): raise ValueError('Enter an exact numeric literal and an ASCII identifier token.')
+            spans=scalar_literal_occurrences(line,literal)
+            if len(spans)<occurrence: raise ValueError('The requested exact scalar occurrence is absent on this line.')
+            start,end=spans[occurrence-1]
+            self.preview.setText(line+'\n→ '+line[:start]+'<'+token+'>'+line[end:])
             self.binding=dict(token=token,source_path=self.files.currentText(),line_number=self.line.value(),expected_line=line,old_literal=literal,occurrence=occurrence)
             self.error.clear()
         except (ValueError,IndexError) as exc: self.binding=None; self.preview.clear(); self.error.setText(str(exc))

@@ -13,12 +13,13 @@ class ParallelCoordinatesWidget(PlotWidget):
         for label,callback in [('Move left',lambda:self._move(-1)),('Move right',lambda:self._move(1)),('Reset brushes',self.reset_brushes)]:
             button=QPushButton(label); button.clicked.connect(callback); row.addWidget(button)
         self.controls.addLayout(row)
-        self.records=[]; self.variables=[]; self.response_ids=[]; self.units={}; self.order=[]; self.brushes={}; self._press=None
+        self.records=[]; self.all_records=[]; self.variables=[]; self.response_ids=[]; self.units={}; self.order=[]; self.brushes={}; self._press=None
         self.canvas.mpl_connect('button_press_event',self._start_brush)
         self.canvas.mpl_connect('button_release_event',self._end_brush)
 
-    def set_study(self,records,variables,response_ids,units):
+    def set_study(self,records,variables,response_ids,units,all_records=None):
         self.records=list(records); self.variables=list(variables); self.response_ids=list(response_ids); self.units=dict(units)
+        self.all_records=list(all_records) if all_records is not None else self.records
         keys=[v.id for v in variables]+list(response_ids)
         self.order=[k for k in self.order if k in keys]+[k for k in keys if k not in self.order]
         old=self.axis.currentText(); self.axis.clear(); self.axis.addItems(self.order); self.axis.setCurrentText(old)
@@ -41,7 +42,7 @@ class ParallelCoordinatesWidget(PlotWidget):
     def _end_brush(self,event):
         if self._press and event.inaxes==self.ax and event.ydata is not None:
             axis,start=self._press; self.brushes[self.order[axis]]=tuple(sorted((start,event.ydata)))
-            ids=[r.point_id for r,values in self._normalized() if all(lo<=values[self.order.index(key)]<=hi for key,(lo,hi) in self.brushes.items())]
+            ids=[r.point_id for r,values in self._normalized(records=self.all_records) if all(lo<=values[self.order.index(key)]<=hi for key,(lo,hi) in self.brushes.items())]
             self.filter_changed.emit(ids); self.refresh()
         self._press=None
 
@@ -56,13 +57,13 @@ class ParallelCoordinatesWidget(PlotWidget):
             elif variable and hasattr(variable,'lower') and variable.lower is not None:
                 scales[key]=('log' if getattr(variable,'transform','linear')=='log' else 'linear',(variable.lower,variable.upper))
             else:
-                values=[r.observations[key] for r in self.records if key in r.observations]
+                values=[r.observations[key] for r in self.all_records if key in r.observations]
                 scales[key]=('linear',(min(values),max(values))) if values else ('linear',(0.,1.))
         return scales
 
-    def _normalized(self,scales=None):
+    def _normalized(self,scales=None,records=None):
         scales=scales or self._scales(); result=[]
-        for record in self.records:
+        for record in self.records if records is None else records:
             values=[]
             for key in self.order:
                 value=record.physical_values.get(key,record.observations.get(key)); kind,domain=scales[key]

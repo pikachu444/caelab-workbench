@@ -1,19 +1,24 @@
 """Point-ID linked Pareto projections; dominance comes only from the full study."""
 from __future__ import annotations
 import numpy as np
-from PySide6.QtWidgets import QHBoxLayout, QComboBox, QLabel, QStackedWidget
+from PySide6.QtWidgets import QHBoxLayout,QGridLayout,QComboBox,QLabel,QWidget,QSizePolicy
 from .plot_base import PlotWidget, Native3D
 
 
 class ParetoFrontWidget(PlotWidget):
     def __init__(self, parent=None, is_dark=True):
         super().__init__(parent, is_dark)
-        row=QHBoxLayout()
+        row=QGridLayout()
         self.dimension=QComboBox(); self.dimension.addItems(['2D', '3D'])
-        row.addWidget(self.dimension)
-        self.axes=[]
-        for label in ('X','Y','Z'):
-            row.addWidget(QLabel(label)); combo=QComboBox(); row.addWidget(combo,1); self.axes.append(combo)
+        row.addWidget(self.dimension,0,0)
+        self.axes=[]; self.axis_groups=[]
+        for i,label in enumerate(('X','Y','Z')):
+            group=QWidget(); line=QHBoxLayout(group); line.setContentsMargins(0,0,0,0)
+            line.addWidget(QLabel(label)); combo=QComboBox(); combo.setMinimumContentsLength(4)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+            combo.setMinimumWidth(60); line.addWidget(combo,1); self.axes.append(combo); self.axis_groups.append(group)
+            row.addWidget(group,0,i+1) if i<2 else row.addWidget(group,1,1,1,2)
             combo.currentIndexChanged.connect(self.refresh)
         self.controls.addLayout(row)
         self.native=Native3D(self)
@@ -45,6 +50,8 @@ class ParetoFrontWidget(PlotWidget):
     def refresh(self, *args):
         if not hasattr(self,'records'): return
         use3=self.dimension.currentText()=='3D'
+        self.axis_groups[2].setVisible(use3)
+        for combo in self.axes: combo.setToolTip(combo.currentText())
         self.native.setVisible(use3 and self.native.available)
         self.canvas.setVisible(not use3 or not self.native.available)
         keys=[c.currentData() for c in self.axes[:3 if use3 else 2]]

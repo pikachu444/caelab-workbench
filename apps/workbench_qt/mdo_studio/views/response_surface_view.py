@@ -1,6 +1,7 @@
 """Debounced, revision-checked surrogate slices with native VTK 3D rendering."""
 from __future__ import annotations
 from dataclasses import dataclass
+from threading import Event
 import numpy as np
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QFormLayout, QComboBox, QLabel, QDoubleSpinBox, QWidget, QCheckBox
@@ -13,9 +14,9 @@ class SliceSignals(QObject):
 
 
 class SliceTask(QRunnable):
-    def __init__(self,token,artifact,space,xid,yid,response,fixed):
+    def __init__(self,token,artifact,space,xid,yid,response,fixed,cancel):
         super().__init__(); self.token=token; self.artifact=artifact; self.space=space
-        self.xid,self.yid,self.response,self.fixed=xid,yid,response,dict(fixed); self.signals=SliceSignals()
+        self.xid,self.yid,self.response,self.fixed=xid,yid,response,dict(fixed); self.signals=SliceSignals(); self.cancel=cancel
 
     def run(self):
         try:
@@ -24,12 +25,14 @@ class SliceTask(QRunnable):
             def grid(v): return np.geomspace(v.lower,v.upper,32) if getattr(v,'transform','linear')=='log' else np.linspace(v.lower,v.upper,32)
             x,y=np.meshgrid(grid(xv),grid(yv)); physical=[]
             for xx,yy in zip(x.ravel(),y.ravel()):
+                if self.cancel.is_set(): self.signals.done.emit(self.token,None,'cancelled'); return
                 values=dict(self.fixed); values[self.xid]=float(xx); values[self.yid]=float(yy)
                 encoded=self.space.encode(values)
                 physical.append(encoded)
             # Study service trains on the same VariableSpace encoded feature order.
             inputs=np.array([getattr(p,'vector',getattr(p,'encoded',p)) for p in physical],dtype=float)
             prediction=predict(self.artifact,inputs)
+            if self.cancel.is_set(): self.signals.done.emit(self.token,None,'cancelled'); return
             index=prediction.response_ids.index(self.response)
             mean=prediction.mean[:,index].reshape(x.shape)
             mean=np.where(prediction.domain_warning.reshape(x.shape),np.nan,mean)
@@ -51,6 +54,7 @@ class ResponseSurfaceWidget(PlotWidget):
         self.native=Native3D(self); self.layout.insertWidget(self.layout.indexOf(self.canvas)+1,self.native,1)
         self.native.setVisible(self.native.available); self.canvas.setVisible(not self.native.available)
         self.artifact=None; self.space=None; self.records=[]; self.units={}; self._token=0; self._controls={}; self._fixed_values={}; self._result=None
+        self._running=False; self._running_token=None; self._pending=None; self._cancel=None
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(180); self.timer.timeout.connect(self._dispatch)
         for combo in (self.xaxis,self.yaxis): combo.currentIndexChanged.connect(self._axes_changed)
         self.response.currentIndexChanged.connect(self.schedule); self.uncertainty.toggled.connect(self._draw_result)
@@ -60,6 +64,8 @@ class ResponseSurfaceWidget(PlotWidget):
             self.records=list(records); self.units=dict(units)
             return
         self._token+=1; self.timer.stop()
+        self._pending=None
+        if self._cancel: self._cancel.set()
         self._result=None
         self.artifact,self.space,self.records,self.units=artifact,space,list(records),dict(units)
         continuous=[v for v in space.variables if hasattr(v,'lower') and hasattr(v,'initial') and not hasattr(v,'values')]
@@ -93,25 +99,41 @@ class ResponseSurfaceWidget(PlotWidget):
         self.schedule()
 
     def schedule(self,*args):
-        self._token+=1; self.timer.start()
+        self._token+=1
+        if self._cancel: self._cancel.set()
+        self.timer.start()
 
     def _dispatch(self):
         if not self.artifact:
+            self._pending=None
             self.empty('Train and validate a surrogate to view a response slice.'); self.native.clear(); return
         xid,yid=self.xaxis.currentData(),self.yaxis.currentData()
         if not xid or not yid or xid==yid:
             self.empty('A 3D slice requires two different continuous variables.'); self.native.clear(); return
         fixed={v.id:v.initial for v in self.space.variables if hasattr(v,'initial')}
         for key,widget in self._controls.items(): fixed[key]=widget.currentData() if isinstance(widget,QComboBox) else widget.value()
-        task=SliceTask(self._token,self.artifact,self.space,xid,yid,self.response.currentData(),fixed)
+        request=(self._token,self.artifact,self.space,xid,yid,self.response.currentData(),fixed)
+        if self._running:
+            self._pending=request
+            if self._cancel: self._cancel.set()
+            return
+        self._start_task(request)
+
+    def _start_task(self,request):
+        self._running=True; self._running_token=request[0]; self._cancel=Event()
+        task=SliceTask(*request,self._cancel)
         task.signals.done.connect(self._receive); self.note.setText('Computing surrogate slice… solver is not called.')
         QThreadPool.globalInstance().start(task)
 
     def _receive(self,token,result,error):
-        if token!=self._token: return
-        if error:
+        if token!=self._running_token: return
+        self._running=False; self._running_token=None
+        if token==self._token and error and error!='cancelled':
             self.empty('Slice prediction unavailable'); self.note.setText(error); return
-        self._result=result; self._draw_result()
+        if token==self._token and not error:
+            self._result=result; self._draw_result()
+        pending,self._pending=self._pending,None
+        if pending is not None and pending[0]==self._token: self._start_task(pending)
 
     def _draw_result(self,*args):
         if self._result is None: return
@@ -139,4 +161,6 @@ class ResponseSurfaceWidget(PlotWidget):
         self.ax.plot(values,prediction.mean[:,index],label='GP prediction'); self.ax.legend(); self.canvas.draw_idle()
 
     def closeEvent(self,event):
-        self._token+=1; self.timer.stop(); self.native.close(); super().closeEvent(event)
+        self._token+=1; self.timer.stop(); self._pending=None
+        if self._cancel: self._cancel.set()
+        self.native.close(); super().closeEvent(event)

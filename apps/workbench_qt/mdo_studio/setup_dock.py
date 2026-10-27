@@ -134,7 +134,8 @@ class SetupDockWidget(QWidget):
     def display_record(self, record: DesignPointRecord | None, units=None) -> None:
         self._current_record = record
         units=units or {}
-        for button in (self.btn_confirm,self.btn_attempts,self.btn_result): button.setEnabled(record is not None)
+        self.btn_attempts.setEnabled(record is not None)
+        self.btn_confirm.setEnabled(False); self.btn_result.setEnabled(False)
         if record is None:
             self.lbl_title.setText("Selected Design Point: None")
             self.lbl_status.setText("—")

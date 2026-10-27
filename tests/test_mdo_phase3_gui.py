@@ -7,14 +7,15 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt,QEvent,QPersistentModelIndex
 from PySide6.QtGui import QInputMethodEvent
-from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox
+from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox,QPushButton,QDialog
 from caelab.workbench import Workbench
 from caelab.mdo.study_manager import StudyManager,DesignPointRecord
 from caelab.mdo.variables import ContinuousVariable,VariableSpace
 from caelab.mdo.objectives import ObjectiveSpec
 from apps.workbench_qt.mdo_studio.window import MDOStudioWindow,startup_service
 from apps.workbench_qt.mdo_studio.design_points_model import DesignPointsTableModel,DesignPointsProxyModel
-from apps.workbench_qt.mdo_studio.study_config import StudyConfigEditor,ParameterizeDialog
+from apps.workbench_qt.mdo_studio.study_config import StudyConfigEditor,ParameterizeDialog,SurrogateTrainingDialog
+from test_mdo_phase3_service import service as native_service,measured
 
 
 @pytest.fixture(scope='session')
@@ -48,7 +49,7 @@ def win(qapp,monkeypatch):
 
 def test_five_views_and_numeric_sort_id_selection(win,qapp):
     assert win.viz_tabs.count()==5
-    mass_col=8+len(win.tdp_model.parameter_keys)
+    mass_col=win.tdp_model.ParameterStart+len(win.tdp_model.parameter_keys)
     win.tdp_proxy.sort(mass_col,Qt.SortOrder.AscendingOrder)
     first=win.tdp_proxy.index(0,0).data(DesignPointsTableModel.PointIdRole)
     assert first==win.study.records[1].point_id
@@ -142,7 +143,7 @@ def test_10k_scalar_snapshot_sort_filter(qapp):
     assert model.columnCount()==32
     # A generous deterministic guard; native 10k×30 latency is measured separately on Windows.
     assert time.perf_counter()-start<5
-    proxy=DesignPointsProxyModel(); proxy.setSourceModel(model); proxy.sort(28,Qt.SortOrder.AscendingOrder)
+    proxy=DesignPointsProxyModel(); proxy.setSourceModel(model); proxy.sort(model.ParameterStart+20,Qt.SortOrder.AscendingOrder)
     assert proxy.index(0,0).data(model.PointIdRole)=='point-9999'
     proxy.set_filters(text='Point 9999'); assert proxy.rowCount()==1
     # Opening a study with fewer columns must retire the prior response-column sort.
@@ -160,3 +161,134 @@ def test_readonly_startup_never_creates_or_autoloads_wrong_relation():
     calls.clear(); startup_service(wb,project=project,node_id='node',read_only=True)
     assert calls[0][0]=='relation.json' and calls[0][1]['read_only']
     with pytest.raises(ValueError,match='requires'): startup_service(wb,read_only=True)
+
+
+def test_point_numeric_sort_at_ten_thousand_and_insertion(qapp):
+    rows=[DesignPointRecord(point_id=f'point-{i}',index=i,name=f'Point {i}',physical_values={}) for i in range(1,10001)]
+    model=DesignPointsTableModel(rows); proxy=DesignPointsProxyModel(); proxy.setSourceModel(model)
+    proxy.sort(0,Qt.SortOrder.AscendingOrder)
+    assert proxy.index(9999,0).data(model.SortRole)==10000
+    proxy.sort(0,Qt.SortOrder.DescendingOrder); assert proxy.index(0,0).data(model.SortRole)==10000
+    model.update_record(DesignPointRecord(point_id='new',index=10001,name='new',physical_values={}))
+    assert proxy.index(0,0).data(model.SortRole)==10001
+
+
+def test_exact_scalar_preview_selection_crlf_and_unicode(qapp):
+    source='** 한글 😀\r\n'*20+'*ELASTIC\r\n10,1,1\r\n'
+    dialog=ParameterizeDialog({'C:/external/scalars.inp':source}); dialog.token.setText('A')
+    first=dialog.source.document().find('1',dialog.source.document().find('10,'))
+    second=dialog.source.document().find('1',first); dialog.source.setTextCursor(second)
+    next(button for button in dialog.findChildren(QPushButton) if button.text()=='Use selected scalar literal').click()
+    assert dialog.line.value()==22 and dialog.occurrence.value()==2
+    assert dialog.binding['expected_line']=='10,1,1' and dialog.preview.text().endswith('10,1,<A>')
+    dialog.close()
+
+
+def test_filters_change_visible_plot_population(win):
+    win.select_point(win.study.records[1].point_id); win.search.setText('한글 설계점 2'); win._update_visualizations()
+    assert [r.point_id for r in win.pareto_view.records]==[win.study.records[1].point_id]
+    assert '1 / 3' in win.plot_filter_label.text() and 'name:' in win.plot_filter_label.text()
+
+
+def test_surface_single_inflight_and_latest_pending(qapp,monkeypatch):
+    from apps.workbench_qt.mdo_studio.views import response_surface_view as module
+    pool=SimpleNamespace(tasks=[],start=lambda task:pool.tasks.append(task))
+    monkeypatch.setattr(module.QThreadPool,'globalInstance',lambda:pool)
+    widget=module.ResponseSurfaceWidget(); space=ServiceSpy().study.space
+    artifact=SimpleNamespace(dataset=SimpleNamespace(response_ids=('response',)))
+    widget.set_study(artifact,space,[],{}); widget.timer.stop(); widget._dispatch()
+    assert len(pool.tasks)==1
+    for _ in range(5): widget._token+=1; widget._dispatch()
+    assert len(pool.tasks)==1 and pool.tasks[0].cancel.is_set()
+    latest=widget._token; widget._receive(pool.tasks[0].token,None,'cancelled')
+    assert len(pool.tasks)==2 and pool.tasks[1].token==latest
+    widget.close()
+
+
+def test_train_editor_and_revision_resource_sensitivity_integration(native_service,qapp,monkeypatch):
+    service=native_service; measured(service,np.linspace(1,3.2,12)); service.workbench.jobs.close=lambda:True
+    win=MDOStudioWindow(service=service)
+    def configure_dialog(dialog):
+        dialog.method.setCurrentText('prs'); dialog.seed.setValue(17); dialog.validation_seed.setValue(9); dialog.fraction.setValue(.25)
+        for row in range(dialog.responses.rowCount()): dialog.responses.item(row,3).setText('1e-5')
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(SurrogateTrainingDialog,'exec',configure_dialog)
+    win._train(); deadline=time.monotonic()+10
+    while (win._busy or not win.progress_bar.isHidden()) and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    assert service.training_report['split_policy']['seed']==9 and service.training_report['qualification_limits']==[1e-5]*3
+    win.viz_tabs.setCurrentIndex(3); win._update_visualizations()
+    from caelab.mdo.sensitivity import SensitivityConfig
+    win.tornado_view.config=SensitivityConfig(method='sobol',base_samples=8,resamples=20,max_evaluations=1000)
+    win.search.setText('Point 1'); win.tornado_view.method_selector.setCurrentIndex(1)
+    next(button for button in win.tornado_view.findChildren(QPushButton) if button.text()=='Analyze').click()
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        qapp.processEvents()
+        if win.tornado_view.report and win.tornado_view.report['method']=='sobol': break
+        time.sleep(.01)
+    report=win.tornado_view.report
+    assert report['source_mode']=='SURROGATE' and report['native_calls']==0 and report['sample_count']==24
+    assert len(report['paired_rows'])==24 and report['point_ids']==[]
+    assert 'visual filter is not applied' in win.tornado_view.note.text()
+    win.tornado_view.experiment.setCurrentIndex(win.tornado_view.experiment.findData(report['experiment_id']))
+    win.search.setText('Point 2'); win._update_visualizations()
+    deadline=time.monotonic()+5
+    while win._sensitivity_running and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    assert win.tornado_view.report['experiment_id']==report['experiment_id']
+    old_revision=service.revision
+    from dataclasses import replace
+    space=VariableSpace(variables=(replace(service.study.space.variables[0],unit='cm'),))
+    win._configure_study(space,service.study.objectives,service.study.constraints,service.response_units)
+    assert win.tdp_proxy.rowCount()==0
+    win.revision_selector.setCurrentIndex(win.revision_selector.findData(old_revision)); win.search.clear()
+    assert win.tdp_proxy.rowCount()==12 and win.tdp_model.units['width']=='mm'
+    assert not win.act_run.isEnabled() and not win.act_confirm.isEnabled() and not win.setup_widget.btn_confirm.isEnabled()
+    win.select_point(service.study.records[0].point_id)
+    def accept_current_values(dialog):
+        from PySide6.QtWidgets import QDoubleSpinBox
+        values=dialog.findChildren(QDoubleSpinBox)
+        assert values and 'Clone into current revision' in dialog.windowTitle()
+        values[0].setValue(2.5)
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(QDialog,'exec',accept_current_values)
+    win._clone_selected(); deadline=time.monotonic()+5
+    while win._busy and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    assert win._display_revision==service.revision and service.study.records[-1].physical_values['width']==2.5
+    assert service.study.records[-1].source_point_id==service.study.records[0].point_id
+    win._busy=None; win.close(); qapp.processEvents()
+
+
+def test_saved_selection_after_layout_and_narrow_preserves_manual_viewport(qapp):
+    from pathlib import Path
+    from PySide6.QtGui import QFontDatabase
+    # Windows' offscreen plugin has an empty font database; load installed fonts for geometry.
+    if not QFontDatabase.families():
+        for name in ('segoeui.ttf','malgun.ttf'):
+            path=Path('C:/Windows/Fonts')/name
+            if path.is_file(): QFontDatabase.addApplicationFont(str(path))
+    service=ServiceSpy()
+    for i in range(300): service.study.add_point(dict(x=2.,y=2.),name=f'Candidate {i}')
+    last=service.study.records[-1]; service.view_state=dict(selected_ids=[last.point_id],tab=0)
+    window=MDOStudioWindow(service=service); window.resize(1440,960); window.show()
+    def settle():
+        end=time.monotonic()+.12
+        while time.monotonic()<end: qapp.processEvents(); time.sleep(.005)
+    settle(); window.resize(960,720); settle()
+    selected=window.tdp_table.selectionModel().selectedRows()[0]
+    assert window.width()==960 and window.tdp_table.viewport().rect().intersects(window.tdp_table.visualRect(selected))
+    window.tdp_table.scrollToTop(); settle(); before=window.tdp_table.verticalScrollBar().value()
+    window._pending_records[last.point_id]=last; window._flush_deltas(); settle()
+    assert window.tdp_table.verticalScrollBar().value()==before
+    assert not window.tdp_table.viewport().rect().intersects(window.tdp_table.visualRect(window.tdp_table.selectionModel().selectedRows()[0]))
+    window.close(); qapp.processEvents()
+
+
+def test_readonly_setup_commands_stay_disabled_after_restore(qapp):
+    service=ServiceSpy(); service.read_only=True; service.view_state=dict(selected_ids=[service.study.records[0].point_id])
+    window=MDOStudioWindow(service=service,read_only=True)
+    assert not window.act_confirm.isEnabled() and not window.setup_widget.btn_confirm.isEnabled()
+    assert not window.setup_widget.btn_apply_current.isEnabled() and not window.setup_widget.btn_result.isEnabled()
+    window._input_context()
+    for button in window.setup_widget.context_tabs.widget(1).findChildren(QPushButton):
+        if button.text() in ('Open Native Input…','Create Scalar Token…'): assert not button.isEnabled()
+    window.close(); qapp.processEvents()
