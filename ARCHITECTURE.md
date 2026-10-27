@@ -1,6 +1,6 @@
 # 구조
 
-2026-10-27 최신 설계 반영: 기존 `caelab/numerical/`과 레거시 최적화 패널은 [새 MDO 명세](docs/specs/spec-clean-slate-mdo-design.md)에 따라 제거되어 수치 API가 `caelab/mdo/`로 옮겨졌다. 8대 수치 코어를 갖춘 `caelab/mdo/` 엔진과 3대 작업 영역의 독립 MDO Studio(`apps/workbench_qt/mdo_studio/`)가 새로 구축되었으며, Workbench·JobManager·네이티브 판독 경계를 유지한다. 독립 실행(`python -m apps.workbench_qt.mdo_studio`) 및 메인 윈도우 메뉴 연동이 완료되었다.
+2026-10-27 MDO Phase 3 구현 후보: 수치 API는 `caelab/mdo/`, 실행·저장·출처·현재 설계 적용은 `MDOStudyService`가 소유한다. 독립 Studio는 Study Tree, Setup Dock, 설계점 표, 다섯 시각화 영역을 제공한다. 부모/보조 창 → Workbench → 독립 프로세스와 Studio → 서비스 → JobManager 경계를 유지한다. 실제 검증 결과와 미완료 인도 조건은 CURRENT_STATE에 구분한다.
 
 기준은 이 저장소 DESIGN.md의 제품 정의와 5가지 결정입니다. 본문 정합성 개정일은 2026-10-23입니다. 목표 구조와 현재 구현을 구분하며, 기존 저장소의 문서는 이식 근거 자료로만 사용합니다.
 
@@ -30,13 +30,16 @@
 - 새 MDO 수치 엔진 (`caelab/mdo`): 변수·목적함수·제약·DOE·대리모델(Kriging/RBF/PRS)·최적화(SLSQP/DE/NSGA-II)·Pareto·민감도(Sobol/Morris) 8대 코어와 StudyManager, INP 파라메트릭 덱 바인딩(`TemplateDeck`), 결과 스칼라 축소 추출(`responses.py`)의 구현을 제공한다. API 존재와 GUI 연결·실제 솔버 검증 완료는 구분한다. Qt나 레거시 코드를 일절 가져오지 않으며, 선택적 라이브러리는 안전한 런타임 검사로 관리된다.
 - 기존 수치 경로: 레거시 수치 구현과 `optimization_panel.py`는 제거되었다. `caelab/numerical`에는 보존용 `__init__.py`와 안내용 AGENTS만 남았으며, 모든 기능은 `caelab/mdo/`로 전면 이관되었다.
 - PDE 라인: `caelab/pde` — FEniCSx(dolfinx) 실행 환경. 공통 모델 스키마에 넣지 않고 자체 형식을 유지한다.
-- GUI: PySide6 (`apps/workbench_qt`). 부모는 빈 프로젝트에서 사용자 파일과 여러 프로그램 상자를 등록·연결하는 화면입니다. `native_analysis`의 별도 프로세스에서 실제 INP를 읽기 전용으로 확인하고 비동기 계산·취소·실행 선택·로그·결과 프레임을 조회합니다. 현재 입력과 조회 중인 과거 실행은 구분하며 파일 선택이나 프로젝트 재열기로 계산하지 않습니다. `expert_window`는 별도 진입점과 대화 문서를 가지며 자료 미리보기와 질문 근거 선택을 분리합니다. MDO Studio(`apps/workbench_qt/mdo_studio/`)는 독립 프로세스 실행(`python -m apps.workbench_qt.mdo_studio`)과 `MainWindow` 메뉴 액션 연동이 완료되어, 스터디 설정 독, 평가 매트릭스 테이블, 3-Tab 분석 대시보드(Pareto, Kriging Response Surface, Spearman 순위 상관)를 제공합니다.
+- GUI: PySide6 (`apps/workbench_qt`). 부모는 빈 프로젝트에서 사용자 파일과 여러 프로그램 상자를 등록·연결하는 화면입니다. `native_analysis`의 별도 프로세스에서 실제 INP를 읽기 전용으로 확인하고 비동기 계산·취소·실행 선택·로그·결과 프레임을 조회합니다. 현재 입력과 조회 중인 과거 실행은 구분하며 파일 선택이나 프로젝트 재열기로 계산하지 않습니다. `expert_window`는 별도 진입점과 대화 문서를 가지며 자료 미리보기와 질문 근거 선택을 분리합니다. MDO Studio(`apps/workbench_qt/mdo_studio/`)는 `--study`, `--project`/`--node`, `--read-only` 진입점을 제공합니다. Tree/Setup은 이름 있는 독, 중앙은 설계점 표와 Pareto·Parallel·Surface·Sensitivity·Convergence 탭입니다. 숫자 스냅샷과 ID 기반 프록시가 정렬·필터·선택을 연결하고, 계산·모델 학습·표면 예측은 작업 스레드에서 수행합니다. VTK를 사용할 수 없는 환경의 표면은 명시적인 2D 대체 표시이며 3D 검증 통과로 세지 않습니다.
 
 ## MDO 입력·출처 경계
 
 - 연구는 사용자 CalculiX 덱의 명시적 토큰을 바인딩한다. 토큰 치환으로 외부 CAD가 갱신되거나 재메시된다고 가정하지 않는다.
 - GE 예제는 미계산 목표 사양이다. 합성 관측값·난수 시간과 암묵적 테스트 큐브 실행은 제품 결과 경로에 두지 않는다.
-- GUI 차트는 계산 표본의 Pareto, GP 예측 슬라이스, Spearman 상관을 구분한다. 코어의 NSGA-II·Sobol API가 있다는 이유로 GUI에서 자동 실행된다고 설명하지 않는다.
+- 실제 설계점과 대리모델 후보를 구분한다. 제약 탐색은 저장된 모델을 사용하고 실제 확인은 별도 JobManager 실행이다. 현재 설계 재해석도 적용과 별도 명령이며 그 실행의 전체 필드 파일을 ParaView에 전달한다.
+- 서비스가 관리하는 실제 응답 판정은 종료 코드·원로그·최종 STA 단계/시간·완전한 FRD 필드·입출력 해시를 함께 확인한다. 현재 완료 판정으로 검증한 부분집합은 기본/단위 시간의 기계 정적 단계이며, 비단위 시간·다른 절차를 정상 완료로 추측하지 않는다. 원 솔버 실행 기록은 보존한다.
+- 현재 설계 적용은 원본과 INCLUDE의 해시 확인, 각 파일 백업, 저널, 임시 파일과 원자적 치환, 메타데이터 커밋을 잠금 범위 안에서 수행한다. 다중 파일 시스템 전체의 원자성을 주장하지 않으며 중단 시 저널로 복구한다. 실패 시 이전 current-point와 current-rerun 관계도 보존한다.
+- 프로젝트 연관 스터디의 실제 실행은 부모의 평평한 RunStore에 저장한다. 스터디 Save As는 부모 관계를 바꾸지 않는 독립 복사본이며 JSON과 `.mdo-data`가 소유 모델·실행을 함께 보존한다. 소유 경로는 상대 참조, 외부 INP는 원본 참조를 유지한다. 읽기 전용 열기는 저장·복구 쓰기를 수행하지 않는다.
 - 실제 사용자 절차와 출력 단위는 [CalculiX MDO 가이드](docs/tutorials/01_end_to_end_calculix_mdo_guide.md), 검증 상태는 CURRENT_STATE를 따른다.
 
 프로그램 노드의 `mdo_study` 파일 역할은 저장된 스터디 관계를 나타냅니다. 프로젝트 재열기에서 이를 보존하고, 메타데이터의 변경·누락은 `issues`로 알리되 솔버 입력·결과와 연결된 후속 프로그램을 무효화하지 않습니다. 이 역할을 물리 입력·출력 연결로 지정할 수는 없습니다.
