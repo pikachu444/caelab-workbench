@@ -4,7 +4,7 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from types import SimpleNamespace
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication,QWidget,QLabel
+from PySide6.QtWidgets import QApplication,QWidget,QLabel,QTabWidget
 from vtkmodules.vtkRenderingCore import vtkRenderWindow,vtkRenderWindowInteractor
 from apps.workbench_qt.mdo_studio.views.plot_base import Native3D,axis_label_layout
 from apps.workbench_qt.mdo_studio.views.pareto_view import ParetoFrontWidget
@@ -41,7 +41,7 @@ def vtk_widget(qapp,monkeypatch):
 
 
 def camera_state(camera):
-    return camera.GetPosition(),camera.GetFocalPoint(),camera.GetViewUp(),camera.GetParallelProjection(),camera.GetParallelScale()
+    return camera.GetPosition(),camera.GetFocalPoint(),camera.GetViewUp(),camera.GetParallelProjection(),camera.GetParallelScale(),camera.GetWindowCenter(),camera.GetViewAngle()
 
 
 def test_native_style_camera_ranges_and_redraw_preserve_user_view(vtk_widget):
@@ -74,6 +74,199 @@ def test_constant_axis_is_explicit_and_keeps_exact_original_range(vtk_widget):
     for i,value in enumerate((1e-4,.05,200.)): assert (ranges[2*i]+ranges[2*i+1])/2==pytest.approx(value)
     actor=next(iter(view.actors)); assert actor.GetBounds()==pytest.approx((.5,.5,.5,.5,.5,.5))
     view.close()
+
+
+def test_surface_material_normals_preserve_finite_cell_mask_and_values(vtk_widget):
+    view=Native3D(); x,y=np.meshgrid(np.arange(4.),np.arange(4.)); z=x+y; z[0,0]=np.nan
+    view.surface(x,y,z); actor=view.renderer.GetActors().GetLastActor(); actor.GetMapper().Update(); data=actor.GetMapper().GetInput()
+    assert data.GetNumberOfPoints()==16 and data.GetNumberOfCells()==8
+    assert data.GetPointData().GetNormals() is not None
+    for i in range(data.GetNumberOfCells()):
+        assert all(np.isfinite(data.GetPoint(data.GetCell(i).GetPointId(j))).all() for j in range(data.GetCell(i).GetNumberOfPoints()))
+    np.testing.assert_allclose(np.array([data.GetPoint(i) for i in range(16)]),np.column_stack((x.ravel(),y.ravel(),z.ravel())),equal_nan=True)
+    prop=actor.GetProperty(); assert prop.GetAmbient()==.65 and prop.GetDiffuse()==.35
+    assert not prop.GetBackfaceCulling() and not prop.GetFrontfaceCulling() and view.renderer.GetTwoSidedLighting()
+    view.close()
+
+
+def assert_annotation_pixels_match_boxes(view,tmp_path):
+    """Check real VTK glyph pixels, not only a mathematical overlap oracle."""
+    from PIL import Image,ImageDraw
+    from vtkmodules.vtkRenderingCore import vtkWindowToImageFilter
+    from vtkmodules.util.numpy_support import vtk_to_numpy
+    capture=vtkWindowToImageFilter(); capture.SetInput(view.widget.window); capture.Update()
+    width,height=capture.GetOutput().GetDimensions()[:2]
+    pixels=vtk_to_numpy(capture.GetOutput().GetPointData().GetScalars()).reshape(height,width,-1)
+    white=(pixels[:,:,:3]>180).all(axis=2)
+    mask=Image.new('1',(width,height)); draw=ImageDraw.Draw(mask); ratio=view.widget.ratio
+    for item in view.annotation_layout['boxes']:
+        x0,y0,x1,y1=item['box']; padding=2*ratio
+        draw.rectangle((x0-padding,y0-padding,x1+padding,y1+padding),fill=1)
+    yy,xx=np.nonzero(white); points=np.column_stack((xx,yy)); covered=np.array(mask,dtype=bool)[yy,xx]
+    def cover_line(start,end,radius):
+        delta=end-start; length=np.dot(delta,delta)
+        fraction=np.clip((points-start)@delta/length,0,1) if length else np.zeros(len(points))
+        covered[:]|=np.linalg.norm(points-(start+fraction[:,None]*delta),axis=1)<=radius
+    for axis in (view.axes.GetXAxisActor2D(),view.axes.GetYAxisActor2D(),view.axes.GetZAxisActor2D()):
+        p0=np.array(axis.GetPositionCoordinate().GetComputedViewportValue(view.renderer)); p1=np.array(axis.GetPosition2Coordinate().GetComputedViewportValue(view.renderer))
+        # Exclude actual GL line strokes analytically; Pillow's even-width strokes
+        # omit some diagonal caps and lower-edge pixels. Glyph boxes stay unchanged.
+        radius=axis.GetProperty().GetLineWidth()/2+1
+        cover_line(p0,p1,radius)
+        theta=np.arctan2(*(p1-p0)[::-1]); normal=np.array([np.sin(theta),-np.cos(theta)])
+        ticks=axis.GetTickPositions()
+        for i in range(ticks.GetNumberOfPoints()):
+            start=np.array(ticks.GetPoint(i)[:2]); end=start+axis.GetTickLength()*normal
+            cover_line(start,end,radius)
+    unexpected=points[~covered]
+    if len(unexpected):
+        from vtkmodules.vtkIOImage import vtkPNGWriter
+        writer=vtkPNGWriter(); writer.SetFileName(str(tmp_path/'annotation-pixel-mismatch.png')); writer.SetInputConnection(capture.GetOutputPort()); writer.Write()
+    assert not len(unexpected),unexpected[:20].tolist()
+
+
+@pytest.mark.parametrize('width',(620,1038))
+@pytest.mark.parametrize('ratio',(1.,1.5,2.))
+@pytest.mark.parametrize('uncertainty',(False,True))
+def test_real_surface_viewport_material_text_boxes_and_rotated_camera(vtk_widget,tmp_path,width,ratio,uncertainty):
+    view=Native3D(); widget=view.widget; widget.ratio=ratio; widget.resize(width,236)
+    widget.window.SetOffScreenRendering(1); widget.window.SetSize(round(width*ratio),round(236*ratio)); widget.proxy.Render=widget.window.Render
+    widget.interactor.Initialize()
+    x,y=np.meshgrid(np.linspace(7,13,32),np.linspace(3.5,6.5,32)); z=.9/(x+2*y); z[:2,:]=np.nan; z[-2:,:]=np.nan
+    view.surface(x,y,z)
+    if uncertainty:
+        view.surface(x,y,z-.002,(.5,.4,.8),.15); view.surface(x,y,z+.002,(.5,.4,.8),.15)
+    view.finish(['root width [mm]','tip width [mm]','displacement [mm]'])
+    assert view.annotation_layout['valid'],view.annotation_layout
+    assert view.annotation_layout['fit_passes']<=3
+    assert_annotation_pixels_match_boxes(view,tmp_path)
+    initial=camera_state(view.renderer.GetActiveCamera())
+    view.renderer.GetActiveCamera().Azimuth(23); view.renderer.GetActiveCamera().Elevation(10)
+    changed=camera_state(view.renderer.GetActiveCamera()); view._update_annotation_layout()
+    assert camera_state(view.renderer.GetActiveCamera())==changed
+    assert view.annotation_layout['valid'],view.annotation_layout
+    assert_annotation_pixels_match_boxes(view,tmp_path)
+    view.reset_camera(); assert camera_state(view.renderer.GetActiveCamera())==initial
+    assert_annotation_pixels_match_boxes(view,tmp_path)
+    widget.window.Finalize(); view.close()
+
+
+def test_hidden_tab_first_fit_then_user_camera_survives_show_and_redraw(vtk_widget,qapp,monkeypatch):
+    tabs=QTabWidget(); tabs.resize(960,720); tabs.addTab(QWidget(),'Other'); view=Native3D(); tabs.addTab(view,'Surface'); tabs.show(); qapp.processEvents()
+    calls=[]; original=view._fit_camera
+    def fit(**kwargs): calls.append(kwargs); return original(**kwargs)
+    monkeypatch.setattr(view,'_fit_camera',fit)
+    view.points([[1,2,3],[2,3,4]],['a','b']); view.finish(['x','y','z'])
+    assert len(calls)==1 and view._initial_fit_pending and not view.isVisible()
+    tabs.setCurrentIndex(1); qapp.processEvents(); qapp.processEvents()
+    assert len(calls)==2 and not view._initial_fit_pending
+    view.renderer.GetActiveCamera().Azimuth(30); view.renderer.GetActiveCamera().Zoom(1.3)
+    changed=camera_state(view.renderer.GetActiveCamera())
+    tabs.setCurrentIndex(0); tabs.setCurrentIndex(1); qapp.processEvents()
+    view.clear(); view.points([[1,2,3],[2,3,4]],['a','b']); view.finish(['x','y','z'])
+    view.widget.ratio=2.; view._update_annotation_layout()
+    assert len(calls)==2 and camera_state(view.renderer.GetActiveCamera())==changed
+    view.close(); tabs.close()
+
+
+@pytest.mark.parametrize('action',('interaction','explicit_fit','close','replace'))
+def test_pending_initial_fit_respects_user_and_scene_lifecycle(vtk_widget,qapp,monkeypatch,action):
+    view=Native3D(); calls=[]; original=view._fit_camera
+    def fit(**kwargs): calls.append(kwargs); return original(**kwargs)
+    monkeypatch.setattr(view,'_fit_camera',fit)
+    view.points([[1,2,3],[2,3,4]],['a','b']); view.finish(['x','y','z'])
+    if action=='interaction':
+        view.renderer.GetActiveCamera().Azimuth(19); view.widget.interactor.InvokeEvent('StartInteractionEvent')
+    elif action=='explicit_fit': view.reset_camera()
+    before=camera_state(view.renderer.GetActiveCamera()); expected=len(calls); view.show()
+    if action=='close': view.close()
+    elif action=='replace':
+        view.clear(); view.points([[2,4,6],[3,5,7]],['new-a','new-b']); view.finish(['new-x','new-y','new-z']); expected=len(calls)
+    qapp.processEvents(); qapp.processEvents()
+    assert len(calls)==expected
+    if action in ('interaction','explicit_fit'): assert camera_state(view.renderer.GetActiveCamera())==before
+    view.close()
+
+
+@pytest.mark.parametrize('width',(620,1038))
+@pytest.mark.parametrize('ratio',(1.,1.5,2.))
+@pytest.mark.parametrize('points',[[[1e-4,.05,-200.]],[[1e-12,-1e9,-.003],[5e-12,1e9,-.001]],[[-5e-12,-100,-.1],[5e-12,100,.1]]])
+def test_real_annotation_constant_small_large_negative_ranges(vtk_widget,tmp_path,width,ratio,points):
+    view=Native3D(); widget=view.widget; widget.ratio=ratio; widget.resize(width,236)
+    widget.window.SetOffScreenRendering(1); widget.window.SetSize(round(width*ratio),round(236*ratio)); widget.proxy.Render=widget.window.Render; widget.interactor.Initialize()
+    view.points(points,[str(i) for i in range(len(points))]); view.finish(['mass [tonne]','value [N]','stress [MPa]'])
+    assert view.annotation_layout['valid'],view.annotation_layout
+    for axis in (view.axes.GetXAxisActor2D(),view.axes.GetYAxisActor2D(),view.axes.GetZAxisActor2D()):
+        numbers=[item for item in view.annotation_layout['boxes'] if item.get('axis')==axis.GetTitle()]
+        assert len({item['text'] for item in numbers})>=2
+        for point,value in ((axis.GetPositionCoordinate().GetComputedViewportValue(view.renderer),axis.GetRange()[0]),(axis.GetPosition2Coordinate().GetComputedViewportValue(view.renderer),axis.GetRange()[1])):
+            assert any(item['text']==axis.GetLabelFormat()%value and np.linalg.norm(np.array(item['anchor'])-point)<1.5 for item in numbers)
+    assert_annotation_pixels_match_boxes(view,tmp_path)
+    widget.window.Finalize(); view.close()
+
+
+def test_missing_endpoint_supplement_is_exact_not_pickable_and_never_duplicates(vtk_widget,tmp_path):
+    view=Native3D(); widget=view.widget; widget.resize(620,236)
+    widget.window.SetOffScreenRendering(1); widget.window.SetSize(620,236); widget.proxy.Render=widget.window.Render; widget.interactor.Initialize()
+    view.points([[1e-12,-1e9,-.003],[5e-12,1e9,-.001]],['a','b']); view.finish(['x','y','z'])
+    assert view.annotation_layout['supplemental_count']>0
+    for actor in view._endpoint_labels:
+        assert not actor.GetPickable() and not actor.GetUseBounds() and actor not in view.actors
+    count=view.renderer.GetViewProps().GetNumberOfItems()
+    for _ in range(3): view._update_annotation_layout()
+    assert view.renderer.GetViewProps().GetNumberOfItems()==count
+    view.renderer.GetActiveCamera().Azimuth(150); changed=camera_state(view.renderer.GetActiveCamera()); view._update_annotation_layout()
+    assert camera_state(view.renderer.GetActiveCamera())==changed
+    # Every supplementary value stays attached to the correct public endpoint after fly-mode reversal.
+    axes={axis.GetTitle():axis for axis in (view.axes.GetXAxisActor2D(),view.axes.GetYAxisActor2D(),view.axes.GetZAxisActor2D())}
+    for item in view.annotation_layout['boxes']:
+        if not item.get('supplemental'): continue
+        axis=axes[item['axis']]; endpoints=list(zip((axis.GetPositionCoordinate(),axis.GetPosition2Coordinate()),axis.GetRange()))
+        assert any(item['value']==value and np.array_equal(item['anchor'],coordinate.GetComputedViewportValue(view.renderer)) for coordinate,value in endpoints)
+    assert_annotation_pixels_match_boxes(view,tmp_path)
+    view.reset_camera(); assert view.annotation_layout['valid']
+    view.clear(); assert not view._endpoint_labels and not view.actors and view.renderer.GetViewProps().GetNumberOfItems()==0
+    view.points([[1,2,3],[2,3,4]],['normal-a','normal-b']); view.finish(['x','y','z'])
+    assert view.annotation_layout['supplemental_count']==0
+    widget.window.Finalize(); view.close()
+
+
+def test_surface_native_pixels_and_annotation_contrast_are_theme_independent(vtk_widget):
+    from vtkmodules.vtkRenderingCore import vtkWindowToImageFilter
+    from vtkmodules.util.numpy_support import vtk_to_numpy
+    images=[]
+    for dark in (False,True):
+        view=ResponseSurfaceWidget(is_dark=dark); widget=view.native.widget; widget.resize(620,236)
+        view.xaxis.addItem('x [mm]','x'); view.yaxis.addItem('y [mm]','y'); view.response.addItem('disp [mm]','disp'); view.timer.stop()
+        view.artifact=SimpleNamespace(config=SimpleNamespace(method='gp'),dataset=SimpleNamespace(training_revision='1'),qualified=True,metrics=[],id='model')
+        widget.window.SetOffScreenRendering(1); widget.window.SetSize(620,236); widget.proxy.Render=widget.window.Render; widget.interactor.Initialize()
+        x,y=np.meshgrid(np.linspace(7,13,16),np.linspace(3.5,6.5,16)); view._result=(x,y,.9/(x+2*y),None); view._draw_result()
+        view.set_theme(dark)
+        assert view.native.renderer.GetBackground()==(.075,.09,.12)
+        assert '#e2e8f0' in view.native.axis_key.styleSheet() and '#13171e' in view.native.axis_key.styleSheet()
+        capture=vtkWindowToImageFilter(); capture.SetInput(widget.window); capture.Update(); images.append(vtk_to_numpy(capture.GetOutput().GetPointData().GetScalars()).copy())
+        widget.window.Finalize(); view.close()
+    np.testing.assert_array_equal(images[0],images[1])
+
+
+def test_first_fit_waits_for_nonzero_visible_render_size(vtk_widget,qapp):
+    view=Native3D(); view.resize(960,720); view.widget.setFixedSize(0,0)
+    view.points([[1,2,3],[2,3,4]],['a','b']); view.finish(['x','y','z']); view.show()
+    qapp.processEvents(); qapp.processEvents()
+    assert view._initial_fit_pending
+    view.widget.setMaximumSize(16777215,16777215); view.widget.setMinimumSize(0,0); view.widget.resize(620,236)
+    qapp.processEvents(); qapp.processEvents()
+    assert not view._initial_fit_pending
+    view.close()
+
+
+def test_too_small_viewport_reports_residual_clip_after_bounded_fit(vtk_widget):
+    view=Native3D(); widget=view.widget; widget.resize(100,60)
+    widget.window.SetOffScreenRendering(1); widget.window.SetSize(100,60); widget.proxy.Render=widget.window.Render; widget.interactor.Initialize()
+    view.points([[1e-6,-10,-100],[2e-6,-1,100]],['a','b']); view.finish(['x','y','z'])
+    assert not view.annotation_layout['valid'] and view.annotation_layout['fit_passes']<=3
+    assert not view.message.isHidden() and 'Enlarge' in view.message.text()
+    widget.window.Finalize(); view.close()
 
 
 def test_physical_axis_key_updates_wraps_and_dpi_layout_keeps_camera(vtk_widget,qapp):
