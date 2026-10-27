@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import Qt,QEvent,QPersistentModelIndex
 from PySide6.QtGui import QInputMethodEvent
-from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox,QPushButton,QDialog
+from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox,QPushButton,QDialog,QFormLayout
 from caelab.workbench import Workbench
 from caelab.mdo.study_manager import StudyManager,DesignPointRecord
 from caelab.mdo.variables import ContinuousVariable,VariableSpace
@@ -292,3 +292,55 @@ def test_readonly_setup_commands_stay_disabled_after_restore(qapp):
     for button in window.setup_widget.context_tabs.widget(1).findChildren(QPushButton):
         if button.text() in ('Open Native Input…','Create Scalar Token…'): assert not button.isEnabled()
     window.close(); qapp.processEvents()
+
+
+def test_configure_clears_old_selection_and_hidden_history_keeps_frozen_units(native_service,qapp):
+    from dataclasses import replace
+    service=native_service; (record,)=measured(service,(2.,)); service.workbench.jobs.close=lambda:True
+    window=MDOStudioWindow(service=service); window.select_point(record.point_id)
+    assert window.setup_widget.param_layout.itemAt(0,QFormLayout.ItemRole.FieldRole).widget().text()=='2 mm'
+    space=VariableSpace(variables=(replace(service.study.space.variables[0],unit='cm'),))
+    window._configure_study(space,service.study.objectives,service.study.constraints,service.response_units)
+    assert window._selected_ids==set() and window.setup_widget._current_record is None
+    assert window.setup_widget.param_layout.rowCount()==0
+    # Defensive inspection also keeps units correct if a hidden old ID is selected programmatically.
+    window.select_point(record.point_id)
+    assert window._hidden_selection and window.setup_widget._current_record.revision!=service.revision
+    assert window.setup_widget.param_layout.itemAt(0,QFormLayout.ItemRole.FieldRole).widget().text()=='2 mm'
+    assert not window.act_run.isEnabled() and not window.setup_widget.btn_confirm.isEnabled()
+    window.close(); qapp.processEvents()
+
+
+def test_sensitivity_writer_lifecycle_and_selector_generation(win,qapp,monkeypatch):
+    from threading import Event
+    started,finish=Event(),Event(); closed=[]
+    monkeypatch.setattr(win.service,'close',lambda:closed.append(True) or True)
+    win._on_configure(); editor=win._editor; editor.variables.item(0,5).setText('Preserved draft')
+    def analyze():
+        started.set()
+        assert finish.wait(5)
+        return dict(method='spearman',response_id='mass',unit='kg',variable_ids=[],estimates={},source_mode='ACTUAL',sample_count=0,revision='1',native_calls=0)
+    win._sensitivity_job=1
+    win._queue_sensitivity((win._generation,'Sensitivity 1',analyze))
+    assert started.wait(1) and not win.act_new.isEnabled() and not win.act_open.isEnabled()
+    old=win.service; win._on_new_study(); win._on_open_study('not-opened.json')
+    assert win.service is old and not closed and win._editor is editor
+    assert win.close() is False and not closed
+    # Changing selectors invalidates the old result but keeps ownership until that task finishes.
+    win.tornado_view.method_selector.setCurrentIndex(2)
+    assert win._sensitivity_running and win.tornado_view.report is None
+    finish.set(); deadline=time.monotonic()+5
+    while win._sensitivity_running and time.monotonic()<deadline: qapp.processEvents(); time.sleep(.01)
+    assert not win._sensitivity_running and win.tornado_view.method_selector.currentData()=='morris'
+    assert win.tornado_view.report is None and win.act_new.isEnabled() and win.act_open.isEnabled()
+    assert editor.variables.item(0,5).text()=='Preserved draft'
+
+
+def test_open_candidate_is_closed_when_current_service_cannot_close(win,monkeypatch):
+    closed=[]; original=win.service
+    previous_close=original.close
+    candidate=SimpleNamespace(close=lambda:closed.append(True) or True)
+    monkeypatch.setattr(original,'close',lambda:False)
+    win._task_finished(win._generation,'Open study',candidate,None)
+    assert win.service is original and closed==[True]
+    monkeypatch.setattr(original,'close',previous_close)

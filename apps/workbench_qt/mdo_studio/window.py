@@ -163,6 +163,7 @@ class MDOStudioWindow(QMainWindow):
         for widget in (self.pareto_view,self.parallel_view,self.convergence_view): widget.point_selected.connect(self.select_point)
         self.parallel_view.filter_changed.connect(self._brush_filter)
         self.tornado_view.analysis_requested.connect(lambda:self._sensitivity(self._filtered_records()))
+        self.tornado_view.response_selected.connect(self._invalidate_sensitivity)
         self.tornado_view.experiment_selected.connect(self._load_sensitivity_report)
         visualization=QWidget(); visual_layout=QVBoxLayout(visualization); visual_layout.setContentsMargins(0,0,0,0)
         self.plot_filter_label=QLabel(); self.plot_filter_label.setWordWrap(True); visual_layout.addWidget(self.plot_filter_label); visual_layout.addWidget(self.viz_tabs,1)
@@ -170,8 +171,8 @@ class MDOStudioWindow(QMainWindow):
         self._study_actions=[self.act_new,self.act_open,self.act_input,self.act_generate,self.act_parameterize,self.act_save,self.act_save_as,self.act_train,self.act_optimize]
 
     def _background(self,name,call):
-        if self._busy:
-            self.status_bar.showMessage('Wait for the current operation to finish.'); return
+        if self._busy or self._sensitivity_write_busy():
+            self.status_bar.showMessage('Wait for the current study operation to finish, then retry. Your study and draft are retained.'); return
         self._busy=name; self._sync_actions(); self.status_bar.showMessage(name+'…')
         QThreadPool.globalInstance().start(StudioTask(self._generation,name,call,self.bridge))
 
@@ -187,6 +188,7 @@ class MDOStudioWindow(QMainWindow):
             pending,self._sensitivity_pending=self._sensitivity_pending,None
             if pending is not None and pending[0]==self._generation and not self._closing:
                 self._sensitivity_running=True; QThreadPool.globalInstance().start(StudioTask(*pending,self.bridge))
+            self._sync_actions()
             return
         if generation!=self._generation or self._closing: return
         self._busy=None
@@ -194,9 +196,13 @@ class MDOStudioWindow(QMainWindow):
             QMessageBox.warning(self,name,error); self.status_bar.showMessage(f'{name} failed: {error}')
         elif name=='Prepare current design': self._review_apply(result)
         elif name in ('Open study','Open input'):
-            old=self.service; self.service=result; self._display_revision=result.revision
-            if hasattr(old,'close'): old.close()
-            self._generation+=1; self._selected_ids.clear(); self._clear_filters(); self._restore_study_view()
+            old=self.service
+            if hasattr(old,'close') and old.close() is False:
+                result.close(); error='The current study is still finishing an operation. Retry opening after it finishes; the current study and draft are retained.'
+                QMessageBox.warning(self,name,error); self.status_bar.showMessage(error)
+            else:
+                self.service=result; self._display_revision=result.revision
+                self._generation+=1; self._selected_ids.clear(); self._clear_filters(); self._restore_study_view()
         elif name=='Clone candidate':
             self._display_revision=self.service.revision; self._selected_ids={result.point_id}
         else:
@@ -209,11 +215,12 @@ class MDOStudioWindow(QMainWindow):
         if self._active_batch_id: self._delta_timer.start()
 
     def _sync_actions(self):
-        active=bool(self._active_batch_id); busy=bool(self._busy); writable=not self.service.read_only
+        active=bool(self._active_batch_id); busy=bool(self._busy or self._sensitivity_write_busy()); writable=not self.service.read_only
         current_view=self._display_revision==self.service.revision
+        selected_current=all(getattr(self.tdp_model.record(point),'revision',None)==self.service.revision for point in self._selected_ids)
         for action in self._study_actions: action.setEnabled(not active and not busy and writable)
         self.act_configure.setEnabled(not busy and bool(self.template_deck) and writable)
-        self.act_run.setEnabled(not active and not busy and writable and self._configured and current_view)
+        self.act_run.setEnabled(not active and not busy and writable and self._configured and current_view and selected_current)
         self.act_all.setEnabled(self.act_run.isEnabled()); self.act_confirm.setEnabled(self.act_run.isEnabled() and bool(self._selected_ids))
         self.act_clone.setEnabled(not active and not busy and writable and bool(self._selected_ids))
         self.act_stop.setEnabled(active); self.act_cancel.setEnabled(active)
@@ -284,7 +291,13 @@ class MDOStudioWindow(QMainWindow):
         self._show_selection(); self._sync_actions()
 
     def _show_selection(self):
-        rec=self.tdp_model.record(self._first_selected()); self.setup_widget.display_record(rec,self.tdp_model.units)
+        rec=self.tdp_model.record(self._first_selected()); units=self.tdp_model.units
+        if rec is not None and hasattr(self.service,'revision_definition'):
+            try:
+                definition=self.service.revision_definition(getattr(rec,'revision',self.service.revision))
+                units={v.id:getattr(v,'unit','') for v in definition['space'].variables}; units.update(definition['response_units'])
+            except ValueError: units={}
+        self.setup_widget.display_record(rec,units)
         for view in (self.pareto_view,self.parallel_view): view.set_selected(self._selected_ids)
         if rec:
             self.setup_widget.lbl_guide.setPlainText((rec.error_message+'\n' if rec.error_message else '')+f'{getattr(rec,"mode","ACTUAL")} · revision {getattr(rec,"revision","1")}\nSelection does not apply or run this design.')
@@ -377,6 +390,7 @@ class MDOStudioWindow(QMainWindow):
 
     def _sensitivity(self,records):
         self._sensitivity_job+=1
+        if self._busy: return
         target=self.tornado_view.response.currentData()
         if self._display_revision!=self.service.revision:
             self.tornado_view.empty('Choose the current revision to create a new sensitivity analysis. Historical rows remain available in the table and export.'); return
@@ -389,10 +403,17 @@ class MDOStudioWindow(QMainWindow):
         request=(self._generation,f'Sensitivity {self._sensitivity_job}',compute)
         self._queue_sensitivity(request)
 
+    def _invalidate_sensitivity(self,*args):
+        self._sensitivity_job+=1; self._sensitivity_pending=None
+
     def _queue_sensitivity(self,request):
         if self._sensitivity_running: self._sensitivity_pending=request
         else:
             self._sensitivity_running=True; QThreadPool.globalInstance().start(StudioTask(*request,self.bridge))
+        self._sync_actions()
+
+    def _sensitivity_write_busy(self):
+        return not self.service.read_only and (self._sensitivity_running or getattr(self.service,'busy_operation',None)=='sensitivity')
 
     def _load_sensitivity_report(self,experiment_id):
         if not experiment_id: self.tornado_view.report=None; self._update_visualizations(); return
@@ -451,7 +472,10 @@ class MDOStudioWindow(QMainWindow):
             if self._editor: self._editor.error.setText(str(exc))
             else: QMessageBox.warning(self,'Study configuration',str(exc))
             return
-        self._display_revision=self.service.revision; self._populate_study(); self.status_bar.showMessage('New study revision applied. Historical rows retain their original revision.')
+        self._display_revision=self.service.revision
+        current_ids={record.point_id for record in self.study.records if getattr(record,'revision',self.service.revision)==self._display_revision}
+        self._selected_ids.intersection_update(current_ids)
+        self._populate_study(); self.status_bar.showMessage('New study revision applied. Historical rows retain their original revision.')
         if self._editor:
             self._editor.study=self.study; self._editor.response_units=dict(self.response_units); self._editor.selectors=dict(getattr(self.service,'response_selectors',{}))
 
@@ -462,13 +486,16 @@ class MDOStudioWindow(QMainWindow):
             self._background('Parameterize',lambda:self.service.parameterize([dialog.binding]))
 
     def _on_new_study(self):
-        if self._active_batch_id or self._busy: return
+        if self._active_batch_id or self._busy or self._sensitivity_write_busy():
+            self.status_bar.showMessage('Wait for the current study operation to finish, then retry. Your study and draft are retained.'); return
         old=self.service
-        if hasattr(old,'close'): old.close()
+        if hasattr(old,'close') and old.close() is False:
+            self.status_bar.showMessage('Wait for the current study operation to finish, then retry. Your study and draft are retained.'); return
         self.service=self.workbench.create_mdo_study(); self._display_revision=self.service.revision; self._generation+=1; self._selected_ids.clear(); self._editor=None; self._clear_filters(); self._populate_study()
 
     def _on_load_deck(self,path=None):
-        if self._active_batch_id or self._busy: return
+        if self._active_batch_id or self._busy or self._sensitivity_write_busy():
+            self.status_bar.showMessage('Wait for the current study operation to finish, then retry. Your study and draft are retained.'); return
         if path is None:
             path,_=QFileDialog.getOpenFileName(self,'Open native input','','CalculiX input (*.inp)')
             if not path: return
@@ -712,11 +739,12 @@ class MDOStudioWindow(QMainWindow):
         for view in self.views: view.set_theme(self.is_dark)
 
     def closeEvent(self,event):
-        if self._busy:
-            self.status_bar.showMessage('Wait for the current operation before closing.'); event.ignore(); return
+        if self._busy or self._sensitivity_write_busy():
+            self.status_bar.showMessage('Wait for the current study operation to finish, then close again. Your study and draft are retained.'); event.ignore(); return
         if self._active_batch_id:
             self._stop_evaluations(); self.status_bar.showMessage('Cancelling the owned campaign; close again after it finishes.'); event.ignore(); return
-        if hasattr(self.service,'close') and self.service.close() is False: event.ignore(); return
+        if hasattr(self.service,'close') and self.service.close() is False:
+            self.status_bar.showMessage('Wait for the current study operation to finish, then close again.'); event.ignore(); return
         self._closing=True; self._generation+=1; self._viz_timer.stop(); self._delta_timer.stop()
         for view in self.views: view.close()
         self._save_layout()

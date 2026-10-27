@@ -47,6 +47,7 @@ class SensitivityTornadoWidget(PlotWidget):
     def _request(self,*args):
         self.report=None; self.experiment.blockSignals(True); self.experiment.setCurrentIndex(0); self.experiment.blockSignals(False)
         self.empty('Choose experiment settings, then Analyze.'); self.note.setText('Spearman uses actual pairs; Sobol/Morris use the complete surrogate experiment and make no native calls.')
+        self.response_selected.emit(self.response.currentData() or '')
 
     def set_responses(self,keys,units):
         previous=self.response.currentData(); self.response.blockSignals(True); self.response.clear()

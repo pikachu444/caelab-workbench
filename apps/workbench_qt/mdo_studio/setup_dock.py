@@ -142,6 +142,7 @@ class SetupDockWidget(QWidget):
             self.lbl_feasibility.setText("—")
             self.lbl_violation.setText("0.0")
             self.btn_apply_current.setEnabled(False)
+            self.lbl_guide.setPlainText("Select a point to inspect its values and available actions.")
             while self.param_layout.rowCount():
                 self.param_layout.removeRow(0)
             while self.resp_layout.rowCount():
