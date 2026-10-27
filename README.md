@@ -31,9 +31,10 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
   python -m apps.workbench_qt.mdo_studio
   ```
 - **사용자 설명서 및 튜토리얼**:
-  - [그림으로 보는 MDO Studio 비주얼 퀵스타트 가이드](docs/tutorials/visual_mdo_guide.md): 5대 실사 캡처 및 4대 영역 3분 조작법
+  - [그림으로 보는 MDO Studio 비주얼 퀵스타트 가이드](docs/tutorials/visual_mdo_guide.md): 5대 실사 캡처 및 3대 영역 3분 조작법
   - [박스 거더 캔틸레버 단면 치수 최적화 튜토리얼](docs/tutorials/mdo_cantilever_quickstart.md): 현업 실무 엔지니어 핸즈온 가이드
   - [3D 산업 표준 대형 벤치마크 계획서](docs/benchmarks/commercial_mdo_benchmark_calculix.md): GE 제트 엔진 브래킷 및 로어 컨트롤 암 비교 사양서
+  - [7대 다분야 산업 종합 벤치마크 사양서](docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md): 항공우주, 자동차, 파워트레인, 기체주익, 충돌안전, 압력용기, 교량보 7대 산업 모델
 - **핵심 수치 모듈 ([`caelab.mdo`](caelab/mdo/__init__.py))**:
   - [`VariableSpace`](caelab/mdo/variables.py): 연속형(`ContinuousVariable`), 이산 규격형(`DiscreteVariable`), 범주형(`CategoricalVariable`), 수식 연동형(`LinkedVariable`) 설계 공간 정의.
   - [`ObjectiveSpec`](caelab/mdo/objectives.py) 및 [`ConstraintSpec`](caelab/mdo/constraints.py): 3상태([`Feasibility`](caelab/mdo/constraints.py): FEASIBLE / MARGINAL / INFEASIBLE) 판정 및 오차 대역 평가.
@@ -43,15 +44,13 @@ AI 어시스턴트와 함께 설계하고 구현하는 CAE 연구 환경입니�
   - `optimize`: 구배 기반 SLSQP, 전역 미분진화(DE), 다목적 유전알고리즘(NSGA-II).
   - `pareto`: 비지배 정렬, NSGA-II 밀집도 거리, 초체적, 무릎점([`knee_point`](caelab/mdo/pareto.py)) 의사결정.
   - [`TemplateDeck`](caelab/mdo/inp_binder.py) & [`StudyManager`](caelab/mdo/study_manager.py): 텍스트 기반 템플릿 토큰 치환(`@@VAR@@`, `{{VAR}}`)을 통한 솔버 독립 덱 바인딩 및 전 과정 이력 보존.
-- **4대 작업 영역 (MDO Studio Workspace)**:
-  1. **설정 도크 (Setup Dock)**: 설계변수 테이블, 목적함수/제약조건 정의, DoE/최적화 알고리즘 파라미터 제어.
-  2. **해석 모델 토폴로지 캔버스 (Visual Canvas)**: CalculiX/FEA 해석 덱 및 컴포넌트 데이터 플로우 시각화.
-  3. **평가 실행 매트릭스 테이블 (Evaluation Table)**: DoE 샘플 및 세대별 해석 실행 결과 매트릭스 (성공/실패/제약 위반 실시간 표시).
-  4. **4-탭 인터랙티브 분석 대시보드 (Interactive Analytics)**:
-     - 수렴 이력 (Convergence History): 세대별 최적값 및 제약 만족 여부 트래킹.
-     - 2D/3D 파레토 프론티어 (Pareto Frontier): 다목적 상충 관계 분산도, Knee Point 자동 검출.
-     - 3D 응답곡면 (Response Surface): Kriging 곡면 3D 회전 렌더링, 단면 슬라이서, $\pm 2\sigma$ 신뢰 구간.
-     - 민감도 토네이도 차트 (Sensitivity Tornado): 설계변수별 기여도 순위화.
+- **MDO Studio 워크스페이스 구조**:
+  1. **설정 독 (Study Setup Dock)**: 설계변수 테이블, 목적함수/제약조건 정의, DoE/최적화 알고리즘 파라미터 제어.
+  2. **평가 이력 매트릭스 테이블 (Evaluation History Table)**: DoE 샘플 및 세대별 해석 실행 결과 매트릭스 (SUCCEEDED/FAILED, FEASIBLE/INFEASIBLE 실시간 뱃지 표시, 설계점 우클릭 원본 덱 즉시 적용).
+  3. **3-Tab 엔지니어링 분석 대시보드 (Engineering Analytics Dashboard)**:
+     - 2D 파레토 프론티어 (Pareto Frontier): 다목적 상충 관계 분산도 및 무릎점(Knee Point ★) 자동 검출.
+     - 반응 곡면 (Response Surface): Kriging GPR 예측 평균 곡선, 실측 DoE 샘플, $\pm 2\sigma$ 신뢰 구간 대역.
+     - 민감도 토네이도 차트 (Sensitivity Tornado): Sobol 1차/총차 지수 기반 설계변수별 기여도 순위화.
 - **"Set as Current" 피드백 루프**:
   - 파레토 프론트나 수렴 이력에서 엔지니어가 최적 설계점을 클릭하고 "Set as Current Design Point"를 실행하면, 원본 네이티브 해석 덱(예: `cantilever.inp`)에 최적 치수가 즉시 치환 반영되며 안전한 백업 파일(`.bak`)이 자동 생성됩니다.
 

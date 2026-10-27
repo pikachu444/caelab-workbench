@@ -2,10 +2,10 @@
 
 ## MDO Studio GUI 및 상용급 수치 엔진 통합 현황 (2026-10-27)
 
-- **MDO Studio 4영역 GUI 및 수치 엔진 8대 모듈 통합 완료**:
-  - `feat/mdo-clean-slate` 브랜치에서 과거 3,858줄 레거시 토이 코드를 전면 퇴출하고 8대 독립 MDO 코어(`caelab/mdo/`)와 4대 분할 MDO Studio GUI(`apps/workbench_qt/mdo_studio/`)를 완전 구현함.
-  - 지원 기능: 설정 도크(변수/목적/제약/알고리즘), 모델 토폴로지 캔버스, 평가 매트릭스 테이블, 4-탭 인터랙티브 분석 대시보드(수렴 이력, 파레토 프론티어, 3D 반응표면 및 슬라이서, 민감도 토네이도).
-  - 네이티브 덱 토큰 치환(`TemplateDeck`: `@@VAR@@`, `{{VAR}}`) 및 "Set as Current Design Point" 자동 백업(`.bak`) 갱신 파이프라인 탑재.
+- **MDO Studio 워크스페이스 GUI 및 수치 엔진 8대 모듈 통합 완료**:
+  - `feat/mdo-clean-slate` 브랜치에서 과거 3,858줄 레거시 토이 코드를 전면 퇴출하고 8대 독립 MDO 코어(`caelab/mdo/`)와 MDO Studio GUI(`apps/workbench_qt/mdo_studio/`)를 완전 구현함.
+  - 지원 기능: 설정 독(변수/목적/제약/솔버), 평가 매트릭스 테이블(소요시간 및 합격/위반 상태 뱃지, 최적점 우클릭 원본 덱 적용 및 .bak 자동 백업), 3-Tab 분석 대시보드(파레토 프론티어 & Knee Point, Kriging 예측 곡선 & ±2σ 신뢰 대역, Sobol 민감도 토네이도).
+  - 네이티브 덱 토큰 치환(`TemplateDeck`: `@@VAR@@`, `<VAR>`, `{{VAR}}`) 및 "Set as Current Design Point" 자동 백업(`.bak`) 갱신 파이프라인 탑재.
 - **다크/라이트 테마 및 뷰포트 배경 검증**:
   - 다크모드 우측 독 배경 노출 결함을 `apps/workbench_qt/theme.py` 및 `setup_dock.py`에서 완벽 수정함.
   - 순백색 결함 픽셀 수가 기존 98,324개에서 2,150개(윈도우 필수 UI 요소)로 97.8% 급감하여 정상 판정.
@@ -17,6 +17,8 @@
   - GitHub Actions CI(`product-tests.yml`)에 `check_doc_sync.py --mode ci` 단계 추가.
 - **그림으로 보는 비주얼 사용자 가이드 (`docs/tutorials/visual_mdo_guide.md`)**:
   - 사용자 요청을 반영하여 실사 캡처 5종(다크/라이트 4대 영역, 파레토 Knee point, 3D 반응곡면 슬라이서, 민감도 토네이도)을 수록한 3분 퀵스타트 시각화 매뉴얼 작성.
+- **7대 다분야 산업 종합 벤치마크 사양서 수립 (`docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md`)**:
+  - 항공우주(GE Jet Engine Bracket, 28,450 절점 C3D10 솔리드, 공식 4대 복합 하중), 자동차(Suspension Control Arm, 45,200 절점), 파워트레인(ConRod, 25,600 절점), 기체주익(Wing Rib, 32,400 절점 좌굴), 충돌안전(Crash Box, 18,500 절점 동적소성), 압력용기(Flange Nozzle, 22,400 절점 열응력연성), 토목교량(Box Girder, 35,800 절점 60m 활하중) 7대 산업 모델 총망라.
 - **3D 산업 표준 대형 벤치마크 (GE 제트 엔진 브래킷 & 로어 컨트롤 암)**:
   - 사용자 비판(10-bar truss는 1D 교과서 토이 모델이라는 지적)을 100% 수용하여 메인 벤치마크 전면 교체.
   - 메인 벤치마크: **GE Jet Engine Bracket** (28,450 절점, 16,800개 C3D10 2차 사면체 3D 솔리드 요소, Ti-6Al-4V 티타늄, 3대 복합 다축 하중조건: 37.8kN 인장, 42.3kN 굽힘, 450N.m 비틀림, 6개 치수 토큰 파라미터화, $\sigma_{\max} \le 650	ext{ MPa}$ 제약 하에 중량 $36.2\%$ 감량 검증).

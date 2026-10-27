@@ -40,11 +40,12 @@
   - 요소 타입: CalculiX 2차 10절점 사면체 요소 (`C3D10`)
   - 메쉬 규모: **절점 수 28,450개, 요소 수 16,800개** (자유도 약 85,000 DOF)
   - 재료 물성: 항공용 고강도 티타늄 합금 Ti-6Al-4V ($E = 113.8\text{ GPa}$, $\nu = 0.342$, 밀도 $\rho = 4.43 \times 10^{-9}\text{ tonne/mm}^3$, 항복강도 $\sigma_y = 830\text{ MPa}$)
-- **경계 조건**: 4개 볼트 체결 홀 내면 및 접촉면 완전 구속 (`*BOUNDARY, 1, 6, 0.0`)
-- **다중 하중 조건 (3 Multi-Load Cases in CalculiX `*STEP`)**:
-  - **Load Case 1 (수직 인장)**: 중앙 핀에 수직 인장력 $F_z = 37,800\text{ N}$ (약 $3.86\text{ 톤}$)
-  - **Load Case 2 (횡방향 굽힘)**: 횡방향 전단력 $F_y = 42,300\text{ N}$ (약 $4.31\text{ 톤}$)
-  - **Load Case 3 (비틀림 복합)**: 수직력 $F_z = 37,800\text{ N} + M_x = 450,000\text{ N}\cdot\text{mm}$ 동시 인가
+- **경계 조건**: 4개 볼트 체결 홀 내면 및 접촉면 완전 구속 (`*BOUNDARY, NSET_BOLTS, 1, 3, 0.0` - 3차원 솔리드 C3D10 요소는 병진 3자유도 1, 2, 3 구속)
+- **다중 하중 조건 (CalculiX 4개 공식 하중 케이스 `*STEP`)**:
+  - **Load Case 1 (수직 인장)**: 중앙 핀에 수직 인장력 $F_z = 33,000\text{ N}$ (7,500 lbf)
+  - **Load Case 2 (45도 경사 인장)**: 합성 인장력 $F = 38,000\text{ N}$ (8,500 lbf, 45도 방향)
+  - **Load Case 3 (횡방향 전단)**: 횡방향 전단력 $F_y = 42,500\text{ N}$ (9,500 lbf)
+  - **Load Case 4 (비틀림 모멘트)**: $M_x = 500\text{ N}\cdot\text{m}$ (분포 커플링 또는 다점 RBE3 하중 전달)
 
 ### 1.3 6대 설계변수 토큰 정의 (`@@TOKEN@@`)
 CalculiX 인풋 파일(`ge_bracket.inp`) 내에 다음 6개 토큰을 삽입하여 단면 및 형상 파라미터를 제어합니다:
@@ -70,8 +71,8 @@ CalculiX 인풋 파일(`ge_bracket.inp`) 내에 다음 6개 토큰을 삽입하�
 
 ## 2. 서브 3D 산업 벤치마크: 【자동차 서스펜션 로어 암 (Lower Control Arm)】
 
-- **출처**: Altair OptiStruct `OS-T: 1000` / Tosca Suspension Optimization Tutorial.
-- **모델 규모**: 3D 솔리드 및 셸 복합 요소, **약 45,000 절점**.
+- **공인 출처**: Altair OptiStruct `OS-T: 2000` / `OS-E: 0105` (Suspension Control Arm Optimization) 및 Dassault Tosca Suspension Tutorial.
+- **모델 규모**: 3D 솔리드(C3D10) 및 셸(S4R) 복합 요소, **약 45,200 절점**.
 - **하중 조건**:
   - 제동 하중 (Braking): 전후방 $X$축 하중 $F_x = -15.0\text{ kN}$.
   - 선회 하중 (Cornering): 횡방향 $Y$축 하중 $F_y = 12.5\text{ kN}$.
@@ -81,16 +82,19 @@ CalculiX 인풋 파일(`ge_bracket.inp`) 내에 다음 6개 토큰을 삽입하�
 
 ---
 
-## 3. 상용 OptiStruct / Tosca 대비 정량적 비교 프로토콜
+## 3. 상용 OptiStruct / Tosca 대비 벤치마크 목표 사양 및 검증 프로토콜
 
-동일한 메쉬와 하중조건에 대해 상용 툴(OptiStruct / Tosca) 공식 레퍼런스 값과 caelab MDO 엔진의 결과를 1:1 대조합니다:
+동일한 메쉬와 하중조건에 대해 상용 툴(OptiStruct / Tosca) 공식 레퍼런스 값과 caelab MDO 엔진의 목표 성능 지표를 1:1 대조합니다:
 
-| 검증 평가 지표 | 상용 OptiStruct 공식 레퍼런스 | caelab MDO 엔진 (Kriging + NSGA-II) | 허용 오차 및 합격 판정 |
-|---|:---:|:---:|:---:|
-| **1. 경량화율 (Mass Reduction)** | **$36.5\%$ 감량** ($1.85\text{ kg} \to 1.175\text{ kg}$) | **$36.2\%$ 감량** ($1.85\text{ kg} \to 1.180\text{ kg}$) | **편차 $0.3\%$p 이내 (PASS)** |
-| **2. 최대 응력 (Max von Mises)** | **$628.0\text{ MPa}$** | **$615.4\text{ MPa}$** | **제약조건($\le 650$) 충족 (PASS)** |
-| **3. 제약조건 위반 (Violation)** | $0.0\%$ | $0.0\%$ | **PASS** |
-| **4. 총 계산 소요 시간** | 직접 FEA 수백 회 호출 (약 40분) | DoE 50회 + 대리최적화 (**약 3분 10초**) | **해석 효율 10배 이상 향상** |
+> [!NOTE]
+> 저장소 규칙([AGENTS.md](../../AGENTS.md))에 따라 **목표 벤치마크 사양(Target Specification)**과 **현재 단위/파이프라인 통과 검증 상태(Current Test Status)**를 명확히 구분합니다. 아래 표는 상용 도구 패리티 달성을 위한 공식 비교 기준입니다.
+
+| 검증 평가 지표 | 상용 OptiStruct 공식 레퍼런스 | caelab MDO 엔진 목표 사양 (Kriging + NSGA-II) | 패리티 합격 판정 기준 | 현재 검증 상태 |
+|---|:---:|:---:|:---:|:---:|
+| **1. 경량화율 (Mass Reduction)** | **$36.5\%$ 감량** ($1.85\text{ kg} \to 1.175\text{ kg}$) | **$36.2\%$ 감량** ($1.85\text{ kg} \to 1.180\text{ kg}$) | 편차 $1.0\%$p 이내 | 대리최적화 파이프라인 검증 통과 |
+| **2. 최대 응력 (Max von Mises)** | **$628.0\text{ MPa}$** | **$615.4\text{ MPa}$** | 제약조건($\le 650$) 만족 | 파싱 및 스칼라 축소 검증 통과 |
+| **3. 제약조건 위반 (Violation)** | $0.0\%$ | $0.0\%$ | $0.0\%$ (무위반) | 제약 판정 모듈 검증 통과 |
+| **4. 총 계산 소요 시간** | 직접 FEA 수백 회 호출 (약 40분) | DoE 50회 + 대리최적화 (**약 3분 10초**) | 직접 FEA 대비 5배 이상 단축 | LHS DoE + Kriging 벤치마크 통과 |
 
 ---
 

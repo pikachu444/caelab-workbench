@@ -51,14 +51,26 @@ def extract_scalar(spec: ResponseSpec, workdir: Path) -> float | None:
             matches = rx.findall(content)
             if not matches:
                 return spec.default_value
-            last_match = matches[-1]
-            if isinstance(last_match, tuple):
-                # Pick first non-empty group
-                val_str = next((g for g in last_match if g), None)
-            else:
-                val_str = last_match
-            if val_str:
-                return float(val_str.strip())
+            parsed_floats: list[float] = []
+            for m in matches:
+                val_str = next((g for g in m if g), None) if isinstance(m, tuple) else m
+                if val_str:
+                    try:
+                        parsed_floats.append(float(val_str.strip()))
+                    except ValueError:
+                        pass
+            if not parsed_floats:
+                return spec.default_value
+            if spec.reduction == "min":
+                return min(parsed_floats)
+            elif spec.reduction == "max":
+                return max(parsed_floats)
+            elif spec.reduction == "sum":
+                return sum(parsed_floats)
+            elif spec.reduction == "mean":
+                return sum(parsed_floats) / len(parsed_floats)
+            else:  # "last" or "value"
+                return parsed_floats[-1]
         except Exception:
             return spec.default_value
 

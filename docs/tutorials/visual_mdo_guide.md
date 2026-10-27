@@ -4,32 +4,36 @@
 
 ---
 
-## 1. MDO Studio 4대 작업 영역 한눈에 보기
+## 1. MDO Studio 작업 영역 구성도
 
-MDO Studio는 상용 CAE 최적화 도구(OptiStruct, modeFRONTIER, HEEDS)의 워크스페이스 구조를 채택하여, **4개 핵심 분할 영역**으로 구성되어 있습니다.
+MDO Studio는 상용 CAE 다분야 최적화 도구(modeFRONTIER, HEEDS, OptiStruct)의 직관적인 워크스페이스 구조를 채택하여, **3대 핵심 분할 영역(설계 탐색기 / 평가 이력 매트릭스 / 3-Tab 엔지니어링 분석 대시보드)**으로 구성되어 있습니다.
 
 ![MDO Studio 다크 모드 전체 화면](../images/screen_mdo_studio_dark.png)
-*(그림 1: MDO Studio 다크 모드 4대 분할 영역 구성도)*
+*(그림 1: MDO Studio 다크 모드 워크스페이스 구성도)*
 
 ```
-+---------------------------------------------------------------------------------------+
-|  [ 상단 툴바 ] New Study | Load Deck | Load Demo | Run Optimization | ☀ Dark/Light     |
-+--------------------+-----------------------------------+------------------------------+
-| 1. Setup Dock      | 2. Visual Model Canvas            | 3. Evaluation Matrix         |
-| - 설계 변수 테이블  | - CalculiX/FEA 해석 덱 토폴로지    | - DoE/반복 계산 실행 매트릭스  |
-| - 목적함수/제약조건 | - 파라메트릭 연결 다이어그램      | - Feasibility/위반량 실시간  |
-| - 알고리즘 파라미터|                                   | - 최적점 행 선택             |
-+--------------------+-----------------------------------+------------------------------+
-| 4. 4-Tab Interactive Analytics Dashboard (인터랙티브 분석 대시보드)                     |
-|  [ 수렴 이력 (Convergence) ] [ 파레토 프론트 (Pareto) ] [ 3D 반응표면 ] [ 민감도 토네이도 ]|
-+---------------------------------------------------------------------------------------+
++-----------------------------------------------------------------------------------------------+
+| [ 상단 툴바 ] New Study | Load Deck | Load Demo Study | Run All Points | ☀ Toggle Dark/Light  |
++--------------------------+--------------------------------------------------------------------+
+| 1. 스터디 설정 독        | 2. 평가 이력 매트릭스 테이블 (Evaluation History Matrix)           |
+|    (Study Setup Dock)    | - 설계점(DP-001...), 설계변수값, 목적함수/제약값, 실행시간 표시    |
+| - 설계 변수 테이블       | - 상태 뱃지 (SUCCEEDED / FAILED, FEASIBLE / INFEASIBLE 실시간 뱃지)|
+| - 목적함수 및 제약조건   | - 최적 설계점 선택 및 우클릭 "Set as Current Design Point"         |
+| - 해석 솔버 파라미터     +--------------------------------------------------------------------+
+|                          | 3. 3-Tab 엔지니어링 분석 대시보드 (Engineering Analytics)          |
+|                          |    [ 파레토 프론트 (Pareto) ]                                      |
+|                          |    [ 반응 곡면 (Response Surface, Kriging ±2σ) ]                   |
+|                          |    [ 민감도 토네이도 (Sensitivity Tornado) ]                       |
++--------------------------+--------------------------------------------------------------------+
 ```
 
 ### 각 영역의 역할
-1. **좌측 (Setup Dock)**: 설계변수의 상하한 및 규격치수 설정, 목적함수/제약조건 정의, 알고리즘 선택(DoE/SLSQP/NSGA-II).
-2. **중앙 좌측 (Visual Model Canvas)**: 해석 컴포넌트의 토폴로지 구조와 파라메트릭 연결 상태 시각화.
-3. **중앙 우측 (Evaluation Table)**: DoE 샘플 및 세대별 해석 실행 결과 매트릭스 (`SUCCEEDED`, `FEASIBLE`, `INFEASIBLE` 실시간 색상 뱃지 표시).
-4. **우측/하단 (Analytics Dashboard)**: 수렴 곡선, 파레토 최적해, 3D 응답 곡면, 민감도 토네이도 차트를 탭으로 즉각 전환 조회.
+1. **좌측 스터디 설정 독 (Setup Dock)**: 설계변수의 상하한 및 규격치수(이산형) 설정, 목적함수(최소화/최대화) 및 제약조건(상한/하한/허용치) 정의.
+2. **우측 상단 평가 이력 테이블 (Evaluation History Table)**: DoE 샘플 및 세대별 해석 실행 결과 매트릭스 (`SUCCEEDED`, `FEASIBLE`, `INFEASIBLE` 실시간 색상 뱃지 및 계산 소요 시간 표시). 특정 설계점을 선택하면 우클릭으로 현재 활성 덱에 즉시 적용 가능.
+3. **우측 하단 분석 대시보드 (Analytics Dashboard)**:
+   - **파레토 프론트 (Pareto)**: 상충하는 목적함수 간의 최적 트레이드오프 곡선 및 절충 최적점(Knee Point ★) 자동 표시.
+   - **반응 곡면 (Response Surface)**: Kriging(GPR) 대리모델을 기반으로 한 파라미터별 예측 곡선과 $\pm 2\sigma$ 신뢰 구간(Uncertainty Band) 및 실측 샘플 점 시각화.
+   - **민감도 토네이도 (Sensitivity Tornado)**: Sobol 글로벌 민감도 분석 지표를 내림차순 막대그래프로 정렬 표시.
 
 ---
 
@@ -58,26 +62,26 @@ MDO Studio는 상용 CAE 최적화 도구(OptiStruct, modeFRONTIER, HEEDS)의 �
 
 ---
 
-### 3.2 Kriging 대리모델 기반 3D 반응표면 및 슬라이서
-수십 회의 DoE 해석 결과로부터 전산 대리모델(Kriging/GPR)을 구축하여, 3차원 응답 곡면을 회전 렌더링하고 다른 변수를 슬라이더로 조작할 수 있습니다.
+### 3.2 Kriging 대리모델 기반 반응 곡선 및 예측 불확실성 대역 (±2σ Band)
+수십 회의 DoE 해석 결과로부터 전산 대리모델(Kriging / Gaussian Process Regression)을 구축하여, 특정 설계변수 변화에 따른 목적함수의 비선형 응답 곡선과 예측 불확실성을 시각화합니다.
 
-![3D 반응표면 곡면](../images/screen_mdo_studio_dark_surface.png)
-*(그림 3: 3D 반응표면 렌더링 및 하단 파라미터 슬라이서)*
+![반응 곡선 및 신뢰 대역](../images/screen_mdo_studio_dark_surface.png)
+*(그림 3: Kriging 응답 곡선, 실측 DoE 샘플 점, 그리고 반투명 ±2σ 예측 불확실성 대역)*
 
-- 마우스 드래그로 3차원 응력 곡면을 자유롭게 회전 및 줌.
-- 하단 슬라이더를 움직여 제3의 변수(예: 판재 두께 $t$) 변경에 따른 응력 곡면의 변화를 실시간으로 관찰.
-- 곡면 상하의 반투명 신뢰 대역($\pm 2\sigma$)을 통해 샘플이 부족한 예측 불확실성 영역을 육안으로 확인.
+- **청색 실선 (Mean Prediction)**: Kriging 대리모델이 예측한 응답의 평균 함수 곡선.
+- **산점 (Evaluated Samples)**: 실제 CalculiX 솔버로 계산 완료된 DoE 데이터 포인트.
+- **반투명 음영 대역 ($\pm 2\sigma$ Confidence Envelope)**: 95% 신뢰 구간을 의미하며, 샘플이 밀집된 영역은 띠가 좁아지고(높은 신뢰도), 샘플이 희소한 영역은 띠가 넓어져 추가 샘플링(Active Learning)이 필요한 영역을 직관적으로 식별.
 
 ---
 
 ### 3.3 설계변수 기여도 분석: 민감도 토네이도 차트
-어떤 설계변수가 구조물의 안전성과 중량에 가장 지대한 영향을 미치는지 Sobol 글로벌 민감도 분석을 통해 순위화합니다.
+어떤 설계변수가 구조물의 안전성과 중량에 가장 지대한 영향을 미치는지 Sobol 글로벌 민감도 분석(First-order & Total-order Sobol Indices)을 통해 순위화합니다.
 
 ![민감도 토네이도 차트](../images/screen_mdo_studio_dark_tornado.png)
 *(그림 4: 글로벌 민감도 지수 토네이도 차트)*
 
-- 막대 길이가 길수록 성능에 미치는 영향력이 큰 지배적 설계변수임을 의미.
-- 불필요한 미소 영향 변수를 빠르게 스크리닝하여 설계 자유도를 최적화.
+- 막대 길이가 길수록 해당 목적함수에 미치는 영향력이 큰 지배적 설계변수임을 의미.
+- 불필요한 미소 영향 변수를 조기에 선별(Screening)하여 최적화 계산 효율 극대화.
 
 ---
 
@@ -85,16 +89,18 @@ MDO Studio는 상용 CAE 최적화 도구(OptiStruct, modeFRONTIER, HEEDS)의 �
 
 ```mermaid
 flowchart LR
-    A["1. 템플릿 덱 열기<br/>(Open Native Deck)"] --> B["2. 토큰 자동 감지<br/>(Auto-detect @@TOKEN@@)"]
-    B --> C["3. DoE 샘플링 & 실행<br/>(Optimal LHS)"]
-    C --> D["4. 파레토 Knee Point 클릭<br/>(Pareto Frontier)"]
-    D --> E["5. Set as Current 클릭<br/>(원본 덱 자동 백업 & 갱신)"]
+    A["1. 덱 불러오기<br/>(Load Deck: .inp)"] --> B["2. 토큰 자동 감지<br/>(Auto-detect @@TOKEN@@)"]
+    B --> C["3. 스터디 실행<br/>(Run All Points)"]
+    C --> D["4. 파레토 최적점 선택<br/>(Pareto Knee Point)"]
+    D --> E["5. 현재 설계로 적용<br/>(Set as Current Design Point)"]
 ```
 
-1. **상단 툴바 [Open Native Deck]**: 치환 토큰(`@@변수명@@`)이 삽입된 CalculiX `.inp` 파일을 엽니다.
-2. **좌측 [Auto-detect Tokens]**: 덱 내의 토큰이 좌측 변수 테이블에 자동 등록됩니다. 상한/하한/규격값을 지정합니다.
-3. **좌측 [Run DoE]**: 샘플 30~50개를 자동 생성하고 백그라운드에서 병렬 해석을 수행합니다.
-4. **우측 차트에서 [Knee Point] 클릭**: 파레토 곡선에서 최적 균형점(Knee Point)을 클릭합니다.
-5. **좌측 하단 [Set as Current Design Point] 클릭**:
-   - 원본 인풋 파일의 백업 파일(`.bak`)이 안전하게 생성됩니다.
-   - 확정된 최적 수치로 인풋 파일이 원클릭 자동 갱신됩니다.
+1. **상단 툴바 [Load Deck]**: 파라메트릭 치환 토큰(`@@변수명@@` 또는 `<변수명>`)이 삽입된 CalculiX `.inp` 파일을 엽니다 (또는 [Load Demo Study]를 눌러 25개 검증 데이터를 즉시 로드).
+2. **좌측 스터디 설정 (Setup Dock)**: 덱 내의 파라메터 토큰이 좌측 변수 테이블에 자동 등록됩니다. 상한/하한/규격값을 지정하고 목적함수와 제약조건을 설정합니다.
+3. **상단 툴바 [Run All Points]**: 설계 탐색 매트릭스를 백그라운드에서 순차/병렬 평가하고 결과를 실시간으로 갱신합니다.
+4. **우측 분석 대시보드에서 최적점 탐색**:
+   - [파레토 프론트] 탭에서 상충 관계를 확인하고 Knee Point(★)를 확인합니다.
+   - [반응 곡면] 탭에서 Kriging 대리모델의 예측 경향과 불확실성($\pm 2\sigma$)을 검토합니다.
+5. **평가 이력 테이블에서 최적점 우클릭 -> [Set as Current Design Point]**:
+   - 원본 인풋 파일의 안전 백업 파일(`*.inp.bak`)이 자동 생성됩니다.
+   - 선택한 최적 설계변수 수치로 활성 `.inp` 파일이 원클릭 갱신됩니다.

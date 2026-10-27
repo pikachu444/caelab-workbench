@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 
-TOKEN_PATTERN = re.compile(r"(?:<([A-Za-z0-9_]+)>|\{\{\s*([A-Za-z0-9_]+)\s*\}\})")
+TOKEN_PATTERN = re.compile(r"(?:<([A-Za-z0-9_]+)>|@@([A-Za-z0-9_]+)@@|\{\{\s*([A-Za-z0-9_]+)\s*\}\})")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -40,7 +40,7 @@ class TemplateDeck:
             if stripped.startswith("**") or stripped.startswith("$") or stripped.startswith("#"):
                 continue
             for match in TOKEN_PATTERN.finditer(line):
-                token = match.group(1) or match.group(2)
+                token = match.group(1) or match.group(2) or match.group(3) or match.group(3)
                 tokens.add(token)
         return cls(original_text=text, token_names=tuple(sorted(tokens)), file_path=file_path)
 
@@ -73,7 +73,7 @@ class TemplateDeck:
                     token_to_value[token] = str(val)
 
         def replacer(match: re.Match) -> str:
-            token = match.group(1) or match.group(2)
+            token = match.group(1) or match.group(2) or match.group(3)
             if token in token_to_value:
                 return token_to_value[token]
             return match.group(0)
@@ -87,3 +87,5 @@ class TemplateDeck:
                 rendered_lines.append(TOKEN_PATTERN.sub(replacer, line))
 
         return "".join(rendered_lines)
+
+    bind = render

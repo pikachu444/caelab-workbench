@@ -22,32 +22,37 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def get_changed_files(mode: str) -> list[str]:
-    """Get list of changed files based on enforcement mode."""
+    """Get list of changed files based on enforcement mode.
+    
+    Fails closed: if git fails to determine diff, raises RuntimeError rather than silently passing.
+    """
     if mode == "pre-commit":
         cmd = ["git", "diff", "--cached", "--name-only"]
-    elif mode == "pre-push":
-        # Check against origin/main if available, else HEAD~1
-        try:
-            cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
-            res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+        res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"Git pre-commit diff failed (code {res.returncode}): {res.stderr.strip()}")
+        return [line.strip() for line in res.stdout.splitlines() if line.strip()]
+
+    # For pre-push and CI, try comparing against upstream base branch
+    candidate_refs = [
+        ["git", "diff", "--name-only", "origin/main...HEAD"],
+        ["git", "diff", "--name-only", "main...HEAD"],
+        ["git", "diff", "--name-only", "HEAD~1...HEAD"],
+    ]
+
+    last_error = ""
+    for cmd in candidate_refs:
+        res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+        if res.returncode == 0:
             files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+            # If we got a valid non-empty diff, return it
             if files:
                 return files
-        except Exception:
-            pass
-        cmd = ["git", "diff", "--name-only", "HEAD~1...HEAD"]
-    else:  # CI / default
-        try:
-            cmd = ["git", "diff", "--name-only", "origin/main...HEAD"]
-        except Exception:
-            cmd = ["git", "diff", "--name-only", "HEAD~1...HEAD"]
+            # If empty diff against base branch, still return empty (branch is up to date)
+            return []
+        last_error = res.stderr.strip()
 
-    try:
-        res = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True)
-        return [line.strip() for line in res.stdout.splitlines() if line.strip()]
-    except Exception as e:
-        print(f"[WARN] Unable to determine changed files via git diff: {e}")
-        return []
+    raise RuntimeError(f"Unable to determine git diff against any base ref: {last_error}")
 
 
 def check_doc_synchronization(changed_files: list[str]) -> bool:
@@ -87,7 +92,12 @@ def main() -> int:
     parser.add_argument("--mode", choices=["pre-commit", "pre-push", "ci"], default="ci")
     args = parser.parse_args()
 
-    changed = get_changed_files(args.mode)
+    try:
+        changed = get_changed_files(args.mode)
+    except Exception as e:
+        print(f"\n[DOC SYNC FATAL] Git verification failed: {e}\n", file=sys.stderr)
+        return 1
+
     if not check_doc_synchronization(changed):
         return 1
     return 0
