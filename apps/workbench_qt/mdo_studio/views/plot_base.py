@@ -374,7 +374,7 @@ class Native3D(QWidget):
     def _invalidate_annotations(self):
         self._scene_epoch+=1
         for group in (self._endpoint_labels,self._custom_labels,self._custom_titles,self._label_leaders):
-            for actor in group: self.renderer.RemoveActor2D(actor)
+            for actor in group: self.renderer.RemoveViewProp(actor)
             group.clear()
         self.annotation_layout=None
         if self.axes is not None:
@@ -383,7 +383,7 @@ class Native3D(QWidget):
 
     def _render_annotations_impl(self,scene):
         for group in (self._endpoint_labels,self._custom_labels,self._custom_titles,self._label_leaders):
-            for actor in group: self.renderer.RemoveActor2D(actor)
+            for actor in group: self.renderer.RemoveViewProp(actor)
             group.clear()
         if self.axes is not None:
             for axis in (self.axes.GetXAxisActor2D(),self.axes.GetYAxisActor2D(),self.axes.GetZAxisActor2D()): axis.LabelVisibilityOn(); axis.TitleVisibilityOn()
@@ -438,7 +438,7 @@ class Native3D(QWidget):
             mapper=vtkTextMapper(); mapper.SetInput(item['text']); mapper.SetTextProperty(title_properties[item['text']] if title_custom else properties[item['axis']])
             actor=vtkActor2D(); actor.SetMapper(mapper); actor.GetPositionCoordinate().SetCoordinateSystemToViewport()
             actor.SetPosition(*item['raw_position']); actor.PickableOff(); actor.UseBoundsOff()
-            self.renderer.AddActor2D(actor)
+            self.renderer.AddViewProp(actor)
             if not self._same_scene(scene): return
             (self._custom_titles if title_custom else self._endpoint_labels if item.get('supplemental') else self._custom_labels).append(actor)
         for leader in leaders:
@@ -464,7 +464,7 @@ class Native3D(QWidget):
         mapper=vtkPolyDataMapper2D(); mapper.SetInputData(data)
         actor=vtkActor2D(); actor.SetMapper(mapper); actor.PickableOff(); actor.UseBoundsOff()
         actor.GetProperty().SetColor(.6,.7,.8); actor.GetProperty().SetLineWidth(self.widget.devicePixelRatioF())
-        self.renderer.AddActor2D(actor); return actor
+        self.renderer.AddViewProp(actor); return actor
 
     def _annotation_warning(self):
         if self.annotation_layout and not self.annotation_layout['valid']:
