@@ -45,6 +45,34 @@ def camera_state(camera):
     return camera.GetPosition(),camera.GetFocalPoint(),camera.GetViewUp(),camera.GetParallelProjection(),camera.GetParallelScale(),camera.GetWindowCenter(),camera.GetViewAngle()
 
 
+@pytest.mark.parametrize('value,precision,expected',[(1.23456789e-12,6,'1.23457e-12'),(-297.1234,4,'-297.1'),(1234567890.,6,'1.23457e+09')])
+def test_axis_numeric_format_printf_and_std_golden_strings(value,precision,expected):
+    from apps.workbench_qt.mdo_studio.views.plot_base import axis_value_text
+    assert axis_value_text(f'%.{precision}g',value)==expected
+    assert axis_value_text(f'{{:.{precision}g}}',value)==expected
+
+
+def test_installed_vtk_axis_label_and_title_paths_accept_both_formats(vtk_widget,monkeypatch):
+    import re
+    from vtkmodules.vtkRenderingAnnotation import vtkAxisActor2D
+    from apps.workbench_qt.mdo_studio.views.plot_base import axis_value_text,axis_text_boxes,axis_title_box
+    axis=vtkAxisActor2D(); axis.SetLabelFormat('%.6g')
+    assert axis_value_text(axis.GetLabelFormat(),.05841234)=='0.0584123'
+    view=Native3D(); widget=view.widget; widget.resize(620,236)
+    widget.window.SetOffScreenRendering(1); widget.window.SetSize(620,236)
+    widget.proxy.Render=widget.window.Render; widget.interactor.Initialize()
+    view.points([[1e-4,.05,-200.],[2e-4,.09,-100.]],['a','b']); view.finish(['mass','disp','stress'])
+    axis=view.axes.GetXAxisActor2D(); precision=int(re.search(r'\.(\d+)g',axis.GetLabelFormat()).group(1))
+    snapshots=[]
+    for spec in (f'%.{precision}g',f'{{:.{precision}g}}'):
+        monkeypatch.setattr(axis,'GetLabelFormat',lambda spec=spec:spec)
+        boxes=axis_text_boxes(axis,view.renderer,axis.GetTickOffset())
+        assert boxes and all(item['text']==format(item['value'],f'.{precision}g') for item in boxes)
+        snapshots.append((boxes,axis_title_box(axis,view.renderer,.5)))
+    assert snapshots[0]==snapshots[1]
+    view.close()
+
+
 def test_native_style_camera_ranges_and_redraw_preserve_user_view(vtk_widget):
     view=Native3D(); assert view.available
     assert view.widget.interactor.GetInteractorStyle().IsA('vtkInteractorStyleTrackballCamera')
@@ -222,8 +250,10 @@ def test_real_annotation_constant_small_large_negative_ranges(vtk_widget,tmp_pat
     for axis in (view.axes.GetXAxisActor2D(),view.axes.GetYAxisActor2D(),view.axes.GetZAxisActor2D()):
         numbers=[item for item in view.annotation_layout['boxes'] if item.get('axis')==axis.GetTitle()]
         assert len({item['text'] for item in numbers})>=2
+        import re
+        precision=int(re.search(r'\.(\d+)g',axis.GetLabelFormat()).group(1))
         for point,value in ((axis.GetPositionCoordinate().GetComputedViewportValue(view.renderer),axis.GetRange()[0]),(axis.GetPosition2Coordinate().GetComputedViewportValue(view.renderer),axis.GetRange()[1])):
-            assert any(item['text']==axis.GetLabelFormat()%value and np.linalg.norm(np.array(item['anchor'])-point)<1.5 for item in numbers)
+            assert any(item['text']==format(value,f'.{precision}g') and np.linalg.norm(np.array(item['anchor'])-point)<1.5 for item in numbers)
     assert_annotation_pixels_match_boxes(view,tmp_path)
     widget.window.Finalize(); view.close()
 

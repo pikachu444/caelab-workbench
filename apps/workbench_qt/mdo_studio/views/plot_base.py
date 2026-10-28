@@ -522,6 +522,11 @@ def axis_label_layout(ranges,width,height,axis_pixels=None):
     return 2,17
 
 
+def axis_value_text(label_format,value):
+    """VTK 9.6+ returns std::format syntax; older versions return printf syntax."""
+    return label_format.format(value) if '{' in label_format else label_format%value
+
+
 def text_size(renderer,prop,text):
     from vtkmodules.vtkRenderingCore import vtkTextMapper
     mapper=vtkTextMapper(); mapper.SetTextProperty(prop); mapper.SetInput(text)
@@ -552,11 +557,11 @@ def axis_text_boxes(axis,renderer,offset,vertical=None):
     theta=np.arctan2(*(end-start)[::-1]); normal=np.array([np.sin(theta),-np.cos(theta)])
     low,high=axis.GetRange(); delta=(high-low)/(adjusted-1) if adjusted>1 else 0.
     values=[low+i*delta for i in range(count)]
-    labels=[axis.GetLabelFormat()%value for value in values]
+    labels=[axis_value_text(axis.GetLabelFormat(),value) for value in values]
     first=text_size(renderer,prop,labels[0]); boxes=[]
     entries=[(np.array(ticks.GetPoint(i*step)[:2]),label,values[i],False) for i,label in enumerate(labels)]
     for anchor,value in ((start,low),(end,high)):
-        label=axis.GetLabelFormat()%value
+        label=axis_value_text(axis.GetLabelFormat(),value)
         if not any(text==label and np.linalg.norm(point-anchor)<1.5 for point,text,_,_ in entries):
             entries.append((anchor,label,value,True))
     for anchor,label,value,supplemental in entries:
@@ -574,7 +579,7 @@ def axis_title_box(axis,renderer,position,vertical=None):
     prop=vtkTextProperty(); prop.ShallowCopy(axis.GetTitleTextProperty())
     if vertical is not None: prop.SetVerticalJustification(vertical)
     width,height=text_size(renderer,prop,axis.GetTitle())
-    label=axis.GetLabelFormat()%axis.GetRange()[0]
+    label=axis_value_text(axis.GetLabelFormat(),axis.GetRange()[0])
     offset=axis.GetTickLength()+axis.GetTickOffset()+(1.2*text_size(renderer,axis.GetLabelTextProperty(),label)[1] if axis.GetLabelVisibility() else 0)
     # Match vtkAxisActor2D::ShiftPosition's integer width division and offset
     # conversion before each integer-coordinate assignment.
