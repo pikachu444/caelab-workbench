@@ -489,7 +489,7 @@ Reuse existing Matplotlib Qt canvases for 2D plots with collection-based drawing
 
 Plot decimation preserves selected points and the complete displayed feasible frontier. Show the rendered/available count and active filter; decimation cannot change computed rankings, statistics or exports.
 
-If VTK is absent or rendering unavailable, expose a labeled 2D slice fallback; it does not pass the 3D-view acceptance criterion. Tooltips/selection use physical values with units, not only normalized coordinates. Keyboard focus, screen-reader labels, non-color state indicators, Korean text/IME, high-DPI scaling, dock restore and long names are required checks. Actual Windows views at normal and narrow sizes are required before GUI delivery; offscreen tests do not substitute for that evidence.
+If VTK is absent or rendering unavailable, expose a labeled 2D slice fallback; it does not pass the 3D-view acceptance criterion. Tooltips/selection use physical values with units, not only normalized coordinates. Keyboard focus, screen-reader labels, non-color state indicators, Korean text/IME, dock restore and long names are required checks. Actual Windows views at normal and narrow sizes are required before GUI delivery; offscreen tests do not substitute for that evidence.
 
 ## 16. Concrete implementation and migration: Phases 1–3
 
@@ -532,7 +532,7 @@ For scheduling, inject out-of-order completion, cancellation, parser failure, du
 
 **Exit evidence:** a reviewer uses a native input not used to implement the feature: open → parameterize → criteria → DOE → actual runs/failure inspection → surrogate validation → constrained multi-objective search → fresh native confirmation → Pareto/TDP selection → set current with verified backup → separate rerun → ParaView → save/close/reopen. Check source edits while planning apply, damaged/missing outputs, duplicate categories, unresolved linked variables, readonly targets, full disk/write faults, interrupted apply and independent read-only study access.
 
-On Windows record normal/narrow layouts, 100/150/200% DPI, Korean IME, keyboard access, dock restore, selected-row stability, all five views and the 10,000-row performance test. Native solver/ParaView checks, mocked faults, mathematical tests and offscreen renders remain separately reported. Update CURRENT_STATE only with observed results; no general “commercial-grade” or “MDO complete” claim based solely on test counts or a screenshot. Before cutover/phase delivery, resolve each review criticism with its original reviewer; publication/merge remains governed by the user's authorization and AGENTS.
+On Windows record normal/narrow layouts, Korean IME, keyboard access, dock restore, selected-row stability, all five views and the 10,000-row performance test. Native solver/ParaView checks, mocked faults, mathematical tests and offscreen renders remain separately reported. Update CURRENT_STATE only with observed results; no general “commercial-grade” or “MDO complete” claim based solely on test counts or a screenshot. Before cutover/phase delivery, resolve each review criticism with its original reviewer; publication/merge remains governed by the user's authorization and AGENTS.
 
 ## 17. Design review decisions and source limits
 

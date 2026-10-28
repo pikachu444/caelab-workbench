@@ -117,7 +117,8 @@ def drain_layout(app):
     for _ in range(5): app.processEvents()
 
 
-@pytest.mark.parametrize('ratio',(1.,1.5,2.))
+# Acceptance uses default scaling; the user withdrew the per-scale matrix requirement.
+@pytest.mark.parametrize('ratio',(1.,))
 @pytest.mark.parametrize('size',((960,720),(1380,880)))
 @pytest.mark.parametrize('entry',('loaded','blank'))
 def test_fresh_layout_first_3d_keeps_selected_row_and_native_labels(layout_studio,native_layout_widget,
