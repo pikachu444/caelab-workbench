@@ -4,7 +4,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtGui import QFontDatabase, QFontInfo, QFontMetrics
+from PySide6.QtGui import QFontDatabase, QFontInfo
 from PySide6.QtWidgets import QApplication
 from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
 from apps.workbench_qt.theme import toggle_theme_mode, current_theme_mode
@@ -33,11 +33,9 @@ def app(tmp_path):
 
 
 def font_details(font):
-    info=QFontInfo(font); metrics=QFontMetrics(font)
+    info=QFontInfo(font)
     return dict(requested_family=font.family(),resolved_family=info.family(),exact_match=info.exactMatch(),
-        pixel_size=font.pixelSize(),point_size=font.pointSizeF(),height=metrics.height(),
-        line_spacing=metrics.lineSpacing(),ascent=metrics.ascent(),descent=metrics.descent(),
-        average_char_width=metrics.averageCharWidth())
+        pixel_size=font.pixelSize(),point_size=font.pointSizeF())
 
 
 def test_mdo_studio_window_creation(app):
