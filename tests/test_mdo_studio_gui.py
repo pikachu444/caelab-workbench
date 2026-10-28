@@ -4,17 +4,40 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtGui import QFontDatabase, QFontInfo, QFontMetrics
 from PySide6.QtWidgets import QApplication
 from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
 from apps.workbench_qt.theme import toggle_theme_mode, current_theme_mode
 
 
 @pytest.fixture
-def app():
+def app(tmp_path):
+    import hashlib,json
+    from pathlib import Path
     instance = QApplication.instance()
     if instance is None:
         instance = QApplication([])
+    before=list(QFontDatabase.families()); registered=[]
+    # Match the installed-font geometry used by the Windows entry and sibling GUI tests.
+    if not before:
+        for name in ('segoeui.ttf','malgun.ttf'):
+            path=Path('C:/Windows/Fonts')/name
+            if path.is_file():
+                font_id=QFontDatabase.addApplicationFont(str(path))
+                registered.append(dict(path=str(path),font_id=font_id,
+                    sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    (tmp_path/'font-environment.json').write_text(json.dumps(dict(
+        available_before=before,available_after=list(QFontDatabase.families()),registered=registered),
+        indent=2),encoding='utf-8')
     return instance
+
+
+def font_details(font):
+    info=QFontInfo(font); metrics=QFontMetrics(font)
+    return dict(requested_family=font.family(),resolved_family=info.family(),exact_match=info.exactMatch(),
+        pixel_size=font.pixelSize(),point_size=font.pointSizeF(),height=metrics.height(),
+        line_spacing=metrics.lineSpacing(),ascent=metrics.ascent(),descent=metrics.descent(),
+        average_char_width=metrics.averageCharWidth())
 
 
 def test_mdo_studio_window_creation(app):
@@ -121,6 +144,7 @@ def test_fresh_layout_first_3d_keeps_selected_row_and_native_labels(layout_studi
             header_height=window.tdp_table.horizontalHeader().height(),hscroll_height=window.tdp_table.horizontalScrollBar().height(),
             native=[native.widget.width(),native.widget.height()],render_size=native.widget.window.GetSize(),
             ratio=ratio,font_pixels=window.font().pixelSize(),dpi=window.logicalDpiY(),
+            font=font_details(window.font()),
             camera_initialized=native._camera_initialized,initial_fit_pending=native._initial_fit_pending,
             camera=camera_state(native.renderer.GetActiveCamera()),ranges=native.physical_ranges,
             native_calls=len(window._layout_test_native_calls),
@@ -215,20 +239,35 @@ def test_fresh_layout_first_3d_keeps_selected_row_and_native_labels(layout_studi
     assert window._layout_test_native_calls==[]
 
 
-def test_saved_global_and_study_splitters_win_over_fresh_default(layout_studio,app):
+def test_saved_global_and_study_splitters_win_over_fresh_default(layout_studio,app,tmp_path):
+    import json
     seed=layout_studio(); seed.show(); drain_layout(app)
     seed.center_splitter.setSizes([260,364]); drain_layout(app)
     global_sizes=seed.center_splitter.sizes(); global_layout=seed.saveState(); seed._save_layout()
-    seed.center_splitter.setSizes([200,424]); study_state=bytes(seed.center_splitter.saveState()).hex()
+    seed.center_splitter.setSizes([200,424]); study_sizes=seed.center_splitter.sizes()
+    study_splitter_state=bytes(seed.center_splitter.saveState()); study_state=study_splitter_state.hex()
     seed.setup_dock.setFloating(True); seed.setup_dock.hide()
     study_layout=bytes(seed.saveState()).hex(); seed.restoreState(global_layout)
     seed.center_splitter.setSizes(global_sizes); seed._save_layout()
+    global_splitter_state=bytes(seed.center_splitter.saveState())
     global_window=layout_studio(); global_window.show(); drain_layout(app)
     assert global_window.center_splitter.sizes()==global_sizes
+    assert bytes(global_window.center_splitter.saveState())==global_splitter_state
     assert global_window._default_splitter_pending is None
     study_window=layout_studio({'layout':study_layout,'splitter':study_state,'tab':1,'selected_ids':['DP_0001']})
     study_window.show(); drain_layout(app)
-    assert study_window.center_splitter.sizes()==[200,424]
+    (tmp_path/'saved-splitters.json').write_text(json.dumps(dict(
+        font=font_details(study_window.font()),requested_global=[260,364],requested_study=[200,424],
+        global_seed_sizes=global_sizes,global_reopened_sizes=global_window.center_splitter.sizes(),
+        study_seed_sizes=study_sizes,study_reopened_sizes=study_window.center_splitter.sizes(),
+        global_seed_state=global_splitter_state.hex(),
+        global_reopened_state=bytes(global_window.center_splitter.saveState()).hex(),
+        study_seed_state=study_state,study_reopened_state=bytes(study_window.center_splitter.saveState()).hex(),
+        seed_outer=[seed.width(),seed.height()],reopened_outer=[study_window.width(),study_window.height()],
+        seed_splitter_height=seed.center_splitter.height(),
+        reopened_splitter_height=study_window.center_splitter.height()),indent=2),encoding='utf-8')
+    assert study_window.center_splitter.sizes()==study_sizes
+    assert bytes(study_window.center_splitter.saveState())==study_splitter_state
     assert study_window.viz_tabs.currentIndex()==1
     assert study_window._selected_ids=={'DP_0001'}
     assert study_window.setup_dock.isFloating() and study_window.setup_dock.isHidden()
