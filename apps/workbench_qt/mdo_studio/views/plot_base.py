@@ -606,7 +606,7 @@ def repair_axis_numeric_boxes(boxes,axes,renderer,size,padding,gap):
         axis=next(axis for axis in axes if axis.GetTitle()==item['axis'])
         start=np.array(axis.GetPositionCoordinate().GetComputedViewportValue(renderer)); end=np.array(axis.GetPosition2Coordinate().GetComputedViewportValue(renderer))
         width=item['box'][2]-item['box'][0]; height=item['box'][3]-item['box'][1]
-        if np.linalg.norm(end-start)<gap/4 or width>size[0]-2*padding or height>size[1]-2*padding: continue
+        if width>size[0]-2*padding or height>size[1]-2*padding: continue
         original=np.array(item['box']); anchor=np.array(item['anchor']); nearest=np.array([np.clip(original[0],padding,size[0]-padding-width),np.clip(original[1],padding,size[1]-padding-height)])
         candidates=[]
         for dx,dy in ((0,0),(0,height+gap),(0,-height-gap),(width+gap,0),(-width-gap,0)):
@@ -638,15 +638,23 @@ def repair_axis_titles(boxes,leaders,size,padding,gap):
 
 def _repair_title_order(boxes,leaders,size,padding,gap,order):
     result=[dict(item) for item in boxes]; leaders=list(leaders); custom=set()
+    def needs_move(index):
+        item=result[index]
+        return box_clip(item['box'],size,padding) or any(box_overlap(item['box'],other['box'],gap)>0 for j,other in enumerate(result) if j!=index) or any(segment_hits_box(leader['start'],leader['end'],item['box']) for leader in leaders)
+    def contains(box,point): return box[0]<=point[0]<=box[2] and box[1]<=point[1]<=box[3]
     for i in order:
         item=result[i]
-        if not box_clip(item['box'],size,padding) and not any(box_overlap(item['box'],other['box'],gap)>0 for j,other in enumerate(result) if j!=i) and not any(segment_hits_box(leader['start'],leader['end'],item['box']) for leader in leaders): continue
+        # A valid title may block the unchanged leader origin of a clipped title.
+        # Free that origin using the same candidates before routing the other title.
+        blocked=[result[j]['anchor'] for j in order if j!=i and needs_move(j) and contains(item['box'],result[j]['anchor'])]
+        if not needs_move(i) and not blocked: continue
         original=np.array(item['box']); width,height=original[2:]-original[:2]; anchor=np.array(item['anchor'])
         if width>size[0]-2*padding or height>size[1]-2*padding: continue
         nearest=np.array([np.clip(original[0],padding,size[0]-padding-width),np.clip(original[1],padding,size[1]-padding-height)])
         candidates=[]
         for dx,dy in product((0,1,-1,2,-2,3,-3,4,-4),repeat=2):
             origin=nearest+np.array([dx*(width+gap),dy*(height+gap)]); box=[*origin,origin[0]+width,origin[1]+height]
+            if any(contains(box,anchor) for anchor in blocked): continue
             if box_clip(box,size,padding) or any(box_overlap(box,other['box'],gap)>0 for j,other in enumerate(result) if j!=i): continue
             if any(segment_hits_box(leader['start'],leader['end'],box) for leader in leaders): continue
             target=np.clip(anchor,box[:2],box[2:])

@@ -429,6 +429,39 @@ def test_leaders_cannot_cross_unrelated_numbers_titles_or_each_other():
     assert ('leader',0,1) in leader_conflicts([leader,dict(start=(5,0),end=(5,10),label_index=1)],boxes)
 
 
+def test_coincident_tick_origins_keep_distinct_values_and_allow_fanout():
+    from apps.workbench_qt.mdo_studio.views.plot_base import repair_axis_numeric_boxes,box_overlap,leader_conflicts
+    raw=[('Y',172.,(275,35,296,47),(317,60)),('Y',297.,(312,32,333,44),(329,57)),
+         ('Z',6.31e-5,(292,11,342,23),(317,60)),('Z',.000113,(292,11,344,23),(317,60)),
+         ('X',.0969,(341,30,379,42),(329,57)),('X',.0584,(344,58,382,70),(332,69))]
+    boxes=[dict(axis=axis,value=value,text=str(value),box=box,raw_position=box[:2],anchor=anchor) for axis,value,box,anchor in raw]
+    def axis(name):
+        coordinate=SimpleNamespace(GetComputedViewportValue=lambda renderer:(317,60))
+        return SimpleNamespace(GetTitle=lambda:name,GetPositionCoordinate=lambda:coordinate,GetPosition2Coordinate=lambda:coordinate)
+    repaired,custom,leaders=repair_axis_numeric_boxes(boxes,[axis(key) for key in 'XYZ'],None,(614,126),8,4)
+    assert 'Z' in custom and leaders
+    assert [(item['axis'],item['value'],item['anchor']) for item in repaired]==[(item['axis'],item['value'],item['anchor']) for item in boxes]
+    assert not any(box_overlap(a['box'],b['box'],4)>0 for i,a in enumerate(repaired) for b in repaired[i+1:])
+    assert not leader_conflicts(leaders,repaired)
+
+
+def test_title_repair_frees_clipped_title_origin_without_moving_anchors():
+    from apps.workbench_qt.mdo_studio.views.plot_base import repair_axis_titles,box_overlap,box_clip,leader_conflicts
+    raw=[('172',(554,67,593,90),(600,122)),('297',(601,43,640,66),(647,98)),
+         ('0.000113',(481,167,579,190),(600,179)),('6.31e-05',(481,110,577,133),(600,122)),
+         ('0.0969',(652,29,724,52),(647,98)),('0.0584',(698,84,770,107),(693,122)),
+         ('Y',(589,7,607,34),(600,122)),('Z',(590,102,606,129),(600,179)),('X',(659,76,678,103),(670,110))]
+    boxes=[dict(text=text,box=box,raw_position=box[:2],anchor=anchor,**({'axis':'YZX'[i//2]} if i<6 else {})) for i,(text,box,anchor) in enumerate(raw)]
+    leaders=[dict(axis='X',value=.0584,label_index=5,start=(693,122),end=(698,107))]
+    repaired,custom,lines=repair_axis_titles(boxes,leaders,(1228,252),16,8)
+    assert {'Y','Z'}<=custom
+    assert [item['anchor'] for item in repaired]==[item['anchor'] for item in boxes]
+    assert repaired[:6]==boxes[:6]
+    assert not any(box_clip(item['box'],(1228,252),16) for item in repaired)
+    assert not any(box_overlap(a['box'],b['box'],8)>0 for i,a in enumerate(repaired) for b in repaired[i+1:])
+    assert not leader_conflicts(lines,repaired)
+
+
 @pytest.mark.parametrize('enabled',(0,1))
 @pytest.mark.parametrize('suppressed',(False,True))
 def test_style_action_restores_original_render_flags_and_invalidates_failure(vtk_widget,enabled,suppressed):
