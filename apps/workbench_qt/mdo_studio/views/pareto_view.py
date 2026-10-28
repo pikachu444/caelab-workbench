@@ -1,121 +1,101 @@
-"""Interactive 2D Pareto Front visualization with Knee Point recommendation."""
-
+"""Point-ID linked Pareto projections; dominance comes only from the full study."""
 from __future__ import annotations
-
-from typing import Sequence
 import numpy as np
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
+from PySide6.QtWidgets import QHBoxLayout,QGridLayout,QComboBox,QLabel,QWidget,QSizePolicy
+from .plot_base import PlotWidget, Native3D
 
-from caelab.mdo.study_manager import DesignPointRecord
-from caelab.mdo.pareto import pareto_front, knee_point
-
-
-class ParetoFrontWidget(QWidget):
-    def __init__(self, parent=None, is_dark: bool = True) -> None:
-        super().__init__(parent)
-        self.is_dark = is_dark
-        self.fig = Figure(figsize=(6, 4), dpi=100)
-        self.canvas = FigureCanvas(self.fig)
-        self.ax = self.fig.add_subplot(111)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.canvas)
-        self._apply_theme()
-
-    def set_theme(self, is_dark: bool) -> None:
-        self.is_dark = is_dark
-        self._apply_theme()
-        self.canvas.draw_idle()
-
-    def _apply_theme(self) -> None:
-        if self.is_dark:
-            bg_color = "#13171e"
-            text_color = "#e2e8f0"
-            grid_color = "#1e293b"
-        else:
-            bg_color = "#f8fafc"
-            text_color = "#0f172a"
-            grid_color = "#e2e8f0"
-
-        self.fig.patch.set_facecolor(bg_color)
-        self.ax.set_facecolor(bg_color)
-        self.ax.tick_params(colors=text_color, labelsize=9)
-        self.ax.xaxis.label.set_color(text_color)
-        self.ax.yaxis.label.set_color(text_color)
-        self.ax.title.set_color(text_color)
-        for spine in self.ax.spines.values():
-            spine.set_color(grid_color)
-        self.ax.grid(True, linestyle="--", alpha=0.5, color=grid_color)
-        legend = self.ax.get_legend()
-        if legend is not None:
-            legend.get_frame().set_facecolor(bg_color)
-            legend.get_frame().set_edgecolor(grid_color)
-            for label in legend.get_texts():
-                label.set_color(text_color)
-
-    def plot_study(
-        self,
-        records: Sequence[DesignPointRecord],
-        obj_x_id: str,
-        obj_y_id: str,
-        obj_x_name: str | None = None,
-        obj_y_name: str | None = None,
-    ) -> None:
-        self.ax.clear()
-        self._apply_theme()
-
-        completed = [r for r in records if r.status == "COMPLETED" and obj_x_id in r.observations and obj_y_id in r.observations]
-        if not completed:
-            self.ax.text(0.5, 0.5, "No evaluated points available", ha="center", va="center",
-                         color="#94a3b8", transform=self.ax.transAxes)
-            self.canvas.draw_idle()
-            return
-
-        x_name = obj_x_name or obj_x_id
-        y_name = obj_y_name or obj_y_id
-
-        feasible = [r for r in completed if r.feasibility == "FEASIBLE"]
-        infeasible = [r for r in completed if r.feasibility in ("MARGINAL", "INFEASIBLE")]
-
-        # Infeasible points (muted crosses)
-        if infeasible:
-            ix = [r.observations[obj_x_id] for r in infeasible]
-            iy = [r.observations[obj_y_id] for r in infeasible]
-            self.ax.scatter(ix, iy, c="#ef4444", alpha=0.4, marker="x", s=35, label="Infeasible / Marginal")
-
-        # Feasible points
-        if feasible:
-            fx = [r.observations[obj_x_id] for r in feasible]
-            fy = [r.observations[obj_y_id] for r in feasible]
-            self.ax.scatter(fx, fy, c="#22c55e", alpha=0.7, marker="o", s=40, label="Feasible Points")
-
-            # Extract Pareto Front
-            vecs = np.array([[r.observations[obj_x_id], r.observations[obj_y_id]] for r in feasible])
-            p_ids = [r.point_id for r in feasible]
-            p_indices = np.array([i for i, r in enumerate(feasible) if r.is_pareto], dtype=int)
-
-            if len(p_indices) > 0:
-                # Sort along front for smooth line
-                p_vecs = vecs[list(p_indices)]
-                order = np.argsort(p_vecs[:, 0])
-                sorted_front = p_vecs[order]
-
-                self.ax.plot(sorted_front[:, 0], sorted_front[:, 1], color="#38bdf8", linestyle="-", linewidth=2.2, label="Pareto Frontier")
-                self.ax.scatter(sorted_front[:, 0], sorted_front[:, 1], c="#38bdf8", edgecolors="white", s=70, zorder=4)
+NATIVE_SELECTED_COLOR='#ffffff'
+PARETO_LAYERS=(
+    ('Actual feasible','#22c55e','o',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='FEASIBLE'),
+    ('Actual marginal','#f59e0b','^',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='MARGINAL'),
+    ('Actual infeasible / unassessed','#ef4444','x',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility not in ('FEASIBLE','MARGINAL')),
+    ('Surrogate prediction','#a78bfa','D',lambda r:getattr(r,'mode','ACTUAL')=='SURROGATE'))
+PARETO_LEGEND=tuple((label,color) for label,color,_,_ in PARETO_LAYERS)+(('Full-objective feasible front','#38bdf8'),('Selected',NATIVE_SELECTED_COLOR))
+PARETO_LEGEND_TEXT='   '.join(f'<span style="color:{color}">●</span> {name}' for name,color in PARETO_LEGEND)
 
 
-        self.ax.set_xlabel(x_name, fontsize=9.5)
-        self.ax.set_ylabel(y_name, fontsize=9.5)
-        self.ax.set_title("Sampled Pareto Front", fontsize=11, fontweight="bold")
-        legend = self.ax.legend(loc="upper right", framealpha=0.8, fontsize=8.5)
-        if legend:
-            legend.get_frame().set_facecolor(self.ax.get_facecolor())
-            legend.get_frame().set_edgecolor("#1e293b" if self.is_dark else "#e2e8f0")
-            for text in legend.get_texts():
-                text.set_color("#e2e8f0" if self.is_dark else "#0f172a")
+def pareto_result_note(rendered,total,*,fallback=False):
+    return (f'Rendered {rendered} / {total} points. Full-objective front retained; this projection does not recompute dominance.'
+            +(' 2D fallback; native VTK unavailable.' if fallback else ''))
 
-        self.fig.tight_layout()
-        self.canvas.draw_idle()
+
+class ParetoFrontWidget(PlotWidget):
+    def __init__(self, parent=None, is_dark=True):
+        super().__init__(parent, is_dark)
+        row=QGridLayout()
+        self.dimension=QComboBox(); self.dimension.addItems(['2D', '3D'])
+        row.addWidget(self.dimension,0,0)
+        self.axes=[]; self.axis_groups=[]
+        for i,label in enumerate(('X','Y','Z')):
+            group=QWidget(); line=QHBoxLayout(group); line.setContentsMargins(0,0,0,0)
+            line.addWidget(QLabel(label)); combo=QComboBox(); combo.setMinimumContentsLength(4)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+            combo.setMinimumWidth(60); line.addWidget(combo,1); self.axes.append(combo); self.axis_groups.append(group)
+            row.addWidget(group,0,i+1) if i<2 else row.addWidget(group,1,1,1,2)
+            combo.currentIndexChanged.connect(self.refresh)
+        self.controls.addLayout(row)
+        self.native=Native3D(self)
+        self.layout.insertWidget(self.layout.indexOf(self.canvas)+1, self.native, 1)
+        self.native.hide()
+        self.native.point_selected.connect(self.point_selected)
+        self.dimension.currentIndexChanged.connect(self.refresh)
+        self.records=[]; self.objectives=[]; self.units={}
+
+    def set_study(self, records, objectives, units):
+        self.records=list(records); self.objectives=list(objectives); self.units=dict(units)
+        keys=[o.response_id for o in objectives]
+        for i, combo in enumerate(self.axes):
+            old=combo.currentData(); combo.blockSignals(True); combo.clear()
+            for o in objectives: combo.addItem(f'{o.response_id} [{units.get(o.response_id,"—")}] ({o.sense})',o.response_id)
+            combo.setCurrentIndex(keys.index(old) if old in keys else min(i,len(keys)-1))
+            combo.blockSignals(False)
+        self.refresh()
+
+    def plot_study(self, records, obj_x_id, obj_y_id, obj_x_name=None, obj_y_name=None):
+        from types import SimpleNamespace
+        self.set_study(records,[SimpleNamespace(response_id=obj_x_id,sense='MIN'),SimpleNamespace(response_id=obj_y_id,sense='MIN')],{})
+        if obj_x_name: self.ax.set_xlabel(obj_x_name)
+        if obj_y_name: self.ax.set_ylabel(obj_y_name)
+
+    def set_selected(self, point_ids):
+        super().set_selected(point_ids)
+
+    def refresh(self, *args):
+        if not hasattr(self,'records'): return
+        use3=self.dimension.currentText()=='3D'
+        self.axis_groups[2].setVisible(use3)
+        for combo in self.axes: combo.setToolTip(combo.currentText())
+        self.set_native_mode(use3 and self.native.available)
+        keys=[c.currentData() for c in self.axes[:3 if use3 else 2]]
+        if len(set(keys)) != len(keys) or any(k is None for k in keys):
+            self.empty('Choose two / three different objective responses.'); return
+        rows=[r for r in self.records if r.status in ('COMPLETED','PREDICTED') and all(k in r.observations for k in keys)]
+        self.ax.clear(); self._picks.clear(); self.native.clear()
+        if not rows:
+            self.empty('Run native evaluations or search a validated surrogate.'); return
+        # Keep the entire full-objective front and selected points when decimating.
+        keep=[r for r in rows if r.is_pareto or r.point_id in self._selected]
+        rest=[r for r in rows if not r.is_pareto and r.point_id not in self._selected]
+        stride=max(1,int(np.ceil(len(rest)/3000)))
+        rendered=keep+rest[::stride]
+        self.native.set_legend(PARETO_LEGEND)
+        from matplotlib.colors import to_rgb
+        for label,color,marker,predicate in PARETO_LAYERS:
+            group=[r for r in rendered if predicate(r)]
+            if not group: continue
+            values=np.array([[r.observations[k] for k in keys] for r in group])
+            artist=self.ax.scatter(values[:,0],values[:,1],c=color,marker=marker,s=35,alpha=.7,label=label,picker=6)
+            self._picks[artist]=[r.point_id for r in group]
+            if use3: self.native.points(values,[r.point_id for r in group],to_rgb(color))
+        for label,group,color,size in [('Full-objective feasible front',[r for r in rendered if r.is_pareto and getattr(r,'mode','ACTUAL')!='SURROGATE'],'#38bdf8',65),('Selected',[r for r in rendered if r.point_id in self._selected],'#ffffff' if self.is_dark else '#0f172a',130)]:
+            if group:
+                values=np.array([[r.observations[k] for k in keys] for r in group])
+                artist=self.ax.scatter(values[:,0],values[:,1],facecolors='none',edgecolors=color,s=size,linewidths=2,label=label,picker=6)
+                self._picks[artist]=[r.point_id for r in group]
+                if use3: self.native.points(values,[r.point_id for r in group],to_rgb(NATIVE_SELECTED_COLOR if label=='Selected' else color),12)
+        labels=[self.axes[i].currentText() for i in range(len(keys))]
+        self.ax.set_xlabel(labels[0]); self.ax.set_ylabel(labels[1]); self.ax.set_title('Sampled Pareto projection')
+        self.ax.legend(fontsize=8); self._apply_theme(); self.fig.tight_layout(); self.canvas.draw_idle()
+        if use3: self.native.finish(labels)
+        self.note.setText(pareto_result_note(len(rendered),len(rows),fallback=use3 and not self.native.available))

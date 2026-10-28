@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, Any
@@ -35,6 +36,14 @@ class DesignPointRecord:
     is_pareto: bool = False
     duration_sec: float = 0.0
     error_message: str = ""
+    mode: str = "ACTUAL"
+    run_id: str | None = None
+    attempts: list[dict] = field(default_factory=list)
+    source_point_id: str | None = None
+    revision: str = "1"
+    study_id: str = ""
+    batch_id: str | None = None
+    model_id: str | None = None
 
 
 class StudyManager:
@@ -101,22 +110,24 @@ class StudyManager:
         finally:
             rec.duration_sec = time.monotonic() - t0
 
-    def update_pareto_front(self) -> list[str]:
-        """Compute Pareto front on current feasible points."""
-        feasible = [r for r in self.records if r.status == "COMPLETED" and r.feasibility == "FEASIBLE"]
+    def update_pareto_front(self, objectives_by_revision=None) -> list[str]:
+        """Compare full frozen objective vectors within each mode and revision."""
         for r in self.records:
             r.is_pareto = False
-
-        if not feasible or not self.objectives:
-            return []
-
-        # Minimization vectors
-        vecs = [[r.objectives.get(o.id, 0.0) for o in self.objectives] for r in feasible]
-        p_ids = [r.point_id for r in feasible]
-        indices = pareto_front(vecs, p_ids)
-
         pareto_ids = []
-        for idx in indices:
-            feasible[idx].is_pareto = True
-            pareto_ids.append(feasible[idx].point_id)
+        for mode,revision in {(r.mode,r.revision) for r in self.records}:
+            objectives = self.objectives if objectives_by_revision is None else objectives_by_revision.get(revision,())
+            ids = tuple(o.id for o in objectives)
+            if not ids:
+                continue
+            rows = [r for r in self.records if (r.mode,r.revision) == (mode,revision)
+                    and r.status == "COMPLETED" and r.feasibility == "FEASIBLE"
+                    and set(r.objectives) == set(ids) and all(math.isfinite(v) for v in r.objectives.values())]
+            if not rows:
+                continue
+            indices = pareto_front([[r.objectives[key] for key in ids] for r in rows],
+                                   [r.point_id for r in rows])
+            for idx in indices:
+                rows[idx].is_pareto = True
+                pareto_ids.append(rows[idx].point_id)
         return pareto_ids

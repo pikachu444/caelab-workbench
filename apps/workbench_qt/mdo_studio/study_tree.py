@@ -1,59 +1,50 @@
-"""Study tree navigation dock (Area 1 of MDO Studio)."""
-
-from __future__ import annotations
-
+"""Study artifact navigation; selecting a node never applies or evaluates."""
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QWidget, QVBoxLayout, QLabel
-
-from caelab.mdo.study_manager import StudyManager
+from PySide6.QtWidgets import QTreeWidget,QTreeWidgetItem,QWidget,QVBoxLayout
 
 
 class StudyTreeWidget(QWidget):
-    node_selected = Signal(str, str)  # category, item_id
+    node_selected=Signal(str,str)
+    def __init__(self,parent=None):
+        super().__init__(parent); layout=QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
+        self.tree=QTreeWidget(); self.tree.setHeaderHidden(True); self.tree.setAccessibleName('Study artifacts')
+        self.tree.currentItemChanged.connect(self._selected); layout.addWidget(self.tree)
 
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+    def populate(self,study,*,surrogate=None,current_point_id=None):
+        selected=self.tree.currentItem().data(0,Qt.ItemDataRole.UserRole) if self.tree.currentItem() else None
+        self.tree.blockSignals(True); self.tree.clear()
+        root=QTreeWidgetItem(self.tree,[study.name]); root.setExpanded(True)
+        def item(parent,text,kind,key=''):
+            result=QTreeWidgetItem(parent,[text]); result.setToolTip(0,text); result.setData(0,Qt.ItemDataRole.UserRole,(kind,key)); return result
+        item(root,'Inputs / scalar tokens','input')
+        variables=item(root,f'Variables ({len(study.space.variables)})','variables')
+        for v in study.space.variables: item(variables,f'{v.name} [{getattr(v,"unit","—")}]','variables',v.id)
+        criteria=item(root,'Criteria / response selectors','criteria')
+        for o in study.objectives: item(criteria,f'{o.response_id} — {o.sense}','criteria',o.id)
+        for c in study.constraints: item(criteria,f'{c.response_id or c.id} — {c.kind}','criteria',c.id)
+        item(root,'DOE plans','doe')
+        actual=[r for r in study.records if getattr(r,'mode','ACTUAL')=='ACTUAL']
+        predicted=[r for r in study.records if getattr(r,'mode','ACTUAL')=='SURROGATE']
+        campaign=item(root,f'Native evaluations ({sum(r.status=="COMPLETED" for r in actual)} completed)','evaluations')
+        for state in ('RUNNING','FAILED','CANCELLED'):
+            count=sum(r.status==state for r in actual)
+            if count: item(campaign,f'{state}: {count}','evaluations',state)
+        item(root,'Surrogates — '+('validation available' if surrogate else 'needs training'),'surrogates')
+        item(root,f'Optimization runs ({len(predicted)} surrogate predictions)','optimization')
+        item(root,'Sensitivity analyses','sensitivity')
+        views=item(root,'Views','views')
+        for key in ('Pareto','Parallel','Surface','Sensitivity','Convergence'): item(views,key,'view',key)
+        item(root,'Saved selections / current design'+(f' — {current_point_id}' if current_point_id else ''),'selection')
+        root.setExpanded(True); views.setExpanded(True)
+        if selected:
+            def restore(parent):
+                for i in range(parent.childCount()):
+                    child=parent.child(i)
+                    if child.data(0,Qt.ItemDataRole.UserRole)==selected: self.tree.setCurrentItem(child)
+                    restore(child)
+            restore(root)
+        self.tree.blockSignals(False)
 
-        header = QLabel("MDO Workflow Navigator")
-        header.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;")
-        layout.addWidget(header)
-
-        self.tree = QTreeWidget()
-        self.tree.setHeaderHidden(True)
-        self.tree.itemClicked.connect(self._on_item_clicked)
-        layout.addWidget(self.tree)
-
-    def populate(self, study: StudyManager) -> None:
-        self.tree.clear()
-
-        # 1. Inputs
-        in_item = QTreeWidgetItem(self.tree, ["📁 Native Deck & Template"])
-        QTreeWidgetItem(in_item, ["CalculiX / Abaqus .inp Template"])
-
-        # 2. Variables
-        var_item = QTreeWidgetItem(self.tree, [f"📐 Design Variables ({len(study.space.variables)})"])
-        for v in study.space.variables:
-            info = f"{v.id} [{v.unit or '—'}]"
-            QTreeWidgetItem(var_item, [f"{v.name} ({info})"])
-        var_item.setExpanded(True)
-
-        # 3. Objectives & Constraints
-        crit_item = QTreeWidgetItem(self.tree, [f"🎯 Objectives & Criteria ({len(study.objectives)} obj, {len(study.constraints)} con)"])
-        for o in study.objectives:
-            QTreeWidgetItem(crit_item, [f"Obj: {o.id} ({o.sense})"])
-        for c in study.constraints:
-            QTreeWidgetItem(crit_item, [f"Con: {c.id} ({c.kind} {c.limit})"])
-        crit_item.setExpanded(True)
-
-        doe_item = QTreeWidgetItem(self.tree, ["Design of Experiments"])
-        QTreeWidgetItem(doe_item, ["Baseline + Latin Hypercube (Generate DoE)"])
-        surr_item = QTreeWidgetItem(self.tree, ["Measured-data Analysis"])
-        QTreeWidgetItem(surr_item, ["Sampled Pareto Front"])
-        QTreeWidgetItem(surr_item, ["Gaussian Process: 1D response slice"])
-        QTreeWidgetItem(surr_item, ["Spearman rank correlation"])
-
-    def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
-        text = item.text(0)
-        self.node_selected.emit("category", text)
+    def _selected(self,item,previous=None):
+        value=item.data(0,Qt.ItemDataRole.UserRole) if item else None
+        if value: self.node_selected.emit(*value)

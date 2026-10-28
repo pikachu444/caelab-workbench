@@ -51,7 +51,9 @@ class Workbench:
         self._run_store(project).recover()
         return project
 
-    def save_native_project(self, project: NativeProject, path: str | Path | None = None) -> Path:
+    def save_native_project(self, project: NativeProject, path: str | Path | None = None, *, expected_revision=None) -> Path:
+        if expected_revision is not None:
+            return save_native_project(project, path, expected_revision=expected_revision)
         return save_native_project(project, path)
 
     def add_program_node(self, project: NativeProject, kind: str, program_id: str, position=(0.0, 0.0)):
@@ -221,6 +223,38 @@ class Workbench:
 
     def close(self) -> bool:
         return self.jobs.close()
+
+    def create_mdo_study(self, study=None, *, project=None, node_id=None):
+        from .mdo.service import MDOStudyService
+        service = MDOStudyService(self, study, project=project, node_id=node_id)
+        if project is not None and node_id is not None:
+            stored = project.nodes[node_id].files.get("mdo_study")
+            if stored is not None:
+                return service.open(stored.path)
+            source = project.input_file(node_id)
+            if source is not None:
+                service.open_input(source.path)
+                service.save()
+        return service
+
+    def open_mdo_study(self, path, *, read_only=False, project=None, node_id=None):
+        from .mdo.service import MDOStudyService
+        return MDOStudyService(self, project=project, node_id=node_id).open(path, read_only=read_only)
+
+    def launch_mdo_studio(self, study_file=None, project=None, node_id=None):
+        from .connections import mdo_launch_request
+        if node_id is not None and (project is None or node_id not in project.nodes):
+            raise ValueError("MDO Studio needs an existing project node")
+        if project is not None and project.path is None:
+            raise ValueError("Save the project before opening its independent Studio")
+        if project is not None and node_id is not None:
+            source = project.input_file(node_id)
+            if source and Path(source.path).suffix.lower() != ".inp":
+                raise ValueError("MDO Studio requires an exported CalculiX .inp. Export it in the native preprocessor and choose that input.")
+        request = mdo_launch_request(study_file, project.path if project else None, node_id)
+        if self.registry_path is not None:
+            request.env["CAELAB_INSTALL_REGISTRY"] = str(Path(self.registry_path).resolve())
+        return self.jobs.launch(request)
 
     def resolve_evidence_run(self, project: NativeProject, node_id: str) -> NativeRun | None:
         """Follow the selected node's real incoming path to one selected analysis."""

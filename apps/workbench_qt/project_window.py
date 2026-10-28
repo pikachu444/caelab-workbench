@@ -733,11 +733,11 @@ class ProjectWindow(QMainWindow):
         super().__init__()
         self.workbench = workbench or Workbench()
         self.project = self.workbench.new_native_project()
+        self._project_revision = None
         self.boxes: dict[str, SystemBox] = {}
         self.connectors: list[Connector] = []
         self._dirty = False
         self._loading = False
-        self._optimization_panel = None
         self.resize(1280, 820)
         self._build_ui()
         self.apply_theme()
@@ -807,7 +807,7 @@ class ProjectWindow(QMainWindow):
         view_menu = self.view_menu = self.menuBar().addMenu("보기(&V)")
         tools_menu = self.tools_menu = self.menuBar().addMenu("도구(&T)")
         self.tools_menu_action = tools_menu.menuAction()
-        self.optimization_action = tools_menu.addAction("최적화 및 매개변수 연구...")
+        self.optimization_action = tools_menu.addAction("MDO Studio 열기…")
         self.optimization_action.triggered.connect(self.open_optimization_panel)
         self.toolbox = QListWidget()
         self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
@@ -1188,6 +1188,7 @@ class ProjectWindow(QMainWindow):
         if not self._confirm_transition():
             return False
         self.project = self.workbench.new_native_project()
+        self._project_revision = None
         self._dirty = False
         self._show_project()
         return True
@@ -1203,6 +1204,8 @@ class ProjectWindow(QMainWindow):
             self._error("프로젝트를 열지 못했습니다", error)
             return False
         self.project = project
+        from caelab.project import file_revision
+        self._project_revision = file_revision(project.path)
         self._dirty = False
         self._show_project()
         self._message(f"프로젝트를 열었습니다: {self._short_path(self.project.path)}" +
@@ -1214,11 +1217,13 @@ class ProjectWindow(QMainWindow):
             return self.save_project_as()
         previous_path = self.project.path
         try:
-            self.workbench.save_native_project(self.project, path)
+            self.workbench.save_native_project(self.project, path, expected_revision=self._project_revision)
         except Exception as error:
             self._error("프로젝트를 저장하지 못했습니다", error)
             return False
         self._dirty = False
+        from caelab.project import file_revision
+        self._project_revision = file_revision(self.project.path)
         self._title()
         message = f"프로젝트를 저장했습니다: {self._short_path(self.project.path)}"
         if previous_path and previous_path != self.project.path:
@@ -1232,20 +1237,23 @@ class ProjectWindow(QMainWindow):
         return self.save_project(path) if path else False
 
     def open_optimization_panel(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(
-            self, "MDO Studio",
-            "MDO Studio is undergoing clean-slate rearchitecture.\n"
-            "The new 4-area workspace will be connected soon.")
+        selected = self._selected_boxes()
+        node_id = selected[0].node_id if len(selected) == 1 else None
+        if node_id is not None and (self._dirty or self.project.path is None):
+            if not self.save_project():
+                return
+        try:
+            record = self.workbench.launch_mdo_studio(
+                project=self.project if node_id is not None else None, node_id=node_id)
+            if record.state == "failed":
+                raise ValueError(record.error)
+        except Exception as error:
+            self._error("MDO Studio를 열지 못했습니다", error)
+            return
+        self._message("독립 MDO Studio를 열었습니다.")
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self._optimization_panel is not None and self._optimization_panel._busy:
-            self._optimization_panel.request_cancel()
-            event.ignore()
-            return
         if self._confirm_transition():
-            if self._optimization_panel is not None:
-                self._optimization_panel.close()
             self.run_timer.stop()
             event.accept()
         else:

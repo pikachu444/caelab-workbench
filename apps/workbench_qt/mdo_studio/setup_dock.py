@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QTextOption
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFormLayout, QGroupBox, QTextEdit, QScrollArea, QSizePolicy
+    QFormLayout, QGroupBox, QTextEdit, QScrollArea, QSizePolicy, QTabWidget
 )
 
 from caelab.mdo.study_manager import DesignPointRecord
@@ -21,6 +21,8 @@ from caelab.mdo.study_manager import DesignPointRecord
 class SetupDockWidget(QWidget):
     apply_as_current = Signal(str)  # point_id
     re_evaluate = Signal(str)      # point_id
+    inspect_attempts = Signal(str)
+    open_result = Signal(str)
 
     def __init__(self, is_dark: bool = True, parent=None) -> None:
         super().__init__(parent)
@@ -33,6 +35,9 @@ class SetupDockWidget(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(6, 6, 6, 6)
 
+        self.context_tabs = QTabWidget()
+        outer.addWidget(self.context_tabs)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.viewport().setStyleSheet("background: transparent;")
@@ -43,6 +48,7 @@ class SetupDockWidget(QWidget):
 
         # 1. Selected Point Header
         self.lbl_title = QLabel("Selected Design Point: None")
+        self.lbl_title.setTextFormat(Qt.TextFormat.PlainText)
         self.lbl_title.setWordWrap(True)
         self.lbl_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.lbl_title.setStyleSheet("font-weight: bold; font-size: 11pt;")
@@ -80,20 +86,26 @@ class SetupDockWidget(QWidget):
         act_layout = QVBoxLayout(act_box)
 
         self.btn_apply_current = QPushButton("Set as Current\nDesign Point")
-        self.btn_apply_current.setStyleSheet(
-            "background-color: #2563eb; color: white; font-weight: bold; padding: 8px; border-radius: 4px;"
-        )
         self.btn_apply_current.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.btn_apply_current.setEnabled(False)
         self.btn_apply_current.clicked.connect(self._on_apply_clicked)
         act_layout.addWidget(self.btn_apply_current)
+        self.btn_confirm = QPushButton("Fresh Native\nConfirmation")
+        self.btn_confirm.clicked.connect(lambda: self.re_evaluate.emit(self._current_record.point_id) if self._current_record else None)
+        act_layout.addWidget(self.btn_confirm)
+        self.btn_attempts = QPushButton("Attempts / Log")
+        self.btn_attempts.clicked.connect(lambda: self.inspect_attempts.emit(self._current_record.point_id) if self._current_record else None)
+        act_layout.addWidget(self.btn_attempts)
+        self.btn_result = QPushButton("Open Result in ParaView")
+        self.btn_result.clicked.connect(lambda: self.open_result.emit(self._current_record.point_id) if self._current_record else None)
+        act_layout.addWidget(self.btn_result)
 
         self.lbl_guide = QTextEdit()
         self.lbl_guide.setReadOnly(True)
-        self.lbl_guide.setPlainText("Safely substitutes parameters into active native deck with automatic .bak backup.")
+        self.lbl_guide.setPlainText("Select a point to inspect its values and available actions.")
         self.lbl_guide.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self.lbl_guide.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.lbl_guide.setFixedHeight(120)
+        self.lbl_guide.setMaximumHeight(100)
         self.lbl_guide.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         act_layout.addWidget(self.lbl_guide)
 
@@ -102,7 +114,15 @@ class SetupDockWidget(QWidget):
         for group in (badge_box, self.param_box, self.resp_box, act_box):
             group.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll.setWidget(container)
-        outer.addWidget(scroll)
+        self.context_tabs.addTab(scroll, "Point")
+
+    def set_editor(self, editor, title="Setup"):
+        if self.context_tabs.count() > 1:
+            old=self.context_tabs.widget(1)
+            self.context_tabs.removeTab(1)
+            old.hide()  # Retain configuration drafts when navigating other contexts.
+        self.context_tabs.addTab(editor,title)
+        self.context_tabs.setCurrentIndex(1)
 
     def set_theme(self, is_dark: bool) -> None:
         self.is_dark = is_dark
@@ -111,22 +131,28 @@ class SetupDockWidget(QWidget):
         self.setStyleSheet(f"QWidget#setupDockContainer {{ background-color: {bg_color}; }} QScrollArea {{ background: {bg_color}; }}")
         self.lbl_guide.setStyleSheet(f"color: {guide_color}; font-size: 8.5pt; border: none; background: transparent;")
 
-    def display_record(self, record: DesignPointRecord | None) -> None:
+    def display_record(self, record: DesignPointRecord | None, units=None) -> None:
         self._current_record = record
+        units=units or {}
+        self.btn_attempts.setEnabled(record is not None)
+        self.btn_confirm.setEnabled(False); self.btn_result.setEnabled(False)
         if record is None:
             self.lbl_title.setText("Selected Design Point: None")
             self.lbl_status.setText("—")
             self.lbl_feasibility.setText("—")
             self.lbl_violation.setText("0.0")
             self.btn_apply_current.setEnabled(False)
+            self.lbl_guide.setPlainText("Select a point to inspect its values and available actions.")
             while self.param_layout.rowCount():
                 self.param_layout.removeRow(0)
             while self.resp_layout.rowCount():
                 self.resp_layout.removeRow(0)
             return
 
-        self.lbl_title.setText(f"{record.point_id}: {record.name}")
+        self.lbl_title.setText(f"DP_{record.index:04d}: {record.name}")
+        self.lbl_title.setToolTip(f"{getattr(record,'mode','ACTUAL')} · revision {getattr(record,'revision','1')}")
         self.lbl_status.setText(record.status)
+        self.resp_box.setTitle("Predicted Responses" if getattr(record,'mode','ACTUAL')=='SURROGATE' else "Actual Responses")
 
         # Color feasibility
         if record.feasibility == "FEASIBLE":
@@ -145,13 +171,13 @@ class SetupDockWidget(QWidget):
             self.param_layout.removeRow(0)
         for k, v in record.physical_values.items():
             val_str = f"{v:.4g}" if isinstance(v, (int, float)) else str(v)
-            self.param_layout.addRow(f"{k}:", QLabel(val_str))
+            self.param_layout.addRow(f"{k}:", QLabel(f"{val_str} {units.get(k,'')}".strip()))
 
         # Update Responses
         while self.resp_layout.rowCount() > 0:
             self.resp_layout.removeRow(0)
         for k, v in record.observations.items():
-            self.resp_layout.addRow(f"{k}:", QLabel(f"{v:.4g}"))
+            self.resp_layout.addRow(f"{k}:", QLabel(f"{v:.6g} {units.get(k,'')}".strip()))
 
         self.btn_apply_current.setEnabled(False)  # Window enables only verified native results.
 

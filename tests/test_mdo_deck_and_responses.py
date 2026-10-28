@@ -9,6 +9,26 @@ from caelab.mdo.inp_binder import TemplateDeck
 from caelab.mdo.responses import ResponseSpec, extract_scalar
 
 
+def test_token_boundary_preserves_bytes_and_roundtrip_precision(tmp_path):
+    original = b'\xef\xbb\xbf** comment <COMMENT>\r\n*ELASTIC\r\n<E>, <NU>\r\n'
+    path = tmp_path / "roundtrip.inp"
+    path.write_bytes(original)
+    deck = TemplateDeck.from_file(path)
+    rendered = deck.render({"e":123456.789123456,"nu":.3123456789123456}).encode("utf-8")
+    assert rendered.startswith(b'\xef\xbb\xbf** comment <COMMENT>\r\n*ELASTIC\r\n')
+    assert rendered.count(b'\r\n') == original.count(b'\r\n')
+    values = rendered.decode("utf-8").splitlines()[-1].split(",")
+    assert [float(v) for v in values] == [123456.789123456,.3123456789123456]
+    with pytest.raises(ValueError,match="Unresolved"):
+        deck.render({"e":1})
+
+
+@pytest.mark.parametrize("value", [float("nan"),float("inf"),"steel\n*NODE\n99,0,0,0","steel,other"])
+def test_token_boundary_rejects_non_scalar_values(value):
+    with pytest.raises(ValueError):
+        TemplateDeck.from_text("*ELASTIC\n<E>\n").render({"E":value})
+
+
 def test_template_deck_tokens_and_binding(tmp_path: Path):
     deck_text = """*HEADING
 ** Parametric model
@@ -113,6 +133,15 @@ def test_mdo_studio_rejects_unmeasured_point_apply(tmp_path: Path, monkeypatch):
 
     win = win_mod.MDOStudioWindow()
     win._on_load_deck(inp_file)
+    import time
+    def await_operation():
+        deadline=time.monotonic()+5
+        while win._busy and time.monotonic()<deadline:
+            instance.processEvents()
+            time.sleep(.01)
+        instance.processEvents()
+        assert win._busy is None
+    await_operation()
 
     assert win.template_deck is not None
     assert win.current_deck_path == inp_file
@@ -129,6 +158,7 @@ def test_mdo_studio_rejects_unmeasured_point_apply(tmp_path: Path, monkeypatch):
 
     # Apply design point DP-001
     win._on_apply_as_current("DP-001")
+    await_operation()
 
     # An unmeasured injected point must never update the native input.
     assert not (tmp_path / "test_active.inp.bak").exists()

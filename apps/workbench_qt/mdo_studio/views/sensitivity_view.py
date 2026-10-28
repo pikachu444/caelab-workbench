@@ -1,102 +1,115 @@
-"""Global Sensitivity Tornado Ranking chart."""
-
-from __future__ import annotations
-
+"""Source-labeled sensitivity estimates and intervals from frozen experiments."""
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+import json
 import numpy as np
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (QHBoxLayout,QGridLayout,QComboBox,QPushButton,QCheckBox,QDialog,QVBoxLayout,
+    QPlainTextEdit,QDialogButtonBox,QFormLayout,QSpinBox,QDoubleSpinBox,QLabel)
+from caelab.mdo.sensitivity import SensitivityConfig
+from .plot_base import PlotWidget
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True,slots=True)
 class TornadoItem:
-    variable_id: str
-    metric: str
-    magnitude: float
-    interval: tuple[float, float] | None = None
-    sign: int = 1
+    variable_id:str
+    metric:str
+    magnitude:float
+    interval:tuple[float,float]|None=None
+    sign:int=1
 
 
-class SensitivityTornadoWidget(QWidget):
-    def __init__(self, parent=None, is_dark: bool = True) -> None:
-        super().__init__(parent)
-        self.is_dark = is_dark
-        self.fig = Figure(figsize=(6, 4), dpi=100)
-        self.canvas = FigureCanvas(self.fig)
-        self.ax = self.fig.add_subplot(111)
+class SensitivityTornadoWidget(PlotWidget):
+    response_selected=Signal(str)
+    analysis_requested=Signal()
+    experiment_selected=Signal(str)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.canvas)
-        self._apply_theme()
+    def __init__(self,parent=None,is_dark=True):
+        super().__init__(parent,is_dark)
+        row=QHBoxLayout(); self.response=QComboBox(); self.method_selector=QComboBox()
+        self.method_selector.addItem('Spearman — actual rows','spearman'); self.method_selector.addItem('Sobol — surrogate experiment','sobol'); self.method_selector.addItem('Morris — surrogate experiment','morris')
+        for combo in (self.response,self.method_selector):
+            combo.setMinimumContentsLength(4); combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon); row.addWidget(combo,1)
+        self.controls.addLayout(row)
+        self.experiment=QComboBox(); self.experiment.addItem('New / current analysis',None); self.controls.addWidget(self.experiment)
+        self.experiment.setMinimumContentsLength(6); self.experiment.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.experiment.currentIndexChanged.connect(lambda *args:self.experiment_selected.emit(self.experiment.currentData() or ''))
+        row=QGridLayout(); self.metric_selector=QComboBox(); row.addWidget(self.metric_selector,0,0,1,2)
+        self.intervals=QCheckBox('Intervals'); self.intervals.setChecked(True); row.addWidget(self.intervals,0,2)
+        settings=QPushButton('Experiment settings…'); settings.clicked.connect(self._settings); row.addWidget(settings,1,0)
+        inspect=QPushButton('Inspect experiment'); inspect.clicked.connect(self._inspect); row.addWidget(inspect,1,1)
+        analyze=QPushButton('Analyze'); analyze.clicked.connect(self.analysis_requested); row.addWidget(analyze,1,2)
+        self.controls.addLayout(row)
+        self.config=SensitivityConfig(base_samples=128,trajectories=10,resamples=200,max_evaluations=10000)
+        self.report=None
+        self.response.currentIndexChanged.connect(self._request); self.method_selector.currentIndexChanged.connect(self._request)
+        self.metric_selector.currentIndexChanged.connect(self._render_report); self.intervals.toggled.connect(self._render_report)
 
-    def set_theme(self, is_dark: bool) -> None:
-        self.is_dark = is_dark
-        self._apply_theme()
-        self.canvas.draw_idle()
+    def _request(self,*args):
+        self.report=None; self.experiment.blockSignals(True); self.experiment.setCurrentIndex(0); self.experiment.blockSignals(False)
+        self.empty('Choose experiment settings, then Analyze.'); self.note.setText('Spearman uses actual pairs; Sobol/Morris use the complete surrogate experiment and make no native calls.')
+        self.response_selected.emit(self.response.currentData() or '')
 
-    def _apply_theme(self) -> None:
-        if self.is_dark:
-            bg_color = "#13171e"
-            text_color = "#e2e8f0"
-            grid_color = "#1e293b"
-        else:
-            bg_color = "#f8fafc"
-            text_color = "#0f172a"
-            grid_color = "#e2e8f0"
+    def set_responses(self,keys,units):
+        previous=self.response.currentData(); self.response.blockSignals(True); self.response.clear()
+        for key in keys: self.response.addItem(f'{key} [{units.get(key,"—")}]',key)
+        self.response.setCurrentIndex(max(0,self.response.findData(previous))); self.response.blockSignals(False)
 
-        self.fig.patch.set_facecolor(bg_color)
-        self.ax.set_facecolor(bg_color)
-        self.ax.tick_params(colors=text_color, labelsize=9)
-        self.ax.xaxis.label.set_color(text_color)
-        self.ax.yaxis.label.set_color(text_color)
-        self.ax.title.set_color(text_color)
-        for spine in self.ax.spines.values():
-            spine.set_color(grid_color)
-        self.ax.grid(True, linestyle="--", alpha=0.5, color=grid_color)
+    def set_experiments(self,experiments):
+        previous=self.experiment.currentData(); self.experiment.blockSignals(True); self.experiment.clear(); self.experiment.addItem('New / current analysis',None)
+        for i,item in enumerate(experiments):
+            self.experiment.addItem(f'{i+1}: {item["method"].upper()} · {item["response_id"]} · revision {item["revision"]}',item['id'])
+        self.experiment.setCurrentIndex(max(0,self.experiment.findData(previous))); self.experiment.blockSignals(False)
 
-    def plot_tornado(self, items: Sequence[TornadoItem], target_name: str = "Response") -> None:
-        self.ax.clear()
-        self._apply_theme()
+    def _settings(self):
+        dialog=QDialog(self); dialog.setWindowTitle('Paired surrogate sensitivity experiment'); layout=QVBoxLayout(dialog); form=QFormLayout(); layout.addLayout(form); widgets={}
+        for name,minimum,maximum in [('base_samples',2,65536),('trajectories',2,10000),('levels',4,100),('seed',0,2147483647),('resamples',2,10000),('max_evaluations',4,1000000)]:
+            widget=QSpinBox(); widget.setRange(minimum,maximum); widget.setValue(getattr(self.config,name)); widgets[name]=widget; form.addRow(name.replace('_',' ').title(),widget)
+        confidence=QDoubleSpinBox(); confidence.setRange(.5,.999); confidence.setDecimals(3); confidence.setValue(self.config.confidence); form.addRow('Confidence',confidence)
+        label=QLabel('Sobol/Morris use a full paired experiment on independent physical-uniform continuous factors at the saved surrogate model. They do not use the visual table filter and make no native solver calls.'); label.setWordWrap(True); layout.addWidget(label)
+        error=QLabel(); error.setWordWrap(True); error.setStyleSheet('color:#ef4444'); layout.addWidget(error)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel); layout.addWidget(buttons); buttons.rejected.connect(dialog.reject)
+        def accept():
+            try: config=SensitivityConfig(method=self.method_selector.currentData() if self.method_selector.currentData()!='spearman' else 'sobol',confidence=confidence.value(),**{key:widget.value() for key,widget in widgets.items()})
+            except ValueError as exc: error.setText(str(exc)); return
+            self.config=config; dialog.accept()
+        buttons.accepted.connect(accept)
+        if dialog.exec()==QDialog.DialogCode.Accepted: self._request()
 
-        if not items:
-            self.ax.text(0.5, 0.5, "No sensitivity items computed", ha="center", va="center",
-                         color="#94a3b8", transform=self.ax.transAxes)
-            self.canvas.draw_idle()
-            return
+    def _inspect(self):
+        dialog=QDialog(self); dialog.setWindowTitle('Sensitivity experiment and sources'); dialog.resize(800,600); layout=QVBoxLayout(dialog)
+        text=QPlainTextEdit(); text.setReadOnly(True); text.setPlainText(json.dumps(self.report or {},ensure_ascii=False,indent=2)); layout.addWidget(text)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Close); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons); dialog.exec()
 
-        # Sort ascending for horizontal bar (largest at top)
-        sorted_items = sorted(items, key=lambda x: x.magnitude)
-        names = [it.variable_id for it in sorted_items]
-        magnitudes = [it.magnitude for it in sorted_items]
-        y_pos = np.arange(len(names))
+    def set_report(self,report):
+        self.report=report; previous=self.metric_selector.currentText(); self.metric_selector.blockSignals(True); self.metric_selector.clear()
+        self.response.blockSignals(True); self.response.setCurrentIndex(max(0,self.response.findData(report['response_id']))); self.response.blockSignals(False)
+        self.method_selector.blockSignals(True); self.method_selector.setCurrentIndex(max(0,self.method_selector.findData(report['method']))); self.method_selector.blockSignals(False)
+        metrics=[key for key in report.get('estimates',{}) if key not in ('pvalue','sample_count','missing_count') and not key.endswith('_conf')]
+        self.metric_selector.addItems(metrics); self.metric_selector.setCurrentText(previous if previous in metrics else metrics[0] if metrics else '')
+        self.metric_selector.blockSignals(False); self._render_report()
 
-        # Color gradient: highest impact gets vivid cyan, lower gets subtle steel blue
-        colors = ["#38bdf8" if i == len(names) - 1 else "#0284c7" if i >= len(names) // 2 else "#64748b"
-                  for i in range(len(names))]
+    def _render_report(self,*args):
+        if not self.report: return
+        report=self.report; metric=self.metric_selector.currentText(); values=report.get('estimates',{}).get(metric,[])
+        halfwidth=report.get('estimates',{}).get(metric+'_conf',[]); items=[]
+        for i,(key,value) in enumerate(zip(report.get('variable_ids',[]),values)):
+            if value is None or not np.isfinite(value): continue
+            interval=(value-halfwidth[i],value+halfwidth[i]) if self.intervals.isChecked() and i<len(halfwidth) and halfwidth[i] is not None else None
+            items.append(TornadoItem(key,metric,abs(value),interval,1 if value>=0 else -1))
+        self.plot_tornado(items,f'{report.get("response_id")} [{report.get("unit","—")}]')
+        source=report.get('source_mode','unknown'); paired=report.get('method') in ('sobol','morris')
+        self.note.setText(f'{source} · study revision {report.get("revision")} · n={report.get("sample_count")} · seed {report.get("seed")} · native calls {report.get("native_calls",0)}. '+
+            (f'Full paired experiment, independent physical-uniform continuous factors; visual filter is not applied. Model qualified: {report.get("qualified")}; RMSE limits {report.get("qualification_limits",[])}. ' if paired else 'Actual paired ranks from the explicitly filtered population; undefined pairs remain absent. ')+
+            ' '.join(report.get('warnings',[])))
+        if self.experiment.currentData(): self.note.setText(self.note.text()+' Frozen saved experiment; the current visual filter is not applied.')
+        self.note.setToolTip(f'Model: {report.get("model_id")} · experiment: {report.get("experiment_id")}')
 
-        bars = self.ax.barh(y_pos, magnitudes, align="center", color=colors, height=0.55, edgecolor="none")
-        self.ax.set_yticks(y_pos)
-        self.ax.set_yticklabels(names, fontsize=9.5)
-
-        # Annotate percentages
-        for bar in bars:
-            width = bar.get_width()
-            self.ax.text(
-                width + 0.015,
-                bar.get_y() + bar.get_height() / 2,
-                f"{width:.3f}",
-                va="center",
-                ha="left",
-                fontsize=8.5,
-                color="#e2e8f0" if self.is_dark else "#0f172a",
-                fontweight="bold",
-            )
-
-        self.ax.set_xlabel("Absolute Spearman rank correlation |rho|", fontsize=9.5)
-        self.ax.set_title(f"Observed Rank Correlation ({target_name})", fontsize=11, fontweight="bold")
-        self.ax.set_xlim(0, max(magnitudes) * 1.25 if magnitudes else 1.0)
-        self.fig.tight_layout()
-        self.canvas.draw_idle()
+    def plot_tornado(self,items,target_name='Response'):
+        self.ax.clear(); self._apply_theme()
+        if not items: self.empty('Insufficient valid paired data; inspect the experiment or run more native rows.'); return
+        items=sorted(items,key=lambda item:abs(item.magnitude)); values=[item.magnitude*item.sign for item in items]; positions=np.arange(len(items))
+        self.ax.barh(positions,values,color='#38bdf8',height=.55)
+        for i,(item,value) in enumerate(zip(items,values)):
+            if item.interval: self.ax.errorbar(value,i,xerr=[[max(0,value-item.interval[0])],[max(0,item.interval[1]-value)]],fmt='none',ecolor='#94a3b8',capsize=3)
+        self.ax.set_yticks(positions,[item.variable_id for item in items]); self.ax.axvline(0,color='#64748b',lw=.8)
+        self.ax.set_xlabel(items[0].metric); self.ax.set_title(f'Sensitivity — {target_name}'); self._apply_theme(); self.fig.tight_layout(); self.canvas.draw_idle()
