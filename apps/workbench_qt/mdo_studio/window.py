@@ -20,7 +20,7 @@ from .design_points_model import DesignPointsTableModel,DesignPointsProxyModel
 from .study_tree import StudyTreeWidget
 from .setup_dock import SetupDockWidget
 from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog,SurrogateTrainingDialog
-from .views.pareto_view import ParetoFrontWidget
+from .views.pareto_view import ParetoFrontWidget,PARETO_LEGEND_TEXT,pareto_result_note
 from .views.parallel_view import ParallelCoordinatesWidget
 from .views.response_surface_view import ResponseSurfaceWidget
 from .views.sensitivity_view import SensitivityTornadoWidget,TornadoItem
@@ -68,6 +68,7 @@ class MDOStudioWindow(QMainWindow):
         self._viz_timer=QTimer(self); self._viz_timer.setSingleShot(True); self._viz_timer.setInterval(250); self._viz_timer.timeout.connect(self._update_visualizations)
         self._resize_reveal_pending=False
         self._resize_reveal_timer=QTimer(self); self._resize_reveal_timer.setSingleShot(True); self._resize_reveal_timer.timeout.connect(self._finish_resize_reveal)
+        self._default_splitter_epoch=0; self._default_splitter_pending=None
         self._build_ui(); self._populate_study(); self.apply_theme(); self._restore_layout()
 
     @property
@@ -133,7 +134,7 @@ class MDOStudioWindow(QMainWindow):
         compact=self._action(view,'Compact Rows',lambda checked:self.tdp_table.verticalHeader().setDefaultSectionSize(24 if checked else 30)); compact.setCheckable(True)
         self.act_theme=self._action(view,theme_toggle_label(),self._on_toggle_theme)
         self.center_splitter=QSplitter(Qt.Orientation.Vertical); self.center_splitter.setObjectName('mdo.central')
-        container=QWidget(); layout=QVBoxLayout(container); layout.setContentsMargins(4,4,4,4)
+        container=QWidget(); layout=QVBoxLayout(container); layout.setContentsMargins(4,2,4,2)
         self.study_label=QLabel(); self.study_label.setWordWrap(True); layout.addWidget(self.study_label)
         revision_row=QHBoxLayout(); revision_row.addWidget(QLabel('Study revision'))
         self.revision_selector=QComboBox(); self.revision_selector.setAccessibleName('Study revision'); revision_row.addWidget(self.revision_selector,1); layout.addLayout(revision_row)
@@ -167,7 +168,9 @@ class MDOStudioWindow(QMainWindow):
         self.tornado_view.experiment_selected.connect(self._load_sensitivity_report)
         visualization=QWidget(); visual_layout=QVBoxLayout(visualization); visual_layout.setContentsMargins(0,0,0,0)
         self.plot_filter_label=QLabel(); self.plot_filter_label.setWordWrap(True); visual_layout.addWidget(self.plot_filter_label); visual_layout.addWidget(self.viz_tabs,1)
-        self.center_splitter.addWidget(visualization); self.center_splitter.setSizes([350,430]); self.setCentralWidget(self.center_splitter)
+        self.center_splitter.addWidget(visualization); self.setCentralWidget(self.center_splitter)
+        self.center_splitter.splitterMoved.connect(lambda *_:self._cancel_default_splitter())
+        self.center_splitter.handle(1).installEventFilter(self)
         self._study_actions=[self.act_new,self.act_open,self.act_input,self.act_generate,self.act_parameterize,self.act_save,self.act_save_as,self.act_train,self.act_optimize]
 
     def _background(self,name,call):
@@ -201,6 +204,7 @@ class MDOStudioWindow(QMainWindow):
                 result.close(); error='The current study is still finishing an operation. Retry opening after it finishes; the current study and draft are retained.'
                 QMessageBox.warning(self,name,error); self.status_bar.showMessage(error)
             else:
+                self._cancel_default_splitter()
                 self.service=result; self._display_revision=result.revision
                 self._generation+=1; self._selected_ids.clear(); self._clear_filters()
         elif name=='Clone candidate':
@@ -329,6 +333,9 @@ class MDOStudioWindow(QMainWindow):
 
     def showEvent(self,event):
         super().showEvent(event)
+        if self._default_splitter_pending is not None:
+            # Finalize the parent geometry before a child's deferred first 3D fit.
+            self._apply_default_splitter(self._default_splitter_pending)
         if self._initial_reveal_pending:
             self._initial_reveal_pending=False
             QTimer.singleShot(0,self._reveal_selection)
@@ -343,6 +350,9 @@ class MDOStudioWindow(QMainWindow):
         if visible: self._resize_reveal_timer.start(20)
 
     def eventFilter(self,watched,event):
+        if (hasattr(self,'center_splitter') and watched is self.center_splitter.handle(1)
+                and event.type()==QEvent.Type.MouseButtonPress):
+            self._cancel_default_splitter()
         if hasattr(self,'tdp_table') and watched is self.tdp_table.viewport() and event.type()==QEvent.Type.Resize:
             selected=self.tdp_table.selectionModel().selectedRows()
             if selected:
@@ -496,6 +506,7 @@ class MDOStudioWindow(QMainWindow):
         old=self.service
         if hasattr(old,'close') and old.close() is False:
             self.status_bar.showMessage('Wait for the current study operation to finish, then retry. Your study and draft are retained.'); return
+        self._cancel_default_splitter()
         self.service=self.workbench.create_mdo_study(); self._display_revision=self.service.revision; self._generation+=1; self._selected_ids.clear(); self._editor=None; self._clear_filters(); self._populate_study()
 
     def _on_load_deck(self,path=None):
@@ -716,27 +727,112 @@ class MDOStudioWindow(QMainWindow):
         settings=QSettings('CAELab','MDO Studio'); settings.setValue('layout',self.saveState()); settings.setValue('splitter',self.center_splitter.saveState())
 
     def _restore_layout(self):
+        self._cancel_default_splitter()
         settings=QSettings('CAELab','MDO Studio'); state=settings.value('layout'); splitter=settings.value('splitter')
         if isinstance(state,QByteArray) and state.size()<100000: self.restoreState(state)
-        if isinstance(splitter,QByteArray) and splitter.size()<10000: self.center_splitter.restoreState(splitter)
-        self._restore_study_view()
+        restored=bool(isinstance(splitter,QByteArray) and 0<splitter.size()<10000 and self.center_splitter.restoreState(splitter))
+        study_restored=self._restore_study_view()
+        if not (restored or study_restored): self._request_default_splitter()
 
     def _restore_study_view(self):
+        self._cancel_default_splitter()
+        splitter_restored=False
         state=getattr(self.service,'view_state',{})
         try:
             for key,restore,limit in [('layout',self.restoreState,100000),('splitter',self.center_splitter.restoreState,10000)]:
-                value=bytes.fromhex(state.get(key,''))
-                if value and len(value)<limit: restore(QByteArray(value))
+                try: value=bytes.fromhex(state.get(key,''))
+                except (ValueError,TypeError): continue
+                if value and len(value)<limit:
+                    success=restore(QByteArray(value))
+                    if key=='splitter': splitter_restored=bool(success)
             self._selected_ids=set(state.get('selected_ids',[])); self._restore_selection(); self.viz_tabs.setCurrentIndex(int(state.get('tab',0)))
             convergence=state.get('convergence',{}); self.convergence_view.reference.setText(convergence.get('reference',''))
             self.convergence_view.metric_selector.setCurrentIndex(int(convergence.get('metric',0))); self.convergence_view.xaxis.setCurrentIndex(int(convergence.get('axis',0)))
             self._show_selection(); self._reveal_selection()
             self._sync_actions()
         except (ValueError,TypeError): pass
+        return splitter_restored
+
+    def _cancel_default_splitter(self):
+        self._default_splitter_epoch+=1; self._default_splitter_pending=None
+
+    def _request_default_splitter(self):
+        self._cancel_default_splitter()
+        token=(self._default_splitter_epoch,self._generation,self.service)
+        self._default_splitter_pending=token
+        if self.isVisible(): QTimer.singleShot(0,lambda:self._apply_default_splitter(token))
+
+    def _label_height(self,label,width,text=None):
+        if text is None:
+            return max(0,label.heightForWidth(width),label.minimumSizeHint().height())
+        # Measure an upcoming hidden 3D unit key without changing the live view.
+        probe=QLabel(text,self); probe.setFont(label.font()); probe.setStyleSheet(label.styleSheet())
+        probe.setWordWrap(label.wordWrap()); probe.setTextFormat(label.textFormat()); probe.ensurePolished()
+        height=max(0,probe.heightForWidth(width),probe.minimumSizeHint().height()); probe.deleteLater()
+        return height
+
+    def _default_plot_height(self):
+        page=self.viz_tabs.currentWidget()
+        outer=self.center_splitter.widget(1).height()-page.height()
+        width=page.width(); heights=[]
+        for view in self.views:
+            margins=view.layout.contentsMargins(); inner=max(1,width-margins.left()-margins.right())
+            spacing=max(0,view.layout.spacing())
+            controls=max(view.controls.minimumSize().height(),view.controls.heightForWidth(inner))
+            note=self._label_height(view.note,inner)
+            if view is self.pareto_view:
+                note=max(note,self._label_height(view.note,inner,pareto_result_note(0,0)))
+            chrome=margins.top()+margins.bottom()+controls+note
+            heights.append(chrome+view.mpl_toolbar.sizeHint().height()+3*spacing+136)
+            native=getattr(view,'native',None)
+            if native is None or not native.available: continue
+            native_layout=native.layout(); native_spacing=max(0,native_layout.spacing())
+            row=native_layout.itemAt(0).layout()
+            fixed=[max(row.minimumSize().height(),row.heightForWidth(inner)),native.annotation_message.height()]
+            legend=native.legend.text() or (PARETO_LEGEND_TEXT if view is self.pareto_view else '')
+            if legend: fixed.append(self._label_height(native.legend,inner,legend))
+            if view is self.pareto_view:
+                instruction_width=max(1,inner-row.itemAt(0).widget().sizeHint().width()-max(0,row.spacing()))
+                instruction=native.instructions.text()
+                if 'Click point: select' not in instruction: instruction+='   Click point: select'
+                fixed[0]=max(fixed[0],self._label_height(native.instructions,instruction_width,instruction))
+                labels=[combo.currentText() for combo in view.axes]
+                if view.axis_groups[2].isHidden():
+                    controls+=view.axis_groups[2].minimumSizeHint().height()+max(0,view.controls.spacing())
+            else:
+                labels=[combo.currentText() for combo in (view.xaxis,view.yaxis,view.response)]
+            key='   '.join(f'{axis}: {label}' for axis,label in zip('XYZ',labels) if label)
+            key_height=self._label_height(native.axis_key,inner,key) if key else 0
+            key_height=max(key_height,self._label_height(native.axis_key,inner,
+                'X: physical response [unit]\nY: physical response [unit]   Z: physical response [unit]'))
+            fixed.append(key_height)
+            native_margins=native_layout.contentsMargins()
+            native_chrome=sum(fixed)+len(fixed)*native_spacing+native_margins.top()+native_margins.bottom()
+            canvas=196 if view is self.surface_view else 201
+            heights.append(margins.top()+margins.bottom()+controls+note+native_chrome+2*spacing+canvas)
+        # Allowances from the current native layout cases, not widget minimums.
+        return max(0,outer)+max(heights,default=136)
+
+    def _apply_default_splitter(self,token):
+        if token!=self._default_splitter_pending: return
+        if self._closing or token[1]!=self._generation or token[2] is not self.service:
+            self._cancel_default_splitter(); return
+        if not self.isVisible(): return
+        self.layout().activate()
+        top=self.center_splitter.widget(0); top.layout().activate()
+        self.center_splitter.widget(1).layout().activate(); self.viz_tabs.currentWidget().layout.activate()
+        available=self.center_splitter.contentsRect().height()-self.center_splitter.handleWidth()
+        row_height=self.tdp_table.verticalHeader().defaultSectionSize()
+        table_chrome=top.height()-self.tdp_table.viewport().height()
+        table_need=max(top.minimumSizeHint().height(),table_chrome+row_height)
+        plot_need=self._default_plot_height()
+        table_height=min(max(round(.45*available),table_need),max(table_need,available-plot_need))
+        self._cancel_default_splitter()
+        self.center_splitter.setSizes([table_height,max(0,available-table_height)])
 
     def _default_layout(self):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
-        self.tree_dock.show(); self.setup_dock.show(); self.center_splitter.setSizes([350,430])
+        self.tree_dock.show(); self.setup_dock.show(); self._request_default_splitter()
 
     def _on_toggle_theme(self): toggle_theme_mode(); self.apply_theme()
     def apply_theme(self):
@@ -745,6 +841,7 @@ class MDOStudioWindow(QMainWindow):
         for view in self.views: view.set_theme(self.is_dark)
 
     def closeEvent(self,event):
+        self._cancel_default_splitter()
         if self._busy or self._sensitivity_write_busy():
             self.status_bar.showMessage('Wait for the current study operation to finish, then close again. Your study and draft are retained.'); event.ignore(); return
         if self._active_batch_id:

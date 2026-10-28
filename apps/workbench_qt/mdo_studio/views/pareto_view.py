@@ -5,6 +5,18 @@ from PySide6.QtWidgets import QHBoxLayout,QGridLayout,QComboBox,QLabel,QWidget,Q
 from .plot_base import PlotWidget, Native3D
 
 NATIVE_SELECTED_COLOR='#ffffff'
+PARETO_LAYERS=(
+    ('Actual feasible','#22c55e','o',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='FEASIBLE'),
+    ('Actual marginal','#f59e0b','^',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='MARGINAL'),
+    ('Actual infeasible / unassessed','#ef4444','x',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility not in ('FEASIBLE','MARGINAL')),
+    ('Surrogate prediction','#a78bfa','D',lambda r:getattr(r,'mode','ACTUAL')=='SURROGATE'))
+PARETO_LEGEND=tuple((label,color) for label,color,_,_ in PARETO_LAYERS)+(('Full-objective feasible front','#38bdf8'),('Selected',NATIVE_SELECTED_COLOR))
+PARETO_LEGEND_TEXT='   '.join(f'<span style="color:{color}">●</span> {name}' for name,color in PARETO_LEGEND)
+
+
+def pareto_result_note(rendered,total,*,fallback=False):
+    return (f'Rendered {rendered} / {total} points. Full-objective front retained; this projection does not recompute dominance.'
+            +(' 2D fallback; native VTK unavailable.' if fallback else ''))
 
 
 class ParetoFrontWidget(PlotWidget):
@@ -67,13 +79,9 @@ class ParetoFrontWidget(PlotWidget):
         rest=[r for r in rows if not r.is_pareto and r.point_id not in self._selected]
         stride=max(1,int(np.ceil(len(rest)/3000)))
         rendered=keep+rest[::stride]
-        layers=[('Actual feasible','#22c55e','o',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='FEASIBLE'),
-                ('Actual marginal','#f59e0b','^',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility=='MARGINAL'),
-                ('Actual infeasible / unassessed','#ef4444','x',lambda r:getattr(r,'mode','ACTUAL')!='SURROGATE' and r.feasibility not in ('FEASIBLE','MARGINAL')),
-                ('Surrogate prediction','#a78bfa','D',lambda r:getattr(r,'mode','ACTUAL')=='SURROGATE')]
-        self.native.set_legend([(label,color) for label,color,_,_ in layers]+[('Full-objective feasible front','#38bdf8'),('Selected',NATIVE_SELECTED_COLOR)])
+        self.native.set_legend(PARETO_LEGEND)
         from matplotlib.colors import to_rgb
-        for label,color,marker,predicate in layers:
+        for label,color,marker,predicate in PARETO_LAYERS:
             group=[r for r in rendered if predicate(r)]
             if not group: continue
             values=np.array([[r.observations[k] for k in keys] for r in group])
@@ -90,4 +98,4 @@ class ParetoFrontWidget(PlotWidget):
         self.ax.set_xlabel(labels[0]); self.ax.set_ylabel(labels[1]); self.ax.set_title('Sampled Pareto projection')
         self.ax.legend(fontsize=8); self._apply_theme(); self.fig.tight_layout(); self.canvas.draw_idle()
         if use3: self.native.finish(labels)
-        self.note.setText(f'Rendered {len(rendered)} / {len(rows)} points. Full-objective front retained; this projection does not recompute dominance.'+(' 2D fallback; native VTK unavailable.' if use3 and not self.native.available else ''))
+        self.note.setText(pareto_result_note(len(rendered),len(rows),fallback=use3 and not self.native.available))
