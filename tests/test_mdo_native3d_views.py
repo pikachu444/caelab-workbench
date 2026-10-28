@@ -4,8 +4,9 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from types import SimpleNamespace
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication,QWidget,QLabel,QTabWidget
+from PySide6.QtWidgets import QApplication,QWidget,QLabel,QTabWidget,QSizePolicy
 from vtkmodules.vtkRenderingCore import vtkRenderWindow,vtkRenderWindowInteractor
+from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor as InstalledQVTK
 from apps.workbench_qt.mdo_studio.views.plot_base import Native3D,axis_label_layout
 from apps.workbench_qt.mdo_studio.views.pareto_view import ParetoFrontWidget
 from apps.workbench_qt.mdo_studio.views.response_surface_view import ResponseSurfaceWidget
@@ -90,23 +91,41 @@ def test_surface_material_normals_preserve_finite_cell_mask_and_values(vtk_widge
 
 
 def assert_annotation_pixels_match_boxes(view,tmp_path):
-    """Check real VTK glyph pixels, not only a mathematical overlap oracle."""
+    """Separate real annotation pixels from geometry without masking white glyphs."""
+    import json
     from PIL import Image,ImageDraw
     from vtkmodules.vtkRenderingCore import vtkWindowToImageFilter
+    from vtkmodules.vtkIOImage import vtkPNGWriter
     from vtkmodules.util.numpy_support import vtk_to_numpy
-    capture=vtkWindowToImageFilter(); capture.SetInput(view.widget.window); capture.Update()
+    tmp_path.mkdir(parents=True,exist_ok=True)
+    window=view.renderer.GetRenderWindow(); before=camera_state(view.renderer.GetActiveCamera())
+    def capture_frame(name):
+        window.Render(); capture=vtkWindowToImageFilter(); capture.SetInput(window); capture.Update()
+        writer=vtkPNGWriter(); writer.SetFileName(str(tmp_path/name)); writer.SetInputConnection(capture.GetOutputPort()); writer.Write()
+        width,height=capture.GetOutput().GetDimensions()[:2]
+        return capture,vtk_to_numpy(capture.GetOutput().GetPointData().GetScalars()).copy().reshape(height,width,-1)
+    _,full=capture_frame('annotation-full-frame.png')
+    collection=view.renderer.GetActors(); collection.InitTraversal()
+    actors=[collection.GetNextActor() for _ in range(collection.GetNumberOfItems())]; visibility=[actor.GetVisibility() for actor in actors]
+    try:
+        for actor in actors: actor.SetVisibility(False)
+        capture,pixels=capture_frame('annotation-only.png')
+    finally:
+        for actor,visible in zip(actors,visibility): actor.SetVisibility(visible)
+        if view.available: window.Render()
+    assert [actor.GetVisibility() for actor in actors]==visibility
+    assert camera_state(view.renderer.GetActiveCamera())==before
     width,height=capture.GetOutput().GetDimensions()[:2]
-    pixels=vtk_to_numpy(capture.GetOutput().GetPointData().GetScalars()).reshape(height,width,-1)
     white=(pixels[:,:,:3]>180).all(axis=2)
     mask=Image.new('1',(width,height)); draw=ImageDraw.Draw(mask); ratio=view.widget.ratio
     for item in view.annotation_layout['boxes']:
         x0,y0,x1,y1=item['box']; padding=2*ratio
         draw.rectangle((x0-padding,y0-padding,x1+padding,y1+padding),fill=1)
-    yy,xx=np.nonzero(white); points=np.column_stack((xx,yy)); covered=np.array(mask,dtype=bool)[yy,xx]
+    yy,xx=np.nonzero(white); points=np.column_stack((xx,yy)); font_covered=np.array(mask,dtype=bool)[yy,xx]; line_covered=np.zeros(len(points),dtype=bool)
     def cover_line(start,end,radius):
         delta=end-start; length=np.dot(delta,delta)
         fraction=np.clip((points-start)@delta/length,0,1) if length else np.zeros(len(points))
-        covered[:]|=np.linalg.norm(points-(start+fraction[:,None]*delta),axis=1)<=radius
+        line_covered[:]|=np.linalg.norm(points-(start+fraction[:,None]*delta),axis=1)<=radius
     for axis in (view.axes.GetXAxisActor2D(),view.axes.GetYAxisActor2D(),view.axes.GetZAxisActor2D()):
         p0=np.array(axis.GetPositionCoordinate().GetComputedViewportValue(view.renderer)); p1=np.array(axis.GetPosition2Coordinate().GetComputedViewportValue(view.renderer))
         # Exclude actual GL line strokes analytically; Pillow's even-width strokes
@@ -118,9 +137,13 @@ def assert_annotation_pixels_match_boxes(view,tmp_path):
         for i in range(ticks.GetNumberOfPoints()):
             start=np.array(ticks.GetPoint(i)[:2]); end=start+axis.GetTickLength()*normal
             cover_line(start,end,radius)
-    unexpected=points[~covered]
+    unexpected=points[~(font_covered|line_covered)]
+    Image.fromarray(np.flipud(np.array(mask,dtype=np.uint8)*255)).save(tmp_path/'annotation-glyph-box-mask.png')
+    line_mask=np.zeros((height,width),dtype=np.uint8); line_mask[yy[line_covered],xx[line_covered]]=255
+    Image.fromarray(np.flipud(line_mask)).save(tmp_path/'annotation-axis-line-mask.png')
+    Image.fromarray(np.flipud(np.any(full!=pixels,axis=2).astype(np.uint8)*255)).save(tmp_path/'annotation-geometry-difference-mask.png')
+    (tmp_path/'annotation-layout.json').write_text(json.dumps(view.annotation_layout,indent=2),encoding='utf8')
     if len(unexpected):
-        from vtkmodules.vtkIOImage import vtkPNGWriter
         writer=vtkPNGWriter(); writer.SetFileName(str(tmp_path/'annotation-pixel-mismatch.png')); writer.SetInputConnection(capture.GetOutputPort()); writer.Write()
     assert not len(unexpected),unexpected[:20].tolist()
 
@@ -265,8 +288,116 @@ def test_too_small_viewport_reports_residual_clip_after_bounded_fit(vtk_widget):
     widget.window.SetOffScreenRendering(1); widget.window.SetSize(100,60); widget.proxy.Render=widget.window.Render; widget.interactor.Initialize()
     view.points([[1e-6,-10,-100],[2e-6,-1,100]],['a','b']); view.finish(['x','y','z'])
     assert not view.annotation_layout['valid'] and view.annotation_layout['fit_passes']<=3
-    assert not view.message.isHidden() and 'Enlarge' in view.message.text()
+    assert 'enlarge' in view.annotation_message.text()
     widget.window.Finalize(); view.close()
+
+
+def install_rendered_qt_widget(vtk_widget,monkeypatch,ratio):
+    """Real Qt layout plus the installed QVTK resize/DPI method; offscreen GPU only."""
+    import vtkmodules.qt.QVTKRenderWindowInteractor as module
+    class RenderedInteractor(vtk_widget):
+        def __init__(self,parent):
+            super().__init__(parent); self.ratio=ratio; self.window.SetOffScreenRendering(1); self.proxy.Render=self.window.Render
+            self.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Expanding)
+            self.resizeEvent(None)
+        def _getPixelRatio(self): return self.ratio
+        def resizeEvent(self,event):
+            if hasattr(self,'interactor'):
+                self._RenderWindow=self.window; self._Iren=self.interactor
+                InstalledQVTK.resizeEvent(self,event)
+        def Initialize(self): self.interactor.Initialize()
+        def Finalize(self): self.window.Finalize()
+    monkeypatch.setattr(module,'QVTKRenderWindowInteractor',RenderedInteractor)
+
+
+def settle_qt(qapp):
+    import time
+    for _ in range(5): qapp.processEvents(); time.sleep(.01)
+
+
+@pytest.mark.parametrize('kind,target_height,drag', [('pareto',201,(100,38)),('surface',211,(60,26))])
+@pytest.mark.parametrize('width,outer_height',((1380,880),(960,880),(960,720)))
+@pytest.mark.parametrize('ratio',(1.,1.5,2.))
+def test_full_qt_short_viewport_modest_drag_preserves_camera_data_and_labels(vtk_widget,qapp,monkeypatch,tmp_path,kind,target_height,drag,width,outer_height,ratio):
+    from PySide6.QtCore import Qt
+    from caelab.mdo.variables import ContinuousVariable,VariableSpace
+    from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
+    from apps.workbench_qt.theme import build_stylesheet
+    from test_mdo_phase3_gui import ServiceSpy
+    install_rendered_qt_widget(vtk_widget,monkeypatch,ratio)
+    service=ServiceSpy(); service.read_only=True
+    service.study=StudyManager('Native viewport boundary',space=VariableSpace(variables=(ContinuousVariable(id='w_root',name='Root width',unit='mm',lower=7,upper=13,initial=10),ContinuousVariable(id='w_tip',name='Tip width',unit='mm',lower=3.5,upper=6.5,initial=5))),objectives=[ObjectiveSpec(id=key,response_id=key) for key in ('disp','stress','mass_elall')])
+    for i,(disp,stress,mass) in enumerate(((.0584,297.,.000113),(.08,220.,.00009),(.0969,172.,.0000631))):
+        record=service.study.add_point(dict(w_root=8.+i,w_tip=4.+i/2)); record.status='COMPLETED'; record.feasibility='FEASIBLE'; record.is_pareto=True; record.observations=dict(disp=disp,stress=stress,mass_elall=mass)
+    service.response_units=dict(disp='mm',stress='MPa',mass_elall='N*s**2/mm'); service.current_point_id=service.study.records[-1].point_id
+    win=MDOStudioWindow(service=service); win.resize(width,outer_height); win._default_layout(); win.setup_dock.hide()
+    win.resizeDocks([win.tree_dock],[330],Qt.Orientation.Horizontal); win.show(); settle_qt(qapp)
+    win.select_point(service.study.records[0].point_id); win._viz_timer.stop(); win.surface_view.timer.stop()
+    plot=win.pareto_view if kind=='pareto' else win.surface_view; native=plot.native
+    if kind=='pareto':
+        plot.dimension.setCurrentText('3D')
+    else:
+        win.viz_tabs.setCurrentIndex(2); plot.timer.stop()
+        plot.response.blockSignals(True); plot.response.addItem('disp [mm]','disp'); plot.response.blockSignals(False)
+        plot.artifact=SimpleNamespace(config=SimpleNamespace(method='gp'),dataset=SimpleNamespace(training_revision='1'),qualified=True,metrics=[],id='viewport-fixture')
+        x,y=np.meshgrid(np.linspace(7.193548,12.806452,32),np.linspace(3.693548,6.403226,32)); shape=1/(x+2*y)
+        z=.058726741+(.101923859-.058726741)*(shape-shape.min())/np.ptp(shape)
+        plot.uncertainty.setChecked(True); plot._result=(x,y,z,np.full_like(z,.0004)); plot._draw_result()
+    win._viz_timer.stop(); plot.native.layout().activate(); plot.layout.activate()
+    settle_qt(qapp)
+    assert not native._initial_fit_pending
+    if outer_height==880:
+        assert native.annotation_layout['valid'],native.annotation_layout
+        assert_annotation_pixels_match_boxes(native,tmp_path/'initial-no-fit')
+    else:
+        (tmp_path/'initial-no-fit-layout.json').write_text(__import__('json').dumps(native.annotation_layout,indent=2),encoding='utf8')
+        assert native.annotation_layout['valid'] or native.annotation_message.text()
+    # Reproduce the recorded 201/211 logical-pixel canvas through the full splitter,
+    # controls, legend, physical key and reserved warning layout, not a detached VTK size.
+    for _ in range(5):
+        settle_qt(qapp)
+        win.center_splitter.widget(1).layout().activate(); plot.layout.activate(); native.layout().activate()
+        difference=target_height-native.widget.height(); sizes=win.center_splitter.sizes()
+        if abs(difference)<=1: break
+        win.center_splitter.setSizes([sizes[0]-difference,sizes[1]+difference])
+    settle_qt(qapp); win._viz_timer.stop(); plot.timer.stop() if kind=='surface' else None
+    import json
+    (tmp_path/'full-qt-geometry.json').write_text(json.dumps(dict(requested_outer=[width,outer_height],observed_outer=[win.width(),win.height()],native_logical=[native.widget.width(),native.widget.height()],render_physical=list(native.widget.window.GetSize()),dpi=native.widget.window.GetDPI(),ratio=ratio,splitter=win.center_splitter.sizes()),indent=2),encoding='utf8')
+    if outer_height==880: assert abs(native.widget.height()-target_height)<=2,(native.widget.size(),win.center_splitter.sizes())
+    # The splitter adjustment above is an explicit post-show resize. Fit that
+    # recorded allocation before reproducing the native modest camera drag;
+    # resize itself deliberately preserves the already initialized camera.
+    native.reset_camera()
+    assert not native._initial_fit_pending and native.annotation_layout['valid'],native.annotation_layout
+    assert native.widget.window.GetDPI()==round(72*ratio)
+    assert native.annotation_layout['effective_glyph_pixels']==pytest.approx(12*ratio)
+    initial=camera_state(native.renderer.GetActiveCamera()); ids={actor:values for actor,values in native.actors.items()}; physical=native.physical_ranges
+    selected=set(win._selected_ids); current=service.current_point_id; height=native.widget.height()
+    # Native67/71 drag coordinates expressed in logical screen pixels, with the
+    # same QVTK top-to-bottom device-pixel conversion and real trackball events.
+    interactor=native.widget.interactor; start=(round(native.widget.width()*.55*ratio),round(height*.52*ratio))
+    def event(name,x,y): interactor.SetEventInformation(x,y,0,0,'0',0,None); interactor.InvokeEvent(name)
+    event('LeftButtonPressEvent',*start)
+    event('MouseMoveEvent',start[0]+round(drag[0]*ratio),start[1]-round(drag[1]*ratio))
+    assert native.annotation_layout['valid'] and not native._rendering_layout and not native._style_render_suppressed
+    assert_annotation_pixels_match_boxes(native,tmp_path/'move-before-release')
+    moved=camera_state(native.renderer.GetActiveCamera()); event('LeftButtonReleaseEvent',start[0]+round(drag[0]*ratio),start[1]-round(drag[1]*ratio)); settle_qt(qapp)
+    assert moved!=initial and camera_state(native.renderer.GetActiveCamera())==moved
+    assert native.annotation_layout['valid'],native.annotation_layout
+    assert native.widget.height()==height and native.actors==ids and native.physical_ranges==physical
+    assert win._selected_ids==selected and service.current_point_id==current
+    assert_annotation_pixels_match_boxes(native,tmp_path)
+    # Theme changes and warning transitions never change the canvas allocation.
+    win.setStyleSheet(build_stylesheet('dark')); settle_qt(qapp); native._update_annotation_layout()
+    assert native.annotation_layout['valid'] and camera_state(native.renderer.GetActiveCamera())==moved
+    assert_annotation_pixels_match_boxes(native,tmp_path)
+    native.renderer.GetActiveCamera().Zoom(12); zoomed=camera_state(native.renderer.GetActiveCamera()); native._update_annotation_layout(); settle_qt(qapp)
+    assert not native.annotation_layout['valid'] and native.annotation_layout['outside_anchors']
+    assert native.annotation_message.text() and native.widget.height()==height and camera_state(native.renderer.GetActiveCamera())==zoomed
+    assert native.annotation_message.fontMetrics().horizontalAdvance(native.annotation_message.text())<=native.annotation_message.width()-8
+    native.reset_camera(); settle_qt(qapp)
+    assert native.annotation_layout['valid'] and native.widget.height()==height
+    win.close(); settle_qt(qapp)
 
 
 def test_physical_axis_key_updates_wraps_and_dpi_layout_keeps_camera(vtk_widget,qapp):
@@ -287,6 +418,61 @@ def test_physical_axis_key_updates_wraps_and_dpi_layout_keeps_camera(vtk_widget,
     view.close()
 
 
+def test_leaders_cannot_cross_unrelated_numbers_titles_or_each_other():
+    from apps.workbench_qt.mdo_studio.views.plot_base import leader_conflicts,segments_cross
+    boxes=[dict(box=(10,0,20,10)),dict(box=(3,2,7,8)),dict(box=(3,12,7,18))]
+    leader=dict(start=(0,5),end=(10,5),label_index=0)
+    assert ('glyph',0,1) in leader_conflicts([leader],boxes)
+    assert ('glyph',0,2) in leader_conflicts([dict(leader,start=(0,15),end=(10,15))],boxes)
+    assert segments_cross((0,0),(10,0),(3,0),(12,0))
+    assert not segments_cross((0,0),(10,0),(0,0),(0,10))
+    assert ('leader',0,1) in leader_conflicts([leader,dict(start=(5,0),end=(5,10),label_index=1)],boxes)
+
+
+@pytest.mark.parametrize('enabled',(0,1))
+@pytest.mark.parametrize('suppressed',(False,True))
+def test_style_action_restores_original_render_flags_and_invalidates_failure(vtk_widget,enabled,suppressed):
+    view=Native3D(); view.points([[1,2,3],[2,3,4]],['a','b']); view.finish(['x','y','z'])
+    interactor=view.widget.interactor; interactor.SetEnableRender(enabled); view._style_render_suppressed=suppressed
+    view.annotation_layout={'old':True}
+    def fail(): raise RuntimeError('camera action fault')
+    with pytest.raises(RuntimeError,match='camera action fault'): view._style_camera_action(view.interaction_style,fail)
+    assert interactor.GetEnableRender()==enabled and view._style_render_suppressed is suppressed
+    assert view.annotation_layout is None and not view._custom_labels and not view._label_leaders
+    view.close()
+
+
+@pytest.mark.parametrize('swap',(0,1))
+@pytest.mark.parametrize('mutation',('exception','clear','replace','close'))
+def test_annotation_render_fault_and_reentrant_scene_change(vtk_widget,qapp,swap,mutation):
+    view=Native3D(); view.points([[1,2,3],[2,3,4]],['old-a','old-b']); view.finish(['x','y','z'])
+    window=view.widget.window; window.SetSwapBuffers(swap); calls=[]; original=view.widget.proxy.Render
+    def render():
+        calls.append(view.available)
+        if len(calls)==1:
+            if mutation=='exception': raise RuntimeError('render fault')
+            if mutation=='close': view.close()
+            else:
+                view.clear()
+                if mutation=='replace':
+                    view.points([[3,4,5],[4,5,6]],['new-a','new-b']); view.finish(['new-x','new-y','new-z'])
+        else: original()
+    view.widget.proxy.Render=render
+    if mutation=='exception':
+        with pytest.raises(RuntimeError,match='render fault'): view._render_annotations()
+    else: view._render_annotations()
+    assert window.GetSwapBuffers()==swap and not view._rendering_layout and view._render_scene is None
+    assert all(calls)
+    if mutation=='replace':
+        qapp.processEvents(); assert view.axes is not None and all(ids[0].startswith('new-') for ids in view.actors.values())
+    else:
+        assert view.annotation_layout is None and not view._custom_labels and not view._label_leaders
+        if mutation!='exception': assert not view.actors
+        if mutation=='close':
+            count=len(calls); qapp.processEvents(); view._update_annotation_layout(); assert len(calls)==count and not view.available
+    view.close()
+
+
 @pytest.mark.parametrize('ranges',[(1e-4,2e-4,.02,.08,120.,350.),(1.,1.000000000001,-1e-12,1e-12,200.,201.)])
 def test_tick_density_and_precision_do_not_duplicate_adjacent_values(ranges):
     count,precision=axis_label_layout(ranges,480,220)
@@ -302,13 +488,14 @@ def test_click_threshold_uses_device_pixels_and_drag_release_never_selects(vtk_w
     view=Native3D(); view.widget.ratio=ratio; view.points([[1,2,3]],['DP-known'])
     actor=next(iter(view.actors)); selected=[]; view.point_selected.connect(selected.append)
     picker=SimpleNamespace(Pick=lambda *args:None,GetActor=lambda:actor,GetPointId=lambda:0)
-    view.picker=picker
+    original_picker=view.picker; view.picker=picker
     position=[(100,100)]; interactor=SimpleNamespace(GetEventPosition=lambda:position[0])
     view._begin_pick(interactor,None); position[0]=(100+round(3*ratio),100); view._pick(interactor,None)
     assert selected==['DP-known']
     view._begin_pick(interactor,None); position[0]=(position[0][0]+round(6*ratio),100); view._track_pick(interactor,None)
     position[0]=(100,100); view._pick(interactor,None)
     assert selected==['DP-known']
+    view.picker=original_picker
     view.close()
 
 

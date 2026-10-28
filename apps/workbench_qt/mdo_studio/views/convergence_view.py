@@ -31,6 +31,7 @@ class HypervolumeTask(QRunnable):
 class ConvergenceWidget(PlotWidget):
     def __init__(self,parent=None,is_dark=True):
         super().__init__(parent,is_dark)
+        self.fig.set_layout_engine('tight')
         row=QHBoxLayout(); self.metric_selector=QComboBox(); self.metric_selector.addItems(['Feasible count','Constraint violation','Failures','Best feasible scalar objective','Measured hypervolume'])
         self.xaxis=QComboBox(); self.xaxis.addItems(['Actual evaluation count','Cumulative solver wall time [s]'])
         row.addWidget(self.metric_selector,1); row.addWidget(self.xaxis,1); self.controls.addLayout(row)
@@ -89,5 +90,5 @@ class ConvergenceWidget(PlotWidget):
         label=self.metric_selector.currentText()
         if label=='Best feasible scalar objective': label+=f' [{self.units.get(self.objectives[0].response_id,"—")}]'
         self.ax.set_xlabel(self.xaxis.currentText()); self.ax.set_ylabel(label); self.ax.set_title('Native attempt trace')
-        self._apply_theme(); self.fig.tight_layout(); self.canvas.draw_idle()
+        self._apply_theme(); self.canvas.draw_idle()
         self.note.setText(f'{len(self.rows)} actual attempts at study revision {self.revision}; predictions/cache hits excluded. Failed or unassessed attempts preserve gaps.'+(' Fixed reference: '+self.reference.text()+'; saved objective transforms/scales; no adaptive normalization.' if self.metric_selector.currentText()=='Measured hypervolume' else ''))

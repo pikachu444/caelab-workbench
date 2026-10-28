@@ -1,7 +1,7 @@
 """Small shared Qt plot surface and optional native VTK scene."""
 from __future__ import annotations
 import os
-from itertools import product
+from itertools import product,permutations
 import numpy as np
 from PySide6.QtCore import Signal,Qt,QEvent,QTimer
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QSizePolicy
@@ -96,6 +96,17 @@ class Native3D(QWidget):
         self.axes=None; self.physical_ranges=None; self._press=None; self._dragged=False
         self.annotation_layout=None
         self._endpoint_labels=[]
+        self._custom_labels=[]; self._custom_titles=[]; self._label_leaders=[]
+        self._rendering_layout=False; self._style_render_suppressed=False
+        self._scene_epoch=0
+        self._render_scene=None
+        self._latest_layout_timer=QTimer(self); self._latest_layout_timer.setSingleShot(True); self._latest_layout_timer.timeout.connect(self._update_annotation_layout)
+        self.annotation_message=QLabel(self); self.annotation_message.setTextFormat(Qt.TextFormat.PlainText)
+        self.annotation_message.setAccessibleName('3D axis layout status'); self.annotation_message.hide()
+        self.annotation_message.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        self.annotation_message.setStyleSheet('color: #fbbf24; background: #13171e; padding: 2px 4px;')
+        self.annotation_message.setFixedHeight(self.annotation_message.fontMetrics().lineSpacing()+4)
+        self.annotation_message.installEventFilter(self)
         self.legend=QLabel(self); self.legend.setWordWrap(True); self.legend.hide()
         self.axis_key=QLabel(self); self.axis_key.setWordWrap(True); self.axis_key.setTextFormat(Qt.TextFormat.PlainText)
         self.axis_key.setAccessibleName('3D physical axes'); self.axis_key.hide()
@@ -124,8 +135,12 @@ class Native3D(QWidget):
                 self.interaction_style.AddObserver('LeftButtonPressEvent',self._style_press)
                 self.interaction_style.AddObserver('MouseMoveEvent',self._style_move)
                 self.interaction_style.AddObserver('LeftButtonReleaseEvent',self._style_release)
-                interactor.AddObserver('EndInteractionEvent',lambda *_:self._update_annotation_layout())
+                self.interaction_style.AddObserver('MouseWheelForwardEvent',lambda style,event:self._style_camera_action(style,style.OnMouseWheelForward))
+                self.interaction_style.AddObserver('MouseWheelBackwardEvent',lambda style,event:self._style_camera_action(style,style.OnMouseWheelBackward))
+                self.interaction_style.AddObserver('CharEvent',lambda style,event:self._style_camera_action(style,style.OnChar))
+                interactor.AddObserver('EndInteractionEvent',self._end_interaction)
                 interactor.AddObserver('StartInteractionEvent',self._camera_interacted)
+                interactor.AddObserver('ConfigureEvent',self._configure_scene)
                 self.widget.Initialize()
                 reset=QPushButton('Fit 3D view')
                 reset.setToolTip('Restore the oblique z-up view and fit the data and physical axes.')
@@ -135,6 +150,7 @@ class Native3D(QWidget):
                 self.instructions.setWordWrap(True); controls.addWidget(self.instructions,1)
                 layout.addLayout(controls); layout.addWidget(self.legend); layout.addWidget(self.axis_key)
                 layout.addWidget(self.widget)
+                layout.addWidget(self.annotation_message); self.annotation_message.show()
                 self.available = True
             except ImportError:
                 pass
@@ -150,7 +166,7 @@ class Native3D(QWidget):
 
     def show_empty(self,text):
         if self.available:
-            self.clear(); self.axis_key.clear(); self.axis_key.hide(); self.message.setText(text); self.message.show()
+            self.clear(); self.annotation_message.clear(); self.axis_key.clear(); self.axis_key.hide(); self.message.setText(text); self.message.show()
             self.widget.GetRenderWindow().Render()
 
     def _begin_pick(self,interactor,event):
@@ -160,12 +176,35 @@ class Native3D(QWidget):
         self._initial_fit_pending=False; self._camera_initialized=True; self._initial_fit_timer.stop()
 
     def _style_press(self,style,event):
+        if not self.available: return
         self._begin_pick(style.GetInteractor(),event); style.OnLeftButtonDown()
 
     def _style_move(self,style,event):
-        self._track_pick(style.GetInteractor(),event); style.OnMouseMove()
+        if not self.available: return
+        self._track_pick(style.GetInteractor(),event)
+        if style.GetState(): self._style_camera_action(style,style.OnMouseMove)
+        else: style.OnMouseMove()
+
+    def _style_camera_action(self,style,action):
+        if not self.available: return
+        interactor=style.GetInteractor(); enabled=interactor.GetEnableRender()
+        suppressed=self._style_render_suppressed; scene=(self.axes,self._scene_epoch)
+        self._camera_interacted(); self._style_render_suppressed=True; interactor.EnableRenderOff()
+        try: action()
+        except Exception:
+            if self._same_scene(scene): self._invalidate_annotations()
+            raise
+        finally: interactor.SetEnableRender(enabled); self._style_render_suppressed=suppressed
+        if enabled and self._same_scene(scene): self._update_annotation_layout()
+
+    def _end_interaction(self,*args):
+        if not self._style_render_suppressed: self._update_annotation_layout()
+
+    def _configure_scene(self,*args):
+        if self.available and not self._rendering_layout: self._update_annotation_layout()
 
     def _style_release(self,style,event):
+        if not self.available: return
         style.OnLeftButtonUp(); self._pick(style.GetInteractor(),event)
 
     def _track_pick(self,interactor,event):
@@ -174,6 +213,7 @@ class Native3D(QWidget):
             if (x-self._press[0])**2+(y-self._press[1])**2>threshold**2: self._dragged=True
 
     def _pick(self, interactor, event):
+        if not self.available: self._press=None; return
         if self._press is None: return
         self._track_pick(interactor,event)
         allowed=not self._dragged; self._press=None
@@ -186,9 +226,12 @@ class Native3D(QWidget):
 
     def clear(self):
         if self.available:
+            self._scene_epoch+=1
+            self._latest_layout_timer.stop()
             self._initial_fit_timer.stop(); self._fit_timer_axes=None
             self.renderer.RemoveAllViewProps()
             self._endpoint_labels.clear()
+            self._custom_labels.clear(); self._custom_titles.clear(); self._label_leaders.clear()
             self.actors.clear()
             self.picker.InitializePickList(); self.axes=None; self.physical_ranges=None; self.annotation_layout=None; self._press=None; self._dragged=False
 
@@ -270,12 +313,16 @@ class Native3D(QWidget):
             actor.AdjustLabelsOff(); actor.SnapLabelsToGridOff(); actor.SkipFirstTickOff(); actor.SetNumberOfMinorTicks(0)
         self._update_annotation_layout(render=False)
         self.renderer.AddActor(axes)
-        if not self._camera_initialized or (self._initial_fit_pending and self._render_ready()):
-            self._fit_camera(defer_until_visible=not self._render_ready())
+        if not self._camera_initialized:
+            self._fit_camera(defer_until_visible=True)
         else: self._update_annotation_layout()
+        if self._initial_fit_pending and self.isVisible():
+            self._fit_timer_axes=self.axes; self._initial_fit_timer.start(0)
         self.instructions.setText('Drag: rotate   Middle / Shift-drag: pan   Wheel: zoom'+('   Click point: select' if self.actors else ''))
 
     def eventFilter(self,watched,event):
+        if watched is self.annotation_message and event.type() in (QEvent.Type.FontChange,QEvent.Type.StyleChange):
+            self.annotation_message.setFixedHeight(self.annotation_message.fontMetrics().lineSpacing()+4)
         if self.available and watched is self.widget and event.type() in (QEvent.Type.Resize,QEvent.Type.DevicePixelRatioChange):
             if self._initial_fit_pending and self.isVisible():
                 self._fit_timer_axes=self.axes; self._initial_fit_timer.start(0)
@@ -296,7 +343,9 @@ class Native3D(QWidget):
 
     def _update_annotation_layout(self,render=True):
         if not self.available or self.axes is None: return
-        for prop in (self.axes.GetAxisTitleTextProperty(),self.axes.GetAxisLabelTextProperty()): prop.SetFontSize(round(12*self.widget.devicePixelRatioF()))
+        dpi=max(1,self.renderer.GetRenderWindow().GetDPI())
+        font_points=max(1,round(12*self.widget.devicePixelRatioF()*72/dpi))
+        for prop in (self.axes.GetAxisTitleTextProperty(),self.axes.GetAxisLabelTextProperty()): prop.SetFontSize(font_points)
         for actor,offset in zip((self.axes.GetXAxisActor2D(),self.axes.GetYAxisActor2D(),self.axes.GetZAxisActor2D()),(12,12,32)):
             actor.SetTickOffset(round(offset*self.widget.devicePixelRatioF()))
         origin=self._project((0,0,0)); lengths=[np.linalg.norm(np.array(self._project(point))-origin)/self.widget.devicePixelRatioF() for point in ((1,0,0),(0,1,0),(0,0,1))]
@@ -306,46 +355,121 @@ class Native3D(QWidget):
             self._render_annotations(); self._annotation_warning()
 
     def _render_annotations(self):
-        for actor in self._endpoint_labels: self.renderer.RemoveActor2D(actor)
-        self._endpoint_labels.clear()
-        self.widget.GetRenderWindow().Render()
-        if self.axes is None: return
+        if not self.available or self.axes is None: return
+        if self._rendering_layout:
+            if self._render_scene is not None and not self._same_scene(self._render_scene): self._latest_layout_timer.start(0)
+            return
+        rendering=self._rendering_layout; previous_scene=self._render_scene; scene=(self.axes,self._scene_epoch)
+        self._render_scene=scene
+        self._rendering_layout=True
+        try: self._render_annotations_impl(scene)
+        except Exception:
+            if self._same_scene(scene): self._invalidate_annotations()
+            raise
+        finally: self._rendering_layout=rendering; self._render_scene=previous_scene
+
+    def _same_scene(self,scene):
+        return self.available and self.axes is scene[0] and self._scene_epoch==scene[1]
+
+    def _invalidate_annotations(self):
+        self._scene_epoch+=1
+        for group in (self._endpoint_labels,self._custom_labels,self._custom_titles,self._label_leaders):
+            for actor in group: self.renderer.RemoveActor2D(actor)
+            group.clear()
+        self.annotation_layout=None
+        if self.axes is not None:
+            for axis in (self.axes.GetXAxisActor2D(),self.axes.GetYAxisActor2D(),self.axes.GetZAxisActor2D()): axis.LabelVisibilityOn(); axis.TitleVisibilityOn()
+        self.annotation_message.setText('Axis layout unavailable. Use Fit 3D view.')
+
+    def _render_annotations_impl(self,scene):
+        for group in (self._endpoint_labels,self._custom_labels,self._custom_titles,self._label_leaders):
+            for actor in group: self.renderer.RemoveActor2D(actor)
+            group.clear()
+        if self.axes is not None:
+            for axis in (self.axes.GetXAxisActor2D(),self.axes.GetYAxisActor2D(),self.axes.GetZAxisActor2D()): axis.LabelVisibilityOn(); axis.TitleVisibilityOn()
+        window=self.renderer.GetRenderWindow(); swap=window.GetSwapBuffers(); window.SwapBuffersOff()
+        try: self.widget.GetRenderWindow().Render()
+        finally: window.SetSwapBuffers(swap)
+        if not self._same_scene(scene): return
         if not self.axes.GetXAxisActor2D().GetTickPositions().GetNumberOfPoints(): return
         axes=(self.axes.GetXAxisActor2D(),self.axes.GetYAxisActor2D(),self.axes.GetZAxisActor2D())
         ratio=self.widget.devicePixelRatioF(); size=self.renderer.GetSize(); gap=4*ratio; pad=8*ratio
         # VTK has already selected its fly-mode axes and built its actual tick positions.
-        offsets=(8,16,24,32)
-        options=[[axis_text_boxes(axis,self.renderer,round(offset*ratio)) for offset in offsets] for axis in axes]
-        def cost(boxes):
-            overlap=sum(box_overlap(a['box'],b['box'],gap) for i,a in enumerate(boxes) for b in boxes[i+1:])
-            clipped=sum(box_clip(item['box'],size,pad) for item in boxes)
-            return overlap*1e6+clipped*1e3
-        choice=min(product(range(len(offsets)),repeat=3),key=lambda indices:cost([item for i,index in enumerate(indices) for item in options[i][index]])+sum(indices))
-        boxes=[item for i,index in enumerate(choice) for item in options[i][index]]
-        for axis,index in zip(axes,choice): axis.SetTickOffset(round(offsets[index]*ratio))
+        offsets=(8,16,24,32,0)
+        def candidates(verticals):
+            return [[dict(boxes=axis_text_boxes(axis,self.renderer,round(offset*ratio),vertical),offset=round(offset*ratio),vertical=vertical,preference=(100+vertical*10 if vertical else 0)+i)
+                     for vertical in verticals for i,offset in enumerate(offsets)] for axis in axes]
+        options=candidates((0,)); choice,error=choose_axis_text_layout(options,size,gap,pad)
+        if any(error):
+            options=candidates((0,1,2)); choice,error=choose_axis_text_layout(options,size,gap,pad)
+        selected=[options[i][index] for i,index in enumerate(choice)]
+        boxes=[item for option in selected for item in option['boxes']]
+        for axis,option in zip(axes,selected):
+            axis.SetTickOffset(option['offset']); axis.GetLabelTextProperty().SetVerticalJustification(option['vertical'])
+            axis.GetLabelTextProperty().Modified()
+        if not self._same_scene(scene): return
+        outside=[axis.GetTitle() for axis in axes for coordinate in (axis.GetPositionCoordinate(),axis.GetPosition2Coordinate())
+                 if any(value<0 or value>extent for value,extent in zip(coordinate.GetComputedViewportValue(self.renderer),size))]
+        boxes,custom_axes,leaders=repair_axis_numeric_boxes(boxes,axes,self.renderer,size,pad,gap) if not outside else (boxes,set(),[])
         for axis in axes:
-            candidates=[axis_title_box(axis,self.renderer,position) for position in (.5,.25,.75,0.,1.,.125,.375,.625,.875)]
-            title=min(candidates,key=lambda item:sum(box_overlap(item['box'],other['box'],gap) for other in boxes)*1e6+box_clip(item['box'],size,pad)*1e3+abs(item['position']-.5))
-            axis.SetTitlePosition(title['position']); boxes.append(title)
+            if axis.GetTitle() in custom_axes: axis.LabelVisibilityOff()
+        for axis in axes:
+            candidates=[]; original_offset=axis.GetTickOffset()
+            for offset in ((original_offset,0,round(8*ratio),round(16*ratio),round(24*ratio),round(32*ratio)) if axis.GetTitle() in custom_axes else (original_offset,)):
+                axis.SetTickOffset(offset)
+                for vertical in (0,1,2):
+                    for position in (.5,.25,.75,0.,1.,.125,.375,.625,.875):
+                        candidate=axis_title_box(axis,self.renderer,position,vertical); candidate['offset']=offset; candidates.append(candidate)
+            title=min(candidates,key=lambda item:sum(segment_hits_box(leader['start'],leader['end'],item['box']) for leader in leaders)*1e9+sum(box_overlap(item['box'],other['box'],gap) for other in boxes)*1e6+box_clip(item['box'],size,pad)*1e3+abs(item['position']-.5))
+            axis.SetTickOffset(title['offset']); axis.SetTitlePosition(title['position']); axis.GetTitleTextProperty().SetVerticalJustification(title['vertical']); boxes.append(title)
+            axis.GetTitleTextProperty().Modified()
+        boxes,custom_titles,leaders=repair_axis_titles(boxes,leaders,size,pad,gap) if not outside else (boxes,set(),leaders)
+        for axis in axes:
+            if axis.GetTitle() in custom_titles: axis.TitleVisibilityOff()
+        if not self._same_scene(scene): return
         # VTK can round its last tiny-range tick outside Range and omit it. Add only
         # that exact physical endpoint, without changing Range, geometry or picking.
         from vtkmodules.vtkRenderingCore import vtkTextMapper,vtkActor2D
         properties={axis.GetTitle():axis.GetLabelTextProperty() for axis in axes}
+        title_properties={axis.GetTitle():axis.GetTitleTextProperty() for axis in axes}
         for item in boxes:
-            if not item.get('supplemental'): continue
-            mapper=vtkTextMapper(); mapper.SetInput(item['text']); mapper.SetTextProperty(properties[item['axis']])
+            title_custom='axis' not in item and item['text'] in custom_titles
+            if not title_custom and not item.get('supplemental') and item.get('axis') not in custom_axes: continue
+            mapper=vtkTextMapper(); mapper.SetInput(item['text']); mapper.SetTextProperty(title_properties[item['text']] if title_custom else properties[item['axis']])
             actor=vtkActor2D(); actor.SetMapper(mapper); actor.GetPositionCoordinate().SetCoordinateSystemToViewport()
-            actor.SetPosition(*item['box'][:2]); actor.PickableOff(); actor.UseBoundsOff()
-            self.renderer.AddActor2D(actor); self._endpoint_labels.append(actor)
+            actor.SetPosition(*item['raw_position']); actor.PickableOff(); actor.UseBoundsOff()
+            self.renderer.AddActor2D(actor)
+            if not self._same_scene(scene): return
+            (self._custom_titles if title_custom else self._endpoint_labels if item.get('supplemental') else self._custom_labels).append(actor)
+        for leader in leaders:
+            actor=self._leader_actor(leader['start'],leader['end'])
+            if not self._same_scene(scene): return
+            self._label_leaders.append(actor)
         self.widget.GetRenderWindow().Render()
+        if not self._same_scene(scene): return
         overlaps=[(a['text'],b['text']) for i,a in enumerate(boxes) for b in boxes[i+1:] if box_overlap(a['box'],b['box'],gap)>0]
         clipped=[item['text'] for item in boxes if box_clip(item['box'],size,pad)>0]
-        self.annotation_layout=dict(boxes=boxes,overlaps=overlaps,clipped=clipped,size=tuple(size),gap=gap,padding=pad,valid=not overlaps and not clipped,supplemental_count=len(self._endpoint_labels))
+        conflicts=leader_conflicts(leaders,boxes)
+        dpi=self.renderer.GetRenderWindow().GetDPI(); points=self.axes.GetAxisLabelTextProperty().GetFontSize()
+        self.annotation_layout=dict(boxes=boxes,overlaps=overlaps,clipped=clipped,outside_anchors=outside,leader_conflicts=conflicts,size=tuple(size),gap=gap,padding=pad,valid=not overlaps and not clipped and not outside and not conflicts,supplemental_count=len(self._endpoint_labels),custom_axes=sorted(custom_axes),custom_titles=sorted(custom_titles),leader_lines=leaders,render_dpi=dpi,font_points=points,target_glyph_pixels=12*ratio,effective_glyph_pixels=points*dpi/72)
+
+    def _leader_actor(self,start,end):
+        from vtkmodules.vtkCommonCore import vtkPoints
+        from vtkmodules.vtkCommonDataModel import vtkPolyData,vtkCellArray
+        from vtkmodules.vtkRenderingCore import vtkPolyDataMapper2D,vtkActor2D
+        points=vtkPoints(); points.SetDataTypeToDouble()
+        points.InsertNextPoint(*start,0); points.InsertNextPoint(*end,0)
+        cells=vtkCellArray(); cells.InsertNextCell(2); cells.InsertCellPoint(0); cells.InsertCellPoint(1)
+        data=vtkPolyData(); data.SetPoints(points); data.SetLines(cells)
+        mapper=vtkPolyDataMapper2D(); mapper.SetInputData(data)
+        actor=vtkActor2D(); actor.SetMapper(mapper); actor.PickableOff(); actor.UseBoundsOff()
+        actor.GetProperty().SetColor(.6,.7,.8); actor.GetProperty().SetLineWidth(self.widget.devicePixelRatioF())
+        self.renderer.AddActor2D(actor); return actor
 
     def _annotation_warning(self):
         if self.annotation_layout and not self.annotation_layout['valid']:
-            self.message.setText('3D axis labels need more space. Enlarge this plot and use Fit 3D view.'); self.message.show()
-        else: self.message.hide()
+            self.annotation_message.setText('Axis labels need space. Use Fit 3D view or enlarge the plot.')
+        else: self.annotation_message.clear()
 
     def _project(self,point):
         self.renderer.SetWorldPoint(*point,1.); self.renderer.WorldToDisplay()
@@ -375,12 +499,14 @@ class Native3D(QWidget):
 
     def reset_camera(self):
         if self.available and self.axes is not None:
+            self._initial_fit_timer.stop()
             self._fit_camera()
 
     def closeEvent(self, event):
         self._initial_fit_timer.stop()
+        self._latest_layout_timer.stop()
         if self.available:
-            self.available=False; self.widget.Finalize()
+            self.clear(); self.available=False; self.widget.Finalize()
         super().closeEvent(event)
 
 
@@ -403,7 +529,14 @@ def text_size(renderer,prop,text):
     return np.array(size,dtype=float)
 
 
-def axis_text_boxes(axis,renderer,offset):
+def text_bounds(renderer,prop,text,origin):
+    from vtkmodules.vtkRenderingCore import vtkTextRenderer
+    bounds=[0,0,0,0]
+    vtkTextRenderer.GetInstance().GetBoundingBox(prop,text,bounds,renderer.GetRenderWindow().GetDPI())
+    return [origin[0]+bounds[0],origin[1]+bounds[2],origin[0]+bounds[1]+1,origin[1]+bounds[3]+1]
+
+
+def axis_text_boxes(axis,renderer,offset,vertical=None):
     """Mirror installed vtkAxisActor2D placement using its rendered, adjusted ticks."""
     ticks=axis.GetTickPositions(); adjusted=axis.GetAdjustedNumberOfLabels()
     step=axis.GetNumberOfMinorTicks()+1
@@ -411,13 +544,16 @@ def axis_text_boxes(axis,renderer,offset):
     if count<1: return []
     # CubeAxes uses exact physical endpoints with nice/grid adjustment disabled.
     if axis.GetAdjustLabels() or axis.GetSnapLabelsToGrid(): raise ValueError('3D axes require exact physical tick ranges')
+    from vtkmodules.vtkRenderingCore import vtkTextProperty
+    prop=vtkTextProperty(); prop.ShallowCopy(axis.GetLabelTextProperty())
+    if vertical is not None: prop.SetVerticalJustification(vertical)
     start=np.array(axis.GetPositionCoordinate().GetComputedViewportValue(renderer),dtype=float)
     end=np.array(axis.GetPosition2Coordinate().GetComputedViewportValue(renderer),dtype=float)
     theta=np.arctan2(*(end-start)[::-1]); normal=np.array([np.sin(theta),-np.cos(theta)])
     low,high=axis.GetRange(); delta=(high-low)/(adjusted-1) if adjusted>1 else 0.
     values=[low+i*delta for i in range(count)]
     labels=[axis.GetLabelFormat()%value for value in values]
-    first=text_size(renderer,axis.GetLabelTextProperty(),labels[0]); boxes=[]
+    first=text_size(renderer,prop,labels[0]); boxes=[]
     entries=[(np.array(ticks.GetPoint(i*step)[:2]),label,values[i],False) for i,label in enumerate(labels)]
     for anchor,value in ((start,low),(end,high)):
         label=axis.GetLabelFormat()%value
@@ -426,20 +562,129 @@ def axis_text_boxes(axis,renderer,offset):
     for anchor,label,value,supplemental in entries:
         center=anchor+axis.GetTickLength()*normal+(first/2+offset)*normal
         origin=np.trunc(center-first/2)
-        width,height=text_size(renderer,axis.GetLabelTextProperty(),label)
-        boxes.append(dict(text=label,box=[origin[0],origin[1],origin[0]+width,origin[1]+height],anchor=anchor.tolist(),value=value,axis=axis.GetTitle(),supplemental=supplemental))
+        boxes.append(dict(text=label,box=text_bounds(renderer,prop,label,origin),raw_position=origin.tolist(),anchor=anchor.tolist(),value=value,axis=axis.GetTitle(),supplemental=supplemental,vertical=prop.GetVerticalJustification()))
     return boxes
 
 
-def axis_title_box(axis,renderer,position):
+def axis_title_box(axis,renderer,position,vertical=None):
     start=np.array(axis.GetPositionCoordinate().GetComputedViewportValue(renderer),dtype=float)
     end=np.array(axis.GetPosition2Coordinate().GetComputedViewportValue(renderer),dtype=float)
     anchor=start+(end-start)*position
-    width,height=text_size(renderer,axis.GetTitleTextProperty(),axis.GetTitle())
+    from vtkmodules.vtkRenderingCore import vtkTextProperty
+    prop=vtkTextProperty(); prop.ShallowCopy(axis.GetTitleTextProperty())
+    if vertical is not None: prop.SetVerticalJustification(vertical)
+    width,height=text_size(renderer,prop,axis.GetTitle())
     label=axis.GetLabelFormat()%axis.GetRange()[0]
-    offset=axis.GetTickLength()+axis.GetTickOffset()+1.2*text_size(renderer,axis.GetLabelTextProperty(),label)[1]
-    origin=np.trunc(anchor-np.array([width/2,height+offset]))
-    return dict(text=axis.GetTitle(),box=[origin[0],origin[1],origin[0]+width,origin[1]+height],anchor=anchor.tolist(),position=position)
+    offset=axis.GetTickLength()+axis.GetTickOffset()+(1.2*text_size(renderer,axis.GetLabelTextProperty(),label)[1] if axis.GetLabelVisibility() else 0)
+    # Match vtkAxisActor2D::ShiftPosition's integer width division and offset
+    # conversion before each integer-coordinate assignment.
+    origin=np.array([int(anchor[0]-int(width)//2),int(anchor[1])-int(height)-int(offset)],dtype=float)
+    return dict(text=axis.GetTitle(),box=text_bounds(renderer,prop,axis.GetTitle(),origin),raw_position=origin.tolist(),anchor=anchor.tolist(),position=position,vertical=prop.GetVerticalJustification())
+
+
+def choose_axis_text_layout(options,size,gap,padding):
+    """Search three small axis option sets, caching pair costs instead of repainting."""
+    def overlap(a,b): return sum(box_overlap(x['box'],y['box'],gap) for x in a for y in b)
+    local=[]
+    for group in options:
+        local.append([(sum(box_overlap(a['box'],b['box'],gap) for i,a in enumerate(option['boxes']) for b in option['boxes'][i+1:]),
+                       sum(box_clip(item['box'],size,padding) for item in option['boxes']),option['preference']) for option in group])
+    cross={(i,j):[[overlap(a['boxes'],b['boxes']) for b in options[j]] for a in options[i]] for i,j in ((0,1),(0,2),(1,2))}
+    def score(indices):
+        a,b,c=indices
+        return (local[0][a][0]+local[1][b][0]+local[2][c][0]+cross[0,1][a][b]+cross[0,2][a][c]+cross[1,2][b][c],
+                local[0][a][1]+local[1][b][1]+local[2][c][1],local[0][a][2]+local[1][b][2]+local[2][c][2])
+    choice=min(product(*(range(len(group)) for group in options)),key=score)
+    return choice,score(choice)[:2]
+
+
+def repair_axis_numeric_boxes(boxes,axes,renderer,size,padding,gap):
+    """Keep residual annotations inside, linked to unchanged projected tick anchors."""
+    result=[dict(item) for item in boxes]; custom=set(); leaders=[]
+    for i,item in enumerate(result):
+        if not box_clip(item['box'],size,padding) and not any(box_overlap(item['box'],other['box'],gap)>0 for j,other in enumerate(result) if j!=i): continue
+        axis=next(axis for axis in axes if axis.GetTitle()==item['axis'])
+        start=np.array(axis.GetPositionCoordinate().GetComputedViewportValue(renderer)); end=np.array(axis.GetPosition2Coordinate().GetComputedViewportValue(renderer))
+        width=item['box'][2]-item['box'][0]; height=item['box'][3]-item['box'][1]
+        if np.linalg.norm(end-start)<gap/4 or width>size[0]-2*padding or height>size[1]-2*padding: continue
+        original=np.array(item['box']); anchor=np.array(item['anchor']); nearest=np.array([np.clip(original[0],padding,size[0]-padding-width),np.clip(original[1],padding,size[1]-padding-height)])
+        candidates=[]
+        for dx,dy in ((0,0),(0,height+gap),(0,-height-gap),(width+gap,0),(-width-gap,0)):
+            origin=nearest+[dx,dy]; box=[*origin,origin[0]+width,origin[1]+height]
+            if box_clip(box,size,padding) or any(box_overlap(box,other['box'],gap)>0 for j,other in enumerate(result) if j!=i): continue
+            target=np.clip(anchor,box[:2],box[2:])
+            if np.linalg.norm(target-anchor)<gap/2: continue
+            if any(segments_cross(anchor,target,leader['start'],leader['end']) for leader in leaders): continue
+            if any(segment_hits_box(anchor,target,other['box']) for j,other in enumerate(result) if j!=i): continue
+            candidates.append((np.linalg.norm(origin-original[:2]),box,target))
+        if not candidates: continue
+        _,box,target=min(candidates,key=lambda entry:entry[0]); shift=np.array(box[:2])-original[:2]
+        item['box']=box; item['raw_position']=(np.array(item['raw_position'])+shift).tolist(); item['clamped']=True
+        custom.add(item['axis']); leaders.append(dict(axis=item['axis'],value=item['value'],label_index=i,start=item['anchor'],end=target.tolist()))
+    return result,custom,leaders
+
+
+def repair_axis_titles(boxes,leaders,size,padding,gap):
+    """Move only residual XYZ titles; their native axis identities stay unchanged."""
+    titles=[i for i,item in enumerate(boxes) if 'axis' not in item]
+    candidates=[_repair_title_order(boxes,leaders,size,padding,gap,order) for order in permutations(titles)]
+    def score(candidate):
+        result,_,lines=candidate
+        conflicts=sum(bool(box_clip(item['box'],size,padding)) for item in result)+sum(box_overlap(a['box'],b['box'],gap)>0 for i,a in enumerate(result) for b in result[i+1:])+len(leader_conflicts(lines,result))
+        distance=sum(np.linalg.norm(np.array(item['box'][:2])-original['box'][:2]) for item,original in zip(result,boxes))
+        return conflicts,distance
+    return min(candidates,key=score)
+
+
+def _repair_title_order(boxes,leaders,size,padding,gap,order):
+    result=[dict(item) for item in boxes]; leaders=list(leaders); custom=set()
+    for i in order:
+        item=result[i]
+        if not box_clip(item['box'],size,padding) and not any(box_overlap(item['box'],other['box'],gap)>0 for j,other in enumerate(result) if j!=i) and not any(segment_hits_box(leader['start'],leader['end'],item['box']) for leader in leaders): continue
+        original=np.array(item['box']); width,height=original[2:]-original[:2]; anchor=np.array(item['anchor'])
+        if width>size[0]-2*padding or height>size[1]-2*padding: continue
+        nearest=np.array([np.clip(original[0],padding,size[0]-padding-width),np.clip(original[1],padding,size[1]-padding-height)])
+        candidates=[]
+        for dx,dy in product((0,1,-1,2,-2,3,-3,4,-4),repeat=2):
+            origin=nearest+np.array([dx*(width+gap),dy*(height+gap)]); box=[*origin,origin[0]+width,origin[1]+height]
+            if box_clip(box,size,padding) or any(box_overlap(box,other['box'],gap)>0 for j,other in enumerate(result) if j!=i): continue
+            if any(segment_hits_box(leader['start'],leader['end'],box) for leader in leaders): continue
+            target=np.clip(anchor,box[:2],box[2:])
+            if np.linalg.norm(target-anchor)<gap/2: continue
+            if any(segments_cross(anchor,target,leader['start'],leader['end']) for leader in leaders): continue
+            if any(segment_hits_box(anchor,target,other['box']) for j,other in enumerate(result) if j!=i): continue
+            candidates.append((np.linalg.norm(origin-original[:2]),box,target))
+        if not candidates: continue
+        _,box,target=min(candidates,key=lambda entry:entry[0]); shift=np.array(box[:2])-original[:2]
+        item['box']=box; item['raw_position']=(np.array(item['raw_position'])+shift).tolist(); item['clamped']=True
+        custom.add(item['text']); leaders.append(dict(axis=item['text'],kind='title',label_index=i,start=item['anchor'],end=target.tolist()))
+    return result,custom,leaders
+
+
+def segments_cross(a,b,c,d):
+    a,b,c,d=map(lambda point:np.array(point,dtype=float),(a,b,c,d))
+    def side(p,q,r): return (q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0])
+    values=(side(a,b,c),side(a,b,d),side(c,d,a),side(c,d,b)); epsilon=1e-6
+    if all(abs(value)<epsilon for value in values):
+        dimension=int(np.argmax(np.abs(b-a)))
+        return min(max(a[dimension],b[dimension]),max(c[dimension],d[dimension]))-max(min(a[dimension],b[dimension]),min(c[dimension],d[dimension]))>epsilon
+    if any(np.linalg.norm(x-y)<epsilon for x in (a,b) for y in (c,d)): return False
+    def on_segment(p,q,r): return abs(side(p,q,r))<epsilon and np.all(r>=np.minimum(p,q)-epsilon) and np.all(r<=np.maximum(p,q)+epsilon)
+    return (values[0]*values[1]<0 and values[2]*values[3]<0) or any(on_segment(p,q,r) for p,q,r in ((a,b,c),(a,b,d),(c,d,a),(c,d,b)))
+
+
+def segment_hits_box(start,end,box):
+    if any(box[0]<=point[0]<=box[2] and box[1]<=point[1]<=box[3] for point in (start,end)): return True
+    corners=((box[0],box[1]),(box[2],box[1]),(box[2],box[3]),(box[0],box[3]))
+    return any(segments_cross(start,end,corners[i],corners[(i+1)%4]) for i in range(4))
+
+
+def leader_conflicts(leaders,boxes):
+    conflicts=[]
+    for i,leader in enumerate(leaders):
+        conflicts.extend(('glyph',i,j) for j,item in enumerate(boxes) if j!=leader['label_index'] and segment_hits_box(leader['start'],leader['end'],item['box']))
+        conflicts.extend(('leader',i,j) for j,other in enumerate(leaders[i+1:],i+1) if segments_cross(leader['start'],leader['end'],other['start'],other['end']))
+    return conflicts
 
 
 def box_overlap(a,b,gap=0):

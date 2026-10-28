@@ -517,3 +517,29 @@ def test_queued_ten_hz_results_keep_flush_cadence_and_stop_after_final_flush(win
         assert not service.calls
     finally:
         stop.set(); terminal.set(); worker.join(1); service.active_batch_id=None; win._delta_timer.stop()
+
+
+@pytest.mark.parametrize('ratio',(1.,1.5,2.))
+@pytest.mark.parametrize('theme',('light','dark'))
+def test_convergence_resize_keeps_actual_ylabel_inside_without_recomputing(win,qapp,monkeypatch,ratio,theme):
+    from apps.workbench_qt.theme import build_stylesheet
+    for record in win.study.records:
+        record.attempts=[dict(status='COMPLETED',feasibility='FEASIBLE',total_violation=0.,objectives=record.objectives,responses=record.observations,duration_sec=1.)]
+    win.resize(1380,880); win._default_layout(); win.setup_dock.hide(); win.setStyleSheet(build_stylesheet(theme)); win.show()
+    view=win.convergence_view; win.viz_tabs.setCurrentIndex(4); win._populate_study(); win.select_point(win.study.records[0].point_id)
+    for _ in range(5): qapp.processEvents(); time.sleep(.01)
+    win._viz_timer.stop(); monkeypatch.setattr(view.canvas,'devicePixelRatioF',lambda:ratio); view.canvas._update_pixel_ratio()
+    view.ax.set_xlim(0,20); view.ax.set_ylim(-1,15); view.canvas.draw()
+    line=view.ax.lines[0]; x=line.get_xdata().copy(); y=line.get_ydata().copy(); selected=set(win._selected_ids); token=view._token
+    limits=(view.ax.get_xlim(),view.ax.get_ylim()); picks=list(view._picks[line]); rows=list(view.rows)
+    def unexpected(*args,**kwargs): raise AssertionError('Resize must not recompute the trace or hypervolume')
+    monkeypatch.setattr(view,'refresh',unexpected); monkeypatch.setattr(view,'_draw',unexpected)
+    for window_width,dock_width in ((1380,650),(960,330),(1380,330)):
+        win.resizeDocks([win.tree_dock],[dock_width],Qt.Orientation.Horizontal); win.resize(window_width,880 if window_width==1380 else 720)
+        for _ in range(5): qapp.processEvents(); time.sleep(.01)
+        view.canvas.draw(); renderer=view.canvas.get_renderer(); label=view.ax.yaxis.label.get_window_extent(renderer)
+        assert label.x0>=0 and label.x1<=view.fig.bbox.width and label.y0>=0 and label.y1<=view.fig.bbox.height
+        assert (view.ax.get_xlim(),view.ax.get_ylim())==limits and view._token==token
+        assert view.ax.lines[0] is line and view._picks[line]==picks and view.rows==rows and win._selected_ids==selected
+        np.testing.assert_array_equal(line.get_xdata(),x); np.testing.assert_array_equal(line.get_ydata(),y)
+    assert not win.service.calls
