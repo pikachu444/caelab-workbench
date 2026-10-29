@@ -264,8 +264,15 @@ PDE·설치·RAG 코드와 유효한 검사는 보존하고 본선의 결함은 
 | OpenRadioss/OpenCourant 후보 | 확인된 공개 설명 | 채택 전 확인할 것 |
 |---|---|---|
 | [Naksha Free](https://agentnaksha.com/pricing.html) | 무료 상업사용, OpenRadioss 작성·실행·읽기, 형상 import·메시·재료·접촉·단계·CLI 안내 | 빌드 요청/배포 동봉 라이선스, 실제 모델·카드·출력 왕복. 공개 소스는 확인하지 못함 |
-| [BeidPrep](https://beidersim.com/beidprep) | 무료/유료 구분의 Radioss 전처리 기능 소개 | Early Access 배포, 무료판 기능·입출력·실행 확인 |
+| [BeidPrep](https://beidersim.com/beidprep) | 1.0.1 Windows 실실행·RAD 표시·저장·재열기 관찰. 저장본에서 구속·IPLAS 변경 확인 | 해당 버전의 조건 보존 결함이 있어 주력 채택 보류. 2.0은 미확보·미시험 |
+| [CAELab Prep](https://github.com/pikachu444/caelab-prep) | 사용자가 만든 독립 전처리기 개발 저장소. 제품 방향과 평가 자산 초기 정리 | 실제 RAD 편집 앱, 공용 GUI 부품, 저장/재열기, CAD/메시 및 워크벤치 연결 개발 |
 | PrePoMax + inp2rad | INP 작성 후 Radioss 변환 | 지원 카드·INCLUDE·요소·재료·접촉·단계 의미 보존. 범용 완전 변환으로 표시 금지 |
 | Gmsh | Radioss 메시 export | 완전한 물리 모델 작성기를 별도 연결 |
 
-[REA](https://github.com/morluto/rea)는 앱 동작·바이너리 분석을 돕는 도구다. 특정 UI/명령/형식의 동작을 분석해 필요한 기능을 구현하는 데 활용할 수 있으나 전문 mesher·솔버 카드 의미·전체 CAE 앱 복제의 완성 근거가 아니다. 공개 소스인 PrePoMax는 소스/API 검토를 우선한다. Naksha의 무료 배포를 소스 재사용·재배포 허가로 해석하지 않는다. 현재는 후보 조사이며 설치·복제·통합 완료가 아니다.
+[REA](https://github.com/morluto/rea)는 앱 동작·바이너리 분석을 돕는 도구다. 해당 제품의 허가 조건을 확인한 범위에서 활용을 판단하며 전문 mesher·솔버 카드 의미·전체 CAE 앱 복제의 완성 근거로 삼지 않는다. 공개 소스인 PrePoMax는 소스/API 검토를 우선한다. Naksha의 무료 배포를 소스 재사용·재배포 허가로 해석하지 않는다. BeidPrep 1.0.1 시험에서는 역공학을 수행하지 않았다.
+
+### 다른 세션의 GUI 자산·자동화 제안 통합
+
+공용 GUI 자산 조사에서 제안한 디자인 토큰/아이콘, 단위·속성·곡선·트리 위젯, 공유 Action·Undo·선택·문서·도킹 구조를 CAELab Prep의 실제 편집 흐름에 적용한다. 필요한 부품부터 내부 모듈로 분리하며 별도 범용 프레임워크나 새 저장소 제작을 전처리기 개발의 선행 목표로 삼지 않는다. 이 워크벤치의 제품 역할은 기존 DESIGN대로 유지한다.
+
+[PrePoMax 3.0 공식 발표](https://prepomax.fs.um.si/version-3-0-0/)에 Python 스크립트/API 도움말·명령 기록 변환·MCP 서버 지원이 명시돼 있다. 현재 PR #51의 수동 PMX 재열기·INP 출력 연결을 기반으로 **Windows 실제 파일 흐름 확인 → Python을 통한 반복 전처리 자동화 → MCP 세션 보조 평가** 순서로 진행한다. 문서에 기능이 있다는 사실을 실행·연동 검증으로 보고하지 않는다. 워크벤치에서 시작한 솔버 계산은 JobManager가 소유하며 외부 전처리기의 자동화가 계산을 중복 시작하지 않게 한다. 이 후속 자동화는 아직 구현하지 않았다.
