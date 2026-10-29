@@ -330,7 +330,7 @@ def main():
         app_environment.update({"GALLIUM_DRIVER": "llvmpipe", "LIBGL_ALWAYS_SOFTWARE": "true",
                                 "QT_OPENGL": "software"})
         RESULT["rendering_environment"] = {
-            "Mesa": "26.2.4", "driver": "llvmpipe", "QT_OPENGL": "software",
+            "Mesa": "24.3.4", "driver": "llvmpipe", "QT_OPENGL": "software",
             "osmesa_dll_present": (appdir / "osmesa.dll").is_file(),
             "opengl32_dll_present": (appdir / "opengl32.dll").is_file(),
         }
