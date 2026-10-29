@@ -53,6 +53,7 @@ def log(message):
 def download(executable):
     import requests
 
+    log("Starting public BeidPrep executable download")
     session = requests.Session()
     url = "https://drive.usercontent.google.com/download"
     params = {"id": FILE_ID, "export": "download", "authuser": "0"}
@@ -69,11 +70,15 @@ def download(executable):
         raise RuntimeError("Public download returned HTML instead of the application")
     digest = hashlib.sha256()
     size = 0
+    next_progress = 25 * 1024 * 1024
     with executable.open("wb") as stream:
         for chunk in response.iter_content(1024 * 1024):
             stream.write(chunk)
             digest.update(chunk)
             size += len(chunk)
+            if size >= next_progress:
+                log(f"Executable download progress: {size // (1024 * 1024)} MiB")
+                next_progress += 25 * 1024 * 1024
     if digest.hexdigest() != EXPECTED_SHA256:
         raise RuntimeError("Executable SHA-256 differs from the already acquired public build")
     RESULT["steps"]["download"] = {"status": "passed", "bytes": size, "sha256": digest.hexdigest()}
@@ -85,6 +90,7 @@ def snapshot(name, window=None):
     from PIL import ImageGrab
     from pywinauto import Desktop
 
+    log(f"Capturing UI observation: {name}")
     for capture_name, capture in [
         (f"{name}-desktop.png", lambda: ImageGrab.grab(all_screens=True)),
         (f"{name}-window.png", lambda: window.capture_as_image() if window else None),
@@ -321,6 +327,14 @@ def main():
             and key.upper() not in ("GH_TOKEN", "GITHUB_TOKEN", "CI_JOB_TOKEN", "CI_TOKEN")
             and not ("TOKEN" in key.upper() and key.upper().startswith("CI"))
         }
+        app_environment.update({"GALLIUM_DRIVER": "llvmpipe", "LIBGL_ALWAYS_SOFTWARE": "true",
+                                "QT_OPENGL": "software"})
+        RESULT["rendering_environment"] = {
+            "Mesa": "26.2.4", "driver": "llvmpipe", "QT_OPENGL": "software",
+            "osmesa_dll_present": (appdir / "osmesa.dll").is_file(),
+            "opengl32_dll_present": (appdir / "opengl32.dll").is_file(),
+        }
+        log("Launching BeidPrep with Mesa llvmpipe software rendering")
         process = subprocess.Popen([str(executable)], cwd=appdir, env=app_environment,
                                    stdout=log_stream, stderr=subprocess.STDOUT)
         RESULT["launcher_pid"] = process.pid
