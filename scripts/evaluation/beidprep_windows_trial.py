@@ -155,6 +155,8 @@ def ui_window(main):
 
 
 def expand_tree(main):
+    from pywinauto import keyboard
+
     for _ in range(3):
         changed = False
         for control in ui_window(main).descendants(control_type="TreeItem")[:100]:
@@ -165,6 +167,17 @@ def expand_tree(main):
         if not changed:
             break
         time.sleep(0.5)
+    # Qt's accessibility provider exposes rows but not ExpandCollapse on this build.
+    # Exercise the tree's ordinary navigation keys rather than silently leaving it closed.
+    trees = [control for control in ui_window(main).descendants(control_type="Tree")
+             if control.class_name() == "QTreeWidget"]
+    if len(trees) == 1:
+        try:
+            trees[0].set_focus()
+            keyboard.send_keys("{HOME}" + "{RIGHT}{DOWN}" * 55 + "{HOME}", pause=0.015)
+            time.sleep(0.5)
+        except Exception as exc:
+            log(f"Tree keyboard expansion was not available: {exc}")
 
 
 def open_file(main, filename):
@@ -202,17 +215,37 @@ def find_control_value(control):
     return ""
 
 
-def edit_material(main):
-    """Edit only an unambiguous visible 210000 field after selecting STEEL."""
+def select_material_item(main):
     from pywinauto import keyboard
 
+    trees = [control for control in ui_window(main).descendants(control_type="Tree")
+             if control.class_name() == "QTreeWidget"]
+    if len(trees) == 1:
+        # Qt keyboard search brings the Materials category into view. Right/Down
+        # then selects its first child (this trial has exactly one material).
+        trees[0].set_focus()
+        keyboard.send_keys("{HOME}Materials{RIGHT}{DOWN}", pause=0.05)
+        time.sleep(0.5)
     candidates = [item for item in ui_window(main).descendants(control_type="TreeItem")
                   if "STEEL" in item.window_text().upper() or "PLAS_TAB" in item.window_text().upper()
                   or "LAW36" in item.window_text().upper()]
     if not candidates:
-        return {"status": "not_verified", "reason": "Material tree item not exposed through accessibility"}
-    candidates[0].double_click_input()
+        return False
+    candidate = candidates[0]
+    for method in ("ensure_visible", "scroll_into_view"):
+        with contextlib.suppress(Exception):
+            getattr(candidate, method)()
+    candidate.double_click_input()
     time.sleep(1)
+    return True
+
+
+def edit_material(main):
+    """Edit only an unambiguous visible 210000 field after selecting STEEL."""
+    from pywinauto import keyboard
+
+    if not select_material_item(main):
+        return {"status": "not_verified", "reason": "Material tree item not exposed through accessibility"}
     snapshot("03-material-selected", main)
     controls = ui_window(main).descendants()
     matched = []
@@ -284,13 +317,8 @@ def inspect_deck(filename):
 
 def read_reopened_material(main):
     """Read the material editor in a fresh process; do not change its contents."""
-    candidates = [item for item in ui_window(main).descendants(control_type="TreeItem")
-                  if "STEEL" in item.window_text().upper() or "PLAS_TAB" in item.window_text().upper()
-                  or "LAW36" in item.window_text().upper()]
-    if not candidates:
+    if not select_material_item(main):
         return {"status": "not_verified_by_values", "reason": "Material item not exposed"}
-    candidates[0].double_click_input()
-    time.sleep(1)
     matched = []
     for control in ui_window(main).descendants():
         with contextlib.suppress(Exception):
@@ -351,16 +379,18 @@ def main():
             open_file(app_main, disposable)
             observations = snapshot("02-model-opened", app_main)
             names = json.dumps(observations)
-            evidence = [token for token in ("STEEL", "LOWER", "UPPER", "input-copy.rad") if token in names]
+            evidence = [token for token in ("STEEL", "LOWER", "UPPER", "input-copy.rad",
+                                            "Elements (2)", "Materials (1)", "Interfaces (1)") if token in names]
             RESULT["steps"]["open_rad"] = {"status": "observed" if evidence else "attempted",
                                                "visible_model_evidence": evidence}
             RESULT["steps"]["material_edit"] = edit_material(app_main)
             saved = OUT / "beidprep-saved.rad"
             save_as(app_main, saved)
             snapshot("05-after-save", app_main)
-            actual_saved = saved if saved.exists() else disposable
+            saved_with_suffix = saved.with_name(saved.stem + "_0000.rad")
+            actual_saved = saved if saved.exists() else saved_with_suffix if saved_with_suffix.exists() else disposable
             original_bytes = source.read_bytes()
-            if actual_saved.exists() and (saved.exists() or actual_saved.read_bytes() != original_bytes):
+            if actual_saved.exists() and (actual_saved != disposable or actual_saved.read_bytes() != original_bytes):
                 RESULT["steps"]["save"] = {"status": "passed", "path": actual_saved.name,
                                               "deck": inspect_deck(actual_saved)}
                 if RESULT["steps"]["save"]["deck"]["material_contains_new_E"]:
