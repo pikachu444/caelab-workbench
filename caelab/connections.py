@@ -1,9 +1,9 @@
 """Connections to external programs — the workbench's main line.
 
 The workbench does not reimplement preprocessors or postprocessors.
-Each solver uses the preprocessor that fits it (FreeCAD FEM for
-CalculiX, Salome for Code_Aster, Gmsh for OpenRadioss), and results
-are viewed in ParaView. This module is the registry of those programs:
+FreeCAD owns CAD; solver-specific preprocessors own the FE model
+(PrePoMax for CalculiX, Salome-Meca for Code_Aster). Gmsh is a mesher,
+not a complete OpenRadioss preprocessor. This registry describes programs:
 how to find them on the machine, whether they are available, and how
 to launch them with a file. The built-in solver converters in
 `caelab/solvers` are auxiliary — for paths with no native
@@ -24,17 +24,24 @@ from dataclasses import dataclass, field
 class ProgramSpec:
     id: str
     name: str
-    role: str  # "preprocessor" | "solver" | "postprocessor" | "mesh"
+    role: str  # "cad" | "preprocessor" | "solver" | "postprocessor" | "mesh"
     env_var: str
     executables: tuple[str, ...]
     notes: str = ""
+    platforms: tuple[str, ...] = ()
 
 
 PROGRAMS: tuple[ProgramSpec, ...] = (
     ProgramSpec(
-        "freecad", "FreeCAD", "preprocessor", "CAELAB_FREECAD",
+        "freecad", "FreeCAD", "cad", "CAELAB_FREECAD",
         ("freecad", "FreeCAD"),
-        "형상 편집과 CalculiX 전처리(FEM)의 본선 프로그램.",
+        "CAD 원본(.FCStd)을 편집하고 STEP 형상을 전달합니다. 기존 FEM 경로도 열 수 있습니다.",
+    ),
+    ProgramSpec(
+        "prepomax", "PrePoMax", "preprocessor", "CAELAB_PREPOMAX",
+        ("PrePoMax.exe", "PrePoMax"),
+        "CalculiX 전후처리. STEP를 가져와 메시·재료·접촉·단계를 작성하고 PMX와 INP를 저장합니다.",
+        ("windows",),
     ),
     ProgramSpec(
         "salome", "Salome", "preprocessor", "CAELAB_SALOME",
@@ -44,12 +51,12 @@ PROGRAMS: tuple[ProgramSpec, ...] = (
     ProgramSpec(
         "gmsh", "Gmsh", "mesh", "CAELAB_GMSH",
         ("gmsh",),
-        "메시 생성. Radioss 블록 형식과 LS-DYNA 키워드 내보내기를 제공한다.",
+        "형상·메시 도구. 메시 내보내기만으로 재료·접촉·단계가 있는 완전한 솔버 입력을 만들지는 않습니다.",
     ),
     ProgramSpec(
         "calculix", "CalculiX", "solver", "CAELAB_CCX",
         ("ccx",),
-        "구조 솔버. 인풋 파일(.inp)은 FreeCAD FEM 작성기가 만드는 것이 본선이다.",
+        "구조 솔버. PrePoMax·기존 FreeCAD FEM 등에서 작성한 원본 INP를 그대로 실행합니다.",
     ),
     ProgramSpec(
         "codeaster", "Code_Aster", "solver", "CAELAB_CODEASTER",
@@ -168,6 +175,9 @@ def _executable_reason(path: Path, host: str) -> str:
 
 def _status(spec: ProgramSpec, registry: dict, registry_error: str, host: str) -> ProgramStatus:
     status = ProgramStatus(spec, host_os=host)
+    if spec.platforms and host not in spec.platforms:
+        status.reason = f"{spec.name}의 지원 실행 환경은 {', '.join(spec.platforms)}입니다. {host} 연결은 검증되지 않았습니다."
+        return status
     manifest_path = Path(__file__).parent / "solvers" / "installer" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     entry = next((program for program in manifest["programs"] if program["id"] == spec.id), None)
@@ -255,6 +265,12 @@ def launch_request(status: ProgramStatus, file: str | Path) -> LaunchRequest:
         if document.suffix.lower() != ".fcstd":
             raise ValueError("FreeCAD 문서(.FCStd)를 선택하세요.")
         argv = [status.path, str(document)]
+    elif status.spec.id == "prepomax":
+        if document.suffix.lower() not in {".pmx", ".step", ".stp", ".brep", ".igs", ".iges", ".inp", ".frd", ".unv", ".vol", ".stl"}:
+            raise ValueError("PrePoMax 문서(.pmx) 또는 가져올 형상·메시·INP를 선택하세요.")
+        # PrePoMax 2.6 manual: --file/-f opens PMX or imports geometry/decks.
+        # -o controls overwrite after regeneration; it does NOT mean 'open'.
+        argv = [status.path, "-f", str(document)]
     elif status.spec.id == "gmsh":
         argv = [status.path, str(document)]
     elif status.spec.id == "paraview":

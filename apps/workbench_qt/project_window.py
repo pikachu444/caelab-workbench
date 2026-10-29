@@ -59,18 +59,19 @@ from .theme import (
     status_badge_style, theme_toggle_label, toggle_theme_mode,
 )
 
-_KIND_ICONS = {"geometry": "geometry", "mesh": "mesh", "analysis": "solver",
+_KIND_ICONS = {"geometry": "geometry", "preprocessor": "mesh", "mesh": "mesh", "analysis": "solver",
                "results": "result", "expert": "expert"}
 
 SYSTEM_KINDS = [
-    ("geometry", "FreeCAD", "형상·입력 작성"),
+    ("geometry", "FreeCAD", "CAD 형상 설계·STEP 내보내기"),
+    ("preprocessor", "PrePoMax", "솔버별 전처리"),
     ("mesh", "Gmsh", "메시 작성"),
     ("analysis", "CalculiX", "해석"),
     ("results", "ParaView", "결과 보기"),
     ("expert", "전문가", "논의"),
 ]
 _KIND_CATEGORIES = {
-    "geometry": "형상 · CAD", "mesh": "전처리 · 메시", "analysis": "해석 · 계산",
+    "geometry": "형상 · CAD", "preprocessor": "전처리 · 해석 모델", "mesh": "메시", "analysis": "해석 · 계산",
     "results": "후처리 · 결과", "expert": "전문가 · 논의",
 }
 STATE_COLORS = {
@@ -592,17 +593,37 @@ class Connector(QGraphicsPathItem):
         self.setPath(path)
 
 
-_PROGRAM_IDS = {"geometry": "freecad", "mesh": "gmsh", "analysis": "calculix",
+_PROGRAM_IDS = {"geometry": "freecad", "preprocessor": "prepomax", "mesh": "gmsh", "analysis": "calculix",
                 "results": "paraview", "expert": "expert"}
 _FILE_FILTERS = {
     "geometry": "FreeCAD (*.FCStd *.fcstd);;모든 파일 (*)",
+    "preprocessor": "CAD 형상 / 해석 입력 (*.step *.stp *.brep *.inp *.med);;모든 파일 (*)",
     "mesh": "Gmsh / MED (*.geo *.msh *.med);;모든 파일 (*)",
     "analysis": "해석 입력 (*.inp *.comm *.rad *.k *.key);;CalculiX (*.inp);;Code_Aster (*.comm);;OpenRadioss (*.rad);;LS-DYNA (*.k *.key);;모든 파일 (*)",
     "results": "결과 파일 (*.vtu *.vtk *.pvd *.frd *.rmed *.med *.d3plot);;모든 파일 (*)",
 }
 PROJECT_FILTER = "CAELAB 프로젝트 (*.json);;모든 파일 (*)"
-OUTPUT_FILTER = "작성한 출력 (*.inp *.msh *.med *.frd *.vtu *.vtk *.pvd);;모든 파일 (*)"
+OUTPUT_FILTER = "작성한 출력 (*.step *.stp *.brep *.inp *.export *.comm *.rad *.k *.key *.msh *.med *.frd *.vtu *.vtk *.pvd);;모든 파일 (*)"
+_DOCUMENT_FILTERS = {
+    "prepomax": "PrePoMax 프로젝트 (*.pmx);;모든 파일 (*)",
+    "salome": "Salome 프로젝트 (*.hdf);;모든 파일 (*)",
+    "freecad": "FreeCAD FEM 문서 (*.FCStd *.fcstd);;모든 파일 (*)",
+}
+_PREPROCESSOR_INPUT_FILTERS = {
+    "prepomax": "CAD 형상 / CalculiX 입력 (*.step *.stp *.brep *.inp);;모든 파일 (*)",
+    "freecad": "FreeCAD FEM 문서 (*.FCStd *.fcstd);;모든 파일 (*)",
+    "salome": "CAD 형상 / 메시 (*.step *.stp *.brep *.med);;모든 파일 (*)",
+}
 UNIT_LABELS = {"length": "길이", "force": "힘", "time": "시간", "temperature": "온도", "stress": "응력"}
+
+
+def _program_title(program_id: str, kind: str = '') -> str:
+    from caelab.connections import PROGRAMS
+    if program_id == 'freecad' and kind == 'preprocessor':
+        return 'FreeCAD FEM'
+    return next((spec.name for spec in PROGRAMS if spec.id == program_id),
+                {'expert': '전문가 논의', 'radioss': 'OpenRadioss',
+                 'openradioss': 'OpenRadioss', 'lsdyna': 'LS-DYNA'}.get(program_id, program_id))
 
 
 def _problem_text(error) -> str:
@@ -705,7 +726,15 @@ def _problem_message(text: str) -> str | None:
     for prefixes, message in groups:
         if text.startswith(prefixes):
             return message
-    if re.fullmatch(r'(?:FreeCAD|Gmsh|CalculiX|ParaView|Code_Aster|OpenCourant|FEniCSx) 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
+    platform_message = re.fullmatch(r'([^\n]+)의 지원 실행 환경은 ([^\n]+)입니다\. ([^\n]+) 연결은 검증되지 않았습니다\.', text)
+    if platform_message:
+        names = {'windows': 'Windows', 'linux': 'Linux', 'darwin': 'macOS'}
+        program, supported, host = platform_message.groups()
+        supported = ', '.join(names.get(item.strip(), item.strip()) for item in supported.split(','))
+        return f'{program}는 {supported} 환경에서 연결할 수 있습니다. 현재 {names.get(host, host)} 연결은 지원하지 않습니다.'
+    if re.fullmatch(r'PrePoMax 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
+        return 'PrePoMax 실행 파일을 찾지 못했습니다. 설치한 Windows GUI 프로그램을 연결 설정에서 지정하세요.'
+    if re.fullmatch(r'(?:FreeCAD|Salome|Gmsh|CalculiX|ParaView|Code_Aster|OpenCourant|FEniCSx) 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
         return '프로그램 실행 파일을 찾지 못했거나 사용할 수 없습니다. 설치와 프로그램 연결 설정을 확인하세요.'
     return None
 
@@ -931,6 +960,16 @@ class ProjectWindow(QMainWindow):
         fields = QVBoxLayout(self.settings_body)
         fields.setContentsMargins(0, 0, 0, 0)
         fields.setSpacing(8)
+        self.program_choice_row = QWidget()
+        program_row = QHBoxLayout(self.program_choice_row)
+        program_row.setContentsMargins(0, 0, 0, 0)
+        program_row.addWidget(QLabel('프로그램'))
+        self.program_choice = QComboBox()
+        self.program_choice.setObjectName('program_choice')
+        self.program_choice.setAccessibleName('전처리기 또는 솔버 선택')
+        self.program_choice.currentIndexChanged.connect(self.change_selected_program)
+        program_row.addWidget(self.program_choice, 1)
+        fields.addWidget(self.program_choice_row)
         self.input_summary = QLabel()
         self.input_value = QLineEdit()
         self.input_value.setReadOnly(True)
@@ -949,6 +988,15 @@ class ProjectWindow(QMainWindow):
         self.output_button.clicked.connect(lambda: self.choose_file('output'))
         self.output_units_button = QPushButton('단위…')
         self.output_units_button.clicked.connect(lambda: self.edit_units('output'))
+        self.document_summary = QLabel('편집 문서')
+        self.document_value = QLineEdit()
+        self.document_value.setReadOnly(True)
+        self.document_button = QPushButton('등록…')
+        self.document_button.setAccessibleName('전처리 편집 문서 지정')
+        self.document_button.clicked.connect(lambda: self.choose_file('document'))
+        self.import_input_button = QPushButton('형상 가져오기')
+        self.import_input_button.setAccessibleName('연결한 입력을 전처리기로 가져오기')
+        self.import_input_button.clicked.connect(self.import_selected_input)
         self.input_units_value = QLabel()
         self.output_units_value = QLabel()
         self.input_more_button = QToolButton()
@@ -963,6 +1011,7 @@ class ProjectWindow(QMainWindow):
         self.input_more_button.setMenu(input_menu)
         for summary, value, button, units in (
                 (self.input_summary, self.input_value, self.input_button, self.input_units_button),
+                (self.document_summary, self.document_value, self.document_button, None),
                 (self.output_summary, self.output_value, self.output_button, self.output_units_button)):
             summary.setTextFormat(Qt.PlainText)
             summary.setWordWrap(True)
@@ -973,6 +1022,8 @@ class ProjectWindow(QMainWindow):
             section.setSpacing(6)
             if summary is self.input_summary:
                 self.input_section = section_widget
+            elif summary is self.document_summary:
+                self.document_section = section_widget
             else:
                 self.output_section = section_widget
             heading = QHBoxLayout()
@@ -982,6 +1033,13 @@ class ProjectWindow(QMainWindow):
                 heading.addWidget(self.input_more_button)
             section.addLayout(heading)
             section.addWidget(value)
+            if summary is self.document_summary:
+                self.document_hint = QLabel('전처리 프로그램에서 저장한 프로젝트를 등록하면 이어서 편집할 수 있습니다.')
+                self.document_hint.setWordWrap(True)
+                section.addWidget(self.document_hint)
+                section.addWidget(self.import_input_button)
+                fields.addWidget(section_widget)
+                continue
             units_widget = QWidget()
             row = QHBoxLayout(units_widget)
             row.setContentsMargins(0, 0, 0, 0)
@@ -1324,9 +1382,9 @@ class ProjectWindow(QMainWindow):
             connector.refresh()
         return box
 
-    def add_box(self, kind: str) -> SystemBox:
+    def add_box(self, kind: str, program_id: str | None = None) -> SystemBox:
         position = (40 + 250 * (len(self.boxes) % 3), 40 + 150 * (len(self.boxes) // 3))
-        node = self.workbench.add_program_node(self.project, kind, _PROGRAM_IDS[kind], position)
+        node = self.workbench.add_program_node(self.project, kind, program_id or _PROGRAM_IDS[kind], position)
         box = self._add_node_box(node)
         self.empty_hint.setVisible(False)
         self.scene.clearSelection()
@@ -1408,6 +1466,8 @@ class ProjectWindow(QMainWindow):
         self.program_summary.hide()
         self.run_summary.clear()
         self.run_summary.hide()
+        self.program_choice_row.hide()
+        self.document_section.hide()
         if len(selected) != 1:
             for value in (self.input_value, self.output_value):
                 value.clear()
@@ -1421,8 +1481,41 @@ class ProjectWindow(QMainWindow):
         node = self.project.nodes[box.node_id]
         statuses = {status.spec.id: status for status in self.workbench.programs()}
         program = statuses.get(node.program_id)
-        self.selection_name.setText(program.spec.name if program else '전문가 논의' if node.kind == 'expert' else '프로그램')
+        if node.kind in {'preprocessor', 'analysis', 'mesh', 'results'}:
+            from caelab.connections import PROGRAMS
+            role = {'preprocessor': 'preprocessor', 'analysis': 'solver', 'mesh': 'mesh', 'results': 'postprocessor'}[node.kind]
+            choices = [spec for spec in PROGRAMS
+                       if spec.role == role or (node.kind == 'preprocessor' and spec.id == 'freecad')
+                       or (node.kind == 'results' and spec.id == 'prepomax')]
+            self.program_choice.blockSignals(True)
+            self.program_choice.clear()
+            for spec in choices:
+                label = 'FreeCAD FEM (기존 경로)' if node.kind == 'preprocessor' and spec.id == 'freecad' else spec.name
+                self.program_choice.addItem(label, spec.id)
+            if self.program_choice.findData(node.program_id) < 0:
+                self.program_choice.addItem(node.program_id, node.program_id)
+            self.program_choice.setCurrentIndex(self.program_choice.findData(node.program_id))
+            self.program_choice.blockSignals(False)
+            self.program_choice_row.show()
+        self.selection_name.setText(_program_title(node.program_id, node.kind))
         reference = self.workbench.input_file(self.project, node.id)
+        if node.kind == 'preprocessor':
+            document = node.files.get('document')
+            self.document_section.show()
+            self.document_value.setText(self._summary_file_name(document.path)[0] if document else '')
+            self.document_value.setToolTip(self._file_tooltip(document.path) if document else '')
+            self.document_value.setPlaceholderText('편집 문서 지정 안 됨')
+            document_status = self._file_status(document) if document else 'needs_input'
+            document_note = {'needs_input': '미지정', 'changed': '변경됨', 'stale': '갱신 필요', 'missing': '누락'}.get(document_status, '')
+            self.document_summary.setText(('편집 문서 ' + document_note).rstrip())
+            self.document_button.setText('변경…' if document else '등록…')
+            self.document_summary.setStyleSheet(
+                f"color: {p['status_error_fg']}; font-weight: 600;" if document_status == 'missing' else
+                f"color: {p['status_warning_fg']}; font-weight: 600;" if document_status in {'changed', 'stale'} else '')
+            self.import_input_button.setVisible(document is not None)
+            self.import_input_button.setText('형상·입력 가져오기' if node.program_id == 'prepomax' else '연결 입력 열기')
+            self.import_input_button.setEnabled(reference is not None and self._file_status(reference) != 'missing'
+                                                and bool(program and program.available))
         direct = self._file_owner(node.id) == (node.id, 'input')
         editable = node.kind != 'expert'
         self.output_section.setVisible(editable)
@@ -1438,7 +1531,10 @@ class ProjectWindow(QMainWindow):
         for summary, value, button, unit_button, role, ref in (
                 (self.input_summary, self.input_value, self.input_button, self.input_units_button, 'input', reference),
                 (self.output_summary, self.output_value, self.output_button, self.output_units_button, 'output', node.files.get('output'))):
-            title = '입력 파일' if role == 'input' else '출력 파일'
+            title = ('전처리 입력' if role == 'input' else '솔버 입력 파일') if node.kind == 'preprocessor' else ('입력 파일' if role == 'input' else '출력 파일')
+            if (node.kind == 'geometry' and role == 'output'
+                    and (ref is None or Path(ref.path).suffix.lower() in {'.step', '.stp', '.brep'})):
+                title = '교환 형상 출력 (STEP 등)'
             saved_result = bool(role == 'output' and node.kind == 'analysis' and ref and self._is_run_file(ref.path))
             if saved_result:
                 title = '선택 계산 결과'
@@ -1518,13 +1614,19 @@ class ProjectWindow(QMainWindow):
         self.run_summary.setVisible(bool(self.run_summary.text()))
 
     def _needs_file(self, box):
+        if box.kind == 'preprocessor':
+            document = self.project.nodes[box.node_id].files.get('document')
+            if document is not None:
+                return self._file_status(document) == 'missing'
         reference = self.workbench.input_file(self.project, box.node_id)
         direct = self._file_owner(box.node_id) == (box.node_id, 'input')
-        return direct and box.kind in {'geometry', 'mesh', 'results'} and (reference is None or self._file_status(reference) == 'missing')
+        return direct and box.kind in {'geometry', 'preprocessor', 'mesh', 'results'} and (reference is None or self._file_status(reference) == 'missing')
 
     def _needs_upstream(self, box):
+        if box.kind == 'preprocessor' and self.project.nodes[box.node_id].files.get('document') is not None:
+            return False
         reference = self.workbench.input_file(self.project, box.node_id)
-        return (box.kind in {'geometry', 'mesh', 'results'}
+        return (box.kind in {'geometry', 'preprocessor', 'mesh', 'results'}
                 and self._file_owner(box.node_id) != (box.node_id, 'input')
                 and (reference is None or self._file_status(reference) == 'missing'))
 
@@ -1532,13 +1634,45 @@ class ProjectWindow(QMainWindow):
         if self._needs_upstream(box):
             return self._owner_label(box.node_id)
         if self._needs_file(box):
+            if box.kind == 'preprocessor' and self.project.nodes[box.node_id].files.get('document'):
+                return '편집 문서 다시 지정…'
             return '입력 파일 지정…' if box.kind != 'results' else '결과 파일 지정…'
+        if box.kind == 'preprocessor':
+            name = box.title
+            if self.project.nodes[box.node_id].files.get('document'):
+                return f'{name} 편집 문서 열기'
+            return f'{name}로 입력 가져오기' if self.project.nodes[box.node_id].program_id == 'prepomax' else f'{name} 열기'
         return {'geometry': 'FreeCAD 열기', 'mesh': 'Gmsh 열기', 'analysis': '해석창 열기',
-                'results': 'ParaView 열기', 'expert': '전문가 대화 열기'}.get(box.kind, '프로그램 열기')
+                'results': f'{box.title} 열기', 'expert': '전문가 대화 열기'}.get(box.kind, '프로그램 열기')
 
     def _owner_label(self, node_id):
         owner_id, role = self._file_owner(node_id)
         return f"{self.boxes[owner_id].title} {'입력' if role == 'input' else '출력'}으로 이동"
+
+    def change_selected_program(self, _index=None) -> bool:
+        selected = self._selected_boxes()
+        if len(selected) != 1:
+            return False
+        program_id = self.program_choice.currentData()
+        node = self.project.nodes[selected[0].node_id]
+        if not program_id or program_id == node.program_id:
+            return False
+        try:
+            self.workbench.set_node_program(self.project, node.id, program_id)
+        except Exception as error:
+            self._error('프로그램을 변경하지 못했습니다', error)
+            self._selection_changed()
+            return False
+        self._mark_dirty()
+        self._reflect_programs()
+        self._selection_changed()
+        self._message('프로그램을 변경했습니다. 편집 문서와 출력 파일이 새 프로그램에 맞는지 확인하세요.')
+        return True
+
+    def import_selected_input(self) -> None:
+        selected = self._selected_boxes()
+        if len(selected) == 1 and selected[0].kind == 'preprocessor':
+            self.open_box(selected[0], use_input=True)
 
     def _node_note(self, node, reference) -> str:
         return _problem_text(node.reason) if node.state == 'failed' and node.reason else ''
@@ -1582,14 +1716,24 @@ class ProjectWindow(QMainWindow):
         if len(selected) != 1:
             return False
         box = selected[0]
+        node = self.project.nodes[box.node_id]
         if role == 'output' and not self.output_button.isEnabled():
             return False
+        if role == 'document':
+            title, file_filter = '전처리 편집 문서 지정', _DOCUMENT_FILTERS.get(node.program_id, '편집 문서 (*);;모든 파일 (*)')
+        elif role == 'output':
+            title = '작성한 교환 형상 지정' if box.kind == 'geometry' else '작성한 솔버 입력 지정' if box.kind == 'preprocessor' else '작성한 출력 지정'
+            file_filter = ('CAD 교환 형상 (*.step *.stp *.brep);;모든 파일 (*)' if box.kind == 'geometry' else
+                           'CalculiX 입력 (*.inp);;모든 파일 (*)' if node.program_id == 'prepomax' else OUTPUT_FILTER)
+        else:
+            title = '상위 연결 대신 사용할 입력 파일' if self._file_owner(box.node_id) != (box.node_id, 'input') else '입력 파일 선택'
+            file_filter = (_PREPROCESSOR_INPUT_FILTERS.get(node.program_id, _FILE_FILTERS['preprocessor'])
+                           if box.kind == 'preprocessor' else _FILE_FILTERS.get(box.kind, '모든 파일 (*)'))
         path, _filter = QFileDialog.getOpenFileName(
-            self, ("상위 연결 대신 사용할 입력 파일" if role == "input" and self._file_owner(box.node_id) != (box.node_id, "input") else "입력 파일 선택") if role == "input" else "작성한 출력 지정", "",
-            OUTPUT_FILTER if role == "output" else _FILE_FILTERS.get(box.kind, "모든 파일 (*)"))
+            self, title, '', file_filter)
         if not path:
             return False
-        units = self._ask_file_units(path)
+        units = {} if role == 'document' else self._ask_file_units(path)
         if units is None:
             return False
         return self.register_file(box.node_id, path, role, units)
@@ -1630,7 +1774,8 @@ class ProjectWindow(QMainWindow):
         self._sync_connections()
         self._reflect_programs()
         self._selection_changed()
-        self._message(f"{'입력' if role == 'input' else '출력'} 파일을 등록했습니다: {self._summary_file_name(str(path))[0]}")
+        role_name = {'input': '입력', 'output': '출력', 'document': '편집 문서'}.get(role, role)
+        self._message(f"{role_name} 파일을 등록했습니다: {self._summary_file_name(str(path))[0]}")
         return True
 
     def _sync_connections(self) -> None:
@@ -1789,8 +1934,8 @@ class ProjectWindow(QMainWindow):
         choices = QComboBox()
         pairs = []
         for node in self.project.removed_nodes.values():
-            title = next(title for kind, title, _ in SYSTEM_KINDS if kind == node.kind)
-            reference = node.files.get('input') or node.files.get('output')
+            title = _program_title(node.program_id, node.kind)
+            reference = node.files.get('document') or node.files.get('input') or node.files.get('output')
             label = f'{title} — {self._summary_file_name(reference.path)[0]}' if reference else title
             if node.kind == 'analysis' and self.project.path:
                 try:
@@ -1886,18 +2031,13 @@ class ProjectWindow(QMainWindow):
         else:
             box.unit_badge = ''
             box.unit_warning = False
-        title = next((title for kind, title, sub in SYSTEM_KINDS if kind == node.kind), "프로그램")
-        program_titles = {
-            "freecad": "FreeCAD", "salome": "Salome", "gmsh": "Gmsh",
-            "calculix": "CalculiX", "codeaster": "Code_Aster", "radioss": "OpenRadioss",
-            "openradioss": "OpenRadioss", "opencourant": "OpenCourant", "lsdyna": "LS-DYNA",
-            "paraview": "ParaView", "expert": "전문가 논의",
-        }
-        box.title = program_titles.get(node.program_id) or {"geometry": "FreeCAD", "mesh": "Gmsh", "analysis": "CalculiX", "results": "ParaView", "expert": "전문가 논의"}.get(node.kind, title)
-        box.file_label = self._summary_file_name(reference.path)[0] if reference else "선택 파일 없음"
+        box.title = _program_title(node.program_id, node.kind)
+        display_reference = node.files.get('document') if node.kind == 'preprocessor' else None
+        display_reference = display_reference or reference
+        box.file_label = self._summary_file_name(display_reference.path)[0] if display_reference else "선택 파일 없음"
         box.set_state(node.state, self._node_note(node, reference))
         execution_state = node.state in {'queued', 'preparing', 'running', 'failed', 'cancelled', 'interrupted'}
-        if reference is None and not execution_state:
+        if display_reference is None and not execution_state:
             box.status_label = '결과 없음' if node.kind in {'results', 'expert'} else '입력 파일 미지정'
         if reference and not execution_state:
             status = self._file_status(reference)
@@ -1920,7 +2060,9 @@ class ProjectWindow(QMainWindow):
                                     'missing': '입력 파일 누락'}.get(status, '')
                 if status == 'stale' and self._calculation_result(node_id, 'input', reference):
                     box.status_label = '이전 입력의 결과'
-        if not execution_state and reference and self._file_status(reference) == 'ready' and node.kind in {'geometry', 'mesh'}:
+        if (not execution_state and display_reference and self._file_status(display_reference) == 'ready'
+                and (reference is None or self._file_status(reference) == 'ready')
+                and node.kind in {'geometry', 'preprocessor', 'mesh'}):
             output = node.files.get('output')
             if output:
                 output_status = self._file_status(output)
@@ -1928,6 +2070,12 @@ class ProjectWindow(QMainWindow):
                                     'missing': '출력 파일 누락'}.get(output_status, '')
                 box.status_warning = output_status in {'stale', 'changed', 'missing'}
                 box.status_error = output_status == 'missing'
+        if node.kind == 'preprocessor' and node.files.get('document'):
+            document_status = self._file_status(node.files['document'])
+            if document_status in {'stale', 'changed', 'missing'}:
+                box.status_label = {'stale': '편집 문서 갱신 필요', 'changed': '편집 문서 변경됨', 'missing': '편집 문서 누락'}[document_status]
+                box.status_warning = document_status in {'stale', 'changed'}
+                box.status_error = document_status == 'missing'
         file_label = self._file_tooltip(reference.path) if reference else "입력 파일 없음"
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{file_label}\n{self._node_note(node, reference)}")
 
@@ -2009,11 +2157,12 @@ class ProjectWindow(QMainWindow):
             if self._needs_upstream(selected[0]):
                 self.select_input_owner()
             elif self._needs_file(selected[0]):
-                self.choose_file("input")
+                role = 'document' if selected[0].kind == 'preprocessor' and self.project.nodes[selected[0].node_id].files.get('document') else 'input'
+                self.choose_file(role)
             else:
                 self.open_box(selected[0])
 
-    def open_box(self, box: SystemBox) -> None:
+    def open_box(self, box: SystemBox, *, use_input: bool = False) -> None:
         if box.kind in {"analysis", "expert"} and (self._dirty or self.project.path is None):
             answer = QMessageBox.question(
                 self, "별도 프로그램 열기", "프로젝트를 저장한 뒤 별도 프로그램을 엽니다.",
@@ -2028,7 +2177,8 @@ class ProjectWindow(QMainWindow):
             elif box.kind == "results" and self.workbench.resolve_evidence_run(self.project, box.node_id):
                 launch = self.workbench.open_native_results(self.project, box.node_id)
             else:
-                launch = self.workbench.open_program(self.project, box.node_id)
+                launch = (self.workbench.open_program(self.project, box.node_id, use_input=True) if use_input
+                          else self.workbench.open_program(self.project, box.node_id))
         except Exception as error:
             self._mark_dirty()
             self._reflect_programs()

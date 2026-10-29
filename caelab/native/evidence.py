@@ -404,12 +404,16 @@ def verify_evidence(evidence: dict, asset_root: Path) -> list[str]:
     return issues
 
 
-def native_results_file(run) -> Path:
+def native_results_file(run, *, native_format=None) -> Path:
     """Only open recorded, intact exchange files from this selected run."""
     _terminal(run)
     files = run.result.get('exchange_files', [])
     chosen = next((name for name in files if name.lower().endswith('.pvd')), None)
     chosen = chosen or next((name for name in files if name.lower().endswith('.vtu')), None)
+    if native_format is not None:
+        if native_format != 'frd' or run.solver_id != 'calculix':
+            raise ValueError('선택한 솔버 결과를 이 후처리 형식으로 열 수 없습니다.')
+        chosen = 'model.frd'
     if chosen is None:
         raise ValueError('선택 실행에 열 수 있는 PVD/VTU 결과 파일이 없습니다.')
     expected = run.snapshot.get('artifacts', {})

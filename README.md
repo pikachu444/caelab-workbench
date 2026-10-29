@@ -1,13 +1,13 @@
 # caelab-workbench
 
-FreeCAD 등에서 만든 네이티브 해석 입력을 솔버·ParaView·독립 전문가 프로그램에 연결하는 Windows용 Qt 워크벤치입니다. 제품 기준은 [DESIGN.md](DESIGN.md), 확인된 구현과 남은 작업은 [CURRENT_STATE.md](CURRENT_STATE.md)에 기록합니다.
+FreeCAD의 CAD 형상을 솔버별 전처리기에 전달하고, 작성된 네이티브 해석 입력을 솔버·ParaView·독립 전문가 프로그램에 연결하는 Windows용 Qt 워크벤치입니다. 제품 기준은 [DESIGN.md](DESIGN.md), 확인된 구현과 남은 작업은 [CURRENT_STATE.md](CURRENT_STATE.md)에 기록합니다.
 
 ## 5대 핵심 기능
 
 | 기능 | 사용자가 하는 일 | 파일과 결과 |
 |---|---|---|
 | 프로젝트 런처 | 독립 프로그램을 등록·연결하고 입력과 실행 상태를 관리 | 프로젝트 JSON, 원본 파일 참조 |
-| 네이티브 전처리 | FreeCAD FEM 등 전용 프로그램에서 형상·메시·재료·조건 작성 | CalculiX `.inp` 등 네이티브 덱 |
+| CAD와 전문 전처리 | FreeCAD에서 CAD 작성 후 STEP를 PrePoMax 등 전처리기로 전달해 메시·재료·접촉·단계 작성 | `.FCStd`, STEP, `.pmx`, CalculiX `.inp`를 각각 보존 |
 | 솔버 실행 | 지원 어댑터로 입력을 실행하고 상태·로그 확인 | 실행별 입력 사본, 원로그, 결과 파일 |
 | 후처리 | 같은 실행의 결과를 ParaView에 전달해 필드 확인 | FRD에서 변환한 VTU/PVD 등 |
 | 독립 엔지니어링 도구 | 전문가 창에서 선택한 자료로 토론하거나 MDO Studio에서 파라미터 연구 수행 | 대화 근거, 설계점별 계산 결과와 연구 기록 |
@@ -32,6 +32,8 @@ python -m apps.workbench_qt.mdo_studio
 python -m apps.workbench_qt.mdo_studio --study "C:\연구\study.json" --read-only
 python -m apps.workbench_qt.expert_window
 ```
+
+PrePoMax는 Windows에서 `CAELAB_PREPOMAX`에 GUI 실행 파일을 지정합니다.
 
 CalculiX 실행 파일은 연결 설정 또는 `CAELAB_CCX`, ParaView는 `CAELAB_PARAVIEW` 환경변수로 지정합니다. 외부 프로그램 설치는 Python 패키지 설치와 별개입니다.
 
@@ -72,3 +74,14 @@ python scripts/check_doc_sync.py --mode pre-push
 ```
 
 모의 프로세스·Qt offscreen 검사는 실제 CalculiX 실행과 Windows 화면 조작 검사를 대신하지 않습니다. 이번 확인 범위와 환경별 실패는 CURRENT_STATE에 구분합니다.
+
+## FreeCAD → PrePoMax → CalculiX 사용 흐름
+
+1. 프로그램 추가에서 FreeCAD CAD, 전처리기(PrePoMax), CalculiX, 후처리기를 추가합니다. 전처리·솔버 프로그램은 선택 설정에서 바꿀 수 있습니다.
+2. FreeCAD 상자에 `.FCStd` 원본을 등록하고 FreeCAD에서 STEP를 내보낸 뒤 출력으로 등록합니다.
+3. CAD 출력을 전처리 입력으로 연결해 **형상 가져오기**를 실행합니다. PrePoMax에서 메시·재료·접촉·하중·단계·출력을 설정합니다.
+4. PrePoMax에서 `.pmx`를 저장하고 워크벤치의 **편집 문서**로 등록합니다. 다음 기본 열기는 PMX를 사용합니다. STEP는 형상 교환 파일이므로 해석 조건·CAD 설계 이력을 전달하지 않습니다.
+5. PrePoMax가 내보낸 `.inp`를 전처리 출력으로 등록하고 CalculiX 입력으로 연결합니다. 기존 계산·로그·결과 전달 경로로 실행합니다. 계산 결과는 기존 ParaView 경로 또는 PrePoMax 결과 열기로 확인합니다.
+6. CAD나 PMX를 바꿨다면 전처리기에서 조건을 확인하고 덱을 다시 내보내 등록합니다. 이 연결은 형상 변경 시 자동 재메시·조건 재연결을 보장하지 않습니다.
+
+프로젝트 저장 형식 3은 이전 1/2를 읽습니다. 기존 FreeCAD FEM 입력·CalculiX 덱 경로도 유지합니다. PrePoMax의 Windows 실제 GUI/솔버 끝단 실행은 현재 개발 환경에서 미검증입니다. Salome 및 추가 솔버의 미완성 연결을 완료로 표시하지 않습니다.

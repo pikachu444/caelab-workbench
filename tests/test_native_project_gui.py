@@ -1211,17 +1211,17 @@ def test_explicit_program_add_menu_and_single_click_palette_add_real_programs(wi
     app.processEvents()
     assert window.toolbox_dock.isHidden() and window.history_dock.isHidden()
     assert [action.text() for action in window.add_program_menu.actions()] == [
-        'FreeCAD', 'Gmsh', 'CalculiX', 'ParaView', '전문가']
+        'FreeCAD', 'PrePoMax', 'Gmsh', 'CalculiX', 'ParaView', '전문가']
     for kind, action in window.add_program_actions.items():
         action.trigger()
         selected = window._selected_boxes()
         assert len(selected) == 1 and selected[0].kind == kind
-    assert len(window.project.nodes) == 5
+    assert len(window.project.nodes) == 6
     window.toolbox_dock.show()
     app.processEvents()
     QTest.mouseClick(window.toolbox.viewport(), Qt.LeftButton,
                      pos=window.toolbox.visualItemRect(window.toolbox.item(0)).center())
-    assert len(window.project.nodes) == 6
+    assert len(window.project.nodes) == 7
     assert window._selected_boxes()[0].kind == 'geometry'
 
 
@@ -1542,8 +1542,8 @@ def test_project_window_dark_default_and_light_theme_toggle(themed_window, app, 
     toolbar = next(bar for bar in window.findChildren(QToolBar) if bar.windowTitle() == "프로젝트")
     assert window.theme_action in window.view_menu.actions()
     assert window.theme_action not in toolbar.actions()
-    assert window.toolbox.count() == 5
-    assert [window.toolbox.item(i).text() for i in range(5)] == ["FreeCAD", "Gmsh", "CalculiX", "ParaView", "전문가"]
+    assert window.toolbox.count() == 6
+    assert [window.toolbox.item(i).text() for i in range(6)] == ["FreeCAD", "PrePoMax", "Gmsh", "CalculiX", "ParaView", "전문가"]
     for mode in ("light", "dark"):
         window.theme_action.trigger()
         app.processEvents()
