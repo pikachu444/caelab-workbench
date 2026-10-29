@@ -24,7 +24,8 @@ def test_registry_covers_the_connected_programs():
     assert {"freecad", "salome", "gmsh", "calculix", "paraview",
             "codeaster", "opencourant"} <= ids
     roles = {spec.id: spec.role for spec in PROGRAMS}
-    assert roles["freecad"] == "preprocessor"
+    assert roles["freecad"] == "cad"
+    assert roles["prepomax"] == "preprocessor"
     assert roles["paraview"] == "postprocessor"
     solvers = {spec.id for spec in PROGRAMS if spec.role == "solver"}
     assert solvers == {"calculix", "codeaster", "opencourant", "fenicsx"}

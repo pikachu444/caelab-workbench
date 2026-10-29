@@ -510,5 +510,5 @@ def test_current_save_format_preserves_archive_by_rejecting_legacy_writers(tmp_p
     wb.remove_program_node(project, first.id)
     path = wb.save_native_project(project, tmp_path / 'project.json')
     data = json.loads(path.read_text(encoding='utf-8'))
-    assert data['schema_version'] == 2  # Version-1 loaders explicitly reject this.
+    assert data['schema_version'] == 3  # Earlier loaders reject new document roles.
     assert first.id in wb.open_native_project(path).removed_nodes

@@ -12,7 +12,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PROJECT_FILENAME = "project.json"
 NODE_STATES = {"needs_input", "ready", "changed", "missing", "stale", "opened", "failed"}
 
@@ -105,7 +105,7 @@ class NativeProject:
             pending.extend(edge.target_id for edge in self.connections if edge.source_id == current)
 
     def set_file(self, node_id: str, path: str | Path, role="input", units=None, unit_source="user") -> FileReference:
-        if role not in {"input", "output"}:
+        if role not in {"input", "output", "document"}:
             raise ValueError(f"지원하지 않는 파일 역할: {role}")
         node = self.nodes[node_id]
         resolved = str(Path(path).expanduser().resolve())
@@ -114,6 +114,10 @@ class NativeProject:
         if previous is None or (previous.path, previous.revision) != (reference.path, reference.revision):
             self.invalidate(node_id, "파일 선택 또는 개정이 변경되었습니다.")
         node.files[role] = reference
+        if role == "document":
+            # Editing projects (PMX/HDF/FCStd) are distinct from exchange input
+            # and exported solver decks. They never replace an incoming edge.
+            node.state, node.reason = reference.status, ""
         if role == "input":
             # A deliberate local selection replaces a formerly connected input.
             incoming = [edge for edge in self.connections if edge.target_id == node_id]
@@ -228,10 +232,16 @@ class NativeProject:
                     if role == "input" and self.input_file(node.id) is not reference:
                         continue  # a connected input supersedes this retained local selection
                     self.invalidate(node.id, reason)
-                    if role == "input" or self.input_file(node.id) is reference:
+                    if role in {"input", "document"} or self.input_file(node.id) is reference:
                         node.state, node.reason = status, reason
         for node in self.nodes.values():
             reference = self.input_file(node.id)
+            document = node.files.get("document")
+            if document is not None and document.status != "ready":
+                node.state, node.reason = document.status, "편집 문서가 변경·누락되었거나 갱신이 필요합니다."
+                continue
+            if reference is None and document is not None:
+                reference = document  # An existing PMX needs no separate STEP.
             if reference is None:
                 node.state, node.reason = "needs_input", "연결된 입력 파일이 없습니다."
             elif reference.status != "ready":
@@ -289,7 +299,7 @@ def load_native_project(path: str | Path) -> NativeProject:
         path /= PROJECT_FILENAME
     try:
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-        if not isinstance(data, dict) or data.get("schema_version") not in (1, SCHEMA_VERSION):
+        if not isinstance(data, dict) or data.get("schema_version") not in (1, 2, SCHEMA_VERSION):
             raise ValueError(f"지원하지 않는 프로젝트 schema_version: {data.get('schema_version') if isinstance(data, dict) else None}")
         if not isinstance(data.get("name"), str) or not isinstance(data.get("nodes"), dict) or not isinstance(data.get("connections"), list):
             raise ValueError("name/nodes/connections 자료 형식이 잘못되었습니다.")
@@ -321,7 +331,7 @@ def load_native_project(path: str | Path) -> NativeProject:
             if not isinstance(raw.get("files", {}), dict):
                 raise ValueError(f"nodes.{key}.files: 파일 사전이 필요합니다.")
             for role, ref in raw.get("files", {}).items():
-                if role not in {"input", "output", "mdo_study"} or not isinstance(ref, dict) or not isinstance(ref.get("path"), str) or not ref["path"].strip():
+                if role not in {"input", "output", "document", "mdo_study"} or not isinstance(ref, dict) or not isinstance(ref.get("path"), str) or not ref["path"].strip():
                     raise ValueError(f"nodes.{key}.files.{role}: 파일 경로가 잘못되었습니다.")
                 revision = ref.get("revision")
                 if revision is not None and (not isinstance(revision, str) or len(revision) != 64 or any(c not in "0123456789abcdef" for c in revision)):

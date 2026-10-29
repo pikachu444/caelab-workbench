@@ -59,6 +59,22 @@ class Workbench:
     def add_program_node(self, project: NativeProject, kind: str, program_id: str, position=(0.0, 0.0)):
         return project.add_node(kind, program_id, position)
 
+    def set_node_program(self, project: NativeProject, node_id: str, program_id: str) -> None:
+        from .connections import PROGRAMS
+        node = project.nodes[node_id]
+        spec = next((item for item in PROGRAMS if item.id == program_id), None)
+        allowed = {"geometry": {"cad"}, "preprocessor": {"preprocessor", "cad"},
+                   "mesh": {"mesh"}, "analysis": {"solver"}, "results": {"postprocessor"}}
+        if spec is None or (spec.role not in allowed.get(node.kind, set())
+                            and not (node.kind == "results" and program_id == "prepomax")):
+            raise ValueError("선택한 역할에 맞는 프로그램을 지정하세요.")
+        if node.program_id == program_id:
+            return
+        node.program_id = program_id
+        if "document" in node.files:
+            node.files["document"].stale = True
+        project.invalidate(node_id, "프로그램이 변경되었습니다. 편집 문서와 출력을 확인·등록하세요.", include_self=True)
+
     def set_node_file(self, project: NativeProject, node_id: str, path: str | Path,
                       role="input", units=None, unit_source="user") -> FileReference:
         return project.set_file(node_id, path, role, units, unit_source)
@@ -141,6 +157,9 @@ class Workbench:
                     source = project.input_file(edge.source_id)
                     if source is not None and source is not reference:
                         prerequisites.append(copy.deepcopy(source))
+                    document = project.nodes[edge.source_id].files.get("document")
+                    if document is not None and document is not reference:
+                        prerequisites.append(copy.deepcopy(document))
                     pending.append(edge.source_id)
         run = self.jobs.submit_native(self._run_store(project), node_id, copy.deepcopy(reference), status, timeout, prerequisites)
         self._apply_run_selection(project, node_id, run)
@@ -155,7 +174,9 @@ class Workbench:
             run = owned if owned and owned.workdir == stored.workdir else stored
             reference = project.input_file(run.node_id) if run.node_id in project.nodes else None
             reason = ""
-            if reference is None or reference.path != run.input_path:
+            if run.node_id in project.nodes and run.solver_id != project.nodes[run.node_id].program_id:
+                reason = "현재 선택한 솔버와 이 실행의 솔버가 다릅니다."
+            elif reference is None or reference.path != run.input_path:
                 reason = "현재 선택 입력이 이 실행의 입력과 다릅니다."
             elif reference.stale:
                 reason = "상위 변경으로 현재 입력 덱이 오래되었습니다."
@@ -278,8 +299,12 @@ class Workbench:
         run = self.resolve_evidence_run(project, node_id)
         if run is None:
             raise ValueError('연결된 해석 노드에서 실행을 선택하세요.')
-        document = native_results_file(run)
-        status = next(status for status in self.programs() if status.spec.id == 'paraview')
+        target = project.nodes[node_id]
+        program_id = target.program_id if target.kind == 'results' else 'paraview'
+        document = native_results_file(run, native_format='frd') if program_id == 'prepomax' else native_results_file(run)
+        status = next((item for item in self.programs() if item.spec.id == program_id), None)
+        if status is None:
+            raise ValueError(f'{program_id} 후처리 프로그램을 찾을 수 없습니다.')
         return self.jobs.launch(launch_request(status, document))
 
     def capture_native_evidence(self, project: NativeProject, node_id: str, asset_root: Path, *, frame_index=None) -> dict:
@@ -377,13 +402,13 @@ class Workbench:
         node.state, node.reason = "failed", reason
         project.invalidate(node_id, reason)
 
-    def open_program(self, project: NativeProject, node_id: str) -> LaunchRecord:
+    def open_program(self, project: NativeProject, node_id: str, *, use_input: bool = False) -> LaunchRecord:
         from .connections import launch_request
 
         node = project.nodes[node_id]
         project.refresh()
         try:
-            reference = project.input_file(node_id)
+            reference = (None if use_input else node.files.get("document")) or project.input_file(node_id)
             if reference is None or reference.status == "missing":
                 raise ValueError("선택하거나 연결한 입력 파일이 없습니다. 파일 경로를 확인하세요.")
             status = next((status for status in self.programs() if status.spec.id == node.program_id), None)
@@ -396,7 +421,7 @@ class Workbench:
         record = self.jobs.launch(request)
         if record.state == "failed":
             self.mark_node_failed(project, node_id, record.error)
-        elif node.state in {"changed", "stale"}:
+        elif node.state in {"changed", "stale", "missing"}:
             node.reason += " 프로그램 열기 요청을 전달했습니다. 변경/오래된 출처 상태는 유지합니다."
         else:
             node.state, node.reason = "opened", "프로그램 열기 요청을 전달했습니다. 계산 완료를 뜻하지 않습니다."
