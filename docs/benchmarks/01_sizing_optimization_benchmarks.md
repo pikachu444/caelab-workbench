@@ -117,10 +117,47 @@ $$\begin{aligned}
 
 ## 6. 재현 방법
 
-저장소 루트에서 다음 명령으로 세 가지 벤치마크를 즉시 재실행하고 검증할 수 있습니다:
+[README](../../README.md)의 Python 환경과 `mdo` 의존성, 실제 CalculiX 실행 파일이 필요합니다. 입력은 [benchmarks/definitions](../../benchmarks/definitions)의 `cantilever_3d_converged.inp`, `truss_10bar_template.inp`, `stepped_cantilever_template.inp`입니다. 모델·단위·비교 조건은 위 사례별 설명을 먼저 확인하세요.
 
-```bash
-python benchmarks/run_sizing_benchmarks.py
+현재 [실행 스크립트](../../benchmarks/run_sizing_benchmarks.py)는 `CCX_BIN = DEFAULT_CCX`로 작성 당시의 Windows 경로를 사용합니다. **`CAELAB_CCX`만 설정하고 스크립트를 직접 실행하면 경로가 바뀌지 않습니다.** 직접 실행하는 `python benchmarks/run_sizing_benchmarks.py`는 해당 기본 경로가 유효할 때만 동작하고, `benchmarks/runs/`의 같은 이름 영수증을 덮어씁니다. 타임스탬프별 기록을 자동 보존하는 방식은 아닙니다.
+
+다른 설치 경로에서는 저장소 루트의 PowerShell에서 아래처럼 모듈의 실행 파일과 출력 폴더를 지정할 수 있습니다. 제품 소스와 기존 측정 영수증은 수정하지 않습니다. 예시 경로는 실제 경로로 바꾸세요.
+
+```powershell
+$env:CAELAB_CCX = 'C:\실제설치경로\ccx.exe'
+@'
+import os
+import sys
+from pathlib import Path
+from tempfile import mkdtemp
+
+sys.path.insert(0, str(Path('benchmarks').resolve()))
+import run_sizing_benchmarks as benchmark
+
+solver = Path(os.environ['CAELAB_CCX']).resolve(strict=True)
+if not solver.is_file():
+    raise ValueError('CAELAB_CCX must point to the solver executable')
+benchmark.CCX_BIN = str(solver)
+benchmark.RUNS_DIR = Path(mkdtemp(prefix='caelab-sizing-'))
+print('Receipts:', benchmark.RUNS_DIR, flush=True)
+benchmark.run_converged_3d_cantilever()
+benchmark.run_10bar_truss_sizing()
+benchmark.run_stepped_cantilever_sizing()
+'@ | python -
 ```
 
-실행 후 `benchmarks/runs/` 디렉터리에 새로운 타임스탬프와 함께 JSON 영수증이 갱신됩니다.
+표시된 새 임시 폴더에 다음 JSON 영수증이 생깁니다. 필요한 결과는 임시 폴더가 정리되기 전에 별도로 보관하세요.
+
+- `cantilever_3d_converged_receipt.json`
+- `truss_10bar_optimization_receipt.json`
+- `stepped_cantilever_optimization_receipt.json`
+
+실행 실패 시 일부 영수증만 존재할 수 있으므로 세 사례의 완료와 파일 내용을 함께 확인합니다. 스크립트의 개별 해석 작업 폴더는 임시로 생성·정리되며, 이 JSON들은 모든 반복의 원본 덱·로그·결과 파일 전체를 보관한 아카이브가 아닙니다.
+
+## 7. 결과 비교와 한계
+
+위 표는 2026-10-27에 기록한 측정 결과이며 새 환경의 예상 실행 시간이나 동일한 평가 횟수를 보증하지 않습니다. 솔버·Python·수치 라이브러리 버전, 하드웨어와 스레드 설정을 별도로 기록하고 입력 해시·단위·변수 범위·목적함수·제약을 맞춘 뒤 비교하세요. 현재 스크립트의 영수증에는 솔버 이름이 `CalculiX 2.22`로 고정돼 있으므로 다른 버전으로 실행했다면 실제 사용 버전을 별도로 명시해야 합니다.
+
+보 사례는 변위와 이론 비교값을, 최적화 사례는 질량뿐 아니라 최종 처짐·응력 등 선언한 제약과 유효 계산 여부를 확인합니다. 이 세 사례의 결과는 다른 모델의 정확도·안전성, 전역 최적해 또는 전체 GUI 연결의 검증을 대신하지 않습니다. 보 이론과 3D 요소 결과의 차이에 대한 일반적 원인 규명도 단일 비교 수치만으로 확정할 수 없습니다.
+
+GE 브래킷·로어 컨트롤 암은 별도의 [향후 목표 사양](commercial_mdo_benchmark_calculix.md)입니다. 이 보고서의 작은 사례와 구분하며, 상용 도구와의 미실측 성능 비교로 확대하지 않습니다. GUI 조작 실습은 [MDO 가이드](../tutorials/01_end_to_end_calculix_mdo_guide.md), 프로그램 전체의 시작 방법은 [워크벤치 가이드](../tutorials/workbench_quickstart.md)를 참고하세요.
