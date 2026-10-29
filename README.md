@@ -14,6 +14,8 @@ FreeCAD의 CAD 형상을 솔버별 전처리기에 전달하고, 작성된 네�
 
 각 프로그램의 설치 여부와 연결 지원 범위는 다릅니다. 네이티브 모델 작성·정밀 편집은 전용 프로그램이 맡습니다. MDO의 `Set as Current Design Point`는 선택한 INP의 토큰을 치환하며 FreeCAD 원본 형상을 갱신하거나 다시 메시하지 않습니다.
 
+OpenRadioss/OpenCourant 전처리기는 별도 [CAELab Prep](https://github.com/pikachu444/caelab-prep)에서 개발합니다. 이 워크벤치는 해당 프로그램의 파일·실행 연결을 맡으며 정밀 전처리 GUI를 중복 구현하지 않습니다. CAELab Prep은 현재 개발 방향과 평가 자산을 정리한 초기 단계이며 실행 가능한 앱이나 연결 어댑터는 아직 없습니다. PrePoMax 3.0 Python/MCP 자동화는 기존 PMX/INP 연결 이후의 [후속 계획](docs/review/2026-10-23-codex-improvement-plan.md)에 반영했습니다.
+
 ## 설치와 실행
 
 Python 3.11 이상과 필요한 외부 프로그램을 준비합니다. PowerShell에서:

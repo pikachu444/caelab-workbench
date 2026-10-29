@@ -1,3 +1,11 @@
+## 독립 전처리기 개발과 기존 연결 병합 (2026-10-29)
+
+CAD/전문 전처리 분리 PR [#51](https://github.com/pikachu444/caelab-workbench/pull/51)을 main에 병합했습니다. 병합 뒤 새 clone의 파일 트리가 검토한 PR head와 같은지 확인했고 관련 검사는 **38 passed, 1 skipped**였습니다. 로컬 건너뜀은 `CAELAB_CCX` 미설정 때문이며 기존 PR의 실제 CalculiX CI와 구분합니다. 이 작업에서 전체 회귀를 다시 실행하지 않았습니다. Windows PrePoMax의 실제 끝단 미확인 상태는 그대로입니다.
+
+사용자가 만든 [caelab-prep](https://github.com/pikachu444/caelab-prep)는 OpenRadioss/OpenCourant용 독립 GUI 전처리기 개발을 담당합니다. 현재 제품 방향·공용 GUI 구조·BeidPrep 평가 자산을 정리하는 초기 단계이며 앱과 워크벤치 연결은 미구현입니다. 이 저장소에는 역할 경계와 후속 작업 순서를 반영했습니다.
+
+BeidPrep **1.0.1**은 실제 Windows에서 RAD 열기·표시·저장·새 프로세스 재열기를 시험했습니다. 저장본을 별도 Linux OpenCourant로 검사했을 때 X 병진과 세 회전 구속이 풀리고 셸 IPLAS가 1에서 0으로 바뀌었습니다. 재료 E 수정/GUI 값 재읽기는 미완료이고 GUI 내부 솔버 실행은 시험하지 않았습니다. 2.0은 미확보·미시험입니다. 자세한 [시험 기록](https://github.com/pikachu444/caelab-prep/blob/main/docs/beidprep-evaluation.md)을 연결하며 현재 버전을 주력 전처리기로 채택한 상태가 아닙니다.
+
 ## CAD와 솔버별 전처리 분리 (2026-10-29)
 
 사용자 지시로 FreeCAD FEM 고정을 해제하고 FreeCAD CAD → 전문 전처리기 → 원 덱 → 솔버 → 후처리 구조로 수정했습니다. PrePoMax Windows GUI 연결, 전처리 노드의 프로그램 선택, STEP 입력/PMX 편집 문서/INP 출력 분리, 저장 형식 3(1/2 읽기), 문서 변경의 하류 상태·계산 준비 확인을 구현했습니다. 외부 프로그램의 수동 편집·저장·내보내기와 워크벤치 파일 등록이 연결 경계이며 자동 CAD 재생성이나 카드 전체 지원을 뜻하지 않습니다.
