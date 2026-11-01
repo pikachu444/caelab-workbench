@@ -10,7 +10,11 @@ Workbench 기준 `92ce81181396bed9bb6e3024bba62913834c2a7e`에 W1·W2 변경을 
 
 환경은 Linux/Python 3.12.14/PySide6 6.12.0/VTK 9.4.2, `QT_QPA_PLATFORM=offscreen`이었다. 파일 잠금·기존 MDO 회귀용 선택 의존성은 격리 경로에 설치했고 제품 의존성 계약을 변경하지 않았다. 외부 Prep의 full Qt VTK 화면은 OpenGL 오류와 검은 viewport가 관찰되어 **3D 렌더 통과가 아니다**. 실제 QWidget 생성·입력·파일 동작과 구분한다. Windows 실제 창·IME·DPI·포커스와 배포 조합 검증은 사용자 지시에 따라 후속 일괄 검사로 남긴다. 이번 변경의 Linux 구현·검토·CI 병합을 Windows 검사의 선행 조건으로 묶지 않으며 Windows 완료도 주장하지 않는다. RAD의 실제 솔버 실행은 기존 실행기의 INP snapshot 범위를 별도로 해결해야 하며 이 handoff에서 실행하지 않았다.
 
-새 재현 검사는 `tests/test_prep_shared_controls.py`와 `tests/test_prep_handoff.py`다. 실제 호스트 캡처와 외부 실행 영수증은 당시 로컬 `wb-g4-evidence/`에 저장했으며 저장소에 포함된 배포 자산은 아니다. 아래 날짜별 기록은 당시 상태를 보존한 이력이다.
+**고정 커밋 후속 확인:** Workbench `b64267e533882654461166a9910315745f69d4bd`와 별도 detached worktree의 Prep `e017653dc0a51aa508c5290bbb08450b2b70cacb`를 사용해 다시 실행했다. 같은 실제 MDO 호스트에서 `caelab_prep.ui.widgets.numeric.NumericEdit` 클래스, `1e` 초안·오류·초점 보존과 dark/light 캡처를 확인했다. 기존 Workbench→JobManager→실제 Prep CLI의 두 프로세스 왕복도 exit 0, E=205000 유지, 원본 해시 불변, 후속 문서 변경의 changed/stale을 다시 확인했다. 두 Prep 프로세스의 실제 `_render_failed=True`와 검은 viewport도 기록했으므로 이 고정 조합의 파일 성공은 3D 성공이 아니다. 배포 설치 검증도 남았다.
+
+이 고정 조합에서 전체 제품 회귀를 한 번 실행한 결과는 **1116 passed, 32 skipped, 1 failed**(538.75초)였다. 유일한 실패 `test_mdo_imports_without_optional_backends`는 검사 내부의 새 프로세스가 PYTHONPATH를 저장소 경로로 교체해, 격리 target에만 있던 필수 의존성 `filelock`을 찾지 못한 환경 구성 문제였다. 별도 venv에 제품 의존성 `filelock 4.2.6`을 정상 설치한 뒤 같은 소스로 이 실패 1개와 신규 W1/W2 18개를 실행해 **19 passed**(4.62초)를 확인했다. 테스트의 기대값·skip·제품 코드를 바꾸지 않았다. 32개 skip은 미설치 솔버와 Windows 전용 경로이며 실제 공유 위젯 4개는 이 로컬 실행에서 건너뛰지 않았다. 최초 전체 실행을 모두 통과한 것으로 소급하거나 후속 부분 검사를 전체 재실행으로 기록하지 않는다. 원 비판자의 승인은 커밋 전 동일 코드에서 재현한 두 W1 결함 해소에 해당하며, 고정 커밋 조합의 후속 실행은 작성자가 수행했다.
+
+새 재현 검사는 `tests/test_prep_shared_controls.py`와 `tests/test_prep_handoff.py`다. 실제 호스트 캡처와 외부 실행 영수증은 당시 로컬 `wb-g4-evidence/`에, 고정 조합의 후속 실행은 그 안의 `pin-b64267e-e017653/`에 저장했다. 전체 원실패 로그 `full-regression-b64267e.log`와 후속 `focused-after-env.log`를 보존했으며 저장소에 포함된 배포 자산은 아니다. 아래 날짜별 기록은 당시 상태를 보존한 이력이다.
 
 ## 독립 전처리기 개발과 기존 연결 병합 (2026-10-29)
 
