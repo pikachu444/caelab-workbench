@@ -17,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 import shutil
+import zipfile
 from dataclasses import dataclass, field
 
 
@@ -42,6 +43,12 @@ PROGRAMS: tuple[ProgramSpec, ...] = (
         ("PrePoMax.exe", "PrePoMax"),
         "CalculiX 전후처리. STEP를 가져와 메시·재료·접촉·단계를 작성하고 PMX와 INP를 저장합니다.",
         ("windows",),
+    ),
+    ProgramSpec(
+        "caelab_prep", "CAELab Prep", "preprocessor", "CAELAB_PREP",
+        ("caelab-prep",),
+        "RAD 입력과 RAD 작업 문서(.caeprep)를 독립 GUI에서 엽니다. "
+        "작업 문서 저장·RAD 내보내기·솔버 실행은 별도 작업입니다.",
     ),
     ProgramSpec(
         "salome", "Salome", "preprocessor", "CAELAB_SALOME",
@@ -249,6 +256,26 @@ def find_program(spec: ProgramSpec, registry_path=None) -> str | None:
     return status.path if status.available else None
 
 
+def _check_prep_document_kind(document: Path) -> None:
+    """Identify the native Prep codec without owning its payload/version reader."""
+    limit = 1024 * 1024
+    try:
+        with zipfile.ZipFile(document) as archive:
+            if archive.getinfo("manifest.json").file_size > limit:
+                raise ValueError("prep_manifest_too_large")
+            with archive.open("manifest.json") as stream:
+                payload = stream.read(limit + 1)
+            if len(payload) > limit:
+                raise ValueError("prep_manifest_too_large")
+            manifest = json.loads(payload)
+    except (OSError, zipfile.BadZipFile, KeyError, ValueError, RuntimeError, NotImplementedError) as exc:
+        if isinstance(exc, ValueError) and str(exc) == "prep_manifest_too_large":
+            raise ValueError("CAELab Prep 작업 문서의 manifest가 연결 확인 한도(1 MiB)를 초과했습니다.") from exc
+        raise ValueError("CAELab Prep 작업 문서의 manifest를 읽을 수 없습니다. 올바른 RAD 작업 문서를 선택하세요.") from exc
+    if not isinstance(manifest, dict) or manifest.get("format") != "caelab-prep-project":
+        raise ValueError("CAELab Prep의 RAD 작업 문서(.caeprep)를 선택하세요. 중립 재료·곡선 문서는 이 연결에서 열지 않습니다.")
+
+
 def launch_request(status: ProgramStatus, file: str | Path) -> LaunchRequest:
     """Known native GUI file-open forms; does not submit solver jobs."""
     if not status.available:
@@ -271,6 +298,12 @@ def launch_request(status: ProgramStatus, file: str | Path) -> LaunchRequest:
         # PrePoMax 2.6 manual: --file/-f opens PMX or imports geometry/decks.
         # -o controls overwrite after regeneration; it does NOT mean 'open'.
         argv = [status.path, "-f", str(document)]
+    elif status.spec.id == "caelab_prep":
+        if document.suffix.lower() not in {".rad", ".caeprep"}:
+            raise ValueError("CAELab Prep RAD 입력(.rad) 또는 RAD 작업 문서(.caeprep)를 선택하세요.")
+        if document.suffix.lower() == ".caeprep":
+            _check_prep_document_kind(document)
+        argv = [status.path, "gui", str(document)]
     elif status.spec.id == "gmsh":
         argv = [status.path, str(document)]
     elif status.spec.id == "paraview":

@@ -474,11 +474,22 @@ class MDOStudioWindow(QMainWindow):
             editor.buttons.hide(); editor.tabs.setCurrentIndex(tab); editor.setEnabled(False); self.setup_widget.set_editor(editor,f'Revision {self._display_revision}'); self.setup_dock.show(); return
         if self._editor is None:
             self._editor=StudyConfigEditor(self.template_deck.token_names,self.study,self.response_units,getattr(self.service,'response_selectors',{}))
+            self._editor_revision=self.service.revision
             self._editor.applied.connect(lambda config:self._configure_study(*config))
+            self._editor.reverting.connect(self._rebase_config_editor)
         self.setup_widget.set_editor(self._editor,'Setup')
         self._editor.tabs.setCurrentIndex(tab); self.setup_widget.context_tabs.setCurrentIndex(1); self.setup_dock.show(); self._sync_actions()
 
+    def _rebase_config_editor(self):
+        self._editor.study=self.study
+        self._editor.response_units=dict(self.response_units)
+        self._editor.selectors=dict(getattr(self.service,'response_selectors',{}))
+        self._editor_revision=self.service.revision
+
     def _configure_study(self,space,objectives,constraints,response_units,response_selectors=None):
+        if self._editor and self._editor_revision!=self.service.revision:
+            self._editor.error.setText('Study revision changed; retain this draft or Revert to the current values before Apply.')
+            return
         if self._active_batch_id:
             if self._editor: self._editor.error.setText('Campaign revision is locked; retain this draft and Apply after it finishes.')
             return
@@ -493,6 +504,8 @@ class MDOStudioWindow(QMainWindow):
         self._populate_study(); self.status_bar.showMessage('New study revision applied. Historical rows retain their original revision.')
         if self._editor:
             self._editor.study=self.study; self._editor.response_units=dict(self.response_units); self._editor.selectors=dict(getattr(self.service,'response_selectors',{}))
+            self._editor_revision=self.service.revision
+            self._editor.accept_drafts()
 
     def _parameterize(self):
         if not self.current_deck_path: self._on_load_deck(); return

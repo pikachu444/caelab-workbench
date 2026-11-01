@@ -606,11 +606,13 @@ PROJECT_FILTER = "CAELAB 프로젝트 (*.json);;모든 파일 (*)"
 OUTPUT_FILTER = "작성한 출력 (*.step *.stp *.brep *.inp *.export *.comm *.rad *.k *.key *.msh *.med *.frd *.vtu *.vtk *.pvd);;모든 파일 (*)"
 _DOCUMENT_FILTERS = {
     "prepomax": "PrePoMax 프로젝트 (*.pmx);;모든 파일 (*)",
+    "caelab_prep": "CAELab Prep RAD 작업 문서 (*.caeprep);;모든 파일 (*)",
     "salome": "Salome 프로젝트 (*.hdf);;모든 파일 (*)",
     "freecad": "FreeCAD FEM 문서 (*.FCStd *.fcstd);;모든 파일 (*)",
 }
 _PREPROCESSOR_INPUT_FILTERS = {
     "prepomax": "CAD 형상 / CalculiX 입력 (*.step *.stp *.brep *.inp);;모든 파일 (*)",
+    "caelab_prep": "RAD 입력 (*.rad);;모든 파일 (*)",
     "freecad": "FreeCAD FEM 문서 (*.FCStd *.fcstd);;모든 파일 (*)",
     "salome": "CAD 형상 / 메시 (*.step *.stp *.brep *.med);;모든 파일 (*)",
 }
@@ -687,6 +689,10 @@ def _problem_message(text: str) -> str | None:
         'connections: 순환 연결은 지원하지 않습니다.': '상자를 순환하게 연결할 수 없습니다. 입력이 한 방향으로 전달되도록 연결하세요.',
         '실행 근거 연결이 순환합니다.': '상자를 순환하게 연결할 수 없습니다. 입력이 한 방향으로 전달되도록 연결하세요.',
         'FreeCAD 문서(.FCStd)를 선택하세요.': 'FreeCAD 문서(.FCStd)를 입력 파일로 선택하세요.',
+        'CAELab Prep RAD 입력(.rad) 또는 RAD 작업 문서(.caeprep)를 선택하세요.': 'CAELab Prep에서 편집할 RAD 입력이나 RAD 작업 문서를 선택하세요.',
+        'CAELab Prep 작업 문서의 manifest를 읽을 수 없습니다. 올바른 RAD 작업 문서를 선택하세요.': 'CAELab Prep 작업 문서를 읽을 수 없습니다. 올바른 RAD 작업 문서나 보관한 사본을 선택하세요.',
+        'CAELab Prep 작업 문서의 manifest가 연결 확인 한도(1 MiB)를 초과했습니다.': '이 작업 문서는 연결 확인 한도를 초과했습니다. CAELab Prep에서 직접 여세요.',
+        'CAELab Prep의 RAD 작업 문서(.caeprep)를 선택하세요. 중립 재료·곡선 문서는 이 연결에서 열지 않습니다.': 'RAD 작업 문서를 선택하세요. 중립 재료·곡선 문서는 CAELab Prep의 재료·곡선 화면에서 여세요.',
         '연결된 해석 노드에서 실행을 선택하세요.': '해석 상자를 연결하고 해석창에서 사용할 계산을 선택하세요.',
         '현재 선택 입력이 이 실행의 입력과 다릅니다.': '선택한 계산은 현재 입력과 다른 입력으로 실행되었습니다. 해석창에서 사용할 계산을 확인하세요.',
         '입력 단위 선언/출처가 변경되었습니다.': '입력의 단위 선언이 계산 당시와 다릅니다. 해석창에서 단위와 사용할 계산을 확인하세요.',
@@ -734,7 +740,7 @@ def _problem_message(text: str) -> str | None:
         return f'{program}는 {supported} 환경에서 연결할 수 있습니다. 현재 {names.get(host, host)} 연결은 지원하지 않습니다.'
     if re.fullmatch(r'PrePoMax 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
         return 'PrePoMax 실행 파일을 찾지 못했습니다. 설치한 Windows GUI 프로그램을 연결 설정에서 지정하세요.'
-    if re.fullmatch(r'(?:FreeCAD|Salome|Gmsh|CalculiX|ParaView|Code_Aster|OpenCourant|FEniCSx) 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
+    if re.fullmatch(r'(?:FreeCAD|Salome|Gmsh|CalculiX|ParaView|Code_Aster|OpenCourant|FEniCSx|CAELab Prep) 실행 파일(?:을 찾지 못했습니다 \([^\n]*\)|이 없습니다)\.', text):
         return '프로그램 실행 파일을 찾지 못했거나 사용할 수 없습니다. 설치와 프로그램 연결 설정을 확인하세요.'
     return None
 
@@ -1502,6 +1508,10 @@ class ProjectWindow(QMainWindow):
         if node.kind == 'preprocessor':
             document = node.files.get('document')
             self.document_section.show()
+            self.document_hint.setText(
+                'CAELab Prep의 RAD 작업 문서(.caeprep)를 등록하세요. 내보낸 RAD는 솔버 입력 파일에 따로 등록합니다.'
+                if node.program_id == 'caelab_prep' else
+                '전처리 프로그램에서 저장한 프로젝트를 등록하면 이어서 편집할 수 있습니다.')
             self.document_value.setText(self._summary_file_name(document.path)[0] if document else '')
             self.document_value.setToolTip(self._file_tooltip(document.path) if document else '')
             self.document_value.setPlaceholderText('편집 문서 지정 안 됨')
@@ -1724,6 +1734,7 @@ class ProjectWindow(QMainWindow):
         elif role == 'output':
             title = '작성한 교환 형상 지정' if box.kind == 'geometry' else '작성한 솔버 입력 지정' if box.kind == 'preprocessor' else '작성한 출력 지정'
             file_filter = ('CAD 교환 형상 (*.step *.stp *.brep);;모든 파일 (*)' if box.kind == 'geometry' else
+                           'RAD 솔버 입력 (*.rad);;모든 파일 (*)' if node.program_id == 'caelab_prep' else
                            'CalculiX 입력 (*.inp);;모든 파일 (*)' if node.program_id == 'prepomax' else OUTPUT_FILTER)
         else:
             title = '상위 연결 대신 사용할 입력 파일' if self._file_owner(box.node_id) != (box.node_id, 'input') else '입력 파일 선택'

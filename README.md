@@ -21,7 +21,7 @@
 
 현재 개발·검증은 CalculiX 네이티브 입력 실행과 결과 전달을 중심으로 진행하고 있습니다. FreeCAD FEM 호환 경로를 유지하며, FreeCAD CAD → PrePoMax → CalculiX 연결을 추가했습니다. PrePoMax의 Windows 실제 GUI·솔버 끝단 실행은 아직 미검증입니다. 프로그램 목록에 등록돼 있다는 사실만으로 파일 교환·계산·결과 판독이 모두 지원되는 것은 아닙니다.
 
-OpenRadioss/OpenCourant용 독립 전처리기는 별도 [CAELab Prep](https://github.com/pikachu444/caelab-prep)에서 개발하며, 현재 앱과 워크벤치 연결 어댑터는 미구현입니다. Salome 및 추가 솔버의 연결, 플랫폼별 지원과 전체 GUI 검증의 남은 범위는 [CURRENT_STATE.md](CURRENT_STATE.md)와 [ARCHITECTURE.md](ARCHITECTURE.md)에서 확인하세요. PrePoMax Python/MCP 자동화는 [후속 계획](docs/review/2026-10-23-codex-improvement-plan.md)입니다.
+OpenRadioss/OpenCourant용 독립 전처리기 [CAELab Prep](https://github.com/pikachu444/caelab-prep)의 RAD 입력·작업 문서 열기와 내보낸 RAD 등록을 지원합니다. MDO Studio는 Prep 설치 시 공용 숫자 입력 위젯도 사용합니다. Linux에서 실제 호스트·파일 왕복을 확인했으며 Windows 실화면·전체 3D·RAD 솔버 끝단 검증은 남았습니다. Salome 및 추가 솔버의 연결, 플랫폼별 지원과 전체 GUI 검증의 남은 범위는 [CURRENT_STATE.md](CURRENT_STATE.md)와 [ARCHITECTURE.md](ARCHITECTURE.md)에서 확인하세요. PrePoMax Python/MCP 자동화는 [후속 계획](docs/review/2026-10-23-codex-improvement-plan.md)입니다.
 
 전문가의 제안은 사용자가 검토하고 전용 프로그램에서 수정합니다. MDO의 현재 설계 적용은 INP 토큰 치환이며 CAD 재생성·재메시를 수행하지 않습니다. 실제 관측과 대리모델 예측을 구분하며, 최적화 결과가 전역 최적해나 구조 안전성을 보증하지는 않습니다.
 
@@ -48,6 +48,19 @@ MDO 연구를 사용하려면 추가 의존성을 설치합니다.
 python -m pip install -e ".[mdo]"
 python -m apps.workbench_qt.mdo_studio
 ```
+
+## CAELab Prep 연결과 공용 입력 위젯
+
+두 저장소를 나란히 받았다면 Workbench의 Python 환경에서 `python -m pip install -e "../caelab-prep[widgets]"`로 공용 위젯을 설치합니다. MDO Studio의 Continuous 변수 Lower·Upper·Initial이 실제 Prep `NumericEdit`을 사용하고, 단위·변수 도메인 검증과 적용·revision·저장은 기존 MDO 서비스가 맡습니다. 불완전한 숫자는 Apply 시 오류와 함께 보존되며 Escape는 마지막으로 적용한 값으로 복원합니다. Prep이 설치되지 않았으면 기존 Qt 표 입력을 사용합니다. 이 경우 공용 위젯 재사용이 실행된 것은 아닙니다.
+
+외부 Prep GUI에는 Prep 환경에서 `python -m pip install -e ".[gui]"`가 필요합니다. 연결 설정 또는 `CAELAB_PREP`에 해당 환경의 `caelab-prep` 실행 파일 경로를 지정하세요(Windows는 `Scripts/caelab-prep.exe`, Linux는 `bin/caelab-prep`). GUI는 별도 환경이어도 되지만 공용 위젯은 Workbench 환경에 설치해야 합니다.
+
+1. 전처리 프로그램으로 **CAELab Prep**을 추가하고 원본 `.rad`를 입력 파일로 등록합니다.
+2. 입력을 Prep에서 열어 편집하고 별도 RAD 작업 문서 `.caeprep`로 저장합니다.
+3. 이 파일을 전처리 노드의 작업 문서로 등록합니다. 이후 기본 열기는 작업 문서를, 명시적인 입력 열기는 원본을 엽니다.
+4. Prep에서 내보낸 `.rad`를 별도의 솔버 입력 파일로 등록합니다. 작업 문서를 바꾸면 이전 출력과 하류 연결은 stale 상태가 되며 새 내보내기·등록이 필요합니다.
+
+확장자가 같은 중립 재료·곡선 문서는 RAD GUI 연결 대상이 아닙니다. Workbench는 문서 종류만 확인하며 모델 해석·버전 검증은 Prep에 맡깁니다. 이 연결은 기존 JobManager를 통해 `caelab-prep gui <파일>`을 실행하며 자동 계산을 시작하지 않습니다. Linux 파일 왕복과 Windows·3D·솔버 검증의 구분은 [현재 상태](CURRENT_STATE.md#prep-공용-위젯과-rad-파일-연결-2026-11-01)에 기록합니다.
 
 ## 문서 길잡이
 
