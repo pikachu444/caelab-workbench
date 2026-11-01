@@ -12,6 +12,13 @@ from caelab.mdo.constraints import ConstraintSpec
 from caelab.mdo.surrogate import SurrogateConfig
 from caelab.mdo.inp_binder import scalar_literal_occurrences
 
+try:
+    from caelab_prep.ui.widgets.numeric import NumericEdit as PrepNumericEdit
+except ModuleNotFoundError as exc:
+    if not (exc.name == 'caelab_prep' or exc.name.startswith('caelab_prep.')):
+        raise
+    PrepNumericEdit = None
+
 
 def cell(table,row,col,default=''):
     item=table.item(row,col)
@@ -23,8 +30,15 @@ def choice(table,row,col,values,current):
     return widget
 
 
+class _NumericCellError(ValueError):
+    def __init__(self,column,message):
+        super().__init__(message)
+        self.column=column
+
+
 class StudyConfigEditor(QWidget):
     applied=Signal(object)
+    reverting=Signal()
 
     def __init__(self,tokens,study,response_units,response_selectors=None,parent=None):
         super().__init__(parent)
@@ -32,6 +46,9 @@ class StudyConfigEditor(QWidget):
         layout=QVBoxLayout(self); layout.setContentsMargins(4,4,4,4)
         self.tabs=QTabWidget(); layout.addWidget(self.tabs)
         self.variables=QTableWidget(); self.responses=QTableWidget()
+        self.uses_shared_numeric_controls = PrepNumericEdit is not None
+        self.variables.setProperty('numericEditorSource', 'caelab-prep' if self.uses_shared_numeric_controls else 'Qt table')
+        self.variables.itemChanged.connect(self._variable_item_changed)
         self.tabs.addTab(self.variables,'Variables')
         response_page=QWidget(); response_layout=QVBoxLayout(response_page); response_layout.setContentsMargins(0,0,0,0)
         response_layout.addWidget(self.responses); response_actions=QHBoxLayout(); response_layout.addLayout(response_actions)
@@ -46,7 +63,9 @@ class StudyConfigEditor(QWidget):
         self.revert()
 
     def revert(self):
+        self.reverting.emit()
         self.error.clear()
+        self.variables.blockSignals(True)
         columns=['Token','Lower','Upper','Initial','Unit','Name','Domain','Levels / expression','Dependencies','Transform']
         self.variables.setColumnCount(len(columns)); self.variables.setHorizontalHeaderLabels(columns); self.variables.setRowCount(len(self.tokens))
         existing={v.id:v for v in self.study.space.variables}
@@ -56,8 +75,11 @@ class StudyConfigEditor(QWidget):
             values=[token,getattr(v,'lower',''),getattr(v,'upper',''),getattr(v,'initial',''),getattr(v,'unit',''),getattr(v,'name',token),domain,extras,','.join(getattr(v,'dependencies',())),getattr(v,'transform','linear')]
             for col,value in enumerate(values): self.variables.setItem(row,col,QTableWidgetItem('' if value is None else str(value)))
             self.variables.item(row,0).setFlags(self.variables.item(row,0).flags() & ~Qt.ItemFlag.ItemIsEditable)
-            choice(self.variables,row,6,['Continuous','Discrete','Categorical','Linked'],domain)
+            domain_box=choice(self.variables,row,6,['Continuous','Discrete','Categorical','Linked'],domain)
+            domain_box.currentTextChanged.connect(lambda _value,r=row:self._install_numeric_editors(r))
             choice(self.variables,row,9,['linear','log'],getattr(v,'transform','linear'))
+            self._install_numeric_editors(row)
+        self.variables.blockSignals(False)
         columns=['Response','Unit','Objective','Constraint','Limit','Objective scale','Objective weight','Target','Target band','Tolerance','Marginal band','Source','Field','Component','Frame','Set','Node IDs','Reduction','Constraint scale','Constraint weight','Objective offset']
         self.responses.setColumnCount(len(columns)); self.responses.setHorizontalHeaderLabels(columns)
         keys=list(dict.fromkeys(['disp','stress','mass_eall',*self.response_units,*[o.response_id for o in self.study.objectives],*[c.response_id for c in self.study.constraints if c.response_id]]))
@@ -78,6 +100,50 @@ class StudyConfigEditor(QWidget):
         self.variables.setColumnWidth(0,140); self.variables.setColumnWidth(5,170); self.variables.setColumnWidth(7,180)
         self.responses.setColumnWidth(0,145); self.responses.setColumnWidth(13,135)
 
+    def _install_numeric_editors(self,row):
+        """Reuse drafts only; variable validation and persisted state remain in MDO."""
+        domain=self.variables.cellWidget(row,6).currentText()
+        saved=next((v for v in self.study.space.variables if v.id==cell(self.variables,row,0).lower()),None)
+        for col in (1,2,3):
+            self.variables.removeCellWidget(row,col)
+            if not self.uses_shared_numeric_controls or domain!='Continuous':
+                continue
+            committed=getattr(saved,{1:'lower',2:'upper',3:'initial'}[col],'')
+            editor=PrepNumericEdit(committed,unit=cell(self.variables,row,4))
+            editor.setText(cell(self.variables,row,col))
+            editor.setObjectName('mdoSharedNumber')
+            editor.setAccessibleName(f'{cell(self.variables,row,0)} {self.variables.horizontalHeaderItem(col).text()}')
+            editor.setStyleSheet('QLineEdit[invalid="true"] { border: 1px solid #ef4444; }')
+            editor.textChanged.connect(lambda text,r=row,c=col:self.variables.item(r,c).setText(text))
+            self.variables.setCellWidget(row,col,editor)
+
+    def _variable_item_changed(self,item):
+        if item.column() in (1,2,3):
+            editor=self.variables.cellWidget(item.row(),item.column())
+            if editor is not None and editor.text()!=item.text():
+                editor.setText(item.text())
+        elif item.column()==4:
+            for col in (1,2,3):
+                editor=self.variables.cellWidget(item.row(),col)
+                if editor is not None:
+                    editor.unit=item.text().strip()
+                    editor.set_error(editor.error)
+
+    def accept_drafts(self):
+        """Called by the host only after its existing configure operation succeeds."""
+        for row in range(self.variables.rowCount()):
+            for col in (1,2,3):
+                editor=self.variables.cellWidget(row,col)
+                if editor is not None:
+                    editor.accept_value(cell(self.variables,row,col))
+
+    def _continuous_value(self,row,col):
+        editor=self.variables.cellWidget(row,col)
+        try:
+            return editor.numeric_value() if editor is not None else float(cell(self.variables,row,col))
+        except ValueError as exc:
+            raise _NumericCellError(col,str(exc)) from exc
+
     def configuration(self):
         variables=[]
         for row in range(self.variables.rowCount()):
@@ -88,11 +154,16 @@ class StudyConfigEditor(QWidget):
                 if domain=='Categorical': v=CategoricalVariable(**kw,choices=tuple(x.strip() for x in extra.split(',')),initial=initial)
                 elif domain=='Discrete': v=DiscreteVariable(**kw,unit=unit,values=tuple(float(x.strip()) for x in extra.split(',')),initial=float(initial))
                 elif domain=='Linked': v=LinkedVariable(**kw,unit=unit,expression=extra,dependencies=tuple(x.strip() for x in dependencies.split(',') if x.strip()),lower=float(lower) if lower else None,upper=float(upper) if upper else None)
-                else: v=ContinuousVariable(**kw,unit=unit,lower=float(lower),upper=float(upper),initial=float(initial),transform=self.variables.cellWidget(row,9).currentText())
+                else: v=ContinuousVariable(**kw,unit=unit,lower=self._continuous_value(row,1),upper=self._continuous_value(row,2),initial=self._continuous_value(row,3),transform=self.variables.cellWidget(row,9).currentText())
                 if domain!='Categorical' and not unit: raise ValueError('Declare a unit (1 for dimensionless).')
                 variables.append(v)
             except (ValueError,TypeError) as exc:
-                self.tabs.setCurrentWidget(self.variables); self.variables.setCurrentCell(row,1); raise ValueError(f'{token}: {exc}') from exc
+                self.tabs.setCurrentWidget(self.variables)
+                col=exc.column if isinstance(exc,_NumericCellError) else 1
+                self.variables.setCurrentCell(row,col)
+                editor=self.variables.cellWidget(row,col)
+                if editor is not None: editor.setFocus()
+                raise ValueError(f'{token}: {exc}') from exc
         space=VariableSpace(variables=tuple(variables)); objectives=[]; constraints=[]; units={}; selectors={}
         for row in range(self.responses.rowCount()):
             key=cell(self.responses,row,0); sense=self.responses.cellWidget(row,2).currentText(); kind=self.responses.cellWidget(row,3).currentText()

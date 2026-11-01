@@ -15,7 +15,7 @@
 
 ## 현재 범위
 
-- 연결 층: 프로그램 9종 등록(FreeCAD·PrePoMax·Salome·Gmsh·CalculiX·Code_Aster·OpenCourant·FEniCSx·ParaView), 명시 환경변수·설치 레지스트리·PATH 순 탐색과 실패 이유 표시. FreeCAD·PrePoMax·Gmsh·ParaView의 파일 열기 인자·작업 폴더·환경을 구성하고 Workbench가 JobManager에 실행을 요청합니다. 나머지 프로그램의 등록이 파일 열기·계산 지원 완료를 뜻하지 않습니다.
+- 연결 층: 프로그램 10종 등록(FreeCAD·PrePoMax·CAELab Prep·Salome·Gmsh·CalculiX·Code_Aster·OpenCourant·FEniCSx·ParaView), 명시 환경변수·설치 레지스트리·PATH 순 탐색과 실패 이유 표시. FreeCAD·PrePoMax·CAELab Prep·Gmsh·ParaView의 파일 열기 인자·작업 폴더·환경을 구성하고 Workbench가 JobManager에 실행을 요청합니다. 나머지 프로그램의 등록이 파일 열기·계산 지원 완료를 뜻하지 않습니다.
 - 네이티브 프로젝트: `caelab/project.py`는 고유 노드 ID, 입력/출력 파일 참조와 SHA256 개정, 단위와 출처, 연결·위치를 `project.json`에 원자적으로 저장합니다. 내부 참조는 프로젝트 위치 기준의 상대 경로로, 외부 참조는 절대 경로로 저장합니다. 다른 이름으로 저장하면 소유 실행 저장소와 대화·자산은 복사하되 일반 CAD·INP 문서는 기존 원본 참조를 유지합니다. 입력 변경·누락·실패는 연결된 하위 출력을 오래된 상태로 표시합니다. 기존 `model.json`은 보조 구조 모델용으로 유지합니다.
 - 부모와 Studio의 프로젝트 저장은 같은 파일 잠금 안에서 이전 개정과 대조합니다. 다른 창이 먼저 저장하면 뒤늦은 저장은 거절하고 해당 창의 미저장 편집은 유지합니다. 외부 편집기는 이 협력 잠금을 따르지 않을 수 있습니다.
 - 프로그램 제거·복원: 제거한 노드는 `removed_nodes`에 원 ID로 보관하며 연결은 복원하지 않습니다. 연결 해제는 비활성 직접 입력까지 비우고 하위 출력을 무효화합니다. 구조 편집은 후보 모델의 파일 확인까지 성공한 후 적용하므로 읽기 실패로 부분 변경을 남기지 않습니다. 보관 노드에도 원본 덮어쓰기 방지·상대 경로·다른 이름 저장의 경로 재기준화를 적용합니다. 새 저장 형식은 버전 3이며 버전 1/2도 읽습니다. 구버전 프로그램은 새 형식을 거절해 보관 정보를 조용히 버리지 않습니다. 제거는 실행 저장소 잠금과 전체 진행 상태를 확인하며 파일·계산·대화를 삭제하거나 독립 프로세스를 종료하지 않습니다. 미저장 편집은 다른 창에 즉시 전달하지 않고 기존 저장 파일 변경 감지 계약을 유지합니다.
@@ -71,3 +71,9 @@
 PrePoMax는 `CAELAB_PREPOMAX` 또는 설치 레지스트리/PATH로 찾고 Windows GUI에 `-f <file>`로 PMX 열기 또는 형상 가져오기를 요청합니다. 설치 자동화·카드 변환·메시 재생성은 이 호출의 기능이 아닙니다. PMX 기본 열기와 STEP 가져오기 요청을 구분합니다. Salome의 현재 미구현 파일 열기나 다른 솔버의 미완성 결과 판독은 프로그램 선택만으로 지원 상태가 바뀌지 않습니다.
 
 후처리 상자에서 PrePoMax를 고르면 선택 실행의 원본 `model.frd`를 기록된 결과와 대조한 뒤 전달합니다. ParaView는 기존 PVD/VTU 경로를 사용합니다. 형식 변환이나 다른 실행의 결과로 자동 대체하지 않습니다.
+
+### CAELab Prep 연결과 선택적 위젯 재사용 (2026-11-01)
+
+`caelab/connections.py`의 `caelab_prep` 프로그램은 `CAELAB_PREP`/설치 레지스트리/PATH로 실행 파일을 찾고 `gui <file>`을 기존 JobManager에 전달합니다. RAD 원본은 input, RAD 작업 문서 `.caeprep`는 document, 내보낸 RAD는 output입니다. 기본 열기는 document를 우선하고 명시적 입력 열기는 input을 유지합니다. manifest의 `format=caelab-prep-project`만 제한된 크기로 확인하여 같은 확장자의 중립 문서를 구분하며 payload·문서 버전·모델 수정은 Prep 소유입니다. 프로젝트 스키마와 실행 소유를 추가하지 않았고, 이 파일 전달은 RAD 솔버 실행 구현이 아닙니다.
+
+`StudyConfigEditor`는 선택 의존성 Prep이 설치된 경우 Continuous 변수 Lower·Upper·Initial에 같은 `caelab_prep.ui.widgets.numeric.NumericEdit` 클래스를 사용합니다. 위젯은 유효성 표시·초안·Escape를 맡고 MDO 서비스는 단위/도메인 검증, revision, 저장과 현재 설계 파일 변경을 계속 소유합니다. 성공한 configure 뒤에만 위젯의 Escape 기준값을 갱신하며 오래된 revision의 편집은 보존한 채 거절합니다. Revert는 최신 서비스 snapshot으로 다시 구성합니다. 미설치 환경에서는 기존 Qt table 경로이며 실제 재사용 검증과 구분합니다. 공용 Prep 문서나 전역 history를 Workbench에 추가하지 않았습니다.

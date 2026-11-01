@@ -1,3 +1,23 @@
+## Prep 공용 위젯과 RAD 파일 연결 (2026-11-01)
+
+Workbench 기준 `92ce81181396bed9bb6e3024bba62913834c2a7e`에 W1·W2 변경을 적용한 작업 트리에서 확인했다. Prep은 `2f9a0cac525094d81ceb8ff21dd65d98141795ee`와 당시 진행 중인 UI 변경이 있는 작업 트리의 `src`를 사용했다. 따라서 이 기록을 두 저장소의 고정된 배포 조합 검증이나 G4 전체 완료로 해석하지 않는다. 공용 코드는 복사하거나 vendor하지 않았다.
+
+- **W1 실제 호스트:** 기존 `MDOStudioWindow`의 `StudyConfigEditor`에서 Continuous 변수 Lower·Upper·Initial에 Prep `NumericEdit`을 소비한다. 기존 MDO 서비스가 단위·도메인·campaign/read-only·revision·저장을 소유한다. 다른 도메인과 Prep 미설치 환경은 기존 표 입력을 유지한다. 미설치 경로도 별도 Python 프로세스로 확인했다. 설정 초안은 문서 Undo를 만들지 않으며, 현재 설계 파일 Apply/Undo는 기존 서비스 경로 그대로다.
+- **독립 검토에서 수정한 사례:** domain을 바꿨다가 Continuous로 돌아오면 미적용 초안이 Escape 기준값이 되던 문제, 잘못된 Upper·Initial의 Apply 오류가 Lower로 초점을 옮기던 문제를 각각 재현하고 수정했다. 원 비판자가 두 경로와 새 공유 위젯 검사 **5개 통과**를 다시 확인했다. `1e`·NaN·Inf, 단위·범위 오류, stale revision, campaign/read-only, 적용·새 프로세스 저장본 재열기를 검사했다. 실제 dark/light 호스트 캡처에서 입력·단위·오류를 확인했지만 전체 창·좁은 폭·DPI 품질 완료를 뜻하지 않는다.
+- **W2 기존 연결 재사용:** `ProgramSpec`과 `launch_request`에 `CAELAB_PREP`/`caelab-prep`를 등록했다. 기존 `Workbench.open_program`→`JobManager`가 RAD 입력과 RAD 작업 문서에 `gui <파일>`을 전달한다. 입력·작업 문서·내보낸 출력 역할, 기본 문서 열기, 명시적 원본 열기, 프로젝트 저장·재열기와 하류 stale 계약을 보존했다. 중립 `.caeprep`와 잘못된 manifest는 실행 전에 거절한다. Workbench가 모델 payload·버전 reader나 새 JobManager를 소유하지 않는다.
+- **실제 외부 프로세스 왕복:** 1,075절점·1,008요소 RAD를 기존 launcher로 실제 Prep CLI에 전달했다. Qt QTest로 E=210000→205000 편집·Undo·Redo 후 작업 문서 저장·RAD 내보내기를 실행하고, 새 프로세스가 같은 문서를 열어 205000을 유지하는지 확인했다. 두 프로세스 exit 0, 원본 SHA256 불변, 내보낸 RAD의 독립 API 재읽기, 이후 문서 수정의 전처리 changed/솔버 stale을 확인했다. 실제 CLI 주위의 QTimer 계측 launcher를 사용한 검사이며 배포 설치 검증은 아니다. 입력은 개발 예제이고, solver 정확성·독립 실무 모델 적격성을 입증하지 않는다.
+- **회귀 범위:** handoff 신규·기존 연결 관련 묶음 **51 passed, 1 skipped**(CalculiX 미설정). 기존 MDO 관련 5파일은 **113 passed, 1 failed**였으며 실패는 `pymoo` 의존성 부재였다. 의존성을 격리 설치한 후 해당 실패 테스트 1개가 통과했다. 공유 위젯 새 5개도 통과했다. 이 결과를 서로 합산하거나 전체 제품 회귀·CI 성공으로 바꾸지 않는다. 일반 CI는 Prep을 설치하지 않아 공유 위젯 실제 사용 4개를 건너뛰고 미설치 fallback 1개를 검사한다.
+
+환경은 Linux/Python 3.12.14/PySide6 6.12.0/VTK 9.4.2, `QT_QPA_PLATFORM=offscreen`이었다. 파일 잠금·기존 MDO 회귀용 선택 의존성은 격리 경로에 설치했고 제품 의존성 계약을 변경하지 않았다. 외부 Prep의 full Qt VTK 화면은 OpenGL 오류와 검은 viewport가 관찰되어 **3D 렌더 통과가 아니다**. 실제 QWidget 생성·입력·파일 동작과 구분한다. Windows 실제 창·IME·DPI·포커스와 배포 조합 검증은 사용자 지시에 따라 후속 일괄 검사로 남긴다. 이번 변경의 Linux 구현·검토·CI 병합을 Windows 검사의 선행 조건으로 묶지 않으며 Windows 완료도 주장하지 않는다. RAD의 실제 솔버 실행은 기존 실행기의 INP snapshot 범위를 별도로 해결해야 하며 이 handoff에서 실행하지 않았다.
+
+**고정 커밋 후속 확인:** Workbench `b64267e533882654461166a9910315745f69d4bd`와 별도 detached worktree의 Prep `e017653dc0a51aa508c5290bbb08450b2b70cacb`를 사용해 다시 실행했다. 같은 실제 MDO 호스트에서 `caelab_prep.ui.widgets.numeric.NumericEdit` 클래스, `1e` 초안·오류·초점 보존과 dark/light 캡처를 확인했다. 기존 Workbench→JobManager→실제 Prep CLI의 두 프로세스 왕복도 exit 0, E=205000 유지, 원본 해시 불변, 후속 문서 변경의 changed/stale을 다시 확인했다. 두 Prep 프로세스의 실제 `_render_failed=True`와 검은 viewport도 기록했으므로 이 고정 조합의 파일 성공은 3D 성공이 아니다. 배포 설치 검증도 남았다.
+
+이 고정 조합에서 전체 제품 회귀를 한 번 실행한 결과는 **1116 passed, 32 skipped, 1 failed**(538.75초)였다. 유일한 실패 `test_mdo_imports_without_optional_backends`는 검사 내부의 새 프로세스가 PYTHONPATH를 저장소 경로로 교체해, 격리 target에만 있던 필수 의존성 `filelock`을 찾지 못한 환경 구성 문제였다. 별도 venv에 제품 의존성 `filelock 4.2.6`을 정상 설치한 뒤 같은 소스로 이 실패 1개와 신규 W1/W2 18개를 실행해 **19 passed**(4.62초)를 확인했다. 테스트의 기대값·skip·제품 코드를 바꾸지 않았다. 32개 skip은 미설치 솔버와 Windows 전용 경로이며 실제 공유 위젯 4개는 이 로컬 실행에서 건너뛰지 않았다. 최초 전체 실행을 모두 통과한 것으로 소급하거나 후속 부분 검사를 전체 재실행으로 기록하지 않는다. 원 비판자의 승인은 커밋 전 동일 코드에서 재현한 두 W1 결함 해소에 해당하며, 고정 커밋 조합의 후속 실행은 작성자가 수행했다.
+
+새 재현 검사는 `tests/test_prep_shared_controls.py`와 `tests/test_prep_handoff.py`다. 실제 호스트 캡처와 외부 실행 영수증은 당시 로컬 `wb-g4-evidence/`에, 고정 조합의 후속 실행은 그 안의 `pin-b64267e-e017653/`에 저장했다. 전체 원실패 로그 `full-regression-b64267e.log`와 후속 `focused-after-env.log`를 보존했으며 저장소에 포함된 배포 자산은 아니다. 아래 날짜별 기록은 당시 상태를 보존한 이력이다.
+
+최종 검토에서 압축된 manifest 손상이 `zlib.error`로 빠져 노드가 실패 상태로 바뀌지 않는 결함을 추가 재현했다. 연결 계층은 ZIP 압축 해제 오류를 기존 문서 오류로 정규화하고 실행 전에 `failed`로 전환한다. 통합 담당자가 기존 W2 코드·파일 역할을 독립 검토하고 13개 검사를 직접 실행했으며, 수정 후 손상된 DEFLATE 입력을 포함한 W2 14개를 통과했다. 원 지적자의 재검토와 최종 CI 판정은 PR #54에 따른다. 위 고정 제품 코드 b64267e의 원격 동등 트리는 `96a303de3c21b2908f983e0c3da3b3a28b8e4bff`다.
+
 ## 독립 전처리기 개발과 기존 연결 병합 (2026-10-29)
 
 CAD/전문 전처리 분리 PR [#51](https://github.com/pikachu444/caelab-workbench/pull/51)을 main에 병합했습니다. 병합 뒤 새 clone의 파일 트리가 검토한 PR head와 같은지 확인했고 관련 검사는 **38 passed, 1 skipped**였습니다. 로컬 건너뜀은 `CAELAB_CCX` 미설정 때문이며 기존 PR의 실제 CalculiX CI와 구분합니다. 이 작업에서 전체 회귀를 다시 실행하지 않았습니다. Windows PrePoMax의 실제 끝단 미확인 상태는 그대로입니다.
