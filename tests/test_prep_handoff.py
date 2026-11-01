@@ -1,6 +1,7 @@
 """Prep handoff preserves file roles and uses the existing external launcher."""
 import json
 import os
+import struct
 from types import SimpleNamespace
 import zipfile
 
@@ -133,6 +134,28 @@ def test_wrong_prep_codec_fails_before_job_manager(prep_status, tmp_path, monkey
         wb.set_node_file(project, pre.id, document, "document")
         monkeypatch.setattr(wb.jobs, "launch", lambda request: pytest.fail("Wrong codec reached the process manager"))
         with pytest.raises(ValueError, match="중립"):
+            wb.open_program(project, pre.id)
+        assert pre.state == "failed"
+    finally:
+        wb.close()
+
+
+def test_damaged_compressed_manifest_marks_failure_before_launch(prep_status, tmp_path, monkeypatch):
+    document = tmp_path / "damaged.caeprep"
+    with zipfile.ZipFile(document, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps({"format": "caelab-prep-project", "version": 2}))
+        offset = archive.getinfo("manifest.json").header_offset
+    payload = bytearray(document.read_bytes())
+    name_length, extra_length = struct.unpack_from("<HH", payload, offset + 26)
+    payload[offset + 30 + name_length + extra_length] = 0xff
+    document.write_bytes(payload)
+    wb = Workbench()
+    try:
+        project = wb.new_native_project()
+        pre = wb.add_program_node(project, "preprocessor", "caelab_prep")
+        wb.set_node_file(project, pre.id, document, "document")
+        monkeypatch.setattr(wb.jobs, "launch", lambda request: pytest.fail("Damaged manifest reached the process manager"))
+        with pytest.raises(ValueError, match="manifest"):
             wb.open_program(project, pre.id)
         assert pre.state == "failed"
     finally:

@@ -16,6 +16,8 @@ Workbench 기준 `92ce81181396bed9bb6e3024bba62913834c2a7e`에 W1·W2 변경을 
 
 새 재현 검사는 `tests/test_prep_shared_controls.py`와 `tests/test_prep_handoff.py`다. 실제 호스트 캡처와 외부 실행 영수증은 당시 로컬 `wb-g4-evidence/`에, 고정 조합의 후속 실행은 그 안의 `pin-b64267e-e017653/`에 저장했다. 전체 원실패 로그 `full-regression-b64267e.log`와 후속 `focused-after-env.log`를 보존했으며 저장소에 포함된 배포 자산은 아니다. 아래 날짜별 기록은 당시 상태를 보존한 이력이다.
 
+최종 검토에서 압축된 manifest 손상이 `zlib.error`로 빠져 노드가 실패 상태로 바뀌지 않는 결함을 추가 재현했다. 연결 계층은 ZIP 압축 해제 오류를 기존 문서 오류로 정규화하고 실행 전에 `failed`로 전환한다. 통합 담당자가 기존 W2 코드·파일 역할을 독립 검토하고 13개 검사를 직접 실행했으며, 수정 후 손상된 DEFLATE 입력을 포함한 W2 14개를 통과했다. 원 지적자의 재검토와 최종 CI 판정은 PR #54에 따른다. 위 고정 제품 코드 b64267e의 원격 동등 트리는 `96a303de3c21b2908f983e0c3da3b3a28b8e4bff`다.
+
 ## 독립 전처리기 개발과 기존 연결 병합 (2026-10-29)
 
 CAD/전문 전처리 분리 PR [#51](https://github.com/pikachu444/caelab-workbench/pull/51)을 main에 병합했습니다. 병합 뒤 새 clone의 파일 트리가 검토한 PR head와 같은지 확인했고 관련 검사는 **38 passed, 1 skipped**였습니다. 로컬 건너뜀은 `CAELAB_CCX` 미설정 때문이며 기존 PR의 실제 CalculiX CI와 구분합니다. 이 작업에서 전체 회귀를 다시 실행하지 않았습니다. Windows PrePoMax의 실제 끝단 미확인 상태는 그대로입니다.

@@ -13,11 +13,13 @@ preprocessor — not the main road.
 from __future__ import annotations
 
 import json
+import lzma
 import os
 import sys
 from pathlib import Path
 import shutil
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 
 
@@ -268,7 +270,8 @@ def _check_prep_document_kind(document: Path) -> None:
             if len(payload) > limit:
                 raise ValueError("prep_manifest_too_large")
             manifest = json.loads(payload)
-    except (OSError, zipfile.BadZipFile, KeyError, ValueError, RuntimeError, NotImplementedError) as exc:
+    except (OSError, zipfile.BadZipFile, KeyError, ValueError, RuntimeError, NotImplementedError,
+            zlib.error, lzma.LZMAError, EOFError) as exc:
         if isinstance(exc, ValueError) and str(exc) == "prep_manifest_too_large":
             raise ValueError("CAELab Prep 작업 문서의 manifest가 연결 확인 한도(1 MiB)를 초과했습니다.") from exc
         raise ValueError("CAELab Prep 작업 문서의 manifest를 읽을 수 없습니다. 올바른 RAD 작업 문서를 선택하세요.") from exc
