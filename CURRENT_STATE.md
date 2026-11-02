@@ -1,3 +1,15 @@
+<a id="rad-w3"></a>
+
+## RAD W3 구현과 확인 상태 (2026-11-02)
+
+기준 main `d6f05a3b1abc0cb9e83e7e96311f743e626ab086`에서 `feat/rad-two-stage-runs`로 N21/W3를 구현했다. 아래는 현재 후보의 상태이며 PR/최종 CI/병합 근거를 확인한 뒤 갱신한다. W1/W2의 과거 기록과 Windows 후속 검증을 구별한다.
+
+- **구현:** CAD 없는 사용자 RAD Starter/Engine/상대 INCLUDE 두 묶음의 원문·이름·해시 snapshot, 실제 설치 home→Starter/Engine 탐색, 기존 JobManager의 순차 실행·재시작 파일 확인·단계별 로그/상태·취소/합산 timeout, 실행 입력 변조 거부, 원본 변경 stale, 실제 결과 원본 등록과 저장·재열기.
+- **독립 검토에서 고친 문제:** 실패 후 Engine이 pending으로 남던 상태를 `not_started`로 종결했다. 실제 runname 결과가 고정 출력명과 달라 등록되지 않던 문제를 실제 원본 결과/해시 연결로 수정했다. 단계·오류 표시의 높이 부족도 보완했다. 원 지적자가 재검사했다.
+- **현재 검사:** 최종 집중 56 passed(실제 4건 별도), 독립 QA 25 passed, 기존 CCX/native 핵심 120 passed/6 skipped. 넓은 GUI 검사에서 기존 fixture의 snapshot 필드 누락 16건을 재현하고 fixture에 그 계약을 보완한 뒤 같은 GUI 묶음을 통과했다. 서로 겹치는 수치를 합산하지 않는다.
+- **실제 실행:** 공식 unmodified OpenCourant의 tetra 입력은 Workbench→JobManager→Starter→Engine→partial 결과/해시/재열기가 성공했다. shell/INCLUDE와 GUI shell은 현 컨테이너에서 Starter ERROR760을 재현했고 Engine을 실행하지 않았다. 이 실패를 제품 성공으로 바꾸지 않았다. 제품에는 환경 우회 shim을 넣지 않았다.
+- **남은 판정:** `.github/workflows/product-tests.yml`의 공식 SHA 고정 solver/X11 job에서 service 두 입력·GUI 두 입력을 실제 실행하고 입력·로그·receipt·PNG를 보존한다. 이 최종 CI가 통과하기 전에는 N21 전체를 닫지 않는다. Windows GUI/배포는 사용자가 지정한 일괄 후속이며 binary 후처리 전체 지원은 이 묶음의 기능이 아니다.
+
 ## Prep 공용 위젯과 RAD 파일 연결 (2026-11-01)
 
 Workbench 기준 `92ce81181396bed9bb6e3024bba62913834c2a7e`에 W1·W2 변경을 적용한 작업 트리에서 확인했다. Prep은 `2f9a0cac525094d81ceb8ff21dd65d98141795ee`와 당시 진행 중인 UI 변경이 있는 작업 트리의 `src`를 사용했다. 따라서 이 기록을 두 저장소의 고정된 배포 조합 검증이나 G4 전체 완료로 해석하지 않는다. 공용 코드는 복사하거나 vendor하지 않았다.
@@ -442,3 +454,5 @@ P1~P7은 기존 결함의 복구 작업 번호이며 DESIGN §12의 제품 이�
 이번 팀 검토로 확정한 범위는 맨 위 종료 조건별 판정과 독립 입력 표다. NEXT_SESSION의 시작 환경으로 저장된 하중 수정 작업을 재개하고, 사본의 부모 전체 조작·실제 IME·창 크기를 확인한다. 별도 담당은 지정한 미사용 외부 입력을 수행하고 기존 고정 색인의 검색 비교를 진행한다. QA/CAE는 보존된 실제 제안→네이티브 수정→재실행→후속 토론을 판정한다. 새 계산·구독 호출·전체 검사를 이미 끝난 흐름에 무조건 반복하지 않는다.
 
 Windows 실화면과 실제 구독 호출의 과거 보류는 이후 사용자 요청으로 재개됐다. 기존 실제 통과, 현재 환경 미확인, 새로운 미완료를 구분하며 위 종료 표가 모두 충족될 때만 1단계 완료를 판정한다.
+
+2026-11-02 PR #55 검증 갱신: `6541847`의 원격 CI에서 공식 OpenCourant 서비스·실제 X11 GUI 4건과 실제 CalculiX, 전체 Python 3.12 검사가 통과했다. Python 3.11은 기존 MDO layout 검사의 고정 450 ms 대기 후 두 번째 queued record가 남아 실패했다. layout 검사를 실제 두 결과와 예약된 시각화 완료 조건에 동기화하며, 제품의 성능 기준이나 renderer를 바꾸지 않는다. 수정 SHA의 필수 CI 통과 전에는 병합하지 않는다. 로컬 shell ERROR760과 원격의 실제 두 입력 성공은 서로 다른 환경 근거다.

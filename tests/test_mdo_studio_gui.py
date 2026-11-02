@@ -190,7 +190,20 @@ def test_fresh_layout_first_3d_keeps_selected_row_and_native_labels(layout_studi
                     service.study.records[index]=snapshot; service.study._record_map[row.point_id]=snapshot
                 callback(row.point_id,service.record_snapshot(row.point_id),None)
         producer=threading.Thread(target=deliver); producer.start(); producer.join()
-        QTest.qWait(450); settle_qt(app); record('first-queued-results-2d')
+        # This checks layout after queued results arrive, not a 450 ms latency
+        # budget. Under CI load the second signal may be delivered after the
+        # first record's 100 ms timer fired. Wait for both public results and
+        # their scheduled visualization, without manually flushing the owner.
+        import time
+        deadline = time.monotonic() + 5
+        def results_displayed():
+            return (window.tdp_model.rowCount() == 2
+                    and all(row.mode == 'SURROGATE' for row in window.tdp_model.records)
+                    and not window._pending_records and not window._viz_timer.isActive())
+        while not results_displayed() and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert results_displayed(), 'Queued results did not reach the displayed model'
+        settle_qt(app); record('first-queued-results-2d')
         assert window.tdp_model.rowCount()==2 and not window._pending_records
         assert all(row.mode=='SURROGATE' and not row.attempts for row in window.tdp_model.records)
         assert size_calls==[] and window.center_splitter.sizes()==initial_sizes

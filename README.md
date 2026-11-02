@@ -21,7 +21,7 @@
 
 현재 개발·검증은 CalculiX 네이티브 입력 실행과 결과 전달을 중심으로 진행하고 있습니다. FreeCAD FEM 호환 경로를 유지하며, FreeCAD CAD → PrePoMax → CalculiX 연결을 추가했습니다. PrePoMax의 Windows 실제 GUI·솔버 끝단 실행은 아직 미검증입니다. 프로그램 목록에 등록돼 있다는 사실만으로 파일 교환·계산·결과 판독이 모두 지원되는 것은 아닙니다.
 
-OpenRadioss/OpenCourant용 독립 전처리기 [CAELab Prep](https://github.com/pikachu444/caelab-prep)의 RAD 입력·작업 문서 열기와 내보낸 RAD 등록을 지원합니다. MDO Studio는 Prep 설치 시 공용 숫자 입력 위젯도 사용합니다. Linux에서 실제 호스트·파일 왕복을 확인했으며 Windows 실화면·전체 3D·RAD 솔버 끝단 검증은 남았습니다. Salome 및 추가 솔버의 연결, 플랫폼별 지원과 전체 GUI 검증의 남은 범위는 [CURRENT_STATE.md](CURRENT_STATE.md)와 [ARCHITECTURE.md](ARCHITECTURE.md)에서 확인하세요. PrePoMax Python/MCP 자동화는 [후속 계획](docs/review/2026-10-23-codex-improvement-plan.md)입니다.
+OpenRadioss/OpenCourant용 독립 전처리기 [CAELab Prep](https://github.com/pikachu444/caelab-prep)의 RAD 입력·작업 문서 열기와 내보낸 RAD 등록을 지원합니다. MDO Studio는 Prep 설치 시 공용 숫자 입력 위젯도 사용합니다. Linux에서 실제 호스트·파일 왕복을 확인했습니다. OpenCourant 실행은 Starter/Engine/INCLUDE 보존과 두 단계 실행을 연결했으며, 최종 실제 계산·GUI 판정은 CURRENT_STATE의 W3 기록을 따릅니다. Windows 실화면·전체 3D 검증은 남았습니다. Salome 및 추가 솔버의 연결, 플랫폼별 지원과 전체 GUI 검증의 남은 범위는 [CURRENT_STATE.md](CURRENT_STATE.md)와 [ARCHITECTURE.md](ARCHITECTURE.md)에서 확인하세요. PrePoMax Python/MCP 자동화는 [후속 계획](docs/review/2026-10-23-codex-improvement-plan.md)입니다.
 
 전문가의 제안은 사용자가 검토하고 전용 프로그램에서 수정합니다. MDO의 현재 설계 적용은 INP 토큰 치환이며 CAD 재생성·재메시를 수행하지 않습니다. 실제 관측과 대리모델 예측을 구분하며, 최적화 결과가 전역 최적해나 구조 안전성을 보증하지는 않습니다.
 
@@ -61,6 +61,14 @@ python -m apps.workbench_qt.mdo_studio
 4. Prep에서 내보낸 `.rad`를 별도의 솔버 입력 파일로 등록합니다. 작업 문서를 바꾸면 이전 출력과 하류 연결은 stale 상태가 되며 새 내보내기·등록이 필요합니다.
 
 확장자가 같은 중립 재료·곡선 문서는 RAD GUI 연결 대상이 아닙니다. Workbench는 문서 종류만 확인하며 모델 해석·버전 검증은 Prep에 맡깁니다. 이 연결은 기존 JobManager를 통해 `caelab-prep gui <파일>`을 실행하며 자동 계산을 시작하지 않습니다. Linux 파일 왕복과 Windows·3D·솔버 검증의 구분은 [현재 상태](CURRENT_STATE.md#prep-공용-위젯과-rad-파일-연결-2026-11-01)에 기록합니다.
+
+## OpenCourant Starter와 Engine 실행
+
+연결 설정의 OpenCourant 경로나 `CAELAB_OPENCOURANT`에 설치 홈 디렉터리(하위 `exec/`에 Starter·Engine이 있는 폴더) 또는 `starter_*` 실행파일을 지정합니다. 기존 JobManager가 두 단계를 관리하며 별도의 실행 관리자는 만들지 않습니다.
+
+Prep에서 생성한 `이름_0000.rad`를 솔버 노드의 입력으로 등록하고 같은 폴더에 `이름_0001.rad`와 모든 상대 INCLUDE 파일을 둡니다. 첫 실행 프로파일은 Engine의 `/RUN/이름/1` 한 개, 직렬 실행입니다. 절대·상위 폴더·별칭 경로나 재시작 연속 실행을 추정하지 않으며 지원하지 않는 입력은 실행 전에 진단합니다. 원본을 바꾸면 새로 내보내고 입력을 다시 등록합니다.
+
+Run은 원본 이름과 bytes를 보존한 실행 사본을 만들고 Starter의 정상 종료와 restart 파일을 확인한 뒤 Engine을 실행합니다. 단계별 상태·로그·실패/취소와 결과 원본 경로를 기존 실행 목록에서 확인할 수 있습니다. 원본 또는 실행 입력이 바뀌면 stale/failed로 표시합니다. native animation의 모든 물리 필드가 해독되는 것은 아니므로 `partial`을 완전한 결과 판독 성공으로 해석하지 않습니다. 현재 검증과 남은 플랫폼 범위는 [W3 실행 기록](CURRENT_STATE.md#rad-w3)을 따릅니다.
 
 ## 문서 길잡이
 

@@ -118,7 +118,7 @@ def collect_radioss_results(workdir: Path, *, check_cancelled=None) -> dict:
     checkpoint = check_cancelled or (lambda: None)
     checkpoint()
     listings = sorted(workdir.glob("*_0001.out")) or sorted(workdir.glob("*.out"))
-    animations = sorted(path for path in workdir.iterdir() if re.fullmatch(r"A\d{3}", path.name, re.I))
+    animations = sorted(path for path in workdir.iterdir() if path.is_file() and re.fullmatch(r".*A\d{3,}", path.name, re.I))
     listing_text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in listings)
     failure = detect_radioss_failure(listing_text)
     energies = parse_radioss_output(listings[-1]) if listings else {}
@@ -140,7 +140,8 @@ def collect_radioss_results(workdir: Path, *, check_cancelled=None) -> dict:
         checkpoint()
         nodes, cells = _read_ascii_animation(animation)
         if not nodes:
-            warnings.append(f"{animation.name}: native animation payload was not decoded; empty exchange geometry written.")
+            warnings.append(f"{animation.name}: native animation payload was not decoded; use a compatible external postprocessor.")
+            continue
         else:
             decoded_frames += 1
         relative = f"results/frame-{frame_index:06d}.vtu"
@@ -159,4 +160,6 @@ def collect_radioss_results(workdir: Path, *, check_cancelled=None) -> dict:
     if status == "readable" and (not animations or not listings or not energies or decoded_frames != len(animations)):
         status = "partial"
     return {"status": status, "frames": frames, "exchange_files": exchange_files,
+            "native_files": [path.name for path in listings + animations],
+            "primary_native_output": animations[0].name if animations else listings[-1].name if listings else None,
             "summary": summary, "warnings": warnings}

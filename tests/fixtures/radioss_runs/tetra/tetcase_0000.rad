@@ -1,0 +1,26 @@
+#RADIOSS STARTER
+/BEGIN
+tetcase
+      2024
+                  Mg                  mm                   s
+                  Mg                  mm                   s
+/MAT/LAW1/1
+linear elastic test steel
+             7.8e-09
+              210000                 0.3
+/PROP/SOLID/1
+explicit linear tetra4
+         1         4         0         0         0         0      1000         1                   0
+                 1.1                0.05                 0.1                   0                   0
+                   0                   0                   0                   0                   0
+/PART/1
+tetra part
+         1         1         0
+/NODE
+         1                   0                   0                   0
+         2                  10                   0                   0
+         3                   0                  10                   0
+         4                   0                   0                  10
+/TETRA4/1
+         1         1         2         3         4
+/END

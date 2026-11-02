@@ -1,0 +1,54 @@
+#RADIOSS STARTER
+/BEGIN
+conditions
+      2024         0
+                  Mg                  mm                   s
+                  Mg                  mm                   s
+/PART/902
+Lower plate
+       207        41         0
+/PART/903
+Upper plate
+       207        41         0
+#include mesh.inc
+/MAT/LAW1/41
+Created steel
+             7.8e-09
+            210000.0                 0.3
+/PROP/SHELL/207
+Created elastic shell
+        24         4         2         2                                     1.0                    
+                 0.0                 0.0                 0.0                 0.0               0.015
+         0                           0.1  0.8333333333333334                   2         0
+/GRNOD/NODE/47
+Support nodes
+       101       205       309       411
+/GRNOD/NODE/59
+Moving nodes
+       501       605       709       811
+/FUNCT/63
+Applied load
+                 0.0                 0.0
+              0.0005                0.75
+               0.002                 1.0
+/SURF/PART/71
+Lower shell surface
+       902
+/CLOAD/81
+Per-node Z load
+        63         Z         0         0        59                           1.0               -0.01
+/BCS/83
+Fixed support
+   111 111         0        47
+/INIVEL/TRA/89
+Impact speed
+                 0.0                 0.0             -1000.0        59         0
+/INTER/TYPE7/97
+Upper to lower
+        59        71      1000         0         1                   0      1000         0         0
+                 1.0                 0.0                 0.0                             0
+                 0.0               1e+30                 0.4                 0.0         1         3
+                 1.0                0.17                 0.0                 0.0               1e+30
+       000                          1000                0.05                 1.0                 0.2
+         0         0                 0.0         2         0         0                 1.0         0
+/END

@@ -8,6 +8,7 @@ import json
 import math
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -210,7 +211,8 @@ class JobManager:
                                 units=dict(reference.units), unit_source=reference.unit_source,
                                 log_path=str(store.root / run_id / "job.log"))
                 control = {"cancel": threading.Event(), "process": None, "group": None, "thread": None, "store": store,
-                           "prerequisites": copy.deepcopy(prerequisites), "stale_input": reference.stale, "cleanup_failed": False}
+                           "prerequisites": copy.deepcopy(prerequisites), "stale_input": reference.stale,
+                           "registered_input_revision": reference.revision, "cleanup_failed": False}
                 self._native[run_id], self._controls[run_id] = run, control
                 try:
                     run.workdir.mkdir(parents=True)
@@ -226,7 +228,7 @@ class JobManager:
                     lease.release()
                     return copy.deepcopy(run)
                 worker = threading.Thread(target=self._run_native, args=(run_id, status, timeout, lease), daemon=True,
-                                          name=f"caelab-ccx-{run_id[:8]}")
+                                          name=f"caelab-{status.spec.id}-{run_id[:8]}")
                 control["thread"] = worker
                 try:
                     worker.start()
@@ -248,6 +250,8 @@ class JobManager:
             run, control = self._native[run_id], self._controls[run_id]
         store = control["store"]
         deadline = time.monotonic() + timeout
+        current_stage = None
+        stage_offset = 0
 
         def check():
             if control["cancel"].is_set():
@@ -275,53 +279,92 @@ class JobManager:
                 if file_revision(reference.path) != reference.revision or reference.stale or fingerprint(reference.path) != before:
                     raise ValueError(f"상위 파일이 변경/누락되어 입력 덱을 다시 작성·등록해야 합니다: {reference.path}")
                 lineage.append({"source_path": reference.path, "revision": reference.revision, "stat": before})
-            snapshot = snapshot_input(run.input_path, run.workdir, check)
+            snapshotter = getattr(adapter, "snapshot_input", snapshot_input)
+            snapshot = snapshotter(run.input_path, run.workdir, check)
             snapshot["prerequisites"] = lineage
             update(snapshot=snapshot, input_revision=snapshot["input_revision"])
+            if status.spec.id in {"radioss", "openradioss", "opencourant"} and snapshot["input_revision"] != control["registered_input_revision"]:
+                raise ValueError("등록한 Starter 원본이 변경되었습니다. 입력 파일을 다시 등록한 뒤 실행하세요.")
             check()
-            request = adapter.build_run_request(status, run.workdir, Path(run.input_path))
+            stage_builder = getattr(adapter, "build_run_stages", None)
+            stages = (stage_builder(status, run.workdir, snapshot) if stage_builder else
+                      [("solver", adapter.build_run_request(status, run.workdir, Path(run.input_path)))])
+            request = stages[0][1]
             snapshot["execution"] = {"argv": request.argv, "cwd": str(request.cwd), "executable": status.path,
                                      "discovery_source": status.source, "native_environment": status.execution_environment,
                                      "host_os": status.host_os,
                                      "runtime_env_names": sorted(status.runtime_env)}
+            snapshot["stages"] = [{"name": name, "state": "pending", "argv": request.argv,
+                                   "cwd": str(request.cwd), "executable": request.argv[0],
+                                   "runtime_env_names": sorted(status.runtime_env),
+                                   "log_path": f"{name}.log", "returncode": None, "pid": None,
+                                   "started_at": None, "finished_at": None, "error": ""}
+                                  for name, request in stages]
             update(snapshot=snapshot)
-            with Path(run.log_path).open("wb") as log:
-                if os.name == "nt":
-                    gate = run.workdir / ".start-solver"
-                    script = (
-                        "import json,subprocess,sys,time; from pathlib import Path; "
-                        "gate=Path(sys.argv[1]); deadline=time.monotonic()+30; "
-                        "exec('while not gate.exists():\\n if time.monotonic()>deadline: raise SystemExit(125)\\n time.sleep(.02)'); "
-                        # pythonw's all-default Popen path does not forward the redirected log handles.
-                        "raise SystemExit(subprocess.Popen(json.loads(sys.argv[2]),stdin=subprocess.DEVNULL,"
-                        "stdout=sys.stdout,stderr=subprocess.STDOUT,shell=False).wait())"
-                    )
-                    process = subprocess.Popen([sys.executable, "-c", script, str(gate), json.dumps(request.argv)],
-                                               cwd=request.cwd, env=request.env, stdout=log, stderr=subprocess.STDOUT,
-                                               shell=False, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
-                    control["process"] = process
-                    control["group"] = _WindowsRunGroup(process)
+            for index, (name, request) in enumerate(stages):
+                check()  # never start Engine after cancellation/timeout in Starter
+                current_stage = snapshot["stages"][index]
+                current_stage.update(state="running", started_at=utc_now())
+                update(snapshot=snapshot)
+                stage_offset = Path(run.log_path).stat().st_size if Path(run.log_path).exists() else 0
+                with Path(run.log_path).open("ab") as log:
+                    if stage_builder:
+                        log.write(f"\n=== {name} ===\n".encode()); log.flush()
+                    if os.name == "nt":
+                        gate = run.workdir / ".start-solver"
+                        gate.unlink(missing_ok=True)
+                        script = (
+                            "import json,subprocess,sys,time; from pathlib import Path; "
+                            "gate=Path(sys.argv[1]); deadline=time.monotonic()+30; "
+                            "exec('while not gate.exists():\\n if time.monotonic()>deadline: raise SystemExit(125)\\n time.sleep(.02)'); "
+                            "raise SystemExit(subprocess.Popen(json.loads(sys.argv[2]),stdin=subprocess.DEVNULL,"
+                            "stdout=sys.stdout,stderr=subprocess.STDOUT,shell=False).wait())"
+                        )
+                        process = subprocess.Popen([sys.executable, "-c", script, str(gate), json.dumps(request.argv)],
+                                                   cwd=request.cwd, env=request.env, stdout=log, stderr=subprocess.STDOUT,
+                                                   shell=False, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
+                        control["process"] = process
+                        control["group"] = _WindowsRunGroup(process)
+                        check()
+                        gate.touch()
+                    else:
+                        process = subprocess.Popen(request.argv, cwd=request.cwd, env=request.env, stdin=subprocess.DEVNULL,
+                                                   stdout=log, stderr=subprocess.STDOUT, shell=False, start_new_session=True)
+                        control["process"] = process
+                    current_stage["pid"] = process.pid
+                    update(state="running", pid=process.pid, snapshot=snapshot)
+                    while not _native_exited(process):
+                        check()
+                        control["cancel"].wait(0.05)
                     check()
-                    gate.touch()
-                else:
-                    process = subprocess.Popen(request.argv, cwd=request.cwd, env=request.env, stdout=log,
-                                               stderr=subprocess.STDOUT, shell=False, start_new_session=True)
-                    control["process"] = process
-                update(state="running", pid=process.pid)
-                while not _native_exited(process):
+                    returncode = _finish_owned(control)
+                    control["process"] = None
+                    current_stage["returncode"] = returncode
+                    update(returncode=returncode)
+                    if returncode:
+                        raise ValueError(f"{status.spec.name} {name} 종료 코드: {returncode}")
+                    validator = getattr(adapter, "validate_stage", None)
+                    if validator:
+                        validator(name, run.workdir, snapshot)
+                    current_stage.update(state="completed", finished_at=utc_now())
+                    update(snapshot=snapshot)
+                with Path(run.log_path).open("rb") as source, (run.workdir / current_stage["log_path"]).open("wb") as target:
+                    source.seek(stage_offset); shutil.copyfileobj(source, target)
+                current_stage = None
+            if stage_builder:
+                for item in snapshot["files"]:
                     check()
-                    control["cancel"].wait(0.05)
-                check()
-                returncode = _finish_owned(control)
-                update(returncode=returncode, state="completed" if returncode == 0 else "failed",
-                       error="" if returncode == 0 else f"{status.spec.name} 종료 코드: {returncode}")
+                    if file_revision(run.workdir / item["execution_path"]) != item["execution_sha256"]:
+                        raise ValueError(f"실행 중 보존 입력이 변경되었습니다: {item['execution_path']}")
+            update(state="completed", error="")
             if run.state == "completed":
                 update(parse_state="reading")
                 try:
                     result = adapter.collect_results(run.workdir, check_cancelled=check)
                     check()
-                    snapshot["outputs"] = {name: file_revision(run.workdir / name) for name in adapter.expected_output_names()
-                                           if (run.workdir / name).is_file()}
+                    artifact_paths = getattr(adapter, "artifact_paths", None)
+                    paths = artifact_paths(run.workdir, snapshot) if artifact_paths else [run.workdir / name for name in adapter.expected_output_names()]
+                    snapshot["outputs"] = {path.relative_to(run.workdir).as_posix(): file_revision(path) for path in paths if path.is_file()}
                     update(result=result, parse_state=result["status"], snapshot=snapshot)
                 except _NativeCancelled:
                     raise
@@ -336,6 +379,9 @@ class JobManager:
             try:
                 if control["process"] is not None:
                     run.returncode = _finish_owned(control, cancel=True)
+                    if current_stage is not None:
+                        current_stage["returncode"] = run.returncode
+                    control["process"] = None
             except Exception as cleanup:
                 control["cleanup_failed"] = True
                 cleanup_error = f" 소유 프로세스 종료를 확인하지 못했습니다: {cleanup}"
@@ -344,9 +390,15 @@ class JobManager:
                 run.error = f"{type(exc).__name__}: {exc}{cleanup_error}"
                 if run.parse_state == "reading":
                     run.parse_state = "failed"
+                if current_stage is not None:
+                    current_stage.update(state=run.state, error=run.error, finished_at=utc_now())
+                    run.snapshot["stages"] = copy.deepcopy(snapshot["stages"])
             try:
                 with Path(run.log_path).open("a", encoding="utf-8") as log:
                     log.write("\n" + traceback.format_exc() + cleanup_error)
+                if current_stage is not None:
+                    with Path(run.log_path).open("rb") as source, (run.workdir / current_stage["log_path"]).open("wb") as target:
+                        source.seek(stage_offset); shutil.copyfileobj(source, target)
             except OSError:
                 pass
         finally:
@@ -358,6 +410,8 @@ class JobManager:
                 paths = [run.workdir / name for name in ('model.frd', 'model.dat', 'job.log')]
                 paths.extend((run.workdir / 'results').glob('*.pvd'))
                 paths.extend((run.workdir / 'results').glob('*.vtu'))
+                if hasattr(adapter, "artifact_paths"):
+                    paths = adapter.artifact_paths(run.workdir, run.snapshot)
                 for path in paths:
                     if path.is_file():
                         if not path.resolve().is_relative_to(run.workdir.resolve()):
@@ -371,6 +425,10 @@ class JobManager:
                     run.error += f' 실행 출력 해시 기록 실패: {exc}'
             with self._native_lock:
                 run.finished_at = utc_now()
+                for stage in run.snapshot.get('stages', []):
+                    if stage.get('state') == 'pending':
+                        stage.update(state='not_started', finished_at=run.finished_at,
+                                     error='앞 단계 실패·취소 또는 시간 초과로 실행하지 않았습니다.')
                 try:
                     store.write(run)
                 except Exception as exc:
