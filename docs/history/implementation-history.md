@@ -67,6 +67,7 @@
 | 전문가 기능 인계 | [assist/MERGE_REQUEST](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/caelab/assist/MERGE_REQUEST.md). 당시 요청과 실제 원격 누락을 지적한 초기 리뷰를 함께 읽습니다. |
 | PDE 기능 인계 | [pde/MERGE_REQUEST](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/caelab/pde/MERGE_REQUEST.md). 현행 구현 계약은 [구조](../../ARCHITECTURE.md)를 확인합니다. |
 | 솔버 기능 인계 | [solvers/MERGE_REQUEST](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/caelab/solvers/MERGE_REQUEST.md). 당시 설치·구현 요청이며 현재 지원표가 아닙니다. |
+| 퇴역 numerical 운영 지침 | [당시 AGENTS 원문](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/caelab/numerical/AGENTS.md). 새 수치 코드 추가를 허용하던 지침과 clean-slate 폐기 결정을 대조하는 과거 자료입니다. |
 
 ## 이전 화면 자료
 

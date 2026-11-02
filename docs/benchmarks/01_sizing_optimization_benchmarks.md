@@ -56,6 +56,8 @@
 
 ---
 
+<a id="4-상세-벤치마크-2-10-절점-트러스-치수-최적화-10-bar-truss"></a>
+
 ## 4. 상세 벤치마크 2: 10부재 트러스 치수 최적화 (10-Bar Truss)
 
 - **정의 파일**: `benchmarks/definitions/truss_10bar_template.inp`
