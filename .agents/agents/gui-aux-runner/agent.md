@@ -1,6 +1,6 @@
 ---
 name: gui-aux-runner
-description: 보조 창(main_window.py, optimization_panel.py, viewport.py) 테마 연동, 아이콘 보강 및 전체 pytest 회귀 실행 담당 에이전트.
+description: 보조 창(main_window.py, viewport.py) 테마 연동, 아이콘 보강 및 전체 pytest 회귀 실행 담당 에이전트.
 tools:
     - send_message
     - view_file
