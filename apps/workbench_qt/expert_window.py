@@ -30,12 +30,21 @@ def _evidence_name(evidence):
     return evidence_name(evidence)
 
 
+def _view_settings(settings=None):
+    if settings is not None:
+        return settings
+    override = os.environ.get('CAELAB_EXPERT_SETTINGS_PATH', '').strip()
+    if override:
+        return QSettings(override, QSettings.IniFormat)
+    return QSettings(QSettings.defaultFormat(), QSettings.UserScope, 'CAELAB', 'ExpertChat')
+
+
 class ExpertWindow(QMainWindow):
     def __init__(self, discussion_path=None, *, project_path=None, node_id=None,
                  run_id=None, workbench=None, view_settings=None):
         super().__init__()
         self.workbench = workbench or Workbench()
-        self.view_settings = view_settings if view_settings is not None else QSettings(QSettings.defaultFormat(), QSettings.UserScope, 'CAELAB', 'ExpertChat')
+        self.view_settings = _view_settings(view_settings)
         self._pending_view = None
         self.path = None
         self.document = {}

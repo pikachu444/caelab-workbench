@@ -185,3 +185,57 @@ def test_citation_chips_preserve_inline_and_fenced_code_and_scientific_unicode(a
     cursor = browser.document().find('강조')
     assert cursor.charFormat().fontWeight() == 700
     assert cursor.charFormat().background().color() == QColor(get_palette()['chat_citation_bg'])
+
+
+def test_user_error_type_and_string_classification():
+    from apps.workbench_qt.expert_chat import user_error
+    from caelab.assist.discussions import DiscussionConflict, DiscussionBusy, DiscussionFormatError
+
+    # 1. Type-based: DiscussionConflict with tricky text ("덮어쓸 수 없습니다")
+    # Must NOT be misclassified as missing file despite '없'
+    conflict_err = DiscussionConflict("다른 대화 또는 개정의 내용으로 덮어쓸 수 없습니다.")
+    msg = user_error(conflict_err)
+    assert "다른 창에서 대화가 변경되었습니다" in msg
+    assert "찾지 못했습니다" not in msg
+
+    # Plain string fallback with "덮어쓸 수 없습니다"
+    msg_str = user_error("다른 대화 또는 개정의 내용으로 덮어쓸 수 없습니다.")
+    assert "다른 창에서 대화가 변경되었습니다" in msg_str
+    assert "찾지 못했습니다" not in msg_str
+
+    # 2. DiscussionBusy
+    busy_turn = DiscussionBusy("이 대화에 진행 중인 질문이 있습니다.")
+    assert "진행 중인 질문이 있습니다" in user_error(busy_turn)
+    assert "진행 중인 질문이 있습니다" in user_error(str(busy_turn))
+    
+    busy_other = DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.")
+    msg_busy_obj = user_error(busy_other)
+    msg_busy_str = user_error(str(busy_other))
+    # Both object and its serialized string form (as stored in pending['error'])
+    # must produce the exact same Busy advice, never conflict advice.
+    assert "다른 창에서 대화를 저장하고 있습니다" in msg_busy_obj
+    assert "다른 창에서 대화를 저장하고 있습니다" in msg_busy_str
+    assert "변경되었습니다" not in msg_busy_str
+    assert msg_busy_obj == msg_busy_str
+
+    # Final-save busy lock variants must map to busy advice, not conflict
+    assert "다른 창에서 대화를 저장하고 있습니다" in user_error("다른 프로세스가 대화를 저장하고 있습니다.")
+    assert "다른 창에서 대화를 저장하고 있습니다" in user_error("대화 저장 중 잠금 상태")
+    assert "다른 창에서 대화를 저장하고 있습니다" in user_error("Storage lock busy")
+
+    # 3. FileNotFoundError & genuine missing file
+    fnf = FileNotFoundError(2, "No such file or directory", "model.inp")
+    assert "필요한 파일이나 계산 기록을 찾지 못했습니다" in user_error(fnf)
+    assert "필요한 파일이나 계산 기록을 찾지 못했습니다" in user_error("필요한 파일이 없습니다.")
+
+    # 4. DiscussionFormatError & integrity
+    fmt_err = DiscussionFormatError("대화 발언 형식이 잘못되었습니다.")
+    assert "대화 또는 첨부 자료의 형식이 올바르지 않습니다" in user_error(fmt_err)
+    integrity_err = DiscussionFormatError("첨부 자료의 무결성 검증 실패: SHA256 불일치")
+    assert "무결성을 확인하지 못했습니다" in user_error(integrity_err)
+
+    # 5. TimeoutError & Cancel
+    timeout_err = TimeoutError("Request timed out")
+    assert "응답 시간이 초과되었습니다" in user_error(timeout_err)
+    assert "응답 대기를 중단했습니다" in user_error("사용자가 중단했습니다.")
+

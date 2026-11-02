@@ -1,6 +1,7 @@
 """Independent four-area Studio. Native state and execution belong to Workbench."""
 from __future__ import annotations
 import json
+import os
 from copy import deepcopy
 from pathlib import Path
 import numpy as np
@@ -28,6 +29,13 @@ from .views.parallel_view import ParallelCoordinatesWidget
 from .views.response_surface_view import ResponseSurfaceWidget
 from .views.sensitivity_view import SensitivityTornadoWidget,TornadoItem
 from .views.convergence_view import ConvergenceWidget
+
+
+def _layout_settings():
+    override = os.environ.get("CAELAB_MDO_SETTINGS_PATH", "").strip()
+    if override:
+        return QSettings(override, QSettings.IniFormat)
+    return QSettings("CAELab", "MDO Studio")
 
 
 class StudioTask(QRunnable):
@@ -841,11 +849,11 @@ class MDOStudioWindow(QMainWindow):
             self._background('Export CSV',lambda:self.service.export_csv(path,ids,revision=self._display_revision))
 
     def _save_layout(self):
-        settings=QSettings('CAELab','MDO Studio'); settings.setValue('layout',self.saveState()); settings.setValue('splitter',self.center_splitter.saveState())
+        settings=_layout_settings(); settings.setValue('layout',self.saveState()); settings.setValue('splitter',self.center_splitter.saveState())
 
     def _restore_layout(self):
         self._cancel_default_splitter()
-        settings=QSettings('CAELab','MDO Studio'); state=settings.value('layout'); splitter=settings.value('splitter')
+        settings=_layout_settings(); state=settings.value('layout'); splitter=settings.value('splitter')
         if isinstance(state,QByteArray) and state.size()<100000: self.restoreState(state)
         restored=bool(isinstance(splitter,QByteArray) and 0<splitter.size()<10000 and self.center_splitter.restoreState(splitter))
         study_restored=self._restore_study_view()
