@@ -1,3 +1,13 @@
+<a id="mdo-sensitivity-cache-integrity-followup"></a>
+
+## MDO Studio 민감도 분석 캐시 키 계약 및 전체 SHA-256 무결성 보완 (2026-11-02)
+
+기준 main `32e9d7c`에서 `fix/mdo-sensitivity-cache-integrity-followup`으로 PR #59에 대한 Codex(ChatGPT) 비판 검토 지적 2건을 해결했다.
+
+- **원본 INP/INCLUDE 캐시 키 반영 (P1):** `_spearman_condition_key`에서 존재하지 않던 `service._sources` 대신 `service.input_sources()`의 모든 경로 계약을 읽어 원본 덱 및 INCLUDE 파일(`material.inc` 등)의 지문을 캐시 키에 포함했다. 파일 수정/삭제 시 캐시가 즉시 무효화되어 `_require_sources` 검증 및 재계산이 실행된다.
+- **산출물 전체 내용 무결성 보장 (P2):** `_file_fingerprint`에서 262,144 bytes 초과 파일에 대해 mtime/size 단축 비교를 배제하고 모든 파일 크기에 대해 스트리밍 `hashlib.sha256()` 지문을 계산하도록 개선했다. 동일 크기/mtime 변조 시에도 SHA-256 해시 변경으로 캐시 오염을 감지한다.
+- **검증:** `tests/test_mdo_phase3_gui.py` 41 passed (반례 1, 2 검증 단위 테스트 포함).
+
 <a id="mdo-calculix-evaluator-41"></a>
 
 ## CalculiXEvaluator 동적 탐색 및 미사용 인자 정리 (2026-11-02)

@@ -736,3 +736,60 @@ def test_sensitivity_skips_active_batch_and_coalesces_identical_spearman_refresh
     finally:
         sta_path.write_bytes(original_bytes)
     window.close(); qapp.processEvents()
+
+
+def test_file_fingerprint_full_sha256_detects_same_size_same_mtime_content_change(tmp_path, qapp):
+    import os
+    window = MDOStudioWindow(service=None)
+    target = tmp_path / "large_output.sta"
+    size = 300_000
+    target.write_bytes(b"A" * size)
+    st = target.stat()
+    orig_atime = st.st_atime
+    orig_mtime = st.st_mtime
+
+    fp1 = window._file_fingerprint(target)
+    assert fp1[0] is True
+    assert fp1[1] == size
+
+    # Alter contents with same size and restore exact mtime
+    target.write_bytes(b"B" * size)
+    os.utime(target, ns=(st.st_atime_ns, st.st_mtime_ns))
+    st2 = target.stat()
+    assert st2.st_size == size
+    assert int(st2.st_mtime) == int(st.st_mtime)
+
+    fp2 = window._file_fingerprint(target)
+    # The SHA256 must distinguish the two states despite same size and same mtime
+    assert fp1 != fp2
+    assert fp1[2] != fp2[2]
+
+
+def test_sensitivity_cache_key_tracks_input_sources_and_invalidates_on_include_modification(native_service, qapp, monkeypatch):
+    from pathlib import Path
+    service = native_service
+    records = measured(service, (1.2, 1.8, 2.4, 3.0))
+    service.workbench.jobs.close = lambda: True
+    window = MDOStudioWindow(service=service)
+
+    key1 = window._spearman_condition_key(records, 'mass')
+    assert key1 is not None
+
+    src_paths = list(service.input_sources().keys())
+    assert len(src_paths) >= 1
+    target_src = Path(src_paths[0])
+    orig_content = target_src.read_text(encoding='utf-8')
+
+    try:
+        # Modify the source file
+        target_src.write_text(orig_content + "\n** MODIFIED", encoding='utf-8')
+        key2 = window._spearman_condition_key(records, 'mass')
+        assert key1 != key2
+
+        # Delete the source file
+        target_src.unlink()
+        key3 = window._spearman_condition_key(records, 'mass')
+        assert key1 != key3
+        assert key2 != key3
+    finally:
+        target_src.write_text(orig_content, encoding='utf-8')
