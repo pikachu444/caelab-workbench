@@ -180,7 +180,9 @@ def test_actual_calculix_run_is_independent_of_expert_provider(app, monkeypatch,
         pytest.skip("ccx is not available for the analysis-window run path")
     monkeypatch.setitem(sys.modules, "caelab.assist.experts", None)
     window = MainWindow()
-    window.set_model(cantilever_model(), tmp_path / 'project')
+    folder = tmp_path / 'project'
+    window.workbench.save_project(cantilever_model(), folder)
+    window.set_model(window.workbench.open_project(folder), folder)
     try:
         window.run_solve()
         deadline = time.monotonic() + 20
