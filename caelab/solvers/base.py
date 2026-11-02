@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from ..model.schema import StructuralModel
 from ..validate.checker import Issue
@@ -95,3 +95,6 @@ class SolverConverter(Protocol):
     def write_input(self, model: StructuralModel, workdir: Path) -> Path: ...
 
     def run(self, model: StructuralModel, deck: Path, workdir: Path) -> ResultSet: ...
+
+    def read_result(self, model: StructuralModel, deck: Path, workdir: Path,
+                    *, check_cancelled: Callable[[], None] | None = None) -> ResultSet: ...

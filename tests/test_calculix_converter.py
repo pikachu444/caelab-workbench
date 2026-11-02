@@ -315,6 +315,50 @@ def _fake_solver(monkeypatch, tmp_path, frd_text, dat_text=None, stdout="solver 
     monkeypatch.setattr(module.subprocess, "run", execute)
 
 
+@pytest.mark.parametrize('declaration,units', [('si', {'length': 'm', 'force': 'N'}),
+                                             ('mm-tonne-s', {}), ('', {})])
+@pytest.mark.parametrize('fields,success', [('U', True), ('U, S', False)])
+def test_saved_result_reader_preserves_inputs_outputs_log_and_units(tmp_path, monkeypatch, declaration, units, fields, success):
+    import caelab.solvers.calculix as module
+    model = _tet_model('PIN')
+    model.unit_system = declaration
+    before_model = model.to_dict()
+    deck = tmp_path / 'model.inp'
+    deck.write_text(f'*NODE FILE\n{fields}\n')
+    (tmp_path / 'model.frd').write_text(_frd_block('DISP', {1: [0, -0.0002, 0]}))
+    (tmp_path / 'job.log').write_bytes(b'preserved solver log\n')
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    monkeypatch.setattr(module, 'find_ccx', lambda: pytest.fail('executable discovery'))
+    monkeypatch.setattr(module.subprocess, 'run', lambda *a, **kw: pytest.fail('solver execution'))
+    result = CalculiXConverter().read_result(model, deck, tmp_path)
+    assert result.success is success and result.displacements[1] == [0, -0.0002, 0]
+    assert bool(result.validation_issues) is not success
+    assert result.max_displacement == pytest.approx(.0002)
+    assert result.units == units and result.reaction_totals == {}
+    assert result.log_path == str(tmp_path / 'job.log')
+    assert 'preserved solver log' in result.log_tail
+    assert model.to_dict() == before_model
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+def test_saved_result_reader_propagates_cancellation_during_frd_read(tmp_path):
+    class Cancelled(RuntimeError):
+        pass
+    calls = []
+    def check():
+        calls.append(None)
+        if len(calls) == 2:
+            raise Cancelled('cancel while reading')
+    deck = tmp_path / 'model.inp'
+    deck.write_text('*NODE FILE\nU\n')
+    (tmp_path / 'model.frd').write_text(_frd_block('DISP', {1: [0, 0, 0]}))
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    with pytest.raises(Cancelled, match='cancel while reading'):
+        CalculiXConverter().read_result(_tet_model('PIN'), deck, tmp_path, check_cancelled=check)
+    assert len(calls) == 2
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
 def test_converter_does_not_use_displacements_before_final_unsupported_dat_frame(tmp_path, monkeypatch):
     model = cantilever_model()
     converter = CalculiXConverter()

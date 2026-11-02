@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from ..model.schema import StructuralModel
 from ..validate.checker import Issue, validate_model
@@ -304,11 +305,24 @@ class CalculiXConverter:
         log_path.write_text((proc.stdout or "") + (proc.stderr or ""), encoding="utf-8")
         if proc.returncode != 0:
             return finish(ResultSet(self.id, False), f"솔버 종료 코드: {proc.returncode}")
+        result = self.read_result(model, deck, workdir)
+        return finish(result, "\n".join(result.validation_issues))
+
+    def read_result(self, model: StructuralModel, deck: Path, workdir: Path,
+                    *, check_cancelled: Callable[[], None] | None = None) -> ResultSet:
+        """Read a run whose successful process exit the caller has confirmed.
+
+        The model and deck must belong to that run. No files are changed.
+        """
+        check = check_cancelled or (lambda: None)
+        check()
+        workdir = Path(workdir).resolve()
+        log_path = workdir / 'job.log'
         requested = _output_requests(Path(deck))
         frd_path = workdir / f"{Path(deck).stem}.frd"
         dat_path = workdir / f"{Path(deck).stem}.dat"
-        frd = _read_frd(frd_path) if frd_path.exists() else FrdResults()
-        dat = parse_dat(dat_path) if dat_path.exists() else DatResults()
+        frd = _read_frd(frd_path, check_cancelled=check) if frd_path.exists() else FrdResults()
+        dat = parse_dat(dat_path, check_cancelled=check) if dat_path.exists() else DatResults()
         result = frd.result
         use_dat = bool(
             (not result.displacements and dat.displacements)
@@ -336,6 +350,7 @@ class CalculiXConverter:
         if not frd.fields and not dat.displacements and not dat.nodal_forces and not dat.totals_by_set:
             errors.append("results: 유효한 결과 프레임이 없습니다.")
         for field, kind, options in requested:
+            check()
             scope = options.get("NSET")
             if kind == "*NODE PRINT":
                 blocks = dat.displacements_by_set if field == "U" else dat.forces_by_set
@@ -365,12 +380,14 @@ class CalculiXConverter:
                 errors.append(f"outputs.{field}{'.' + scope if scope else ''}: 요청한 결과 필드·집합·출력 형식이 없거나 확인할 수 없습니다.")
         constrained = {}
         for step in model.steps:
+            check()
             for name in step.bcs:
                 bc = model.bc(name)
                 for node in model.sets[bc.target_set].members:
                     constrained.setdefault(node, set()).update(bc.fixed_dofs)
         loaded = set()
         for load in model.loads:
+            check()
             if load.kind == "force" and load.target_set in model.sets:
                 loaded.update(model.sets[load.target_set].members)
             elif load.kind in ("pressure", "gravity"):
@@ -395,6 +412,7 @@ class CalculiXConverter:
                 covered = set()
                 matched = []
                 for name, selection in model.sets.items():
+                    check()
                     members = set(selection.members) if selection.kind == "node" else set()
                     if name.upper() in dat.totals_by_set and members and all(constrained.get(n) == {1, 2, 3} for n in members):
                         if covered.intersection(members):
@@ -409,7 +427,12 @@ class CalculiXConverter:
                     }
         result.validation_issues = errors
         result.success = not errors
-        return finish(result, "\n".join(errors))
+        result.units = {"length": "m", "force": "N"} if model.unit_system == "si" else {}
+        result.log_path = str(log_path)
+        log = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else ''
+        result.log_tail = (log + ('\n' + '\n'.join(errors) if errors else ''))[-4000:]
+        check()
+        return result
 
 
 def _output_requests(deck: Path) -> list[tuple[str, str, dict]]:
@@ -442,7 +465,7 @@ class FrdResults:
     frames: tuple = ()
 
 
-def _read_frd(path: Path) -> FrdResults:
+def _read_frd(path: Path, *, check_cancelled: Callable[[], None] | None = None) -> FrdResults:
     frames = {}
     frame = None
     step, increment = None, None
@@ -451,6 +474,8 @@ def _read_frd(path: Path) -> FrdResults:
     rows = {}
     errors = []
     for line_number, line in enumerate(Path(path).read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+        if check_cancelled is not None and line_number % 1024 == 1:
+            check_cancelled()
         if line.startswith("    1PSTEP"):
             # CalculiX frdheader.c: dataset counter is separate from step/increment.
             try:
