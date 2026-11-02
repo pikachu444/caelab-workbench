@@ -437,7 +437,8 @@ def _provided_materials(discussion, evidence, origin):
 
 
 def ask_discussion(path, question, *, evidence_id: str, template_id: str,
-                   provider_id: str | None = None, expected_revision: int, check_cancelled=None) -> dict:
+                   provider_id: str | None = None, expected_revision: int, check_cancelled=None,
+                   on_stage=None) -> dict:
     """Ask once with a frozen document/evidence context and a 60-second deadline.
 
     Only the caller writes. A late daemon worker can neither update a document
@@ -481,7 +482,7 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                         **origin, "evidence_sources": [], "provided_materials": [],
                         "constraints": copy.deepcopy(document["constraints"]),
                         "citations": {"shown_ids": [], "unverified": [], "verified": []},
-                        "created_at": now, "finished_at": None}
+                        "created_at": now, "finished_at": None, "stage": "preparation"}
                 history = copy.deepcopy(document["turns"])
                 document["turns"].append(turn)
                 document["selected_evidence_id"] = evidence_id
@@ -496,6 +497,11 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
         start_time = time.monotonic()
         prep_deadline = start_time + prep_budget
         overall_deadline = start_time + overall_budget
+        if on_stage is not None:
+            try:
+                on_stage("preparation")
+            except Exception:
+                pass
         stopped = threading.Event()
         responses = queue.Queue(maxsize=1)
         supplied = queue.Queue(maxsize=1)
@@ -543,14 +549,24 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                            "knowledge_error": discussion.knowledge_result.error if discussion.knowledge_result else None}
                 checkpoint("prep")  # retrieval must not launch a provider after cancellation or prep timeout
                 supplied.put(context)
+                checkpoint("prep")
 
                 prep_finished = time.monotonic()
                 provider_deadline_box[0] = min(prep_finished + provider_budget, overall_deadline)
+                checkpoint("provider")
+
                 provider_started.set()
+                if on_stage is not None:
+                    try:
+                        on_stage("provider")
+                    except Exception:
+                        pass
+                checkpoint("provider")
 
                 reply = provider.discuss(prompt)
                 if not isinstance(reply, str) or not reply.strip():
                     raise ValueError("공급자가 비어 있는 답변을 반환했습니다.")
+                checkpoint("provider")
                 responses.put(("completed", reply, None))
             except (Cancelled, TimeoutError) as error:
                 responses.put(("cancelled" if isinstance(error, Cancelled) else "timed_out", "", str(error)))
@@ -583,6 +599,25 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                 break
             try:
                 status, reply, error_text = responses.get(timeout=min(.05, max(0.001, remaining)))
+                now = time.monotonic()
+                if check_cancelled is not None:
+                    try:
+                        check_cancelled()
+                    except Exception as error:
+                        status, reply, error_text = "cancelled", "", f"{type(error).__name__}: {error}"
+                        break
+                if not provider_started.is_set():
+                    if now >= prep_deadline:
+                        status, reply, error_text = "timed_out", "", f"전문가 준비 대기 시간이 {prep_budget:g}초 제한을 넘었습니다."
+                        break
+                else:
+                    target_deadline = min(provider_deadline_box[0], overall_deadline)
+                    if now >= target_deadline:
+                        status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
+                        break
+                if now >= overall_deadline:
+                    status, reply, error_text = "timed_out", "", f"전문가 요청이 {overall_budget:g}초 제한을 넘었습니다."
+                    break
                 break
             except queue.Empty:
                 pass
@@ -598,7 +633,8 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                 if current["id"] != pending_document["id"] or (current.get("pending_request") or {}).get("id") != request_id:
                     raise DiscussionConflict("질문을 시작한 대화가 바뀌어 늦은 응답을 저장하지 않았습니다.")
                 final_turn = next(t for t in current["turns"] if t["id"] == request_id)
-                final_turn.update(status=status, reply=reply, error=error_text, finished_at=utc_now())
+                final_stage = "provider" if provider_started.is_set() else "preparation"
+                final_turn.update(status=status, reply=reply, error=error_text, finished_at=utc_now(), stage=final_stage)
                 try:
                     context = supplied.get_nowait()
                 except queue.Empty:

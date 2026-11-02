@@ -871,3 +871,163 @@ def test_split_timeout_budgets_fake_clock_worker_start_delay_anchored_at_caller(
     assert not provider_called.is_set()
 
 
+def test_split_timeout_budgets_responses_queue_deadline_recheck_prevents_completed(tmp_path, monkeypatch):
+    # Counterexample 1: provider returns late response after deadline (e.g. 60.001s).
+    # Caller MUST recheck deadline upon receiving response from responses queue and mark timed_out, NOT completed.
+    fake_time = [1000.0]
+
+    def fake_monotonic():
+        return fake_time[0]
+
+    provider = Provider()
+    discuss_called = threading.Event()
+
+    def slow_discuss(prompt):
+        discuss_called.set()
+        # Advance clock past provider deadline
+        fake_time[0] += 65.0
+        return "LATE_ANSWER_PAST_DEADLINE"
+
+    provider.discuss = slow_discuss
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 20.0)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 85.0)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 85.0)
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+
+    doc = ask(path, doc, template_id="interpretation")
+    turn = doc["turns"][-1]
+    assert turn["status"] == "timed_out"
+    assert turn["reply"] == ""
+    assert "제한을 넘었습니다" in turn["error"]
+    assert turn["stage"] == "provider"
+
+
+def test_split_timeout_budgets_responses_queue_cancellation_recheck_prevents_completed(tmp_path, monkeypatch):
+    # Counterexample 2: provider returns response while check_cancelled is in cancelled state.
+    # Caller MUST recheck check_cancelled upon receiving response and mark cancelled, NOT completed.
+    cancel_flag = threading.Event()
+    provider = Provider()
+
+    def discuss_spy(prompt):
+        cancel_flag.set()
+        return "ANSWER_WHILE_CANCELLED"
+
+    provider.discuss = discuss_spy
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+
+    def check_cancelled():
+        if cancel_flag.is_set():
+            raise RuntimeError("window closed by user")
+
+    doc = ask(path, doc, template_id="interpretation", check_cancelled=check_cancelled)
+    turn = doc["turns"][-1]
+    assert turn["status"] == "cancelled"
+    assert turn["reply"] == ""
+    assert "window closed by user" in turn["error"]
+    assert turn["stage"] == "provider"
+
+
+def test_split_timeout_budgets_supplied_queue_delay_and_caller_timeout_blocks_provider_call(tmp_path, monkeypatch):
+    # Counterexample 3: worker is paused after prep retrieval before launching provider.
+    # Caller times out at prep deadline (21s) and saves/returns timed_out.
+    # When worker is released, provider.discuss MUST NOT be called (0 calls).
+    provider_called = threading.Event()
+    worker_released = threading.Event()
+    orig_provided = service._provided_materials
+
+    def blocking_materials(*args, **kwargs):
+        res = orig_provided(*args, **kwargs)
+        # Block worker until caller has timed out and returned
+        worker_released.wait(2.0)
+        return res
+
+    provider = Provider()
+
+    def discuss_spy(prompt):
+        provider_called.set()
+        return "SHOULD_NEVER_BE_CALLED"
+
+    provider.discuss = discuss_spy
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 0.50)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 1.00)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 1.00)
+    monkeypatch.setattr(service, "_provided_materials", blocking_materials)
+
+    doc = ask(path, doc, template_id="interpretation")
+    turn = doc["turns"][-1]
+    assert turn["status"] == "timed_out"
+    assert "준비 대기 시간" in turn["error"]
+    assert turn["stage"] == "preparation"
+
+    # Now release worker; worker checkpoint must detect stopped and NOT call discuss
+    worker_released.set()
+    time.sleep(0.1)
+    assert not provider_called.is_set()
+
+
+def test_split_timeout_budgets_on_stage_callback_and_turn_stage_recording(tmp_path, monkeypatch):
+    # Verifies service optional on_stage callback and turn stage recording
+    stages = []
+
+    def on_stage_cb(stage):
+        stages.append(stage)
+
+    provider = Provider("STAGE_OK")
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    doc = service.ask_discussion(
+        path, "질문",
+        evidence_id=doc["selected_evidence_id"],
+        template_id="interpretation",
+        expected_revision=doc["revision"],
+        on_stage=on_stage_cb
+    )
+    turn = doc["turns"][-1]
+    assert turn["status"] == "completed"
+    assert turn["stage"] == "provider"
+    assert stages == ["preparation", "provider"]
+
+
+def test_split_timeout_budgets_thread_start_delay_directly_anchored_at_caller(tmp_path, monkeypatch):
+    # Proves that worker thread startup delay (OS scheduling delay before thread runs)
+    # is anchored to caller start_time and counts against preparation budget.
+    fake_time = [1000.0]
+
+    def fake_monotonic():
+        return fake_time[0]
+
+    provider = Provider()
+    provider_called = threading.Event()
+    provider.discuss = lambda prompt: (provider_called.set(), "ok")[1]
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 20.0)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 85.0)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 85.0)
+
+    orig_thread_start = threading.Thread.start
+
+    def delayed_thread_start(self, *args, **kwargs):
+        if self.name.startswith("expert-"):
+            fake_time[0] += 22.0
+        return orig_thread_start(self, *args, **kwargs)
+
+    monkeypatch.setattr(threading.Thread, "start", delayed_thread_start)
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+
+    doc = ask(path, doc, template_id="interpretation")
+    turn = doc["turns"][-1]
+    assert turn["status"] == "timed_out"
+    assert "전문가 준비 대기 시간이 20초 제한을 넘었습니다." in turn["error"]
+    assert turn["stage"] == "preparation"
+    assert not provider_called.is_set()
+
+
+
