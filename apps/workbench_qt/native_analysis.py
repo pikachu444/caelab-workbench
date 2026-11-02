@@ -826,12 +826,12 @@ class NativeAnalysisWindow(QMainWindow):
                 lines.append(f"  마지막 출력 사이클: {int(prt_c)}")
 
             if prt_t is not None:
-                if tot_c is not None and prt_c is not None and tot_c != prt_c:
-                    lines.append(f"  마지막 출력 시간: {prt_t:.6g} {time_unit}")
-                else:
+                if tot_c is not None and prt_c is not None and tot_c == prt_c:
                     lines.append(f"  최종 시간: {prt_t:.6g} {time_unit}")
+                else:
+                    lines.append(f"  마지막 출력 시간: {prt_t:.6g} {time_unit}")
             elif "time" in run_summary:
-                lines.append(f"  최종 시간: {run_summary['time']:.6g} {time_unit}")
+                lines.append(f"  마지막 출력 시간: {run_summary['time']:.6g} {time_unit}")
 
             if "internal_energy" in run_summary:
                 lines.append(f"  내부 에너지 (I-ENERGY): {run_summary['internal_energy']:.6g}")
