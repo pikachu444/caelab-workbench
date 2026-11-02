@@ -1,5 +1,6 @@
 """Connection registry and discussion-summary contracts."""
 
+import json
 import os
 from pathlib import Path
 
@@ -279,3 +280,185 @@ def test_ambiguous_registry_relative_path_does_not_guess_from_cwd(tmp_path, monk
     assert explicit.available
     assert explicit.source == "environment"
     assert explicit.path == str(target)
+
+
+def test_missing_installer_manifest_does_not_crash_and_fails_closed(tmp_path):
+    missing_manifest = tmp_path / "missing_manifest.json"
+    statuses = program_statuses(manifest_path=missing_manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "설치 매니페스트" in s.reason
+    spec = next(spec for spec in PROGRAMS if spec.id == "calculix")
+    assert find_program(spec, manifest_path=missing_manifest) is None
+
+
+def test_corrupt_json_installer_manifest_does_not_crash(tmp_path):
+    corrupt_manifest = tmp_path / "corrupt_manifest.json"
+    corrupt_manifest.write_text("{ broken json: [", encoding="utf-8")
+    statuses = program_statuses(manifest_path=corrupt_manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "형식이 잘못되었습니다" in s.reason
+    spec = next(spec for spec in PROGRAMS if spec.id == "gmsh")
+    assert find_program(spec, manifest_path=corrupt_manifest) is None
+
+
+def test_invalid_structure_installer_manifest_does_not_crash(tmp_path):
+    invalid_manifest = tmp_path / "invalid_manifest.json"
+    invalid_manifest.write_text('{"programs": "not_a_list"}', encoding="utf-8")
+    statuses = program_statuses(manifest_path=invalid_manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "필수 구조" in s.reason
+
+
+def test_malformed_program_entries_in_manifest_do_not_crash(tmp_path, monkeypatch):
+    import sys
+    from caelab.workbench import Workbench
+    host = "windows" if sys.platform.startswith("win") else "linux"
+
+    # 1. Non-dict or empty ID entries must fail closed and never allow bypass via fake executable
+    manifest = tmp_path / "broken_entries.json"
+    manifest.write_text(json.dumps({"programs": ["broken", {}]}), encoding="utf-8")
+    
+    # Even if real env var CAELAB_CODEASTER points to a fake executable, malformed manifest must fail closed
+    fake_exe = tmp_path / ("code_aster.exe" if host == "windows" else "code_aster")
+    fake_exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_exe.chmod(0o755)
+    monkeypatch.setenv("CAELAB_CODEASTER", str(fake_exe))
+
+    statuses = program_statuses(manifest_path=manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "설치 매니페스트" in s.reason
+
+    # Verify Workbench.programs() runs real JSON parsing without mocking loader and Code_Aster remains unavailable
+    monkeypatch.setattr("caelab.connections._DEFAULT_MANIFEST_PATH", manifest)
+    wb = Workbench(tmp_path / "wb")
+    wb_programs = wb.programs()
+    assert len(wb_programs) == len(PROGRAMS)
+    code_aster = next(p for p in wb_programs if p.spec.id == "codeaster")
+    assert not code_aster.available
+    assert "설치 매니페스트" in code_aster.reason
+
+
+def test_manifest_platform_nested_type_errors_fail_closed(tmp_path):
+    import sys
+    host = "windows" if sys.platform.startswith("win") else "linux"
+
+    # 1. Platform is a list/scalar instead of dict
+    bad_platform = tmp_path / "bad_platform.json"
+    bad_platform.write_text(json.dumps({"programs": [{"id": "gmsh", "platforms": {host: []}}]}), encoding="utf-8")
+    statuses = program_statuses(manifest_path=bad_platform)
+    gmsh = next(s for s in statuses if s.spec.id == "gmsh")
+    assert not gmsh.available
+    assert "플랫폼 설정 형식" in gmsh.reason
+
+    # 2. Execution environment is a list/scalar instead of string
+    bad_env = tmp_path / "bad_env.json"
+    bad_env.write_text(json.dumps({"programs": [{"id": "gmsh", "platforms": {host: {"execution_environment": []}}}]}), encoding="utf-8")
+    statuses = program_statuses(manifest_path=bad_env)
+    gmsh = next(s for s in statuses if s.spec.id == "gmsh")
+    assert not gmsh.available
+    assert "실행 환경 설정 형식" in gmsh.reason
+
+
+def test_prep_and_prepomax_allowed_without_installer_manifest_entries(tmp_path, monkeypatch):
+    import sys
+    host = "windows" if sys.platform.startswith("win") else "linux"
+
+    # Prep and PrePoMax do not have entries in manifest.json, but must be discoverable via standard registry/PATH contract
+    manifest = tmp_path / "standard_manifest.json"
+    manifest.write_text(json.dumps({
+        "programs": [
+            {"id": "gmsh", "platforms": {"linux": {"execution_environment": "native"}, "windows": {"execution_environment": "native"}}}
+        ]
+    }), encoding="utf-8")
+
+    # Set up valid fake executables for Prep and PrePoMax via environment variables
+    fake_prep = tmp_path / ("caelab-prep.exe" if host == "windows" else "caelab-prep")
+    fake_prep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_prep.chmod(0o755)
+    monkeypatch.setenv("CAELAB_PREP", str(fake_prep))
+
+    fake_prepomax = tmp_path / ("PrePoMax.exe" if host == "windows" else "PrePoMax")
+    fake_prepomax.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_prepomax.chmod(0o755)
+    monkeypatch.setenv("CAELAB_PREPOMAX", str(fake_prepomax))
+
+    statuses = program_statuses(manifest_path=manifest)
+    prep = next(s for s in statuses if s.spec.id == "caelab_prep")
+    prepomax = next(s for s in statuses if s.spec.id == "prepomax")
+
+    assert prep.available
+    assert prep.source == "environment"
+    assert prep.path == str(fake_prep)
+    assert "매니페스트" not in prep.reason
+
+    # PrePoMax is Windows-only in ProgramSpec
+    if host == "windows":
+        assert prepomax.available
+        assert prepomax.source == "environment"
+        assert prepomax.path == str(fake_prepomax)
+        assert "매니페스트" not in prepomax.reason
+    else:
+        assert not prepomax.available
+        assert "지원 실행 환경" in prepomax.reason
+
+
+def test_installer_manifest_stat_permission_error_fails_closed_without_crashing(tmp_path, monkeypatch):
+    import errno
+    from caelab.workbench import Workbench
+
+    manifest = tmp_path / "protected_manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    real_stat = Path.stat
+
+    def injected_stat(self, *args, **kwargs):
+        if self == manifest:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", injected_stat)
+
+    # 1. Direct program_statuses call with target manifest path
+    statuses = program_statuses(manifest_path=manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "설치 매니페스트를 읽지 못했습니다" in s.reason
+
+    # 2. Real Workbench.programs() boundary with injected _DEFAULT_MANIFEST_PATH
+    monkeypatch.setattr("caelab.connections._DEFAULT_MANIFEST_PATH", manifest)
+    wb = Workbench(tmp_path / "wb")
+    wb_programs = wb.programs()
+    assert len(wb_programs) == len(PROGRAMS)
+    for p in wb_programs:
+        assert not p.available
+        if p.spec.platforms and p.host_os not in p.spec.platforms:
+            assert "지원 실행 환경" in p.reason
+        else:
+            assert "설치 매니페스트를 읽지 못했습니다" in p.reason
+
+
+
