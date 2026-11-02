@@ -36,6 +36,7 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 | Windows 전체 사용 흐름 | 저장·전체 재개, 부모 전체 조작·복구, 실제 IME·창 크기·DPI의 각 증거를 DESIGN 종료 조건과 대조해야 함. 일부 화면·Qt offscreen 통과로 전체 승인하지 않음 |
 | 독립 입력과 검색 평가 | 과거 현황의 PASS 표와 잔여·독립성 판정이 상충함. [종료 표](docs/history/implementation-history.md#1단계-종료-조건별-판정)와 [입력 적격성](docs/history/implementation-history.md#독립-입력-적격성)의 원자료·시점·서명 범위를 대조하기 전 전체 완료를 확정하지 않음 |
 | Windows 배포 | 소스/venv 설치와 standalone EXE/DLL 배포 검증은 별개. 패키징 후보의 실제 사용자 진입점·리소스·독립 프로세스·설정 보존 검증이 남음 |
+| 보조 StructuralModel 창 | 기준 main `96dd109`의 [#44](https://github.com/pikachu444/caelab-workbench/issues/44) 후속 후보에서 단위 표시를 교정했습니다. 정확한 `si`만 SI 환산·기호를 적용하고 다른 선언·미선언은 원값과 단위 미확인 안내를 유지합니다. main 반영은 #44의 연결 PR 병합 상태로 확인합니다. 계산 비동기화·소유 취소와 영구 실행 이력은 [#42](https://github.com/pikachu444/caelab-workbench/issues/42)·[#43](https://github.com/pikachu444/caelab-workbench/issues/43)에 남으며, Windows 실화면·본선 실행의 완료로 확대하지 않습니다. |
 | 미구현 실행 환경 | Windows installer, WSL 파일/작업 연결, 일부 솔버별 전처리·결과 판독은 [플랫폼 계약](ARCHITECTURE.md#플랫폼별-실행-전제)에 명시 |
 
 ## 검사 결과의 범위
