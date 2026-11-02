@@ -173,3 +173,35 @@ def test_actual_radioss_gui_action_runs_solver_and_reopens_receipt(app, tmp_path
     finally:
         window.close()
         app.processEvents()
+
+
+def test_radioss_clean_engine_log_produces_zero_errors_and_warnings(app, tmp_path):
+    wb = Workbench()
+    project = wb.new_native_project("test_log_summary")
+    project.path = tmp_path / "project.json"
+    node = wb.add_program_node(project, "analysis", "opencourant")
+    wb.save_native_project(project, project.path)
+
+    window = NativeAnalysisWindow(project.path, node.id, workbench=wb)
+    try:
+        clean_engine_log = """
+ 02/11/2026
+   CYCLE    TIME      TIME-STEP  ELEMENT          ERROR  I-ENERGY    K-ENERGY T  K-ENERGY R  EXT-WORK     MAS.ERR     TOTAL MASS  MASS ADDED
+       0   0.000      0.7714E-07 SOLID        816   0.0%   0.000       992.8       0.000       0.000       0.000      0.1907E-03   0.000
+     100  0.7714E-05  0.7714E-07 SOLID        816   0.0%   5.087       1170.       0.000       182.5       0.000      0.1907E-03   0.000
+
+     NORMAL TERMINATION
+
+     TOTAL NUMBER OF CYCLES  :    1039
+"""
+        window.log.setPlainText(clean_engine_log)
+        window._update_log_summary()
+        assert window.log_summary_badge.text() == "최근 로그: 오류 0 / 경고 0"
+
+        error_log = clean_engine_log + "\nERROR ID : 343\nWARNING ID : 101\n"
+        window.log.setPlainText(error_log)
+        window._update_log_summary()
+        assert window.log_summary_badge.text() == "최근 로그: 오류 1 / 경고 1"
+    finally:
+        window.close()
+        app.processEvents()

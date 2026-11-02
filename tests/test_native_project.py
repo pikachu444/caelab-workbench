@@ -512,3 +512,29 @@ def test_current_save_format_preserves_archive_by_rejecting_legacy_writers(tmp_p
     data = json.loads(path.read_text(encoding='utf-8'))
     assert data['schema_version'] == 3  # Earlier loaders reject new document roles.
     assert first.id in wb.open_native_project(path).removed_nodes
+
+
+def test_add_program_node_collision_free_placement_and_preserves_saved_origin(tmp_path):
+    """Counterexample 4: Non-colliding auto-placement and zero-coordinate preservation on load."""
+    from caelab.workbench import Workbench
+    wb = Workbench()
+    project = wb.new_native_project("Collision Test")
+
+    # Node 1 explicitly at (40.0, 40.0)
+    node1 = wb.add_program_node(project, "geometry", "freecad", position=(40.0, 40.0))
+    assert node1.position == (40.0, 40.0)
+
+    # Node 2 with position=None: slot 0 (40, 40) is occupied, so it must take slot 1 (290, 40)
+    node2 = wb.add_program_node(project, "analysis", "calculix", position=None)
+    assert node2.position == (290.0, 40.0)
+
+    # Node 3 explicitly at (0.0, 0.0)
+    node3 = wb.add_program_node(project, "results", "calculix", position=(0.0, 0.0))
+    assert node3.position == (0.0, 0.0)
+
+    # Save and reload via Workbench: positions must be 100% preserved
+    save_path = wb.save_native_project(project, tmp_path / "project_collision.json")
+    reloaded = wb.open_native_project(save_path)
+    assert reloaded.nodes[node1.id].position == (40.0, 40.0)
+    assert reloaded.nodes[node2.id].position == (290.0, 40.0)
+    assert reloaded.nodes[node3.id].position == (0.0, 0.0)

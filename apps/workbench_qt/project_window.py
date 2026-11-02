@@ -1394,8 +1394,7 @@ class ProjectWindow(QMainWindow):
         return box
 
     def add_box(self, kind: str, program_id: str | None = None) -> SystemBox:
-        position = (40 + 250 * (len(self.boxes) % 3), 40 + 150 * (len(self.boxes) // 3))
-        node = self.workbench.add_program_node(self.project, kind, program_id or _PROGRAM_IDS[kind], position)
+        node = self.workbench.add_program_node(self.project, kind, program_id or _PROGRAM_IDS[kind], position=None)
         box = self._add_node_box(node)
         self.empty_hint.setVisible(False)
         self.scene.clearSelection()

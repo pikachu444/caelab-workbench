@@ -1,3 +1,14 @@
+<a id="ui-schematic-radioss-kpi"></a>
+
+## 스키매틱 자동 그리드 배치 및 OpenRadioss 요약·아웃라인 연동 (2026-11-02)
+
+기준 main `865ee15`에서 `feat/schematic-grid-and-radioss-kpi`로 UI/UX 및 솔버 요약 연동을 구현하고, Codex(ChatGPT) 코드 검토 지적 4건을 정밀 반영했다.
+
+- **저장 좌표 보존 및 비충돌 신규 배치 (FINDING-06a):** 프로젝트 열기(`ProjectWindow._show_project`) 시 저장된 `(0, 0)` 좌표의 묵시적 변조를 제거하여 기존 배치를 100% 보존했다. 위치 미지정(`position=None`) 신규 노드 추가 시 `Workbench.add_program_node`에서 기존 노드들의 점유 영역(`abs(dx) < 210, abs(dy) < 98`)을 충돌 검사하여 첫 번째 빈 슬롯을 자동 배정했다.
+- **OpenRadioss Engine 사이클 테이블 파싱 및 표본 분리 (FINDING-06b):** `parse_radioss_output`에서 명시적 스칼라 에너지 라벨(`INTERNAL/KINETIC ENERGY`)이 있을 때 사이클 테이블 성분과의 오혼합을 배제하고, `CYCLE TIME TIME-STEP` 헤더 선행 상태 검증 및 `NaN`/`***` 손상 행 발생 시 이전 행 오독을 무효화하는 방어 로직을 추가했다.
+- **마지막 출력 vs 최종 시간 구분 및 키워드 연동 (FINDING-07):** `NativeAnalysisWindow`에서 `total_cycles != cycle`일 때 "최종 시간" 대신 "마지막 출력 사이클/시간"으로 분리 표기했다. OpenRadioss `/` 카드 및 `#include` 아웃라인 트리 분류, 구문 강조 및 클린 로그 배지(`오류 0 / 경고 0`)를 유지했다.
+- **검증:** `tests/test_radioss_native.py` 11 passed, `tests/test_radioss_gui_runs.py` 3 passed, `tests/test_native_project.py` 44 passed (총 58 passed, 2 skipped, 0 failures).
+
 <a id="rad-w3"></a>
 
 ## RAD W3 구현과 확인 상태 (2026-11-02)
