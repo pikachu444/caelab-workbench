@@ -43,6 +43,27 @@ def parse_radioss_starter(path: Path) -> dict:
     return {"path": str(Path(path)), "blocks": blocks, "text": text}
 
 
+def _parse_cycle_table_header(header_line: str) -> list[str]:
+    raw_tokens = re.findall(r"\S+", header_line.upper())
+    cols: list[str] = []
+    i = 0
+    while i < len(raw_tokens):
+        tok = raw_tokens[i]
+        if tok == "K-ENERGY" and i + 1 < len(raw_tokens) and raw_tokens[i + 1] in ("T", "R"):
+            cols.append(f"K-ENERGY_{raw_tokens[i + 1]}")
+            i += 2
+        elif tok == "TOTAL" and i + 1 < len(raw_tokens) and raw_tokens[i + 1] == "MASS":
+            cols.append("TOTAL_MASS")
+            i += 2
+        elif tok == "MASS" and i + 1 < len(raw_tokens) and raw_tokens[i + 1] == "ADDED":
+            cols.append("MASS_ADDED")
+            i += 2
+        else:
+            cols.append(tok)
+            i += 1
+    return cols
+
+
 def parse_radioss_output(path: Path) -> dict[str, float]:
     """Extract the last explicitly labelled global-energy values or cycle-table KPIs from an Engine listing."""
     text = Path(path).read_text(encoding="utf-8", errors="replace")
@@ -55,19 +76,15 @@ def parse_radioss_output(path: Path) -> dict[str, float]:
             value = float(matches[-1].replace("D", "E").replace("d", "e"))
             if math.isfinite(value):
                 values[key] = value
-                if key in ("internal_energy", "kinetic_energy"):
-                    has_explicit_energy = True
+                has_explicit_energy = True
 
     # Parse OpenRadioss standard Engine cycle table lines:
     # CYCLE TIME TIME-STEP ELEMENT ERROR I-ENERGY K-ENERGY T K-ENERGY R EXT-WORK [MAS.ERR]
     # Enforce preceding header validation and defense against corrupted/incomplete trailing rows.
     in_cycle_table = False
+    cycle_header_cols: list[str] = []
     last_valid_cycle: dict[str, float] | None = None
     cycle_table_corrupted = False
-
-    cycle_row_re = re.compile(
-        rf"^(\d+)\s+({_NUMBER})\s+({_NUMBER})\s+(.+?)\s+({_NUMBER})\s*%\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})(?:$|\s+({_NUMBER}))"
-    )
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -82,6 +99,7 @@ def parse_radioss_output(path: Path) -> dict[str, float]:
         ):
             in_cycle_table = True
             cycle_table_corrupted = False
+            cycle_header_cols = _parse_cycle_table_header(stripped)
             continue
 
         # Section end detection
@@ -90,53 +108,92 @@ def parse_radioss_output(path: Path) -> dict[str, float]:
             or re.search(r"\bELAPSED\s+TIME\b", stripped, re.I)
             or stripped.startswith("---")
             or stripped.startswith("===")
+            or re.search(r"\bTOTAL NUMBER OF CYCLES\b", stripped, re.I)
         ):
             in_cycle_table = False
             continue
 
         if in_cycle_table:
-            # Check if line begins with integer cycle token
-            if re.match(r"^\d+\s+", stripped):
+            row_tokens = re.findall(r"\S+", stripped)
+            if not row_tokens:
+                continue
+
+            # Check if line begins with a cycle number (digits)
+            if re.match(r"^\d+$", row_tokens[0]):
                 # Detect corrupted values: NaN, Inf, ***
-                if re.search(r"(?:NaN|Inf|\*{3,})", stripped, re.I):
+                if any(re.search(r"(?:NaN|Inf|\*{3,})", tok, re.I) for tok in row_tokens):
                     last_valid_cycle = None
                     cycle_table_corrupted = True
                     continue
 
-                m = cycle_row_re.match(stripped)
-                if m:
-                    try:
-                        c_val = float(m.group(1))
-                        t_val = float(m.group(2).replace("D", "E").replace("d", "e"))
-                        err_val = float(m.group(5).replace("D", "E").replace("d", "e"))
-                        i_val = float(m.group(6).replace("D", "E").replace("d", "e"))
-                        kt_val = float(m.group(7).replace("D", "E").replace("d", "e"))
-                        kr_val = float(m.group(8).replace("D", "E").replace("d", "e"))
-                        w_val = float(m.group(9).replace("D", "E").replace("d", "e"))
-                        m_val = float(m.group(10).replace("D", "E").replace("d", "e")) if m.group(10) else None
+                # Truncated row check: if row has fewer tokens than expected columns
+                if len(row_tokens) < len(cycle_header_cols):
+                    last_valid_cycle = None
+                    cycle_table_corrupted = True
+                    continue
 
-                        if all(math.isfinite(x) for x in (c_val, t_val, err_val, i_val, kt_val, kr_val, w_val)):
-                            last_valid_cycle = {
-                                "printed_cycle": c_val,
-                                "printed_time": t_val,
-                                "internal_energy": i_val,
-                                "kinetic_energy": kt_val + kr_val,
-                                "kinetic_energy_t": kt_val,
-                                "kinetic_energy_r": kr_val,
-                                "external_work": w_val,
-                                "energy_error": err_val,
-                            }
-                            if m_val is not None and math.isfinite(m_val):
-                                last_valid_cycle["mass_error"] = m_val
-                            cycle_table_corrupted = False
-                        else:
+                try:
+                    elem_idx = cycle_header_cols.index("ELEMENT") if "ELEMENT" in cycle_header_cols else None
+                    col_values: dict[str, str] = {}
+                    if elem_idx is not None:
+                        num_after = len(cycle_header_cols) - 1 - elem_idx
+                        if len(row_tokens) < elem_idx + num_after + 1:
                             last_valid_cycle = None
                             cycle_table_corrupted = True
-                    except (ValueError, TypeError):
+                            continue
+                        for c, tok in zip(cycle_header_cols[:elem_idx], row_tokens[:elem_idx]):
+                            col_values[c] = tok
+                        col_values["ELEMENT"] = " ".join(row_tokens[elem_idx : len(row_tokens) - num_after])
+                        for c, tok in zip(cycle_header_cols[elem_idx + 1 :], row_tokens[len(row_tokens) - num_after :]):
+                            col_values[c] = tok
+                    else:
+                        for c, tok in zip(cycle_header_cols, row_tokens):
+                            col_values[c] = tok
+
+                    c_val = float(col_values["CYCLE"])
+                    t_val = float(col_values["TIME"].replace("D", "E").replace("d", "e"))
+
+                    entry: dict[str, float] = {
+                        "printed_cycle": c_val,
+                        "printed_time": t_val,
+                    }
+
+                    if "ERROR" in col_values:
+                        err_str = col_values["ERROR"].rstrip("%").replace("D", "E").replace("d", "e")
+                        entry["energy_error"] = float(err_str)
+
+                    if "I-ENERGY" in col_values:
+                        entry["internal_energy"] = float(col_values["I-ENERGY"].replace("D", "E").replace("d", "e"))
+
+                    kt = None
+                    kr = None
+                    if "K-ENERGY_T" in col_values:
+                        kt = float(col_values["K-ENERGY_T"].replace("D", "E").replace("d", "e"))
+                        entry["kinetic_energy_t"] = kt
+                    if "K-ENERGY_R" in col_values:
+                        kr = float(col_values["K-ENERGY_R"].replace("D", "E").replace("d", "e"))
+                        entry["kinetic_energy_r"] = kr
+
+                    if kt is not None and kr is not None:
+                        entry["kinetic_energy"] = kt + kr
+                    elif kt is not None:
+                        entry["kinetic_energy"] = kt
+                    elif "K-ENERGY" in col_values:
+                        entry["kinetic_energy"] = float(col_values["K-ENERGY"].replace("D", "E").replace("d", "e"))
+
+                    if "EXT-WORK" in col_values:
+                        entry["external_work"] = float(col_values["EXT-WORK"].replace("D", "E").replace("d", "e"))
+
+                    if "MAS.ERR" in col_values:
+                        entry["mass_error"] = float(col_values["MAS.ERR"].replace("D", "E").replace("d", "e"))
+
+                    if all(math.isfinite(v) for v in entry.values()):
+                        last_valid_cycle = entry
+                        cycle_table_corrupted = False
+                    else:
                         last_valid_cycle = None
                         cycle_table_corrupted = True
-                else:
-                    # Line started with a cycle number but failed standard column layout
+                except (ValueError, TypeError, KeyError):
                     last_valid_cycle = None
                     cycle_table_corrupted = True
 
@@ -146,15 +203,13 @@ def parse_radioss_output(path: Path) -> dict[str, float]:
 
         # Only populate energy metrics from cycle table if no explicit energy scalar labels were present
         if not has_explicit_energy:
-            values["internal_energy"] = last_valid_cycle["internal_energy"]
-            values["kinetic_energy"] = last_valid_cycle["kinetic_energy"]
-            values["kinetic_energy_t"] = last_valid_cycle["kinetic_energy_t"]
-            values["kinetic_energy_r"] = last_valid_cycle["kinetic_energy_r"]
-            values["external_work"] = last_valid_cycle["external_work"]
-            if "energy_error" not in values:
-                values["energy_error"] = last_valid_cycle["energy_error"]
-            if "mass_error" not in values and "mass_error" in last_valid_cycle:
-                values["mass_error"] = last_valid_cycle["mass_error"]
+            for k in ("internal_energy", "kinetic_energy", "kinetic_energy_t", "kinetic_energy_r", "energy_error"):
+                if k in last_valid_cycle:
+                    values[k] = last_valid_cycle[k]
+
+        for diag_key in ("external_work", "mass_error"):
+            if diag_key in last_valid_cycle and diag_key not in values:
+                values[diag_key] = last_valid_cycle[diag_key]
 
         if "cycle" not in values:
             values["cycle"] = last_valid_cycle["printed_cycle"]

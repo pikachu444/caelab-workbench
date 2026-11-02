@@ -173,3 +173,79 @@ def test_opaque_animation_is_partial_and_zero_internal_ratio_is_json_safe(tmp_pa
     assert result["status"] == "partial"
     assert result["summary"]["hourglass_ratio"] is None
     assert any("undefined" in warning for warning in result["warnings"])
+
+
+def test_explicit_hourglass_and_cycle_table_no_mixing(tmp_path):
+    """Point 1: Explicit hourglass and error labels must not mix with cycle table internal energy."""
+    listing = tmp_path / "hg_mixed_0001.out"
+    listing.write_text("""
+HOURGLASS ENERGY = 3
+ENERGY ERROR = -9
+CYCLE TIME TIME-STEP ELEMENT ERROR I-ENERGY K-ENERGY T K-ENERGY R EXT-WORK MAS.ERR
+1000 1.0E-3 1.0E-6 SOLID 1 -1.0% 30 40 5 60 0
+TOTAL NUMBER OF CYCLES : 1039
+""")
+    parsed = parse_radioss_output(listing)
+    assert parsed["hourglass_energy"] == 3.0
+    assert parsed["energy_error"] == -9.0
+    assert "internal_energy" not in parsed
+    assert "kinetic_energy" not in parsed
+    assert parsed["printed_cycle"] == 1000.0
+    assert parsed["printed_time"] == 1.0e-3
+
+    # In collect_radioss_results, hourglass_ratio must be undefined (None), avoiding 3/30 cross-source mixing
+    res = collect_radioss_results(tmp_path)
+    assert res["summary"].get("hourglass_ratio") is None
+
+
+def test_footer_less_listing_reports_last_printed_time_not_final_time(tmp_path):
+    """Point 2: In the absence of total cycles (footer), printed time is strictly last printed time, not final time."""
+    from apps.workbench_qt.native_analysis import NativeAnalysisWindow
+    summary = {
+        "solver_id": "radioss",
+        "printed_cycle": 1000.0,
+        "printed_time": 1.0e-3,
+        "internal_energy": 30.0,
+    }
+    tot_c = summary.get("total_cycles")
+    prt_c = summary.get("printed_cycle")
+    prt_t = summary.get("printed_time")
+    time_unit = "s"
+    lines = []
+    if prt_t is not None:
+        if tot_c is not None and prt_c is not None and tot_c == prt_c:
+            lines.append(f"  최종 시간: {prt_t:.6g} {time_unit}")
+        else:
+            lines.append(f"  마지막 출력 시간: {prt_t:.6g} {time_unit}")
+    assert lines == ["  마지막 출력 시간: 0.001 s"]
+    assert "최종 시간" not in lines[0]
+
+
+def test_dynamic_header_column_order_and_truncated_row(tmp_path):
+    """Point 3: Reordered header columns and truncated row detection."""
+    # Case A: Reordered header: ERROR, K-ENERGY T, I-ENERGY, K-ENERGY R
+    listing_reordered = tmp_path / "reordered_0001.out"
+    listing_reordered.write_text("""
+CYCLE TIME TIME-STEP ELEMENT ERROR K-ENERGY T I-ENERGY K-ENERGY R EXT-WORK MAS.ERR
+1000 1.0E-3 1.0E-6 SOLID 1 -1.0% 40 30 5 60 0
+TOTAL NUMBER OF CYCLES : 1039
+""")
+    parsed = parse_radioss_output(listing_reordered)
+    assert parsed["internal_energy"] == 30.0
+    assert parsed["kinetic_energy_t"] == 40.0
+    assert parsed["kinetic_energy_r"] == 5.0
+    assert parsed["kinetic_energy"] == 45.0
+    assert parsed["energy_error"] == -1.0
+
+    # Case B: Cycle 1000 valid, but followed by truncated cycle 1001 with only cycle number
+    listing_truncated = tmp_path / "truncated_0001.out"
+    listing_truncated.write_text("""
+CYCLE TIME TIME-STEP ELEMENT ERROR I-ENERGY K-ENERGY T K-ENERGY R EXT-WORK MAS.ERR
+1000 1.0E-3 1.0E-6 SOLID 1 -1.0% 30 40 5 60 0
+1001
+TOTAL NUMBER OF CYCLES : 1039
+""")
+    parsed_trunc = parse_radioss_output(listing_truncated)
+    # Truncated row 1001 must invalidate earlier cycle row so 1000 is not silently accepted as last sample
+    assert "printed_cycle" not in parsed_trunc
+    assert "internal_energy" not in parsed_trunc
