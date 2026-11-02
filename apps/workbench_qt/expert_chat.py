@@ -18,12 +18,35 @@ def human_text(value) -> str:
 
 def user_error(error) -> str:
     """Internal diagnostics stay saved; show a meaningful action, not their payload."""
-    text = str(error)
-    if '다른 창' in text or '개정' in text and '충돌' in text:
+    from caelab.assist.discussions import DiscussionConflict, DiscussionBusy, DiscussionFormatError
+
+    # 1. Type-based classification (Domain exceptions take absolute precedence)
+    if isinstance(error, DiscussionConflict):
         return '다른 창에서 대화가 변경되었습니다. 초안은 유지됩니다. 다시 읽은 뒤 저장하세요.'
+    if isinstance(error, DiscussionBusy):
+        text = str(error)
+        if '진행 중인 질문' in text:
+            return '이 대화에 진행 중인 질문이 있습니다. 응답이 끝난 뒤 다시 질문하세요.'
+        return '다른 창에서 대화를 저장하고 있습니다. 잠시 후 다시 시도하세요.'
+    if isinstance(error, DiscussionFormatError):
+        text = str(error)
+        if '무결성' in text or '해시' in text:
+            return '첨부 자료의 무결성을 확인하지 못했습니다. 자료를 다시 불러온 뒤 질문하세요.'
+        return '대화 또는 첨부 자료의 형식이 올바르지 않습니다. 자료를 확인한 뒤 다시 시도하세요.'
+    if isinstance(error, FileNotFoundError):
+        return '필요한 파일이나 계산 기록을 찾지 못했습니다. 첨부 자료를 확인하세요.'
+    if isinstance(error, TimeoutError):
+        return '응답 시간이 초과되었습니다. 연결을 확인한 뒤 다시 질문하세요.'
+
+    # 2. String fallback classification (with bounded domain keywords, avoiding naive single-syllable matching)
+    text = str(error)
+    if '다른 창' in text or '충돌' in text or '덮어쓸 수' in text or ('개정' in text and '바뀌' in text):
+        return '다른 창에서 대화가 변경되었습니다. 초안은 유지됩니다. 다시 읽은 뒤 저장하세요.'
+    if '진행 중인 질문' in text:
+        return '이 대화에 진행 중인 질문이 있습니다. 응답이 끝난 뒤 다시 질문하세요.'
     if '무결성' in text or '해시' in text or 'SHA' in text:
         return '첨부 자료의 무결성을 확인하지 못했습니다. 자료를 다시 불러온 뒤 질문하세요.'
-    if '누락' in text or '없' in text or 'No such file' in text:
+    if '누락' in text or 'No such file' in text or '파일이 없' in text or '찾지 못했' in text:
         return '필요한 파일이나 계산 기록을 찾지 못했습니다. 첨부 자료를 확인하세요.'
     if '중단' in text or 'cancel' in text.lower():
         return '응답 대기를 중단했습니다. 질문 초안은 유지됩니다.'
