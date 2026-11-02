@@ -7,6 +7,7 @@ from email.parser import BytesParser
 import hashlib
 from importlib import metadata
 from pathlib import Path, PurePosixPath
+import sys
 
 
 PACKAGES = ('torch', 'torchvision')
@@ -35,27 +36,37 @@ def collect_optional_metadata(analysis, *, copy_metadata, expand_datas,
     """Validate actual Analysis origins, then add owned dist-info before COLLECT."""
     report = {'schema_version': 1, 'scope': SCOPE, 'distributions': []}
     additions = []
+    entries = [(kind, name, Path(source).resolve())
+               for kind, values in (('pure', analysis.pure), ('binaries', analysis.binaries), ('datas', analysis.datas))
+               for name, source, _ in values]
     existing = {}
     for name, source, _ in [*analysis.binaries, *analysis.datas]:
         existing.setdefault(_relative(name).casefold(), set()).add(Path(source).resolve())
     for package in PACKAGES:
-        collected = []
-        for kind, entries in (('pure', analysis.pure), ('binaries', analysis.binaries), ('datas', analysis.datas)):
-            for name, source, _ in entries:
-                target = name.replace('\\', '/')
-                included = (name == package or name.startswith(package + '.')) if kind == 'pure' else target.startswith(package + '/')
-                if included:
-                    collected.append((kind, name, Path(source).resolve()))
+        hinted = set()
+        for entry in entries:
+            kind, name, source = entry
+            target = name.replace('\\', '/')
+            prefix = (name == package or name.startswith(package + '.')) if kind == 'pure' else target.startswith(package + '/')
+            if prefix:
+                hinted.add(entry)
+        try:
+            installed = distribution(package)
+        except metadata.PackageNotFoundError as error:
+            import_packages = {(Path(root or '.').resolve() / package).resolve() for root in sys.path}
+            if hinted or any(source.is_relative_to(root) for _, _, source in entries for root in import_packages):
+                raise ValueError(f'{package}: metadata for collected files is missing') from error
+            continue
+        files = installed.files or []
+        owned = {Path(installed.locate_file(item)).resolve(): str(item).replace('\\', '/') for item in files}
+        collected = [entry for entry in entries if entry[2] in owned or entry in hinted]
         if not collected:
             continue
-        installed = distribution(package)
         version = installed.metadata.get('Version')
         if installed.metadata.get('Name', '').casefold() != package or not isinstance(version, str) or not version.strip():
             raise ValueError(f'{package}: package metadata Name/Version is missing or ambiguous')
-        files = installed.files
         if not files:
             raise ValueError(f'{package}: installed file ownership is unavailable')
-        owned = {Path(installed.locate_file(item)).resolve(): str(item).replace('\\', '/') for item in files}
         evidence = []
         for kind, name, source in collected:
             if source not in owned:

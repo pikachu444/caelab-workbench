@@ -1,6 +1,7 @@
 """Actual collected optional packages need owned metadata and final notice bytes."""
 
 from email.message import Message
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,7 +34,11 @@ def installed(tmp_path):
                 if path.is_file():
                     yield (str(Path(target) / path.relative_to(source)), str(path))
     def collect():
-        return collect_optional_metadata(analysis, distribution=lambda name: distribution,
+        def lookup(name):
+            if name != 'torch':
+                raise PackageNotFoundError(name)
+            return distribution
+        return collect_optional_metadata(analysis, distribution=lookup,
                                          copy_metadata=copy, expand_datas=expand)
     return root, distribution, analysis, collect
 
@@ -65,6 +70,52 @@ def test_collected_package_metadata_notices_and_final_hashes(installed, tmp_path
     license_path.unlink()
     with pytest.raises((ValueError, OSError)):
         verify_optional_metadata(bundle, report)
+
+
+def test_flattened_binary_is_classified_by_owned_source(installed, tmp_path):
+    root, distribution, analysis, collect = installed
+    relative = Path('torch/lib/libtorch.dll')
+    (root / relative).parent.mkdir(parents=True)
+    (root / relative).write_bytes(b'owned binary fixture; never loaded')
+    distribution.files.append(relative)
+    analysis.pure = []
+    analysis.binaries = [('libtorch.dll', str(root / relative), 'BINARY')]
+    report = collect()
+    assert [item['name'] for item in report['distributions']] == ['torch']
+    assert report['distributions'][0]['analysis_files'][0]['identifier'] == 'libtorch.dll'
+    assert any(target.endswith('/METADATA') for target, _, _ in analysis.datas)
+    bundle = tmp_path / 'bundle'
+    for target, source, _ in [*analysis.binaries, *analysis.datas]:
+        path = bundle / '_internal' / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(Path(source).read_bytes())
+    verify_optional_metadata(bundle, report)
+
+
+@pytest.mark.parametrize('collected', [False, True])
+def test_absent_metadata_is_required_only_for_observed_optional_sources(installed, collected, monkeypatch):
+    root, _, analysis, _ = installed
+    analysis.pure = []
+    monkeypatch.syspath_prepend(str(root))
+    analysis.binaries = [('flat.dll', str(root / 'torch/lib/flat.dll'), 'BINARY')] if collected else []
+    def absent(name):
+        raise PackageNotFoundError(name)
+    if collected:
+        with pytest.raises(ValueError, match='metadata'):
+            collect_optional_metadata(analysis, distribution=absent, copy_metadata=None, expand_datas=None)
+    else:
+        report = collect_optional_metadata(analysis, distribution=absent, copy_metadata=None, expand_datas=None)
+        assert report['distributions'] == [] and analysis.datas == []
+
+
+def test_scipy_torch_compatibility_wrapper_is_not_a_torch_distribution_file(installed):
+    root, _, analysis, collect = installed
+    wrapper = root / 'scipy/_external/array_api_compat/torch/__init__.py'
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_bytes(b'# compatibility wrapper fixture')
+    analysis.pure = [('scipy._external.array_api_compat.torch', str(wrapper), 'PYMODULE')]
+    report = collect()
+    assert report['distributions'] == [] and analysis.datas == []
 
 
 @pytest.mark.parametrize('failure', ['version', 'notice', 'ownership', 'collision', 'ambiguous_notice', 'escaping_notice'])
