@@ -414,9 +414,11 @@ class MDOStudioWindow(QMainWindow):
     def _file_fingerprint(self,path:Path):
         try:
             st=path.stat()
-            if st.st_size<=262144:
-                return (True,st.st_size,hashlib.sha256(path.read_bytes()).hexdigest())
-            return (True,st.st_size,st.st_mtime_ns)
+            h=hashlib.sha256()
+            with open(path,'rb') as f:
+                while chunk:=f.read(65536):
+                    h.update(chunk)
+            return (True,st.st_size,h.hexdigest())
         except OSError:
             return (False,None,None)
 
@@ -425,7 +427,20 @@ class MDOStudioWindow(QMainWindow):
             return None
         actual=[r for r in records if getattr(r,'mode','ACTUAL')=='ACTUAL']
         var_ids=tuple(v.id for v in self.study.space.variables if not isinstance(v,CategoricalVariable))
-        sources=tuple(sorted((str(k),self._file_fingerprint(Path(p))) for k,p in getattr(self.service,'_sources',{}).items()))
+        input_src_paths = ()
+        if hasattr(self.service, "input_sources"):
+            try:
+                src_map = self.service.input_sources()
+                if isinstance(src_map, dict):
+                    input_src_paths = tuple(src_map.keys())
+            except Exception:
+                input_src_paths = ()
+        elif hasattr(self.service, "_current_hashes"):
+            input_src_paths = tuple(self.service._current_hashes.keys())
+        elif hasattr(self.service, "input_path") and self.service.input_path:
+            input_src_paths = (str(self.service.input_path),)
+
+        sources = tuple(sorted((str(p), self._file_fingerprint(Path(p))) for p in input_src_paths))
         point_sources=getattr(self.service,'_point_sources',{})
         rows_sig=[]
         for r in actual:

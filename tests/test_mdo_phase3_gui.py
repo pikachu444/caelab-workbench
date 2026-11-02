@@ -736,3 +736,118 @@ def test_sensitivity_skips_active_batch_and_coalesces_identical_spearman_refresh
     finally:
         sta_path.write_bytes(original_bytes)
     window.close(); qapp.processEvents()
+
+
+@pytest.mark.parametrize('case', [
+    'root-modified', 'root-deleted', 'include-modified', 'include-deleted', 'large-output',
+])
+def test_sensitivity_cache_revalidates_native_evidence(native_service, qapp, monkeypatch, tmp_path, case):
+    from pathlib import Path
+    from PySide6.QtCore import QSettings
+    import apps.workbench_qt.mdo_studio.window as studio
+    import test_mdo_phase3_service as receipts
+
+    monkeypatch.setenv('CAELAB_UI_SETTINGS_PATH',str(tmp_path/'theme.ini'))
+    monkeypatch.setattr(studio,'QSettings',lambda *args:QSettings(str(tmp_path/'layout.ini'),QSettings.IniFormat))
+    service = native_service
+    service.workbench.jobs.close = lambda: True
+
+    if case == 'large-output':
+        original_collect = receipts.collect_results
+
+        def collect_large_receipt(folder):
+            # Pad the synthetic STA before the service records its hash.
+            sta = folder/'model.sta'
+            sta.write_bytes(sta.read_bytes()+b'\n'+b' '*300_001+b'\n')
+            return original_collect(folder)
+
+        monkeypatch.setattr(receipts,'collect_results',collect_large_receipt)
+
+    records = measured(service,(1.2,1.8,2.4,3.0))
+    calls = []
+    original_analyze = service.analyze_sensitivity
+
+    def tracked_analyze(response_id,**kwargs):
+        calls.append(response_id)
+        return original_analyze(response_id,**kwargs)
+
+    monkeypatch.setattr(service,'analyze_sensitivity',tracked_analyze)
+    window = MDOStudioWindow(service=service)
+    target = original_bytes = original_stat = None
+
+    def refresh():
+        window._update_visualizations()
+        deadline = time.monotonic()+5
+        while window._sensitivity_running or window._viz_timer.isActive():
+            assert time.monotonic()<deadline
+            qapp.processEvents()
+            time.sleep(.01)
+        for _ in range(3):
+            qapp.processEvents()
+            time.sleep(.01)
+        assert not window._sensitivity_running and not window._viz_timer.isActive()
+        assert window.tornado_view.report is not None
+
+    try:
+        window.tornado_view.set_responses(window.tdp_model.response_keys,service.response_units)
+        index = window.tornado_view.response.findData('mass_eall')
+        assert index>=0
+        window.tornado_view.response.setCurrentIndex(index)
+        window.viz_tabs.setCurrentIndex(3)
+        refresh()
+
+        first = window.tornado_view.report
+        assert calls == ['mass_eall']
+        assert first['response_id']=='mass_eall' and first['method']=='spearman'
+        assert first['source_mode']=='ACTUAL' and first['sample_count']==4
+        assert not first['excluded_rows']
+        assert all(service.is_verified(row.point_id) for row in records)
+
+        refresh()
+        assert calls == ['mass_eall']
+        assert window.tornado_view.report['experiment_id']==first['experiment_id']
+
+        if case == 'large-output':
+            evidence = service.point_evidence(records[0].point_id)
+            assert 'model.sta' in evidence['files']
+            target = Path(evidence['workdir'])/'model.sta'
+        else:
+            target = service.input_path if case.startswith('root-') else service.input_path.parent/'material.inc'
+            assert str(target) in service.input_sources()
+        original_stat = target.stat()
+        original_bytes = target.read_bytes()
+
+        if case == 'large-output':
+            assert original_stat.st_size>300_000 and original_bytes[-2:-1]==b' '
+            with target.open('r+b') as stream:
+                stream.seek(-2,os.SEEK_END)
+                stream.write(b'\t')
+            os.utime(target,ns=(original_stat.st_atime_ns,original_stat.st_mtime_ns))
+            assert target.stat().st_size==original_stat.st_size
+            assert target.stat().st_mtime_ns==original_stat.st_mtime_ns
+        elif case.endswith('-deleted'):
+            target.unlink()
+        else:
+            target.write_bytes(original_bytes+b'** external edit\r\n')
+
+        refresh()
+        report = window.tornado_view.report
+        assert calls == ['mass_eall','mass_eall']
+        assert report['experiment_id']!=first['experiment_id']
+        assert len(service.sensitivity_reports)==2
+        if case == 'large-output':
+            assert report['sample_count']==3 and len(report['excluded_rows'])==1
+            excluded = report['excluded_rows'][0]
+            assert excluded['point_id']==records[0].point_id
+            assert excluded['reason'] == 'Native receipt changed since response extraction'
+        else:
+            assert report['sample_count']==0
+            assert {item['point_id'] for item in report['excluded_rows']}=={row.point_id for row in records}
+            assert all('Native root/INCLUDE changed or is missing' in item['reason'] for item in report['excluded_rows'])
+        assert service.workbench.jobs.count==len(records)
+    finally:
+        if target is not None and original_bytes is not None:
+            target.write_bytes(original_bytes)
+            os.utime(target,ns=(original_stat.st_atime_ns,original_stat.st_mtime_ns))
+        window.close()
+        qapp.processEvents()
