@@ -8,15 +8,19 @@ project has no solver or LLM side effects.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .jobs import Job, JobManager, LaunchRecord
+from .jobs import Job, JobManager, LaunchRecord, RunActivity
 from .project import NativeProject, FileReference, load_native_project, save_native_project
 from .model.schema import StructuralModel
-from .model.store import load_project, save_project
+from .model.store import load_project, save_project, run_store_expected
 from .solvers import get_converter
 from .validate.checker import Issue, validate_model
 from .native.run_store import NativeRun, RunStore
 from .native.input_snapshot import fingerprint
+
+if TYPE_CHECKING:
+    from .model_execution import ModelRunResult
 
 
 def _source_metadata_changed(item: dict) -> bool:
@@ -39,8 +43,91 @@ class Workbench:
     def open_project(self, folder: str | Path) -> StructuralModel:
         return load_project(folder)
 
-    def save_project(self, model: StructuralModel, folder: str | Path) -> Path:
-        return save_project(model, folder)
+    def native_run_activity(self, run_id: str) -> RunActivity | None:
+        return self.jobs.native_run_activity(run_id)
+
+    def native_run_snapshot(self, run_id: str) -> NativeRun | None:
+        return self.jobs.native_snapshot(run_id)
+
+    def save_project(self, model: StructuralModel, folder: str | Path, *, expected_revision=None) -> Path:
+        return save_project(model, folder, expected_revision=expected_revision)
+
+    def _model_run_store(self, folder: str | Path) -> RunStore:
+        folder = Path(folder).resolve()
+        expected = run_store_expected(folder)
+        root = (folder / 'runs').resolve()
+        if root in self._run_stores:
+            store = self._run_stores[root]
+            store.expected = store.expected or expected
+        else:
+            store = self._run_stores[root] = RunStore(root, expected=expected)
+        if store.expected and not root.is_dir():
+            raise ValueError(f'기대 실행 저장소가 없습니다: {root}')
+        return store
+
+    def submit_model(self, model: StructuralModel, folder: str | Path,
+                     solver_id: str = 'calculix', timeout: float = 3600) -> NativeRun:
+        store = self._model_run_store(folder)
+        if not store.expected:
+            raise ValueError('보조 모델을 영구 프로젝트 폴더에 저장한 뒤 계산하세요.')
+        converter = get_converter(solver_id)
+        status = next((status for status in self.programs() if status.spec.id == solver_id), None)
+        if status is None:
+            raise ValueError(f'{solver_id} 솔버 프로그램을 찾을 수 없습니다.')
+        return self.jobs.submit_model(store, model, converter, status, timeout)
+
+    def model_runs(self, folder: str | Path, model: StructuralModel | None = None) -> list[NativeRun]:
+        from .model_execution import MODEL_NODE_ID, model_revision
+        store = self._model_run_store(folder)
+        if not store.root.is_dir():
+            return []
+        store.recover()
+        revision = model_revision(model if model is not None else load_project(folder))
+        records = []
+        for stored in store.runs(MODEL_NODE_ID):
+            owned = self.jobs.native_snapshot(stored.id)
+            run = owned if owned is not None and owned.workdir == stored.workdir else stored
+            prepared = run.snapshot.get('auxiliary_model')
+            run.stale = bool(prepared and prepared.get('revision') != revision)
+            run.stale_reason = '현재 보조 모델 또는 단위 선언이 이 실행과 다릅니다.' if run.stale else ''
+            records.append(run)
+        return records
+
+    def _model_run(self, folder: str | Path, run_id: str) -> NativeRun:
+        from .model_execution import MODEL_NODE_ID
+        store = self._model_run_store(folder)
+        if not isinstance(run_id, str) or len(run_id) != 32 or any(c not in '0123456789abcdef' for c in run_id):
+            raise ValueError('보조 모델 실행 ID가 잘못되었습니다.')
+        directory = store.root / run_id
+        if directory.resolve().parent != store.root:
+            raise ValueError('보조 모델 실행 경로가 저장소 밖을 가리킵니다.')
+        stored = store.read(directory / 'job.json')
+        if stored.node_id != MODEL_NODE_ID:
+            raise ValueError('다른 입력 종류의 실행입니다.')
+        owned = self.jobs.native_snapshot(stored.id)
+        return owned if owned is not None and owned.workdir == stored.workdir else stored
+
+    def selected_model_run(self, folder: str | Path) -> NativeRun | None:
+        from .model_execution import MODEL_NODE_ID
+        store = self._model_run_store(folder)
+        run_id = store.selected_id(MODEL_NODE_ID)
+        return self._model_run(folder, run_id) if run_id is not None else None
+
+    def select_model_run(self, folder: str | Path, run_id: str) -> NativeRun:
+        from .model_execution import MODEL_NODE_ID
+        run = self._model_run(folder, run_id)
+        self._model_run_store(folder).select(MODEL_NODE_ID, run.id)
+        return run
+
+    def model_run_result(self, folder: str | Path, run_id: str) -> ModelRunResult:
+        from .model_execution import read_model_result
+        return read_model_result(self._model_run(folder, run_id))
+
+    def model_run_is_current(self, folder: str | Path, run_id: str, model: StructuralModel) -> bool:
+        from .model_execution import model_revision
+        run = self._model_run(folder, run_id)
+        metadata = run.snapshot.get('auxiliary_model', {})
+        return isinstance(metadata, dict) and metadata.get('revision') == model_revision(model)
 
     # -- native program/file projects -----------------------------------
     def new_native_project(self, name: str = "새 프로젝트") -> NativeProject:

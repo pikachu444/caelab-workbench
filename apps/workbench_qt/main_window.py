@@ -10,10 +10,9 @@ jump to the object; internal ids live only in Help > Diagnostics.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QStyle,
     QTextEdit,
@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from caelab.model.schema import StructuralModel
+from caelab.model.store import model_revision, project_revision
 from caelab.workbench import Workbench
 
 from .icons import GROUP_ICONS, LEAF_ICONS, icon
@@ -83,15 +84,32 @@ class MainWindow(QMainWindow):
         self.workbench = workbench or Workbench()
         self.model: StructuralModel | None = None
         self.project_folder: Path | None = None
+        self._saved_model_revision = ''
         self._issue_target: str | None = None
         self._path_items: dict[str, QTreeWidgetItem] = {}
         self._group_items: dict[str, QTreeWidgetItem] = {}
         self._last_result = None
+        self._active_run_id = None
+        self._active_folder = None
+        self._model_generation = 0
+        self._selection_generation = 0
+        self._displayed_run_id = None
+        self._displayed_run_label = ''
+        self._displayed_model_name = ''
+        self._displayed_state_text = ''
+        self._run_labels = {}
+        self._close_pending = False
+        self._locked_actions = []
+        self._context_locked_actions = []
+        self._cancel_actions = []
         self.module = "모델"
         self._toolbar_icon_actions: list[tuple] = []
         self.setWindowTitle("CAELAB 구조 해석")
         self.resize(1440, 900)
         self._build_ui()
+        self._run_timer = QTimer(self)
+        self._run_timer.setInterval(100)
+        self._run_timer.timeout.connect(self._poll_run)
         self.apply_theme(current_theme_mode())
         register_theme_listener(self.apply_theme)
 
@@ -99,10 +117,11 @@ class MainWindow(QMainWindow):
     def _icon(self, name: str):
         return self.style().standardIcon(getattr(QStyle, name))
 
-    def _unit_system_text(self) -> str:
-        if self.model is None:
+    def _unit_system_text(self, model: StructuralModel | None = None) -> str:
+        model = model if model is not None else self.model
+        if model is None:
             return "모델 없음"
-        declaration = self.model.unit_system
+        declaration = model.unit_system
         if declaration == "si":
             return "SI (m, kg, s, Pa)"
         if declaration is None or not str(declaration).strip():
@@ -112,11 +131,12 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         menu = self.menuBar()
         file_menu = menu.addMenu("파일")
-        file_menu.addAction("열기…", self.open_project_dialog)
-        file_menu.addAction("저장", self.save_project)
+        self._locked_actions.append(file_menu.addAction("열기…", self.open_project_dialog))
+        self._locked_actions.append(file_menu.addAction("저장", self.save_project))
         analysis_menu = menu.addMenu("해석")
-        analysis_menu.addAction("입력 검사", self.run_check)
-        analysis_menu.addAction("실행", self.run_solve)
+        self._locked_actions.append(analysis_menu.addAction("입력 검사", self.run_check))
+        self._locked_actions.append(analysis_menu.addAction("실행", self.run_solve))
+        self._cancel_actions.append(analysis_menu.addAction("계산 취소", self.cancel_run))
         analysis_menu.addAction("MDO Studio 열기", self.open_optimization_panel)
         results_menu = menu.addMenu("결과")
         results_menu.addAction("ParaView에서 열기 (다음 단계)",
@@ -151,6 +171,13 @@ class MainWindow(QMainWindow):
         module_bar.addSeparator()
         check_act = module_bar.addAction(icon("check"), "검사", self.run_check)
         run_action = module_bar.addAction(icon("run"), "실행", self.run_solve)
+        self.run_action = run_action
+        run_action.setToolTip('현재 프로젝트 모델을 CalculiX로 계산합니다.')
+        self._locked_actions.extend((open_act, save_act, check_act, run_action))
+        self.cancel_action = module_bar.addAction("계산 취소", self.cancel_run)
+        self._cancel_actions.append(self.cancel_action)
+        for action in self._cancel_actions:
+            action.setEnabled(False)
         module_bar.widgetForAction(run_action).setObjectName("primary")
         self._toolbar_icon_actions = [
             (open_act, "folder"),
@@ -278,18 +305,22 @@ class MainWindow(QMainWindow):
 
     # -- modules ------------------------------------------------------------
     def _fill_context_bar(self) -> None:
+        self._context_locked_actions = []
         self.context_bar.clear()
         actions = {
             "모델": [("열기", self.open_project_dialog), ("저장", self.save_project)],
             "재료": [("재료 편집 안내", lambda: self._log("재료는 여기서 고치지 않습니다. FreeCAD 같은 전용 프로그램에서 수정한 뒤 다시 여세요."))],
-            "메시": [("메시 다시 표시", lambda: self.model and self.viewport.show_model(self.model))],
+            "메시": [("메시 다시 표시", lambda: self._show_current_model(manual=True))],
             "해석 단계": [],
             "하중·구속": [],
             "작업": [("입력 검사", self.run_check), ("실행", self.run_solve)],
             "결과": [("ParaView에서 열기 (다음 단계)", lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))],
         }.get(self.module, [])
         for label, fn in actions:
-            self.context_bar.addAction(label, fn)
+            action = self.context_bar.addAction(label, fn)
+            if fn in (self.open_project_dialog, self.save_project, self.run_check, self.run_solve):
+                self._context_locked_actions.append(action)
+                action.setEnabled(self._active_run_id is None)
         if not actions:
             self.context_bar.addWidget(QLabel(f" {self.module} 모듈 — 값은 속성 패널에서 확인합니다."))
 
@@ -323,9 +354,15 @@ class MainWindow(QMainWindow):
 
     # -- tree ---------------------------------------------------------------------
     def set_model(self, model: StructuralModel, folder: Path | None = None) -> None:
+        if self._active_run_id is not None:
+            self.status.setText("계산을 취소하고 정리를 마친 뒤 다른 모델을 여세요.")
+            return
+        self._model_generation += 1
+        self._displayed_run_id = None
         self.model = model
         self.unit_system_status.setText(f"솔버: CalculiX · 단위계: {self._unit_system_text()}")
-        self.project_folder = folder
+        self.project_folder = Path(folder).resolve() if folder is not None else None
+        self._saved_model_revision = model_revision(model) if folder is not None else ''
         self._last_result = None
         self._issue_target = None
         self.btn_goto.setEnabled(False)
@@ -369,6 +406,14 @@ class MainWindow(QMainWindow):
         self.status.setText("모델을 열었습니다. 다음 행동: 검사")
         self._log(f"모델 '{model.name}'을 열었습니다.")
         self._set_flow(1)
+        if folder is not None:
+            self._refresh_run_history()
+            try:
+                selected = self.workbench.selected_model_run(self.project_folder)
+                if selected is not None and selected.finished_at:
+                    self._load_run_result(selected)
+            except Exception as error:
+                self.status.setText(f'보존 실행을 열지 못했습니다: {error}')
 
     def _add(self, parent: QTreeWidgetItem, text: str, path: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem([text])
@@ -391,7 +436,14 @@ class MainWindow(QMainWindow):
         items = self.tree.selectedItems()
         if not items or self.model is None:
             return
-        self._show_props(items[0].data(0, Qt.UserRole) or "model")
+        path = items[0].data(0, Qt.UserRole) or "model"
+        if path.startswith('runs.'):
+            self._choose_run(path.removeprefix('runs.'))
+            return
+        if path == 'model':
+            self._show_current_model(manual=True)
+            return
+        self._show_props(path)
 
     def _clear_props(self) -> None:
         while self.props_form.rowCount():
@@ -423,6 +475,11 @@ class MainWindow(QMainWindow):
             return
         if path == "result":
             self.props_title.setText("결과")
+            if self._displayed_run_id is not None:
+                lay.addRow("선택 실행", QLabel(self._displayed_run_label))
+                lay.addRow("실행 상태", QLabel(self._displayed_state_text))
+                lay.addRow("실행 모델", QLabel(self._displayed_model_name))
+                lay.addRow("프로젝트 모델", QLabel(m.name))
             if self._last_result is not None:
                 lay.addRow("최대 변위", QLabel(fmt_length(self._last_result.max_displacement, self._last_result.units.get("length"))))
                 lay.addRow("반력 합 Fy", QLabel(fmt_force(self._last_result.reaction_totals.get("fy"), self._last_result.units.get("force"))))
@@ -489,19 +546,53 @@ class MainWindow(QMainWindow):
     def open_project_dialog(self) -> None:  # pragma: no cover - native dialog
         from PySide6.QtWidgets import QFileDialog
 
+        if self._active_run_id is not None:
+            return
         folder = QFileDialog.getExistingDirectory(self, "프로젝트 열기")
         if folder:
-            self.set_model(self.workbench.open_project(folder), Path(folder))
+            try:
+                self.set_model(self.workbench.open_project(folder), Path(folder))
+            except Exception as error:
+                self.status.setText(f'프로젝트를 열지 못했습니다: {error}')
 
-    def save_project(self) -> None:
+    def save_project(self) -> bool:
+        from PySide6.QtWidgets import QFileDialog
         if self.model is None:
             self.status.setText("저장할 모델이 없습니다.")
-            return
-        folder = self.project_folder or Path(tempfile.mkdtemp(prefix="caelab-project-"))
-        self.workbench.save_project(self.model, folder)
+            return False
+        if self._active_run_id is not None:
+            self.status.setText('계산 정리를 마친 뒤 모델을 저장하세요.')
+            return False
+        folder = self.project_folder
+        expected_revision = self._saved_model_revision
+        if folder is None:
+            chosen = QFileDialog.getExistingDirectory(self, '프로젝트 저장 폴더 선택')
+            if not chosen:
+                self.status.setText('저장을 취소했습니다.')
+                return False
+            folder = Path(chosen).resolve()
+            try:
+                expected_revision = project_revision(folder)
+            except Exception as error:
+                self.status.setText(f'저장 위치의 모델을 확인하지 못했습니다: {error}')
+                return False
+            if expected_revision:
+                answer = QMessageBox.question(self, '기존 모델 저장',
+                    '이 폴더의 model.json을 현재 모델로 바꾸시겠습니까? 실행 이력은 보존합니다.',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    return False
+        try:
+            self.workbench.save_project(self.model, folder, expected_revision=expected_revision)
+        except Exception as error:
+            self.status.setText(f'프로젝트를 저장하지 못했습니다: {error}')
+            self._log(self.status.text())
+            return False
         self.project_folder = folder
+        self._saved_model_revision = model_revision(self.model)
         self.status.setText(f"저장했습니다: {folder}")
         self._log(f"프로젝트를 저장했습니다: {folder}")
+        return True
 
     def run_check(self) -> None:
         if self.model is None:
@@ -540,43 +631,223 @@ class MainWindow(QMainWindow):
         if self.model is None:
             self.status.setText("먼저 모델을 여세요.")
             return
-        self._last_result = None
-        self.results_item.takeChildren()
-        self._path_items.pop("result", None)
-        self.select_path("model")
-        self.legend_label.clear()
-        self.viewport.show_model(self.model)
-        self._set_flow(2)
-        self.statusBar().clearMessage()
-        workdir = Path(tempfile.mkdtemp(prefix="caelab-run-"))
-        job = self.workbench.run(self.model, "calculix", workdir)
-        if job.result is None:
-            self.status.setText(f"작업 상태: {job.state}")
+        if self._active_run_id is not None:
+            self.status.setText('이미 계산 중입니다. 취소 또는 정리 완료 후 다시 실행하세요.')
             return
-        result = job.result
+        if not self.save_project():
+            return
+        try:
+            run = self.workbench.submit_model(self.model, self.project_folder, 'calculix')
+        except Exception as error:
+            self.status.setText(f'계산을 등록하지 못했습니다: {error}')
+            self._log(self.status.text())
+            return
+        self._active_run_id = run.id
+        self._active_folder = self.project_folder
+        self._active_generation = self._model_generation
+        self._active_selection_generation = self._selection_generation
+        self._last_result = None
+        self._show_current_model(manual=False)
+        self._set_flow(2)
+        self._set_running_controls(True)
+        self._refresh_run_history()
+        self.status.setText('현재 프로젝트 모델의 계산을 등록했습니다.')
+        self._run_timer.start()
+
+    def _set_running_controls(self, running: bool) -> None:
+        for action in self._locked_actions + self._context_locked_actions:
+            action.setEnabled(not running)
+        for action in self._cancel_actions:
+            action.setEnabled(running)
+
+    def cancel_run(self) -> None:
+        if self._active_run_id is not None:
+            self.workbench.cancel_native_run(self._active_run_id)
+            self.status.setText('계산 취소와 소유 작업 정리를 요청했습니다.')
+
+    def _show_current_model(self, *, manual: bool) -> None:
+        if self.model is None:
+            return
+        if manual:
+            self._selection_generation += 1
+        self._displayed_run_id = None
+        self._last_result = None
+        self._displayed_run_label = self._displayed_model_name = ''
+        self._displayed_state_text = ''
+        self.viewport.show_model(self.model)
+        self.legend_label.clear()
+        self.statusBar().clearMessage()
+        self.unit_system_status.setText(f'솔버: CalculiX · 단위계: {self._unit_system_text()}')
+        self.status.setText(f'현재 프로젝트 모델: {self.model.name}')
+        self._show_props('model')
+        blocked = self.tree.blockSignals(True)
+        self.tree.setCurrentItem(self._path_items['model'])
+        self.tree.blockSignals(blocked)
+
+    @staticmethod
+    def _run_state_text(run) -> str:
+        text = {'queued': '대기', 'preparing': '준비 중', 'running': '실행 중',
+                'completed': '프로세스 정상 종료', 'failed': '실패',
+                'cancelled': '취소', 'interrupted': '중단'}.get(run.state, run.state)
+        if run.state == 'completed':
+            text += ' · ' + {'readable': '결과 판독', 'failed': '판독 실패',
+                            'reading': '판독 중'}.get(run.parse_state, run.parse_state)
+        return text
+
+    def _refresh_run_history(self) -> None:
+        if self.project_folder is None:
+            return
+        current = self.tree.currentItem()
+        current_path = current.data(0, Qt.UserRole) if current is not None else None
+        blocked = self.tree.blockSignals(True)
+        try:
+            self.results_item.takeChildren()
+            for key in list(self._path_items):
+                if key.startswith('runs.') or key == 'result':
+                    self._path_items.pop(key)
+            self._run_labels = {}
+            records = self.workbench.model_runs(self.project_folder, self.model)
+            selected = self.workbench.selected_model_run(self.project_folder)
+            for index, run in enumerate(records, 1):
+                label = f'실행 {index}'
+                self._run_labels[run.id] = label
+                timestamp = run.created_at.replace('T', ' ')[:19]
+                text = f'{label} · {timestamp} UTC · {self._run_state_text(run)}'
+                if run.stale:
+                    text += ' · 현재 모델과 다름'
+                item = self._add(self.results_item, text, f'runs.{run.id}')
+                if selected is not None and selected.id == run.id:
+                    self._path_items['result'] = item
+            self.results_item.setExpanded(True)
+            if current_path in self._path_items:
+                self.tree.setCurrentItem(self._path_items[current_path])
+        except Exception as error:
+            self._add(self.results_item, '실행 이력을 읽을 수 없음', 'history_error')
+            self.status.setText(f'실행 이력 확인 실패: {error}')
+            self._log(self.status.text())
+        finally:
+            self.tree.blockSignals(blocked)
+
+    def _choose_run(self, run_id: str) -> None:
+        self._selection_generation += 1
+        try:
+            run = self.workbench.select_model_run(self.project_folder, run_id)
+            self._path_items['result'] = self._path_items[f'runs.{run.id}']
+            activity = (self.workbench.native_run_activity(run.id)
+                        if run.id == self._active_run_id else None)
+            own_unsettled = (run.id == self._active_run_id
+                             and (activity is None or activity.active or activity.cleanup_error))
+            if not run.finished_at or own_unsettled:
+                self.status.setText('선택한 계산이 진행 중입니다. 과거 실행을 선택해 확인할 수 있습니다.')
+                return
+            self._load_run_result(run)
+        except Exception as error:
+            self.status.setText(f'보존 실행을 선택하지 못했습니다: {error}')
+
+    def _load_run_result(self, run) -> None:
+        try:
+            payload = self.workbench.model_run_result(self.project_folder, run.id)
+        except Exception as error:
+            self.status.setText(f'선택 실행을 표시하지 못했습니다: {error}. 이전에 확인한 화면을 유지합니다.')
+            return
+        model, result = payload.model, payload.result
+        item = self._path_items.get(f'runs.{run.id}')
+        if item is not None:
+            blocked = self.tree.blockSignals(True)
+            self.tree.setCurrentItem(item)
+            self.tree.blockSignals(blocked)
+        self._displayed_run_id = run.id
+        self._displayed_run_label = self._run_labels.get(run.id, '보존 실행')
+        self._displayed_model_name = model.name
+        self._displayed_state_text = self._run_state_text(run)
         self._last_result = result
-        if result.success:
-            summary = (
-                f"계산 완료 — 최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}, "
-                f"반력 합 Fy {fmt_force(result.reaction_totals.get('fy'), result.units.get('force'))} "
-                f"({result.verification})"
-            )
-            self._add(self.results_item, f"{result.solver_id} · 최대 변위 {fmt_length(result.max_displacement, result.units.get('length'))}", "result")
-            self.viewport.show_results(self.model, result)
+        self.viewport.show_model(model)
+        self.legend_label.clear()
+        self.unit_system_status.setText(f'{self._displayed_run_label} · 단위계: {self._unit_system_text(model)}')
+        if (result is not None and result.success and run.state == 'completed'
+                and run.parse_state == 'readable' and run.returncode == 0):
+            summary = (f'계산 완료 — 최대 변위 {fmt_length(result.max_displacement, result.units.get("length"))}, '
+                       f'반력 합 Fy {fmt_force(result.reaction_totals.get("fy"), result.units.get("force"))} '
+                       f'({result.verification})')
+            self.viewport.show_results(model, result)
             unit = result.units.get("length")
-            if not self.model.mesh.nodes or not self.model.mesh.nodes.keys() <= result.displacements.keys():
+            if not model.mesh.nodes or not model.mesh.nodes.keys() <= result.displacements.keys():
                 self.legend_label.setText("변위 필드 누락 — 변형 미표시")
             else:
                 self.legend_label.setText(f"색상 범례: 변위 ({'mm' if unit == 'm' else unit or '단위 미확인'})")
             self._set_flow(3)
         else:
-            summary = "계산 실패 — 아래 로그를 확인하세요."
-            self._log(result.log_tail[-1500:])
+            self._set_flow(2)
+            summary = f'선택 실행: {self._run_state_text(run)}. 보존한 실행 모델을 표시합니다.'
+            self._log(run.error or (result.log_tail[-1500:] if result is not None else ''))
         self.status.setText(summary)
         self._log(summary)
-        state_ko = {"succeeded": "완료", "failed": "실패", "running": "실행 중",
-                    "queued": "대기", "preparing": "준비 중"}.get(job.state, job.state)
-        self.statusBar().showMessage(f"최근 작업: {state_ko}")
+        self.statusBar().showMessage(f'{self._displayed_run_label} · 실행 모델: {model.name}')
+        self._show_props('result')
+
+    def _poll_run(self) -> None:
+        run_id = self._active_run_id
+        if run_id is None:
+            self._run_timer.stop()
+            return
+        run = self.workbench.native_run_snapshot(run_id)
+        activity = self.workbench.native_run_activity(run_id)
+        if run is None or activity is None:
+            self._run_timer.stop()
+            self._close_pending = False
+            self.status.setText('소유 작업의 상태를 확인하지 못했습니다. 자동 종료를 중단했습니다.')
+            return
+        if activity.active:
+            self.status.setText('실행 기록을 보존했습니다. 소유 작업 정리 중입니다.' if run.finished_at
+                                else f'현재 계산: {self._run_state_text(run)}')
+            return
+        self._run_timer.stop()
+        if activity.cleanup_error:
+            self._close_pending = False
+            self.status.setText(f'소유 작업 정리를 확인하지 못했습니다: {activity.cleanup_error}')
+            self._log(self.status.text())
+            return
+        self._active_run_id = None
+        self._set_running_controls(False)
+        if self._close_pending:
+            self._close_pending = False
+            self.close()
+            return
+        self._refresh_run_history()
+        try:
+            selected = self.workbench.selected_model_run(self.project_folder)
+            may_display = (self.project_folder == self._active_folder
+                           and self._model_generation == self._active_generation
+                           and self._selection_generation == self._active_selection_generation
+                           and selected is not None and selected.id == run_id
+                           and self.workbench.model_run_is_current(self.project_folder, run_id, self.model))
+            if may_display:
+                self._load_run_result(run)
+            else:
+                self.status.setText(f'계산 종료: {self._run_state_text(run)}. 선택한 화면을 유지합니다.')
+                if run.error:
+                    self._log(run.error)
+        except Exception as error:
+            self.status.setText(f'완료 실행 확인 실패: {error}')
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._active_run_id is not None:
+            activity = self.workbench.native_run_activity(self._active_run_id)
+            if activity is None or activity.cleanup_error:
+                reason = activity.cleanup_error if activity is not None else '소유 상태를 확인할 수 없습니다.'
+                self._close_pending = False
+                self.status.setText(f'정상 종료를 확인하지 못했습니다: {reason}')
+                event.ignore()
+                return
+            if activity.active:
+                self._close_pending = True
+                self.cancel_run()
+                self._run_timer.start()
+                event.ignore()
+                return
+            self._active_run_id = None
+        self._run_timer.stop()
+        event.accept()
 
     def _rescale(self) -> None:
         self.viewport.rescale(self.scale_spin.value())
@@ -589,7 +860,8 @@ class MainWindow(QMainWindow):
         info = [
             f"모델: {self.model.name if self.model else '-'}",
             f"프로젝트 폴더: {self.project_folder or '-'}",
-            f"작업 수: {len(self.workbench.jobs.jobs)}",
+            f"진행 중 실행: {self._active_run_id or '-'}",
+            f"표시한 실행: {self._displayed_run_id or '-'}",
             f"3D 화면: {'켜짐' if self.viewport.available else '꺼짐(헤드리스)'}",
         ]
         text.setPlainText("\n".join(info))
