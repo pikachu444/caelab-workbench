@@ -106,3 +106,35 @@ jobs:
             tests/test_calculix_converter.py::test_run_reads_reactions_from_dat_per_node \
             tests/test_calculix_converter.py::test_run_reads_reactions_from_dat_totals_only \
             tests/test_calculix_converter.py::test_end_to_end_cantilever
+
+  opencourant:
+    name: Actual OpenCourant / GUI two-stage runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: xcb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      - name: Install native GUI libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth libegl1 libopengl0 libgl1 libglu1-mesa libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxkbcommon-x11-0 libfontconfig1 fonts-noto-cjk
+      - name: Install Workbench
+        run: python -m pip install -e ".[dev,gui]"
+      - name: Obtain pinned official OpenCourant
+        run: |
+          curl --fail --location --retry 2 https://github.com/OpenCourant/OpenCourant/releases/download/latest-20261011/OpenCourant_linux64.zip --output opencourant.zip
+          echo "6cb419677ca36d73acb96218cc0cf5e4f7d50494d9c7812ba27935e3c0f8ec94  opencourant.zip" | sha256sum --check
+          unzip -q opencourant.zip -d solver
+          chmod +x solver/OpenCourant/exec/*
+          echo "CAELAB_OPENCOURANT=$PWD/solver/OpenCourant" >> "$GITHUB_ENV"
+      - name: Run two actual input bundles through Workbench GUI and JobManager
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" python -m pytest -q -ra tests/test_radioss_runs.py tests/test_radioss_gui_runs.py -k actual_radioss --basetemp=opencourant-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opencourant-two-stage-evidence
+          path: opencourant-evidence/

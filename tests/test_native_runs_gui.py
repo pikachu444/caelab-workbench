@@ -71,7 +71,7 @@ def make_run(root, identifier, state, parse_state, result):
                            result=result, node_id="", created_at="2026-10-24 09:00",
                            input_path=str(root / f"{identifier}.inp"), input_revision="a" * 64,
                            units={"length": "mm"}, workdir=directory, log_path=str(log),
-                           error="", stale=False, stale_reason="")
+                           error="", stale=False, stale_reason="", snapshot={})
 
 
 def result(value):

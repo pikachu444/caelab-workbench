@@ -77,3 +77,10 @@ PrePoMax는 `CAELAB_PREPOMAX` 또는 설치 레지스트리/PATH로 찾고 Windo
 `caelab/connections.py`의 `caelab_prep` 프로그램은 `CAELAB_PREP`/설치 레지스트리/PATH로 실행 파일을 찾고 `gui <file>`을 기존 JobManager에 전달합니다. RAD 원본은 input, RAD 작업 문서 `.caeprep`는 document, 내보낸 RAD는 output입니다. 기본 열기는 document를 우선하고 명시적 입력 열기는 input을 유지합니다. manifest의 `format=caelab-prep-project`만 제한된 크기로 확인하여 같은 확장자의 중립 문서를 구분하며 payload·문서 버전·모델 수정은 Prep 소유입니다. 프로젝트 스키마와 실행 소유를 추가하지 않았고, 이 파일 전달은 RAD 솔버 실행 구현이 아닙니다.
 
 `StudyConfigEditor`는 선택 의존성 Prep이 설치된 경우 Continuous 변수 Lower·Upper·Initial에 같은 `caelab_prep.ui.widgets.numeric.NumericEdit` 클래스를 사용합니다. 위젯은 유효성 표시·초안·Escape를 맡고 MDO 서비스는 단위/도메인 검증, revision, 저장과 현재 설계 파일 변경을 계속 소유합니다. 성공한 configure 뒤에만 위젯의 Escape 기준값을 갱신하며 오래된 revision의 편집은 보존한 채 거절합니다. Revert는 최신 서비스 snapshot으로 다시 구성합니다. 미설치 환경에서는 기존 Qt table 경로이며 실제 재사용 검증과 구분합니다. 공용 Prep 문서나 전역 history를 Workbench에 추가하지 않았습니다.
+
+
+### RAD W3 입력 보존과 두 단계 실행 (2026-11-02)
+
+`OpenRadiossAdapter.snapshot_input`은 기존 INP snapshot과 구분한 `snapshot_radioss_input`을 사용한다. Starter/Engine과 solver cwd 기준 상대 INCLUDE를 원래 이름/bytes로 보존하며 원본 SHA·통계·실행 사본 SHA를 기록한다. `build_run_stages`가 Starter/Engine 요청을 반환하고 기존 `JobManager._run_native`가 하나의 run/timeout/cancel/lease 안에서 순서대로 실행한다. Starter 정상 listing과 비어 있지 않은 restart가 없으면 Engine은 `not_started`로 남는다. 공용 run 저장·프로세스 소유를 복제하지 않는다.
+
+설치 home 계약을 Starter·Engine·필수 runtime 경로로 풀며 실제 binary 이름의 결과를 원본 해시/경로와 함께 수집한다. `.source` 입력과 `job.json` 자체는 출력 inventory에서 제외한다. 결과 노드는 고정 `A001` 대신 해당 run의 실제 primary native output을 등록한다. 현재 binary decoder의 `partial`은 유지한다. Prep의 작업문서/모델 Undo와 Workbench의 실행 수명은 별도다. Windows 실제 GUI/설치와 전체 후처리 확대는 W3 코드 연결의 완료 근거로 보고하지 않는다.

@@ -153,7 +153,31 @@ def _registered_path(value: str, registry: dict) -> Path:
 
 
 _RUNTIME_PATH_LISTS = {"PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "QT_PLUGIN_PATH"}
-_RUNTIME_PATHS = {"OPENRADIOSS_PATH", "RAD_CFG_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"}
+_RUNTIME_PATHS = {"OPENRADIOSS_PATH", "OPENCOURANT_PATH", "RAD_CFG_PATH", "RAD_H3D_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH"}
+
+
+def _radioss_installation(path: Path, host: str):
+    """Accept the installer home contract or an explicitly selected Starter."""
+    if path.is_dir():
+        home = path
+        suffix = "win64.exe" if host == "windows" else "linux64_gf"
+        starter, engine = home / "exec" / f"starter_{suffix}", home / "exec" / f"engine_{suffix}"
+    else:
+        starter = path
+        if not starter.name.startswith("starter_"):
+            raise ValueError("OpenCourant home 또는 starter_* 실행 파일을 지정하세요.")
+        engine = starter.with_name("engine_" + starter.name[len("starter_"):])
+        home = starter.parent.parent
+    for executable in (starter, engine):
+        reason = _executable_reason(executable, host)
+        if reason:
+            raise ValueError(reason)
+    runtime = {"OPENCOURANT_PATH": str(home), "OPENRADIOSS_PATH": str(home),
+               "RAD_CFG_PATH": str(home / "hm_cfg_files"), "OMP_NUM_THREADS": "1", "OMP_STACKSIZE": "400m"}
+    if host == "linux":
+        runtime["RAD_H3D_PATH"] = str(home / "extlib/h3d/lib/linux64")
+        runtime["LD_LIBRARY_PATH"] = os.pathsep.join((str(home / "extlib/hm_reader/linux64"), runtime["RAD_H3D_PATH"], os.environ.get("LD_LIBRARY_PATH", ""))).rstrip(os.pathsep)
+    return starter, engine, runtime
 
 
 def _runtime_environment(runtime: dict, registry: dict) -> dict[str, str]:
@@ -226,6 +250,13 @@ def _status(spec: ProgramSpec, registry: dict, registry_error: str, host: str) -
         return status
     # Keep the invoked path: resolving a venv interpreter symlink loses its environment.
     path = Path(os.path.abspath(candidate_path))
+    native_runtime = {}
+    if spec.id in {"opencourant", "openradioss", "radioss"}:
+        try:
+            path, _, native_runtime = _radioss_installation(path, host)
+        except ValueError as exc:
+            status.reason = str(exc)
+            return status
     status.path = str(path)
     status.reason = _executable_reason(path, host)
     if spec.id == "freecad" and path.stem.lower() == "freecadcmd":
@@ -237,7 +268,7 @@ def _status(spec: ProgramSpec, registry: dict, registry_error: str, host: str) -
         status.reason = "설치 레지스트리의 runtime_env 형식이 잘못되었습니다."
     else:
         try:
-            status.runtime_env = _runtime_environment(runtime, registry)
+            status.runtime_env = {**native_runtime, **_runtime_environment(runtime, registry)}
         except ValueError as exc:
             status.reason = str(exc)
     registered = registry.get("programs", {}).get(spec.id, {})
@@ -377,6 +408,25 @@ def radioss_run_request(status: ProgramStatus, workdir: Path, input_path: Path) 
     target = Path(workdir) / Path(input_path).name
     return LaunchRequest([status.path, "-i", str(target)], Path(workdir),
                          {**status.runtime_env, **os.environ}, status.spec.id)
+
+
+def radioss_run_requests(status: ProgramStatus, workdir: Path, input_path: Path) -> list[tuple[str, LaunchRequest]]:
+    """Serial run-1 profile: the JobManager owns sequencing and process cleanup."""
+    if status.spec.id not in {"radioss", "openradioss", "opencourant"} or not status.available:
+        raise ValueError(status.reason or "OpenCourant 실행 환경이 없습니다.")
+    starter, engine, runtime = _radioss_installation(Path(status.path), host_platform())
+    env = {**runtime, **status.runtime_env, **os.environ}
+    # Runtime paths already incorporate the caller's library search path; do not
+    # accidentally replace the required reader/H3D libraries with that suffix.
+    if host_platform() == "linux":
+        libraries = runtime["LD_LIBRARY_PATH"].split(os.pathsep) + env.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(dict.fromkeys(part for part in libraries if part))
+    target = Path(input_path).name
+    if not target.lower().endswith("_0000.rad"):
+        raise ValueError("Starter 입력은 *_0000.rad여야 합니다.")
+    engine_input = target[:-9] + "_0001.rad"
+    return [("starter", LaunchRequest([str(starter), "-i", target, "-np", "1"], Path(workdir), env, status.spec.id)),
+            ("engine", LaunchRequest([str(engine), "-i", engine_input], Path(workdir), env, status.spec.id))]
 
 
 def lsdyna_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:

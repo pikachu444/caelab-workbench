@@ -746,6 +746,11 @@ def _problem_message(text: str) -> str | None:
 
 
 def _run_text(run) -> str:
+    if run.state == 'running':
+        stage = next((item.get('name') for item in run.snapshot.get('stages', [])
+                      if item.get('state') == 'running' and item.get('name') in {'starter', 'engine'}), None)
+        if stage:
+            return f'{stage.title()} 계산 중'
     if run.state == 'completed':
         if run.parse_state == 'failed':
             return '계산 종료 · 결과 읽기 실패'
@@ -2120,7 +2125,8 @@ class ProjectWindow(QMainWindow):
                 run_objects[node_id] = run
                 state = "stale" if run.stale and run.state == "completed" else run.state
                 run_states[node_id] = (state, _run_text(run))
-                signature.append((node_id, run.id, run.state, run.parse_state, run.stale, run.error))
+                signature.append((node_id, run.id, run.state, run.parse_state, run.stale, run.error,
+                                  tuple((stage.get('name'), stage.get('state')) for stage in run.snapshot.get('stages', []))))
             except (OSError, ValueError, RuntimeError) as error:
                 run_states[node_id] = ("failed", _problem_text(error))
                 signature.append((node_id, str(error)))

@@ -198,6 +198,9 @@ class Workbench:
             expected = get_solver_adapter(run.solver_id).expected_output_names()
         except ValueError:
             expected = ("model.frd", "model.dat")
+        primary = run.result.get("primary_native_output")
+        if isinstance(primary, str) and primary in outputs:
+            expected = (primary, *expected)
         name = next((name for name in expected if outputs.get(name)), None)
         if run.state == "completed" and run.parse_state in {"readable", "partial"} and name:
             reference = FileReference(str(run.workdir / name), outputs[name], dict(run.units), run.unit_source, run.stale)

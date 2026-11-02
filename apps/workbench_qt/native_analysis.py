@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFram
                               QMainWindow, QMessageBox, QPlainTextEdit, QSpinBox,
                               QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QToolBar,
                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QRect, Qt, QTimer
 
 from caelab.workbench import Workbench
 from .theme import (MONO_FONT_STACK, build_stylesheet, current_theme_mode, get_palette,
@@ -30,6 +30,28 @@ _PARSE_LABELS = {"pending": "대기", "unparsed": "미판독", "reading": "판�
                  "readable": "판독 완료", "partial": "일부 판독",
                  "unsupported": "미지원 출력 형식", "missing": "출력 없음", "failed": "판독 실패"}
 _ACTIVE_STATES = {"queued", "preparing", "running"}
+
+
+class _RunStatusLabel(QLabel):
+    """A splitter must not clip the stage or failure text as it changes."""
+    def _fit_text(self):
+        if self.isVisible():
+            content = self.contentsRect()
+            height = self.fontMetrics().boundingRect(QRect(0, 0, max(1, content.width()), 100000),
+                                                    Qt.TextWordWrap, self.text()).height()
+            self.setMinimumHeight(height + self.height() - content.height())
+
+    def setText(self, text):
+        super().setText(text)
+        self._fit_text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_text()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_text()
 
 
 def _busy(run) -> bool:
@@ -284,8 +306,10 @@ class NativeAnalysisWindow(QMainWindow):
         self.run_selector.currentIndexChanged.connect(self.select_run)
         selection.addWidget(self.run_selector, 1)
         run_layout.addLayout(selection)
-        self.run_status = QLabel("아직 실행 기록이 없습니다.")
+        self.run_status = _RunStatusLabel("아직 실행 기록이 없습니다.")
         self.run_status.setWordWrap(True)
+        from PySide6.QtWidgets import QSizePolicy
+        self.run_status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         run_layout.addWidget(self.run_status)
         self.run_source = QLabel()
         self.run_source.setWordWrap(True)
@@ -665,7 +689,12 @@ class NativeAnalysisWindow(QMainWindow):
         stale_reason = _display_reason(run.stale_reason, "현재 입력과 보존 입력을 확인하세요.")
         stale = f" — 오래된 입력의 결과: {stale_reason}" if run.stale else ""
         error = _display_reason(run.error, "계산 기록을 확인하지 못했습니다. 입력 파일과 원본 로그를 확인하세요.")
-        self.run_status.setText(f"실행: {state} / 결과: {parsed}{stale}" + (f"\n{error}" if error else ""))
+        stages = run.snapshot.get("stages", [])
+        stage_labels = {**_RUN_LABELS, 'pending': '대기', 'not_started': '미실행'}
+        stage_text = " · ".join(f"{item['name'].title()}: {stage_labels.get(item['state'], item['state'])}"
+                                for item in stages if item.get("name") in {"starter", "engine"})
+        self.run_status.setText(f"실행: {state} / 결과: {parsed}{stale}" + (f"\n{stage_text}" if stage_text else "")
+                                + (f"\n{error}" if error else ""))
         self.run_source.setText(f"이 실행의 입력: {_display_file(self.project, run.input_path)}")
         self.run_source.setToolTip("선택한 실행에 보존된 입력 파일을 기준으로 표시합니다.")
         self.log.setToolTip("선택한 실행의 원본 로그 일부 (최근 32 KiB)")
@@ -717,6 +746,9 @@ class NativeAnalysisWindow(QMainWindow):
         frame = next((frame for frame in result.get("frames", [])
                       if frame.get("index") == self.frame_selector.currentData()), None)
         lines = [f"선언 단위: {_unit_text(run.units)}", "수치 검증·공학적 적합성: 미실시"]
+        if result.get("native_files"):
+            lines.append(f"원본 결과 폴더: {run.workdir}")
+            lines.append("원본 결과: " + ", ".join(result["native_files"]))
         if frame:
             summary = frame.get("summary", {})
             value = summary.get("max_displacement")

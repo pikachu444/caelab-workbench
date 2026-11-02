@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol, Callable
 from pathlib import Path
+import re
 
 from ..connections import ProgramStatus, LaunchRequest
 
@@ -70,6 +71,34 @@ class OpenRadiossAdapter:
     solver_id = "radioss"
     name = "OpenRadioss"
     input_extensions = (".rad",)
+
+    def snapshot_input(self, input_path, workdir, check_cancelled):
+        from .input_snapshot import snapshot_radioss_input
+        return snapshot_radioss_input(input_path, workdir, check_cancelled)
+
+    def build_run_stages(self, status, workdir, snapshot):
+        from ..connections import radioss_run_requests
+        return radioss_run_requests(status, workdir, Path(snapshot["execution_input"]))
+
+    def validate_stage(self, stage, workdir, snapshot):
+        sequence = "0000" if stage == "starter" else "0001"
+        listing = workdir / f"{snapshot['run_name']}_{sequence}.out"
+        if not listing.is_file():
+            raise ValueError(f"{stage}: 솔버 종료 listing이 없습니다: {listing.name}")
+        text = listing.read_text(encoding="utf-8", errors="replace")
+        if "NORMAL TERMINATION" not in text.upper() or re.search(r"\b[1-9]\d*\s+ERROR\(S\)", text, re.I):
+            raise ValueError(f"{stage}: 정상 종료를 확인하지 못했습니다. {listing.name}을 확인하세요.")
+        if stage == "starter":
+            restart = workdir / f"{snapshot['run_name']}_0000_0001.rst"
+            if not restart.is_file() or not restart.stat().st_size:
+                raise ValueError(f"Starter restart가 없습니다. Engine을 실행하지 않습니다: {restart.name}")
+
+    def artifact_paths(self, workdir, snapshot):
+        inputs = {item["execution_path"] for item in snapshot.get("files", [])}
+        return [path for path in workdir.rglob("*") if path.is_file()
+                and path.relative_to(workdir).as_posix() not in inputs
+                and path.relative_to(workdir).parts[0] != ".source"
+                and path.name not in {"job.json", ".start-solver"}]
 
     def build_run_request(self, status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
         from ..connections import radioss_run_request
