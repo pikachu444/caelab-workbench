@@ -719,3 +719,155 @@ def test_discussion_issues_is_read_only_and_reports_assets_and_originals(tmp_pat
     assert service.discussion_issues(path) == issues
     assert doc == original_doc and path.read_bytes() == original
     assert len(provider.prompts) == calls
+
+
+def test_split_timeout_budgets_prep_slow_does_not_cannibalize_provider(tmp_path, monkeypatch):
+    entered_search = threading.Event()
+    release_search = threading.Event()
+    provider_entered = threading.Event()
+    provider_release = threading.Event()
+
+    provider = Provider()
+    def slow_discuss(prompt):
+        provider_entered.set()
+        provider_release.wait(1.0)
+        return "provider finished within budget"
+    provider.discuss = slow_discuss
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+
+    def slow_search(*args, **kwargs):
+        entered_search.set()
+        release_search.wait(0.2)
+        return KnowledgeSearchResult("no_material", [], "calculix")
+    monkeypatch.setattr(experts, "search_knowledge_result", slow_search)
+
+    # Policy budgets: prep 0.15s, provider 0.3s, overall 0.5s
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 0.15)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 0.30)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 0.50)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 0.50)
+
+    # 1. Preparation timeout case: search takes longer than prep budget
+    outcome_prep = []
+    t_prep = threading.Thread(target=lambda: outcome_prep.append(ask(path, doc, template_id="material")))
+    t_prep.start()
+    assert entered_search.wait(1.0)
+    t_prep.join(1.0)
+    assert not t_prep.is_alive()
+    release_search.set()
+    assert outcome_prep[0]["turns"][-1]["status"] == "timed_out"
+    assert "준비 대기 시간" in outcome_prep[0]["turns"][-1]["error"]
+    assert not provider_entered.is_set()
+
+
+def test_split_timeout_budgets_dedicated_provider_budget_and_caller_monotonic_anchor(tmp_path, monkeypatch):
+    entered_search = threading.Event()
+    release_search = threading.Event()
+    provider_entered = threading.Event()
+    provider_release = threading.Event()
+
+    provider = Provider()
+    def slow_discuss(prompt):
+        provider_entered.set()
+        provider_release.wait(1.0)
+        return "provider finished"
+    provider.discuss = slow_discuss
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+
+    def fast_search(*args, **kwargs):
+        entered_search.set()
+        release_search.wait(0.01)
+        return KnowledgeSearchResult("no_material", [], "calculix")
+    monkeypatch.setattr(experts, "search_knowledge_result", fast_search)
+
+    # Policy budgets: prep 0.2s, provider 0.1s, overall 0.4s
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 0.20)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 0.10)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 0.40)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 0.40)
+
+    outcome = []
+    t = threading.Thread(target=lambda: outcome.append(ask(path, doc, template_id="material")))
+    t.start()
+    assert entered_search.wait(1.0)
+    release_search.set()
+    assert provider_entered.wait(1.0)
+    t.join(1.0)
+    assert not t.is_alive()
+    provider_release.set()
+    turn = outcome[0]["turns"][-1]
+    assert turn["status"] == "timed_out"
+    assert "전문가 요청이 0.1초 제한을 넘었습니다." in turn["error"]
+
+
+def test_split_timeout_budgets_overall_boundary_caps_late_worker(tmp_path, monkeypatch):
+    provider_entered = threading.Event()
+    provider_release = threading.Event()
+
+    provider = Provider()
+    def slow_discuss(prompt):
+        provider_entered.set()
+        provider_release.wait(1.0)
+        return "late"
+    provider.discuss = slow_discuss
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+
+    # Prep 0.1s, Provider 0.3s, Overall 0.2s (overall caps provider)
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 0.10)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 0.30)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 0.20)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 0.20)
+
+    start = time.monotonic()
+    doc = ask(path, doc, template_id="interpretation")
+    elapsed = time.monotonic() - start
+    provider_release.set()
+    turn = doc["turns"][-1]
+    assert turn["status"] == "timed_out"
+    assert elapsed < 0.5
+
+
+def test_split_timeout_budgets_fake_clock_worker_start_delay_anchored_at_caller(tmp_path, monkeypatch):
+    # Fake-clock verifying that worker thread startup delay counts against preparation budget
+    # and cannot push preparation deadline forward to cannibalize provider's dedicated budget.
+    fake_time = [1000.0]
+    real_sleep = time.sleep
+
+    def fake_monotonic():
+        return fake_time[0]
+
+    provider = Provider()
+    provider_called = threading.Event()
+    def discuss_spy(prompt):
+        provider_called.set()
+        return "provider answer"
+    provider.discuss = discuss_spy
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+
+    # Policy budgets: prep 20.0s, provider 60.0s, overall 85.0s
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 20.0)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 85.0)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 85.0)
+
+    # Intercept verify_evidence to simulate delayed worker entry past prep deadline
+    orig_verify = service.verify_evidence
+    def delayed_verify(*args, **kwargs):
+        # Simulate worker thread starting late: clock has jumped by 25s since caller start_time
+        fake_time[0] += 25.0
+        return orig_verify(*args, **kwargs)
+
+    monkeypatch.setattr(service, "verify_evidence", delayed_verify)
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+
+    doc = ask(path, doc, template_id="interpretation")
+    turn = doc["turns"][-1]
+    assert turn["status"] == "timed_out"
+    assert "전문가 준비 대기 시간이 20초 제한을 넘었습니다." in turn["error"]
+    assert not provider_called.is_set()
+
+

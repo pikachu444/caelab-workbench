@@ -17,7 +17,10 @@ from ..native.input_snapshot import fingerprint
 from . import experts
 from .knowledge import extract_citations, verify_citations
 
-REQUEST_TIMEOUT_SECONDS = 60.0  # includes retrieval and provider work
+REQUEST_TIMEOUT_SECONDS = 85.0  # backward compatibility alias for administrative wait boundary
+PREPARATION_TIMEOUT_SECONDS = 20.0  # policy default budget for verification, availability, and prompt building
+PROVIDER_TIMEOUT_SECONDS = 60.0     # dedicated budget for provider.discuss
+OVERALL_TIMEOUT_SECONDS = 85.0      # administrative wait and late response rejection boundary
 _EVIDENCE_KEYS = {"id", "source_kind", "created_at", "solver_id", "run_id", "node_id",
                   "input_revision", "input_manifest", "units", "unit_source", "process_state",
                   "parse_state", "frame_index", "summary_text", "model_text", "log_text", "files", "warnings"}
@@ -454,9 +457,17 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
             with _lock(path):
                 document = _current(path, expected_revision, idle=False)
                 _interrupt(document)
+                prep_budget = PREPARATION_TIMEOUT_SECONDS
+                provider_budget = PROVIDER_TIMEOUT_SECONDS
+                overall_budget = OVERALL_TIMEOUT_SECONDS
+                if REQUEST_TIMEOUT_SECONDS < overall_budget:
+                    overall_budget = REQUEST_TIMEOUT_SECONDS
+                    provider_budget = min(provider_budget, REQUEST_TIMEOUT_SECONDS)
+                    prep_budget = min(prep_budget, REQUEST_TIMEOUT_SECONDS)
+
                 provider = experts.get_provider(provider_id or document.get("provider_id"))
                 if isinstance(provider, experts.OpenAICompatibleProvider):
-                    provider.timeout_seconds = REQUEST_TIMEOUT_SECONDS
+                    provider.timeout_seconds = provider_budget
                 if evidence_id not in document["evidences"]:
                     raise ValueError("선택한 근거가 대화에 없습니다.")
                 evidence = copy.deepcopy(document["evidences"][evidence_id])
@@ -482,10 +493,14 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
         except Timeout as error:
             raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
-        deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS
+        start_time = time.monotonic()
+        prep_deadline = start_time + prep_budget
+        overall_deadline = start_time + overall_budget
         stopped = threading.Event()
         responses = queue.Queue(maxsize=1)
         supplied = queue.Queue(maxsize=1)
+        provider_started = threading.Event()
+        provider_deadline_box = [overall_deadline]
         discussion = experts.Discussion(template=template, summary_text=evidence["summary_text"],
                     model_text=evidence["model_text"], log_tail=evidence["log_text"], provider=provider,
                     history=history, constraints=copy.deepcopy(document["constraints"]),
@@ -494,9 +509,16 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
         class Cancelled(Exception):
             pass
 
-        def checkpoint():
-            if stopped.is_set() or time.monotonic() >= deadline:
-                raise TimeoutError("전문가 요청 대기 시간이 지났습니다.")
+        def checkpoint(stage="prep"):
+            now = time.monotonic()
+            if stopped.is_set():
+                raise Cancelled("전문가 요청 대기 시간이 지났습니다.")
+            if stage == "prep":
+                if now >= prep_deadline:
+                    raise TimeoutError(f"전문가 준비 대기 시간이 {prep_budget:g}초 제한을 넘었습니다.")
+            else:
+                if now >= provider_deadline_box[0] or now >= overall_deadline:
+                    raise TimeoutError(f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다.")
             if check_cancelled is not None:
                 try:
                     check_cancelled()
@@ -505,7 +527,7 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
 
         def request():
             try:
-                checkpoint()
+                checkpoint("prep")
                 problems = verify_evidence(evidence, path.parent / "assets")
                 if problems:
                     raise ValueError("근거 무결성 확인 실패: " + "; ".join(problems))
@@ -519,8 +541,13 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                            "shown_ids": list(discussion.knowledge_ids),
                            "knowledge_status": discussion.knowledge_result.status if discussion.knowledge_result else "not_requested",
                            "knowledge_error": discussion.knowledge_result.error if discussion.knowledge_result else None}
-                checkpoint()  # retrieval must not launch a provider after cancellation
+                checkpoint("prep")  # retrieval must not launch a provider after cancellation or prep timeout
                 supplied.put(context)
+
+                prep_finished = time.monotonic()
+                provider_deadline_box[0] = min(prep_finished + provider_budget, overall_deadline)
+                provider_started.set()
+
                 reply = provider.discuss(prompt)
                 if not isinstance(reply, str) or not reply.strip():
                     raise ValueError("공급자가 비어 있는 답변을 반환했습니다.")
@@ -538,12 +565,24 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
             except Exception as error:
                 status, reply, error_text = "cancelled", "", f"{type(error).__name__}: {error}"
                 break
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            if not provider_started.is_set():
+                if now >= prep_deadline:
+                    status, reply, error_text = "timed_out", "", f"전문가 준비 대기 시간이 {prep_budget:g}초 제한을 넘었습니다."
+                    break
+                remaining = min(prep_deadline - now, overall_deadline - now)
+            else:
+                target_deadline = min(provider_deadline_box[0], overall_deadline)
+                if now >= target_deadline:
+                    status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
+                    break
+                remaining = target_deadline - now
+
             if remaining <= 0:
-                status, reply, error_text = "timed_out", "", f"전문가 요청이 {REQUEST_TIMEOUT_SECONDS:g}초 제한을 넘었습니다."
+                status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
                 break
             try:
-                status, reply, error_text = responses.get(timeout=min(.05, remaining))
+                status, reply, error_text = responses.get(timeout=min(.05, max(0.001, remaining)))
                 break
             except queue.Empty:
                 pass
