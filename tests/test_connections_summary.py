@@ -279,3 +279,53 @@ def test_ambiguous_registry_relative_path_does_not_guess_from_cwd(tmp_path, monk
     assert explicit.available
     assert explicit.source == "environment"
     assert explicit.path == str(target)
+
+
+def test_missing_installer_manifest_does_not_crash_and_fails_closed(tmp_path):
+    missing_manifest = tmp_path / "missing_manifest.json"
+    statuses = program_statuses(manifest_path=missing_manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "설치 매니페스트" in s.reason
+    spec = next(spec for spec in PROGRAMS if spec.id == "calculix")
+    assert find_program(spec, manifest_path=missing_manifest) is None
+
+
+def test_corrupt_json_installer_manifest_does_not_crash(tmp_path):
+    corrupt_manifest = tmp_path / "corrupt_manifest.json"
+    corrupt_manifest.write_text("{ broken json: [", encoding="utf-8")
+    statuses = program_statuses(manifest_path=corrupt_manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "형식이 잘못되었습니다" in s.reason
+    spec = next(spec for spec in PROGRAMS if spec.id == "gmsh")
+    assert find_program(spec, manifest_path=corrupt_manifest) is None
+
+
+def test_invalid_structure_installer_manifest_does_not_crash(tmp_path):
+    invalid_manifest = tmp_path / "invalid_manifest.json"
+    invalid_manifest.write_text('{"programs": "not_a_list"}', encoding="utf-8")
+    statuses = program_statuses(manifest_path=invalid_manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "필수 구조" in s.reason
+
+
+def test_malformed_program_entries_in_manifest_do_not_crash(tmp_path):
+    manifest = tmp_path / "malformed_entries.json"
+    manifest.write_text('{"programs": ["not_a_dict", {"id": "gmsh", "platforms": "not_a_dict"}]}', encoding="utf-8")
+    statuses = program_statuses(manifest_path=manifest)
+    assert len(statuses) == len(PROGRAMS)
+
