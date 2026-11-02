@@ -551,16 +551,17 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                 supplied.put(context)
                 checkpoint("prep")
 
-                prep_finished = time.monotonic()
-                provider_deadline_box[0] = min(prep_finished + provider_budget, overall_deadline)
-                checkpoint("provider")
-
-                provider_started.set()
                 if on_stage is not None:
+                    checkpoint("prep")
                     try:
                         on_stage("provider")
                     except Exception:
                         pass
+                checkpoint("prep")
+
+                provider_started_at = time.monotonic()
+                provider_deadline_box[0] = min(provider_started_at + provider_budget, overall_deadline)
+                provider_started.set()
                 checkpoint("provider")
 
                 reply = provider.discuss(prompt)

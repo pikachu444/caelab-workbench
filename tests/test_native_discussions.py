@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import queue
 import subprocess
 import sys
 import threading
@@ -932,17 +933,19 @@ def test_split_timeout_budgets_responses_queue_cancellation_recheck_prevents_com
 
 
 def test_split_timeout_budgets_supplied_queue_delay_and_caller_timeout_blocks_provider_call(tmp_path, monkeypatch):
-    # Counterexample 3: worker is paused after prep retrieval before launching provider.
+    # Counterexample 3: worker is paused AFTER supplied.put(context) before launching provider.
     # Caller times out at prep deadline (21s) and saves/returns timed_out.
-    # When worker is released, provider.discuss MUST NOT be called (0 calls).
+    # When worker is released, neither on_stage("provider") nor provider.discuss MUST be called (0 calls).
     provider_called = threading.Event()
+    provider_stage_called = threading.Event()
     worker_released = threading.Event()
-    orig_provided = service._provided_materials
+    orig_put = queue.Queue.put
 
-    def blocking_materials(*args, **kwargs):
-        res = orig_provided(*args, **kwargs)
-        # Block worker until caller has timed out and returned
-        worker_released.wait(2.0)
+    def blocking_put(self, item, *args, **kwargs):
+        res = orig_put(self, item, *args, **kwargs)
+        if isinstance(item, dict) and "provided_materials" in item:
+            # Block worker post-put until caller has timed out and returned
+            worker_released.wait(2.0)
         return res
 
     provider = Provider()
@@ -953,23 +956,68 @@ def test_split_timeout_budgets_supplied_queue_delay_and_caller_timeout_blocks_pr
 
     provider.discuss = discuss_spy
 
+    def on_stage_spy(stage):
+        if stage == "provider":
+            provider_stage_called.set()
+
     path, doc, _ = prepared(tmp_path, monkeypatch, provider)
     monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 0.50)
     monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 1.00)
     monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 1.00)
-    monkeypatch.setattr(service, "_provided_materials", blocking_materials)
+    monkeypatch.setattr(queue.Queue, "put", blocking_put)
 
-    doc = ask(path, doc, template_id="interpretation")
+    doc = ask(path, doc, template_id="interpretation", on_stage=on_stage_spy)
     turn = doc["turns"][-1]
     assert turn["status"] == "timed_out"
     assert "준비 대기 시간" in turn["error"]
     assert turn["stage"] == "preparation"
 
-    # Now release worker; worker checkpoint must detect stopped and NOT call discuss
+    # Now release worker; worker checkpoint must detect stopped and NOT call discuss or on_stage("provider")
     worker_released.set()
     time.sleep(0.1)
     assert not provider_called.is_set()
+    assert not provider_stage_called.is_set()
+
+
+def test_split_timeout_budgets_on_stage_delay_does_not_cannibalize_provider_budget(tmp_path, monkeypatch):
+    # Verifies that callback execution time before provider launch does not eat into
+    # provider's dedicated response budget. Provider gets full budget from actual start.
+    fake_time = [1000.0]
+
+    def fake_monotonic():
+        return fake_time[0]
+
+    def on_stage_cb(stage):
+        if stage == "provider":
+            # Callback takes 10 seconds of preparation/transition time
+            fake_time[0] += 10.0
+
+    class TimedProvider(Provider):
+        def discuss(self, prompt):
+            # Provider takes 59.5 seconds of its 60.0s budget
+            fake_time[0] += 59.5
+            return "PROVIDER_REPLY_AFTER_59_5_SECONDS"
+
+    provider = TimedProvider()
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(service, "PREPARATION_TIMEOUT_SECONDS", 20.0)
+    monkeypatch.setattr(service, "PROVIDER_TIMEOUT_SECONDS", 60.0)
+    monkeypatch.setattr(service, "OVERALL_TIMEOUT_SECONDS", 85.0)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 85.0)
+
+    doc = service.ask_discussion(
+        path, "질문",
+        evidence_id=doc["selected_evidence_id"],
+        template_id="interpretation",
+        expected_revision=doc["revision"],
+        on_stage=on_stage_cb
+    )
+    turn = doc["turns"][-1]
+    assert turn["status"] == "completed"
+    assert turn["reply"] == "PROVIDER_REPLY_AFTER_59_5_SECONDS"
+    assert turn["stage"] == "provider"
 
 
 def test_split_timeout_budgets_on_stage_callback_and_turn_stage_recording(tmp_path, monkeypatch):
