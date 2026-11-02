@@ -56,7 +56,10 @@ class Workbench:
             return save_native_project(project, path, expected_revision=expected_revision)
         return save_native_project(project, path)
 
-    def add_program_node(self, project: NativeProject, kind: str, program_id: str, position=(0.0, 0.0)):
+    def add_program_node(self, project: NativeProject, kind: str, program_id: str, position=None):
+        if position is None:
+            idx = len(project.nodes)
+            position = (40.0 + 250.0 * (idx % 3), 40.0 + 150.0 * (idx // 3))
         return project.add_node(kind, program_id, position)
 
     def set_node_program(self, project: NativeProject, node_id: str, program_id: str) -> None:

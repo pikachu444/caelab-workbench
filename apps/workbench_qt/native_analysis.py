@@ -111,7 +111,7 @@ class CalculixDeckHighlighter(QSyntaxHighlighter):
 
     def highlightBlock(self, text):  # noqa: N802
         p = get_palette(self.theme_mode)
-        if re.match(r'^\*\*', text):
+        if re.match(r'^\*\*', text) or (re.match(r'^\s*#', text) and not re.match(r'^\s*#include\b', text, re.I)):
             self._format(0, len(text), p['syn_comment'])
             return
         keyword = re.match(r'^\*[A-Za-z][A-Za-z0-9 _-]*', text)
@@ -120,6 +120,12 @@ class CalculixDeckHighlighter(QSyntaxHighlighter):
             self._format(0, keyword.end(), p['syn_section'] if section else p['syn_keyword'], True)
             for match in re.finditer(r',?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=', text):
                 self._format(match.start(1), len(match[1]), p['syn_param'])
+            return
+        rad_kw = re.match(r'^\s*(?:/[A-Za-z0-9_/-]+|#include\b)', text, re.I)
+        if rad_kw:
+            section = re.match(r'^\s*/(?:BEGIN|RUN|STOP|END)\b', text, re.I)
+            self._format(rad_kw.start(), rad_kw.end() - rad_kw.start(),
+                         p['syn_section'] if section else p['syn_keyword'], True)
 
     def _format(self, start, length, color, bold=False):
         fmt = QTextCharFormat()
@@ -133,9 +139,9 @@ class SolverLogHighlighter(CalculixDeckHighlighter):
     def highlightBlock(self, text):  # noqa: N802
         p = get_palette(self.theme_mode)
         for pattern, key, bold in (
-                (r'\bSTEP\s+\d+|\bINCREMENT\s+\d+|iteration\s+\d+|Job finished', 'syn_keyword', False),
-                (r'\*WARNING.*|\bWARNING\b|cutback', 'syn_warning', True),
-                (r'\*ERROR.*|\bERROR\b|divergence|not convergent', 'syn_error', True)):
+                (r'\bSTEP\s+\d+|\bINCREMENT\s+\d+|iteration\s+\d+|Job finished|\bCYCLE\s+\d+|\bNORMAL TERMINATION\b', 'syn_keyword', False),
+                (r'\*WARNING.*|\bWARNING\s+ID\s*:|\*\*\s*WARNING\b|cutback', 'syn_warning', True),
+                (r'\*ERROR.*|\bERROR\s+ID\s*:|\*\*\s*ERROR\b|\bERROR\s+TERMINATION\b|divergence|not convergent', 'syn_error', True)):
             for match in re.finditer(pattern, text, re.I):
                 self._format(match.start(), len(match[0]), p[key], bold)
 
@@ -462,8 +468,8 @@ class NativeAnalysisWindow(QMainWindow):
 
     def _update_log_summary(self):
         text = self.log.toPlainText()
-        errors = len(re.findall(r'\*ERROR\b', text, re.I))
-        warnings = len(re.findall(r'\*WARNING\b', text, re.I))
+        errors = len(re.findall(r'(?:\*ERROR\b|\bERROR\s+ID\s*:|\*\*\s*ERROR\b|\bERROR\s+TERMINATION\b)', text, re.I))
+        warnings = len(re.findall(r'(?:\*WARNING\b|\bWARNING\s+ID\s*:|\*\*\s*WARNING\b)', text, re.I))
         self.log_summary_badge.setText(f'최근 로그: 오류 {errors} / 경고 {warnings}')
         self.log_summary_badge.setStyleSheet(
             status_badge_style('error' if errors else 'warning' if warnings else 'neutral', getattr(self, '_theme_mode', None))
@@ -471,16 +477,17 @@ class NativeAnalysisWindow(QMainWindow):
 
     @staticmethod
     def _deck_category(keyword):
-        if keyword in {'STEP', 'END STEP', 'STATIC', 'DYNAMIC', 'FREQUENCY', 'BUCKLE', 'HEAT TRANSFER',
-                       'COUPLED TEMPERATURE-DISPLACEMENT', 'VISCO', 'MODAL DYNAMIC'}:
+        kw = keyword.upper().lstrip('/*')
+        if kw in {'STEP', 'END STEP', 'STATIC', 'DYNAMIC', 'FREQUENCY', 'BUCKLE', 'HEAT TRANSFER',
+                  'COUPLED TEMPERATURE-DISPLACEMENT', 'VISCO', 'MODAL DYNAMIC'} or kw.startswith(('RUN', 'ANIM', 'STOP')):
             return 'step'
-        if keyword in {'MATERIAL', 'ELASTIC', 'PLASTIC', 'DENSITY', 'EXPANSION', 'CONDUCTIVITY', 'SPECIFIC HEAT'}:
+        if kw in {'MATERIAL', 'ELASTIC', 'PLASTIC', 'DENSITY', 'EXPANSION', 'CONDUCTIVITY', 'SPECIFIC HEAT'} or kw.startswith(('MAT', 'EOS', 'FAIL')):
             return 'material'
-        if keyword in {'BOUNDARY', 'CLOAD', 'DLOAD', 'DSLOAD', 'TEMPERATURE', 'CFLUX', 'DFLUX', 'FILM', 'RADIATE'}:
+        if kw in {'BOUNDARY', 'CLOAD', 'DLOAD', 'DSLOAD', 'TEMPERATURE', 'CFLUX', 'DFLUX', 'FILM', 'RADIATE'} or kw.startswith(('BCS', 'CLOAD', 'GRAV', 'INIVEL', 'IMPDISP', 'IMPVEL', 'MONVOL')):
             return 'bc_load'
-        if any(word in keyword for word in ('CONTACT', 'FRICTION', 'SURFACE', 'TIE')):
+        if any(word in kw for word in ('CONTACT', 'FRICTION', 'SURFACE', 'TIE')) or kw.startswith(('INTER', 'SURF', 'TIE')):
             return 'contact'
-        if keyword in {'NODE', 'ELEMENT', 'NSET', 'ELSET', 'SOLID SECTION', 'SHELL SECTION', 'BEAM SECTION'}:
+        if kw in {'NODE', 'ELEMENT', 'NSET', 'ELSET', 'SOLID SECTION', 'SHELL SECTION', 'BEAM SECTION'} or kw.startswith(('NODE', 'PART', 'PROP', 'SHELL', 'SH3N', 'BRICK', 'TETRA', 'TRUSS', 'BEAM', 'SPRING', 'GRNOD', 'GRPART', 'GRSH3N', 'GRBRIC', 'GRTETRA', 'SKEW', 'FRAME')):
             return 'mesh'
         return 'other'
 
@@ -489,19 +496,40 @@ class NativeAnalysisWindow(QMainWindow):
         step = None
         for line_no, line in enumerate(self.source.toPlainText().splitlines(), 1):
             text = line.lstrip()
-            if not text.startswith('*') or text.startswith('**'):
+            if not text:
                 continue
-            keyword = text.split(',', 1)[0].strip().upper().lstrip('*')
-            name = re.search(r'\b(?:NAME|ELSET|NSET|MATERIAL)\s*=\s*([^,]+)', text, re.I)
-            title = f'*{keyword}' + (f' ({name[1].strip()})' if name else '')
-            parent = step if step is not None and keyword != 'STEP' else self.deck_outline
-            item = QTreeWidgetItem(parent, [title, str(line_no)])
-            item.setData(0, Qt.UserRole, line_no)
-            item.setData(0, Qt.UserRole + 1, self._deck_category(keyword))
-            if keyword == 'STEP':
-                step = item
-            elif keyword == 'END STEP':
-                step = None
+            if text.startswith('**'):
+                continue
+            if text.startswith('#') and not text.lower().startswith('#include'):
+                continue
+
+            if text.startswith('*'):
+                keyword = text.split(',', 1)[0].strip().upper().lstrip('*')
+                name = re.search(r'\b(?:NAME|ELSET|NSET|MATERIAL)\s*=\s*([^,]+)', text, re.I)
+                title = f'*{keyword}' + (f' ({name[1].strip()})' if name else '')
+                cat = self._deck_category(keyword)
+                parent = step if step is not None and keyword != 'STEP' else self.deck_outline
+                item = QTreeWidgetItem(parent, [title, str(line_no)])
+                item.setData(0, Qt.UserRole, line_no)
+                item.setData(0, Qt.UserRole + 1, cat)
+                if keyword == 'STEP':
+                    step = item
+                elif keyword == 'END STEP':
+                    step = None
+                continue
+
+            if text.startswith('/') or text.lower().startswith('#include'):
+                keyword_part = text.split()[0].rstrip('/')
+                title = keyword_part
+                cat = self._deck_category(keyword_part.lstrip('/'))
+                parent = step if step is not None and not keyword_part.upper().startswith('/RUN') else self.deck_outline
+                item = QTreeWidgetItem(parent, [title, str(line_no)])
+                item.setData(0, Qt.UserRole, line_no)
+                item.setData(0, Qt.UserRole + 1, cat)
+                if keyword_part.upper().startswith('/RUN'):
+                    step = item
+                elif keyword_part.upper() in {'/STOP', '/END'}:
+                    step = None
         self.deck_outline.expandAll()
         self._filter_deck_outline()
 
@@ -777,8 +805,36 @@ class NativeAnalysisWindow(QMainWindow):
                 lines.append(f"교환 파일: {Path(frame['vtu_file']).name}")
         else:
             lines.append("판독한 결과 프레임이 없습니다. 원본 출력과 로그를 확인하세요.")
+            run_sum = result.get("summary", {})
+            if "total_cycles" in run_sum or "cycle" in run_sum:
+                self.kpi_nodes_value.setText(f"사이클 {int(run_sum.get('total_cycles', run_sum.get('cycle', 0))):,}")
+
+        run_summary = result.get("summary", {})
+        if run_summary.get("solver_id") == "radioss" or "internal_energy" in run_summary:
+            lines += ["", "OpenRadioss 에너지·사이클 요약:"]
+            if "total_cycles" in run_summary:
+                lines.append(f"  총 사이클 수: {int(run_summary['total_cycles'])}")
+            elif "cycle" in run_summary:
+                lines.append(f"  최종 사이클: {int(run_summary['cycle'])}")
+            if "time" in run_summary:
+                lines.append(f"  최종 시간: {run_summary['time']:.6g} {run.units.get('time', 's')}")
+            if "internal_energy" in run_summary:
+                lines.append(f"  내부 에너지 (I-ENERGY): {run_summary['internal_energy']:.6g}")
+            if "kinetic_energy" in run_summary:
+                lines.append(f"  운동 에너지 (K-ENERGY): {run_summary['kinetic_energy']:.6g}")
+            if "energy_error" in run_summary:
+                lines.append(f"  에너지 오차율: {run_summary['energy_error']:.2f}%")
+            if "mass_error" in run_summary:
+                lines.append(f"  질량 오차율: {run_summary['mass_error']:.6g}")
+            if "hourglass_ratio" in run_summary and run_summary["hourglass_ratio"] is not None:
+                lines.append(f"  아워글래스 비: {run_summary['hourglass_ratio']:.4f}")
+
         dat = result.get("dat", {})
-        self.kpi_dat_value.setText(_PARSE_LABELS.get(dat.get('status'), dat.get('status') or '출력 없음'))
+        dat_status = dat.get('status')
+        if not dat_status and run_summary.get("energy_error") is not None:
+            self.kpi_dat_value.setText(f"오차 {run_summary['energy_error']:.1f}%")
+        else:
+            self.kpi_dat_value.setText(_PARSE_LABELS.get(dat_status, dat_status or '출력 없음'))
         self.dat_container.setVisible(bool(dat.get('sets')))
         metadata = dat.get('frame') or {}
         self.dat_frame_label.setText(f"DAT 최종 프레임 — 단계 {metadata.get('step', '?')} / 증분 {metadata.get('increment', '?')} / 값 {metadata.get('value', '?')}\n선택한 FRD 프레임과 대응 여부 미확인")

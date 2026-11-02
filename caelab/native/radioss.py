@@ -55,9 +55,53 @@ def parse_radioss_output(path: Path) -> dict[str, float]:
             if math.isfinite(value):
                 values[key] = value
 
-    # Do not guess columns from native compact headings such as I-ENERGY and
-    # K-ENERGY: their layout/version must be established before values can be
-    # mapped safely.  Explicitly labelled exported values remain unambiguous.
+    # OpenRadioss standard Engine cycle table lines:
+    # CYCLE TIME TIME-STEP ELEMENT ERROR I-ENERGY K-ENERGY T K-ENERGY R EXT-WORK [MAS.ERR]
+    cycle_pattern = re.compile(
+        rf"^\s*(\d+)\s+({_NUMBER})\s+({_NUMBER})\s+(.+?)\s+({_NUMBER})\s*%\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})(?:$|\s+({_NUMBER}))",
+        re.M,
+    )
+    cycle_rows = cycle_pattern.findall(text)
+    if cycle_rows:
+        last = cycle_rows[-1]
+        try:
+            cycle_val = float(last[0])
+            time_val = float(last[1].replace("D", "E").replace("d", "e"))
+            err_val = float(last[4].replace("D", "E").replace("d", "e"))
+            i_val = float(last[5].replace("D", "E").replace("d", "e"))
+            kt_val = float(last[6].replace("D", "E").replace("d", "e"))
+            kr_val = float(last[7].replace("D", "E").replace("d", "e"))
+            work_val = float(last[8].replace("D", "E").replace("d", "e"))
+            mas_err = float(last[9].replace("D", "E").replace("d", "e")) if last[9] else None
+
+            if "internal_energy" not in values and math.isfinite(i_val):
+                values["internal_energy"] = i_val
+            if "kinetic_energy" not in values and math.isfinite(kt_val + kr_val):
+                values["kinetic_energy"] = kt_val + kr_val
+            if "energy_error" not in values and math.isfinite(err_val):
+                values["energy_error"] = err_val
+            if "cycle" not in values and math.isfinite(cycle_val):
+                values["cycle"] = cycle_val
+            if "time" not in values and math.isfinite(time_val):
+                values["time"] = time_val
+            if math.isfinite(kt_val):
+                values["kinetic_energy_t"] = kt_val
+            if math.isfinite(kr_val):
+                values["kinetic_energy_r"] = kr_val
+            if math.isfinite(work_val):
+                values["external_work"] = work_val
+            if mas_err is not None and math.isfinite(mas_err):
+                values["mass_error"] = mas_err
+        except (ValueError, TypeError):
+            pass
+
+    total_cycles_match = re.search(r"TOTAL NUMBER OF CYCLES\s*:\s*(\d+)", text, re.I)
+    if total_cycles_match:
+        try:
+            values["total_cycles"] = float(total_cycles_match.group(1))
+        except (ValueError, TypeError):
+            pass
+
     return values
 
 

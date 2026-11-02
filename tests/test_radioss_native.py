@@ -40,6 +40,30 @@ ENERGY ERROR = -1.25 %
     }
 
 
+def test_engine_listing_parses_cycle_table_summary(tmp_path):
+    listing = tmp_path / "case_0001.out"
+    listing.write_text("""
+ 02/11/2026
+   CYCLE    TIME      TIME-STEP  ELEMENT          ERROR  I-ENERGY    K-ENERGY T  K-ENERGY R  EXT-WORK     MAS.ERR     TOTAL MASS  MASS ADDED
+       0   0.000      0.7714E-07 SOLID        816   0.0%   0.000       992.8       0.000       0.000       0.000      0.1907E-03   0.000
+     100  0.7714E-05  0.7714E-07 SOLID        816   0.0%   5.087       1170.       0.000       182.5       0.000      0.1907E-03   0.000
+    1000  0.7712E-04  0.7714E-07 SOLID        816 -35.8%   265.4       1783.       20.01       2228.       0.000      0.1907E-03   0.000
+
+     TOTAL NUMBER OF CYCLES  :    1039
+""")
+    parsed = parse_radioss_output(listing)
+    assert parsed["cycle"] == 1000.0
+    assert parsed["time"] == 0.7712e-04
+    assert parsed["internal_energy"] == 265.4
+    assert parsed["kinetic_energy"] == 1803.01
+    assert parsed["kinetic_energy_t"] == 1783.0
+    assert parsed["kinetic_energy_r"] == 20.01
+    assert parsed["energy_error"] == -35.8
+    assert parsed["external_work"] == 2228.0
+    assert parsed["mass_error"] == 0.0
+    assert parsed["total_cycles"] == 1039.0
+
+
 def test_collection_writes_valid_vtu_and_energy_summary(tmp_path):
     (tmp_path / "impact_0001.out").write_text("""
 KINETIC ENERGY = 12
