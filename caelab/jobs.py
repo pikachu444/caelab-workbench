@@ -116,6 +116,12 @@ class _NativeCancelled(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class RunActivity:
+    active: bool
+    cleanup_error: str = ""
+
+
 def _native_exited(process):
     if os.name == "posix" and hasattr(os, "waitid"):
         # WNOWAIT retains the leader PID until its owned group is cleaned up.
@@ -275,12 +281,28 @@ class JobManager:
             return copy.deepcopy(run) if run is not None else None
 
     def submit_native(self, store: RunStore, node_id: str, reference, status, timeout=3600, prerequisites=(), suppress_select: bool = False) -> NativeRun:
+        from .native.adapter import get_solver_adapter
+        return self._submit_owned(store, node_id, reference, status, timeout, prerequisites,
+                                  suppress_select, adapter=get_solver_adapter(status.spec.id))
+
+    def submit_model(self, store: RunStore, model: StructuralModel, converter: SolverConverter,
+                     status: ProgramStatus, timeout=3600) -> NativeRun:
+        from .model_execution import MODEL_NODE_ID, ModelRunAdapter
+        adapter = ModelRunAdapter(model, converter)
+        units = {"length": "m", "force": "N"} if model.unit_system == "si" else {}
+        reference = FileReference(str(store.root.parent / 'model.json'), units=units,
+                                  unit_source='StructuralModel.unit_system')
+        return self._submit_owned(store, MODEL_NODE_ID, reference, status, timeout, adapter=adapter)
+
+    def _submit_owned(self, store, node_id, reference, status, timeout=3600,
+                      prerequisites=(), suppress_select=False, *, adapter) -> NativeRun:
         if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout은 양의 유한한 초 단위 값이어야 합니다.")
         with self._native_lock:
             if self._closed:
                 raise ValueError("종료 중인 Workbench에는 계산을 제출할 수 없습니다.")
             lease = store.lease()
+            control = None
             try:
                 store.recover_unlocked()
                 run_id = uuid.uuid4().hex
@@ -289,7 +311,8 @@ class JobManager:
                                 log_path=str(store.root / run_id / "job.log"))
                 control = {"cancel": threading.Event(), "process": None, "group": None, "thread": None, "store": store,
                            "prerequisites": copy.deepcopy(prerequisites), "stale_input": reference.stale,
-                           "registered_input_revision": reference.revision, "cleanup_failed": False}
+                           "registered_input_revision": reference.revision, "cleanup_failed": False,
+                           "adapter": adapter, "lease": lease, "lease_release_attempted": False}
                 self._native[run_id], self._controls[run_id] = run, control
                 try:
                     run.workdir.mkdir(parents=True)
@@ -297,34 +320,60 @@ class JobManager:
                     if not suppress_select:
                         store.select(node_id, run.id)
                 except Exception as exc:
-                    run.state, run.error, run.finished_at = "failed", f"실행 기록 준비 실패: {exc}", utc_now()
-                    try:
-                        store.write(run)
-                    except Exception:
-                        pass
-                    lease.release()
-                    return copy.deepcopy(run)
-                worker = threading.Thread(target=self._run_native, args=(run_id, status, timeout, lease), daemon=True,
-                                          name=f"caelab-{status.spec.id}-{run_id[:8]}")
-                control["thread"] = worker
+                    return self._fail_native_submission(run, control, f"실행 기록 준비 실패: {exc}")
                 try:
+                    worker = threading.Thread(target=self._run_native, args=(run_id, status, timeout), daemon=True,
+                                              name=f"caelab-{status.spec.id}-{run_id[:8]}")
+                    control["thread"] = worker
                     worker.start()
                 except Exception as exc:
-                    run.state, run.error, run.finished_at = "failed", f"worker 시작 실패: {exc}", utc_now()
-                    control["thread"] = None
-                    store.write(run)
-                    lease.release()
+                    return self._fail_native_submission(run, control, f"worker 시작 실패: {exc}")
                 return copy.deepcopy(run)
-            except Exception:
-                lease.release()
+            except Exception as exc:
+                if control is not None:
+                    return self._fail_native_submission(run, control, f"실행 등록 실패: {exc}")
+                try:
+                    lease.release()
+                except Exception as cleanup:
+                    raise RuntimeError(f'{exc}; 실행 저장소 lease 해제 실패: {cleanup}') from exc
                 raise
 
-    def _run_native(self, run_id, status, timeout, lease):
-        from .native.adapter import get_solver_adapter
-        adapter = get_solver_adapter(status.spec.id)
+    def _fail_native_submission(self, run, control, message):
+        run.state, run.error, run.finished_at = 'failed', message, utc_now()
+        thread = control['thread']
+        if thread is not None and thread.is_alive():
+            control['cancel'].set()
+        else:
+            control['thread'] = None
+        try:
+            control['store'].write(run)
+        except Exception as exc:
+            run.error += f' 실행 기록 저장 실패: {exc}'
+        if control['thread'] is None:
+            self._release_native_lease(run, control)
+        return copy.deepcopy(run)
 
+    def _release_native_lease(self, run, control):
+        with self._native_lock:
+            if control['lease_release_attempted']:
+                return
+            control['lease_release_attempted'] = True
+        try:
+            control['lease'].release()
+        except Exception as exc:
+            with self._native_lock:
+                control['cleanup_failed'] = True
+                run.state = 'failed'
+                run.error += f' 실행 저장소 lease 해제 실패: {exc}'
+                try:
+                    control['store'].write(run)
+                except Exception as write_error:
+                    run.error += f' 실행 기록 저장 실패: {write_error}'
+
+    def _run_native(self, run_id, status, timeout):
         with self._native_lock:
             run, control = self._native[run_id], self._controls[run_id]
+        adapter = control['adapter']
         store = control["store"]
         deadline = time.monotonic() + timeout
         current_stage = None
@@ -343,6 +392,11 @@ class JobManager:
                 store.write(run)
 
         try:
+            initial_snapshot = {}
+            persist_input = getattr(adapter, 'persist_input', None)
+            if persist_input is not None:
+                initial_snapshot = persist_input(run.workdir)
+                update(snapshot=initial_snapshot)
             check()
             update(state="preparing")
             from .project import file_revision
@@ -358,6 +412,7 @@ class JobManager:
                 lineage.append({"source_path": reference.path, "revision": reference.revision, "stat": before})
             snapshotter = getattr(adapter, "snapshot_input", snapshot_input)
             snapshot = snapshotter(run.input_path, run.workdir, check)
+            snapshot.update(initial_snapshot)
             snapshot["prerequisites"] = lineage
             update(snapshot=snapshot, input_revision=snapshot["input_revision"])
             if status.spec.id in {"radioss", "openradioss", "opencourant"} and snapshot["input_revision"] != control["registered_input_revision"]:
@@ -508,7 +563,20 @@ class JobManager:
                         store.write(run)
                     except Exception:
                         pass
-            lease.release()
+            self._release_native_lease(run, control)
+
+    def native_run_activity(self, run_id: str) -> RunActivity | None:
+        """Observe this manager's ownership; never adopt a restored PID."""
+        with self._native_lock:
+            control, run = self._controls.get(run_id), self._native.get(run_id)
+            if control is None or run is None:
+                return None
+            thread = control['thread']
+            active = thread is not None and thread.is_alive()
+            error = run.error if control['cleanup_failed'] else ''
+            if not active and control['lease'].is_locked and not error:
+                error = '실행 저장소 lease 해제를 확인하지 못했습니다.'
+            return RunActivity(active, error)
 
     def cancel_native(self, run_id: str) -> bool:
         with self._native_lock:
@@ -821,7 +889,8 @@ class JobManager:
         all_threads = threads + batch_threads
         for thread in all_threads:
             thread.join(max(0.0, deadline - time.monotonic()))
-        return not any(thread.is_alive() for thread in all_threads) and not any(c["cleanup_failed"] for c in self._controls.values())
+        return not any(thread.is_alive() for thread in all_threads) and not any(
+            c["cleanup_failed"] or c['lease'].is_locked for c in self._controls.values())
 
     def launch(self, request: LaunchRequest) -> LaunchRecord:
         """Retain this GUI process; creation never means calculation success."""

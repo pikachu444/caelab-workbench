@@ -30,6 +30,43 @@ def _isolated_ui_theme_settings(tmp_path, monkeypatch):
     set_theme_mode("dark")
 
 
+def _completed_model_runs(workbench, model, folder, results, monkeypatch):
+    from types import SimpleNamespace
+    from caelab.jobs import RunActivity
+    from caelab.native.run_store import NativeRun
+    records, payloads, calls = [], {}, []
+    selection = {'id': None}
+    outcomes = iter(results)
+    def submit(actual_model, project_folder, solver='calculix', timeout=3600):
+        result = next(outcomes)
+        run_id = f'{len(records) + 1:032x}'
+        success = result is not None and result.success
+        run = NativeRun(run_id, 'structural-model', folder / 'runs' / run_id,
+                        state='completed' if success else 'failed',
+                        parse_state='readable' if success else 'failed', finished_at='finished',
+                        returncode=0 if success else 1)
+        calls.append((actual_model, solver))
+        records.append(run)
+        selection['id'] = run_id
+        payloads[run_id] = SimpleNamespace(run=run, model=model, result=result)
+        return run
+    def selected(*args):
+        return next((run for run in records if run.id == selection['id']), None)
+    def select(folder, run_id):
+        selection['id'] = run_id
+        return selected()
+    monkeypatch.setattr(workbench, 'run', lambda *a: pytest.fail('synchronous GUI solver call'))
+    monkeypatch.setattr(workbench, 'submit_model', submit)
+    monkeypatch.setattr(workbench, 'model_runs', lambda *a: list(records))
+    monkeypatch.setattr(workbench, 'selected_model_run', selected)
+    monkeypatch.setattr(workbench, 'select_model_run', select)
+    monkeypatch.setattr(workbench, 'native_run_snapshot', lambda run_id: next(r for r in records if r.id == run_id))
+    monkeypatch.setattr(workbench, 'native_run_activity', lambda _: RunActivity(False))
+    monkeypatch.setattr(workbench, 'model_run_is_current', lambda *a: True)
+    monkeypatch.setattr(workbench, 'model_run_result', lambda folder, run_id: payloads[run_id])
+    return records, calls
+
+
 def test_window_tree_and_check(app):
     window = MainWindow()
     window.set_model(cantilever_model())
@@ -40,7 +77,7 @@ def test_window_tree_and_check(app):
     assert not window.btn_goto.isEnabled()
 
 
-def test_analysis_runs_without_expert_provider_or_proposal_editor(app, monkeypatch):
+def test_analysis_runs_without_expert_provider_or_proposal_editor(app, monkeypatch, tmp_path):
     import sys
     from types import SimpleNamespace
 
@@ -60,15 +97,13 @@ def test_analysis_runs_without_expert_provider_or_proposal_editor(app, monkeypat
         reaction_totals={"fx": 0.0, "fy": 1000.0, "fz": 0.0},
         units={"length": "m", "force": "N"},
     )
-    calls = []
-    def solve(actual_model, solver, workdir):
-        calls.append((actual_model, solver))
-        return SimpleNamespace(state="succeeded", result=result)
-    monkeypatch.setattr(workbench, "run", solve)
+    folder = tmp_path / 'project'
+    records, calls = _completed_model_runs(workbench, model, folder, [result], monkeypatch)
     window = MainWindow(workbench)
-    window.set_model(model)
+    window.set_model(model, folder)
     assert calls == []
     window.run_solve()
+    window._poll_run()
     assert calls == [(model, "calculix")]
     assert window._last_result is result
     assert "계산 완료" in window.status.text()
@@ -135,32 +170,43 @@ def test_window_issue_navigation(app):
 
 
 
-def test_actual_calculix_run_is_independent_of_expert_provider(app, monkeypatch):
+def test_actual_calculix_run_is_independent_of_expert_provider(app, monkeypatch, tmp_path):
     import sys
+    import time
     from caelab.solvers.calculix import find_ccx
 
     if find_ccx() is None:
         pytest.skip("ccx is not available for the analysis-window run path")
     monkeypatch.setitem(sys.modules, "caelab.assist.experts", None)
     window = MainWindow()
-    window.set_model(cantilever_model())
-    window.run_solve()
-    assert "계산 완료" in window.status.text(), window.log.toPlainText()
-    assert window._last_result.success
-    assert window._last_result.reaction_totals["fy"] == pytest.approx(1000, rel=0.005)
+    window.set_model(cantilever_model(), tmp_path / 'project')
+    try:
+        window.run_solve()
+        deadline = time.monotonic() + 20
+        while window._active_run_id is not None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert window._active_run_id is None
+        assert "계산 완료" in window.status.text(), window.log.toPlainText()
+        assert window._last_result.success
+        assert window._last_result.reaction_totals["fy"] == pytest.approx(1000, rel=0.005)
+    finally:
+        window.workbench.close()
+        window.close()
 
 
-def test_new_model_clears_previous_result_and_issue_state(app, monkeypatch):
+def test_new_model_clears_previous_result_and_issue_state(app, monkeypatch, tmp_path):
     from types import SimpleNamespace
     from caelab.solvers.base import ResultSet
 
     window = MainWindow()
     model_a = cantilever_model()
-    window.set_model(model_a)
+    folder = tmp_path / 'project'
     result = ResultSet("calculix", True, max_displacement=0.25)
-    monkeypatch.setattr(window.workbench, "run", lambda *args:
-                        SimpleNamespace(state="succeeded", result=result))
+    _completed_model_runs(window.workbench, model_a, folder, [result], monkeypatch)
+    window.set_model(model_a, folder)
     window.run_solve()
+    window._poll_run()
     window._issue_target = "materials[0]"
     window.btn_goto.setEnabled(True)
     window.viewport._last_result = result
@@ -183,25 +229,28 @@ def test_new_model_clears_previous_result_and_issue_state(app, monkeypatch):
 
 
 @pytest.mark.parametrize("failure_has_result", [True, False])
-def test_failed_rerun_removes_previous_success_display(app, monkeypatch, failure_has_result):
+def test_failed_rerun_keeps_history_without_showing_previous_success(app, monkeypatch, tmp_path, failure_has_result):
     from types import SimpleNamespace
     from PySide6.QtWidgets import QLabel
+    from PySide6.QtCore import Qt
     from caelab.solvers.base import ResultSet
 
     window = MainWindow()
-    window.set_model(cantilever_model())
+    model = cantilever_model()
+    folder = tmp_path / 'project'
     success = ResultSet("calculix", True, max_displacement=0.25, units={"length": "m"})
     failure = ResultSet("calculix", False, log_tail="failed input") if failure_has_result else None
-    jobs = iter([SimpleNamespace(state="succeeded", result=success),
-                 SimpleNamespace(state="failed", result=failure)])
-    monkeypatch.setattr(window.workbench, "run", lambda *args: next(jobs))
+    records, _ = _completed_model_runs(window.workbench, model, folder, [success, failure], monkeypatch)
+    window.set_model(model, folder)
     window.run_solve()
+    window._poll_run()
     assert window.results_item.childCount() == 1
     window.select_path("result")
     assert any(label.text() == "0.2500 m" for label in window.props_panel.findChildren(QLabel))
     window.run_solve()
-    assert window.results_item.childCount() == 0
-    assert "result" not in window._path_items
+    window._poll_run()
+    assert window.results_item.childCount() == 2
+    assert window._path_items['result'].data(0, Qt.UserRole) == f'runs.{records[-1].id}'
     assert window._last_result is failure
     assert not window.legend_label.text()
     assert "완료" not in window.statusBar().currentMessage()
