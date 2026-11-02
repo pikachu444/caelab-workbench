@@ -99,6 +99,16 @@ class MainWindow(QMainWindow):
     def _icon(self, name: str):
         return self.style().standardIcon(getattr(QStyle, name))
 
+    def _unit_system_text(self) -> str:
+        if self.model is None:
+            return "모델 없음"
+        declaration = self.model.unit_system
+        if declaration == "si":
+            return "SI (m, kg, s, Pa)"
+        if declaration is None or not str(declaration).strip():
+            return "미선언 (단위 미확인)"
+        return f"{declaration} (세부 단위 미확인)"
+
     def _build_ui(self) -> None:
         menu = self.menuBar()
         file_menu = menu.addMenu("파일")
@@ -256,7 +266,8 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, bottom_dock)
 
         self.statusBar().showMessage("작업 없음")
-        self.statusBar().addPermanentWidget(QLabel("솔버: CalculiX · 단위계: SI"))
+        self.unit_system_status = QLabel(f"솔버: CalculiX · 단위계: {self._unit_system_text()}")
+        self.statusBar().addPermanentWidget(self.unit_system_status)
 
         # Give the docks usable starting widths. At the default split
         # the property dock came up ~200 px wide, which clipped the
@@ -313,6 +324,7 @@ class MainWindow(QMainWindow):
     # -- tree ---------------------------------------------------------------------
     def set_model(self, model: StructuralModel, folder: Path | None = None) -> None:
         self.model = model
+        self.unit_system_status.setText(f"솔버: CalculiX · 단위계: {self._unit_system_text()}")
         self.project_folder = folder
         self._last_result = None
         self._issue_target = None
@@ -394,7 +406,7 @@ class MainWindow(QMainWindow):
         if path == "model":
             self.props_title.setText("모델")
             lay.addRow("이름", QLabel(m.name))
-            lay.addRow("단위계", QLabel("SI (m, kg, s, Pa)"))
+            lay.addRow("단위계", QLabel(self._unit_system_text()))
             lay.addRow("형상 원본", QLabel(m.geometry_source or "-"))
             return
         if path == "mesh":
@@ -423,15 +435,19 @@ class MainWindow(QMainWindow):
         idx = int(rest.rstrip("]"))
         if kind == "materials":
             mat = m.materials[idx]
+            si_units = m.unit_system == "si"
             self.props_title.setText(f"재료 — {mat.name}")
             lay.addRow("이름", QLabel(mat.name))
             lay.addRow("법칙", QLabel(mat.law))
-            lay.addRow("탄성계수",
-                       QLabel(f"{mat.params.get('youngs_modulus', 0.0) / 1e9:.2f} GPa"))
+            modulus = mat.params.get('youngs_modulus', 0.0)
+            lay.addRow("탄성계수", QLabel(f"{modulus / 1e9:.2f} GPa" if si_units
+                                       else f"{modulus} (단위 미확인)"))
             lay.addRow("포아송비",
                        QLabel(f"{mat.params.get('poissons_ratio', 0.0):.3f}"))
             if "density" in mat.params:
-                lay.addRow("밀도", QLabel(f"{mat.params['density']:,.0f} kg/m³"))
+                density = mat.params['density']
+                lay.addRow("밀도", QLabel(f"{density:,.0f} kg/m³" if si_units
+                                        else f"{density} (단위 미확인)"))
             return
         if kind == "loads":
             ld = m.loads[idx]
@@ -440,8 +456,9 @@ class MainWindow(QMainWindow):
             lay.addRow("종류", QLabel(ld.kind))
             lay.addRow("대상 집합", QLabel(ld.target_set or "-"))
             for comp in ("fx", "fy", "fz"):
-                lay.addRow(f"힘 {comp.upper()}",
-                           QLabel(fmt_force(ld.values.get(comp, 0.0))))
+                value = ld.values.get(comp, 0.0)
+                text = fmt_force(value, "N") if m.unit_system == "si" else f"{value} (단위 미확인)"
+                lay.addRow(f"힘 {comp.upper()}", QLabel(text))
             return
         if kind == "bcs":
             bc = m.bcs[idx]
