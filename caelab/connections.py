@@ -211,10 +211,13 @@ def _executable_reason(path: Path, host: str) -> str:
     return ""
 
 
+_DEFAULT_MANIFEST_PATH = Path(__file__).parent / "solvers" / "installer" / "manifest.json"
+
+
 def _installer_manifest(manifest_path: Path | None = None) -> tuple[dict | None, str]:
     """Read solver installer manifest safely without crashing on missing/corrupt files."""
     if manifest_path is None:
-        manifest_path = Path(__file__).parent / "solvers" / "installer" / "manifest.json"
+        manifest_path = _DEFAULT_MANIFEST_PATH
     if not manifest_path.is_file():
         return None, f"설치 매니페스트가 없거나 일반 파일이 아닙니다: {manifest_path}"
     try:

@@ -333,11 +333,11 @@ def test_malformed_program_entries_in_manifest_do_not_crash(tmp_path, monkeypatc
     manifest = tmp_path / "broken_entries.json"
     manifest.write_text(json.dumps({"programs": ["broken", {}]}), encoding="utf-8")
     
-    # Even if an env var points to a fake executable, malformed manifest must fail closed
+    # Even if real env var CAELAB_CODEASTER points to a fake executable, malformed manifest must fail closed
     fake_exe = tmp_path / ("code_aster.exe" if host == "windows" else "code_aster")
     fake_exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     fake_exe.chmod(0o755)
-    monkeypatch.setenv("CAELAB_CODE_ASTER_PATH", str(fake_exe))
+    monkeypatch.setenv("CAELAB_CODEASTER", str(fake_exe))
 
     statuses = program_statuses(manifest_path=manifest)
     assert len(statuses) == len(PROGRAMS)
@@ -348,13 +348,14 @@ def test_malformed_program_entries_in_manifest_do_not_crash(tmp_path, monkeypatc
         else:
             assert "설치 매니페스트" in s.reason
 
-    # Verify Workbench.programs() does not raise and Code_Aster is not available
+    # Verify Workbench.programs() runs real JSON parsing without mocking loader and Code_Aster remains unavailable
+    monkeypatch.setattr("caelab.connections._DEFAULT_MANIFEST_PATH", manifest)
     wb = Workbench(tmp_path / "wb")
-    monkeypatch.setattr("caelab.connections._installer_manifest", lambda path=None: (None, "설치 매니페스트 형식이 올바르지 않습니다."))
     wb_programs = wb.programs()
     assert len(wb_programs) == len(PROGRAMS)
     code_aster = next(p for p in wb_programs if p.spec.id == "codeaster")
     assert not code_aster.available
+    assert "설치 매니페스트" in code_aster.reason
 
 
 def test_manifest_platform_nested_type_errors_fail_closed(tmp_path):
@@ -379,6 +380,9 @@ def test_manifest_platform_nested_type_errors_fail_closed(tmp_path):
 
 
 def test_prep_and_prepomax_allowed_without_installer_manifest_entries(tmp_path, monkeypatch):
+    import sys
+    host = "windows" if sys.platform.startswith("win") else "linux"
+
     # Prep and PrePoMax do not have entries in manifest.json, but must be discoverable via standard registry/PATH contract
     manifest = tmp_path / "standard_manifest.json"
     manifest.write_text(json.dumps({
@@ -386,12 +390,35 @@ def test_prep_and_prepomax_allowed_without_installer_manifest_entries(tmp_path, 
             {"id": "gmsh", "platforms": {"linux": {"execution_environment": "native"}, "windows": {"execution_environment": "native"}}}
         ]
     }), encoding="utf-8")
+
+    # Set up valid fake executables for Prep and PrePoMax via environment variables
+    fake_prep = tmp_path / ("caelab-prep.exe" if host == "windows" else "caelab-prep")
+    fake_prep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_prep.chmod(0o755)
+    monkeypatch.setenv("CAELAB_PREP", str(fake_prep))
+
+    fake_prepomax = tmp_path / ("PrePoMax.exe" if host == "windows" else "PrePoMax")
+    fake_prepomax.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_prepomax.chmod(0o755)
+    monkeypatch.setenv("CAELAB_PREPOMAX", str(fake_prepomax))
+
     statuses = program_statuses(manifest_path=manifest)
-    prep = next((s for s in statuses if s.spec.id == "prep"), None)
-    prepomax = next((s for s in statuses if s.spec.id == "prepomax"), None)
-    if prep is not None:
-        assert "매니페스트" not in prep.reason
-    if prepomax is not None:
+    prep = next(s for s in statuses if s.spec.id == "caelab_prep")
+    prepomax = next(s for s in statuses if s.spec.id == "prepomax")
+
+    assert prep.available
+    assert prep.source == "environment"
+    assert prep.path == str(fake_prep)
+    assert "매니페스트" not in prep.reason
+
+    # PrePoMax is Windows-only in ProgramSpec
+    if host == "windows":
+        assert prepomax.available
+        assert prepomax.source == "environment"
+        assert prepomax.path == str(fake_prepomax)
         assert "매니페스트" not in prepomax.reason
+    else:
+        assert not prepomax.available
+        assert "지원 실행 환경" in prepomax.reason
 
 
