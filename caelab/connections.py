@@ -17,6 +17,7 @@ import lzma
 import os
 import sys
 from pathlib import Path
+from .process_entry import desktop_environment, external_environment, module_command
 import shutil
 import zipfile
 import zlib
@@ -402,7 +403,7 @@ def launch_request(status: ProgramStatus, file: str | Path) -> LaunchRequest:
     else:
         raise ValueError(f"{status.spec.name}의 네이티브 파일 열기 인자는 아직 구현되지 않았습니다.")
     # Explicit host environment wins over registered runtime defaults.
-    environment = {**status.runtime_env, **os.environ}
+    environment = {**status.runtime_env, **external_environment()}
     return LaunchRequest(argv, document.parent, environment, status.spec.id)
 
 
@@ -410,7 +411,7 @@ def mdo_launch_request(study_file=None, project_file=None, node_id=None) -> Laun
     """Open the independent Studio with explicit file and project references."""
     if bool(project_file) != bool(node_id):
         raise ValueError("MDO 프로젝트와 노드 참조를 함께 지정하세요.")
-    argv = [sys.executable, "-m", "apps.workbench_qt.mdo_studio"]
+    argv = module_command("apps.workbench_qt.mdo_studio")
     for flag, value in (("--study", study_file), ("--project", project_file)):
         if value is not None:
             path = Path(value).expanduser().resolve()
@@ -420,7 +421,7 @@ def mdo_launch_request(study_file=None, project_file=None, node_id=None) -> Laun
     if node_id is not None:
         argv.extend(["--node", node_id])
     return LaunchRequest(argv, Path(__file__).resolve().parent.parent,
-                         dict(os.environ), "mdo_studio")
+                         desktop_environment(), "mdo_studio")
 
 
 def analysis_launch_request(project_file: str | Path, node_id: str) -> LaunchRequest:
@@ -428,8 +429,8 @@ def analysis_launch_request(project_file: str | Path, node_id: str) -> LaunchReq
     if not project_file.is_file():
         raise ValueError("입력 확인 창을 열기 전에 프로젝트를 저장하세요.")
     return LaunchRequest(
-        [sys.executable, "-m", "apps.workbench_qt.native_analysis", str(project_file), "--node", node_id],
-        Path(__file__).resolve().parent.parent, dict(os.environ), "native_analysis",
+        module_command("apps.workbench_qt.native_analysis", str(project_file), "--node", node_id),
+        Path(__file__).resolve().parent.parent, desktop_environment(), "native_analysis",
     )
 
 
@@ -441,7 +442,7 @@ def calculix_run_request(status: ProgramStatus, workdir: Path) -> LaunchRequest:
     if reason:
         raise ValueError(reason)
     return LaunchRequest([status.path, "-i", "model"], Path(workdir),
-                         {**status.runtime_env, **os.environ}, "calculix")
+                         {**status.runtime_env, **external_environment()}, "calculix")
 
 
 def codeaster_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
@@ -452,7 +453,7 @@ def codeaster_run_request(status: ProgramStatus, workdir: Path, input_path: Path
         raise ValueError(reason)
     target = Path(workdir) / Path(input_path).name
     return LaunchRequest([status.path, str(target)], Path(workdir),
-                         {**status.runtime_env, **os.environ}, "codeaster")
+                         {**status.runtime_env, **external_environment()}, "codeaster")
 
 
 def radioss_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
@@ -463,7 +464,7 @@ def radioss_run_request(status: ProgramStatus, workdir: Path, input_path: Path) 
         raise ValueError(reason)
     target = Path(workdir) / Path(input_path).name
     return LaunchRequest([status.path, "-i", str(target)], Path(workdir),
-                         {**status.runtime_env, **os.environ}, status.spec.id)
+                         {**status.runtime_env, **external_environment()}, status.spec.id)
 
 
 def radioss_run_requests(status: ProgramStatus, workdir: Path, input_path: Path) -> list[tuple[str, LaunchRequest]]:
@@ -472,7 +473,7 @@ def radioss_run_requests(status: ProgramStatus, workdir: Path, input_path: Path)
         raise ValueError(status.reason or "OpenCourant 실행 환경이 없습니다.")
     host = host_platform()
     starter, engine, runtime = _radioss_installation(Path(status.path), host)
-    env = {**runtime, **status.runtime_env, **os.environ}
+    env = {**runtime, **status.runtime_env, **external_environment()}
     # Runtime paths already incorporate the caller's library search path; do not
     # accidentally replace the required reader/H3D libraries with that suffix.
     if host in {"linux", "windows"}:
@@ -495,18 +496,18 @@ def lsdyna_run_request(status: ProgramStatus, workdir: Path, input_path: Path) -
         raise ValueError(reason)
     target = Path(workdir) / Path(input_path).name
     return LaunchRequest([status.path, f"i={target}"], Path(workdir),
-                         {**status.runtime_env, **os.environ}, "lsdyna")
+                         {**status.runtime_env, **external_environment()}, "lsdyna")
 
 
 def expert_launch_request(discussion_file, project_file=None, node_id=None, run_id=None) -> LaunchRequest:
-    argv = [sys.executable, '-m', 'apps.workbench_qt.expert_window',
-            '--discussion', str(Path(discussion_file).resolve())]
+    argv = module_command('apps.workbench_qt.expert_window',
+                          '--discussion', str(Path(discussion_file).resolve()))
     if project_file:
         argv.extend(['--project', str(Path(project_file).resolve()), '--node', node_id])
     if run_id:
         argv.extend(['--run-id', run_id])
     return LaunchRequest(argv, Path(__file__).resolve().parent.parent,
-                         dict(os.environ), 'native_expert')
+                         desktop_environment(), 'native_expert')
 
 
 def launch_command(status: ProgramStatus, file: str | None = None) -> list[str] | None:

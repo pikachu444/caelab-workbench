@@ -7,13 +7,13 @@ from PySide6.QtWidgets import QApplication,QMessageBox
 from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser=argparse.ArgumentParser(description='Independent native-input MDO Studio')
     parser.add_argument('--study',type=Path)
     parser.add_argument('--project',type=Path)
     parser.add_argument('--node')
     parser.add_argument('--read-only',action='store_true')
-    options=parser.parse_args()
+    options=parser.parse_args(argv)
     app = QApplication(sys.argv)
     project=None
     if options.project:

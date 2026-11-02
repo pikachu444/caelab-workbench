@@ -21,6 +21,7 @@ from pathlib import Path
 
 from .model.schema import StructuralModel
 from .connections import LaunchRequest, ProgramStatus
+from .process_entry import external_command, windows_gate_command
 from .solvers.base import ResultSet, SolverConverter
 from .validate.checker import validate_model
 from .native.input_snapshot import snapshot_input
@@ -313,14 +314,7 @@ class JobManager:
                     if os.name == "nt":
                         gate = run.workdir / ".start-solver"
                         gate.unlink(missing_ok=True)
-                        script = (
-                            "import json,subprocess,sys,time; from pathlib import Path; "
-                            "gate=Path(sys.argv[1]); deadline=time.monotonic()+30; "
-                            "exec('while not gate.exists():\\n if time.monotonic()>deadline: raise SystemExit(125)\\n time.sleep(.02)'); "
-                            "raise SystemExit(subprocess.Popen(json.loads(sys.argv[2]),stdin=subprocess.DEVNULL,"
-                            "stdout=sys.stdout,stderr=subprocess.STDOUT,shell=False).wait())"
-                        )
-                        process = subprocess.Popen([sys.executable, "-c", script, str(gate), json.dumps(request.argv)],
+                        process = subprocess.Popen(windows_gate_command(gate, request.argv, Path(run.log_path)),
                                                    cwd=request.cwd, env=request.env, stdout=log, stderr=subprocess.STDOUT,
                                                    shell=False, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
                         control["process"] = process
@@ -759,7 +753,7 @@ class JobManager:
         self.launches[record.id] = record
         try:
             record.process = subprocess.Popen(
-                request.argv, cwd=request.cwd, env=request.env, shell=False,
+                external_command(request.argv), cwd=request.cwd, env=request.env, shell=False,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except Exception as exc:
