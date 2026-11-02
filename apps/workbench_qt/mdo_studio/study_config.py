@@ -10,6 +10,7 @@ from caelab.mdo.variables import ContinuousVariable,DiscreteVariable,Categorical
 from caelab.mdo.objectives import ObjectiveSpec
 from caelab.mdo.constraints import ConstraintSpec
 from caelab.mdo.surrogate import SurrogateConfig
+from caelab.mdo.doe import DOEConfig,projected_design_count
 from caelab.mdo.inp_binder import scalar_literal_occurrences
 
 try:
@@ -297,3 +298,207 @@ class ParameterizeDialog(QDialog):
     def accept(self):
         self._preview()
         if self.binding: super().accept()
+
+
+_DOE_METHOD_GUIDES = {
+    'lhs': 'Latin Hypercube Sampling (LHS): Stratified random sampling across independent factors. Active settings: Sample count, Random seed, Budget.',
+    'opt-lhs': 'Optimized LHS: Multi-start pairwise swap search optimizing space-filling quality. Active settings: Sample count, Random seed, Criterion, Restarts, Iterations, Budget.',
+    'sobol': 'Scrambled Sobol sequence: Low-discrepancy quasi-Monte Carlo block. Sample count must be a power of two (1, 2, 4, 8, 16, 32, …). Active settings: Sample count, Random seed, Budget.',
+    'full-factorial': 'Full-Factorial grid: Cartesian product of per-factor physical levels. Continuous factors require explicit physical levels (no arbitrary defaults are assumed). Sample count and Random seed are not used.',
+    'box-behnken': 'Box-Behnken response-surface design: Requires at least 3 linear continuous factors. Active settings: Center points, Budget. Sample count and Random seed are not used.',
+    'ccd': 'Central Composite Design (CCD): Response-surface design for linear continuous factors. Choose face-centered or inscribed within hard bounds. Active settings: CCD type, Center points, Budget. Sample count and Random seed are not used.',
+}
+
+
+class DOEGenerationDialog(QDialog):
+    def __init__(self,space:VariableSpace,parent=None,*,budget:int=10000):
+        super().__init__(parent); self.setWindowTitle('Generate DOE'); self.resize(740,560)
+        self.space=space; self.config=None; self.projected_count=None
+        layout=QVBoxLayout(self)
+        self.form=QFormLayout(); layout.addLayout(self.form)
+        self.method=QComboBox(); self.method.addItems(['lhs','opt-lhs','sobol','full-factorial','box-behnken','ccd'])
+        self.form.addRow('Method',self.method)
+        self.n_samples=QSpinBox(); self.n_samples.setRange(1,100000); self.n_samples.setValue(16)
+        self.form.addRow('Sample count',self.n_samples)
+        self.seed=QSpinBox(); self.seed.setRange(0,2147483647); self.seed.setValue(42)
+        self.form.addRow('Random seed',self.seed)
+        self.criterion=QComboBox(); self.criterion.addItems(['maximin','correlation','hybrid'])
+        self.form.addRow('LHS criterion',self.criterion)
+        self.restarts=QSpinBox(); self.restarts.setRange(1,1000); self.restarts.setValue(4)
+        self.form.addRow('LHS restarts',self.restarts)
+        self.iterations=QSpinBox(); self.iterations.setRange(0,100000); self.iterations.setValue(200)
+        self.form.addRow('LHS swap iterations',self.iterations)
+        self.ccd_type=QComboBox(); self.ccd_type.addItems(['face-centered','inscribed','circumscribed'])
+        self.form.addRow('CCD type',self.ccd_type)
+        self.centers=QSpinBox(); self.centers.setRange(1,1000); self.centers.setValue(1)
+        self.form.addRow('Center points',self.centers)
+        self.budget=QSpinBox(); self.budget.setRange(1,100000); self.budget.setValue(int(budget))
+        self.form.addRow('Maximum point budget',self.budget)
+        self.method_guide=QLabel(); self.method_guide.setWordWrap(True); layout.addWidget(self.method_guide)
+        self.levels_label=QLabel('Full-factorial factor levels (enter comma-separated physical levels for every continuous factor; no arbitrary levels are assumed):')
+        self.levels_label.setWordWrap(True); layout.addWidget(self.levels_label)
+        ind=self.space.independent_variables
+        self.levels_table=QTableWidget(len(ind),5)
+        self.levels_table.setHorizontalHeaderLabels(['Variable','Domain','Bounds / Declared','Unit','Physical levels'])
+        self._row_by_var={}
+        for row,v in enumerate(ind):
+            self._row_by_var[v.id.lower()]=row
+            domain=type(v).__name__.removesuffix('Variable')
+            bounds=f'[{v.lower:g}, {v.upper:g}]' if isinstance(v,ContinuousVariable) else ', '.join(map(str,getattr(v,'values',getattr(v,'choices',()))))
+            unit=getattr(v,'unit','') or '—'
+            default_levels='' if isinstance(v,ContinuousVariable) else ', '.join(map(str,getattr(v,'values',getattr(v,'choices',()))))
+            for col,value in ((0,v.id),(1,domain),(2,bounds),(3,unit),(4,default_levels)):
+                item=QTableWidgetItem(value)
+                if col!=4: item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.levels_table.setItem(row,col,item)
+        self.levels_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.levels_table.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.Stretch)
+        self.levels_table.setAlternatingRowColors(True)
+        layout.addWidget(self.levels_table,1)
+        self.projected_label=QLabel(); self.projected_label.setWordWrap(True); layout.addWidget(self.projected_label)
+        self.error=QLabel(); self.error.setWordWrap(True); self.error.setStyleSheet('color:#ef4444'); layout.addWidget(self.error)
+        self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept); self.buttons.rejected.connect(self.reject); layout.addWidget(self.buttons)
+        self.method.currentTextChanged.connect(self._sync_method_controls)
+        for widget in (self.n_samples,self.seed,self.restarts,self.iterations,self.centers,self.budget):
+            widget.valueChanged.connect(self._update_preview)
+        for combo in (self.criterion,self.ccd_type):
+            combo.currentTextChanged.connect(self._update_preview)
+        self.levels_table.itemChanged.connect(self._update_preview)
+        self._sync_method_controls()
+
+    def set_factor_levels(self,variable_id:str,levels):
+        row=self._row_by_var.get(str(variable_id).lower())
+        if row is None:
+            raise ValueError(f'Unknown factorial factor: {variable_id}')
+        text=levels if isinstance(levels,str) else ', '.join(str(x) for x in levels)
+        self.levels_table.item(row,4).setText(text)
+
+    def factor_levels_text(self,variable_id:str)->str:
+        row=self._row_by_var.get(str(variable_id).lower())
+        if row is None:
+            raise ValueError(f'Unknown factorial factor: {variable_id}')
+        return cell(self.levels_table,row,4)
+
+    def _active_settings_summary(self)->str:
+        method=self.method.currentText()
+        if method=='lhs':
+            return f'n_samples={self.n_samples.value()}, seed={self.seed.value()}, budget={self.budget.value()}'
+        if method=='opt-lhs':
+            return f'n_samples={self.n_samples.value()}, seed={self.seed.value()}, criterion={self.criterion.currentText()}, restarts={self.restarts.value()}, iterations={self.iterations.value()}, budget={self.budget.value()}'
+        if method=='sobol':
+            return f'n_samples={self.n_samples.value()} (power-of-two), seed={self.seed.value()}, budget={self.budget.value()}'
+        if method=='full-factorial':
+            return f'explicit factor levels, budget={self.budget.value()} (sample count & seed not used)'
+        if method=='box-behnken':
+            return f'centers={self.centers.value()}, budget={self.budget.value()} (sample count & seed not used)'
+        return f'ccd_type={self.ccd_type.currentText()}, centers={self.centers.value()}, budget={self.budget.value()} (sample count & seed not used)'
+
+    def _sync_method_controls(self,*args):
+        method=self.method.currentText()
+        uses_samples_and_seed=method in ('lhs','opt-lhs','sobol')
+        uses_opt_lhs=method=='opt-lhs'
+        uses_centers=method in ('box-behnken','ccd')
+        uses_ccd_type=method=='ccd'
+        uses_factorial=method=='full-factorial'
+        for widget,active in (
+            (self.n_samples,uses_samples_and_seed),
+            (self.seed,uses_samples_and_seed),
+            (self.criterion,uses_opt_lhs),
+            (self.restarts,uses_opt_lhs),
+            (self.iterations,uses_opt_lhs),
+            (self.ccd_type,uses_ccd_type),
+            (self.centers,uses_centers),
+        ):
+            widget.setEnabled(active)
+            self.form.setRowVisible(widget,active)
+        self.levels_label.setVisible(uses_factorial)
+        self.levels_table.setVisible(uses_factorial)
+        self.levels_table.setEnabled(uses_factorial)
+        self._update_preview()
+
+    def _parse_factorial_levels(self)->dict[str,tuple]:
+        levels={}
+        for row,v in enumerate(self.space.independent_variables):
+            raw=cell(self.levels_table,row,4)
+            if not raw:
+                if isinstance(v,ContinuousVariable):
+                    raise ValueError(f'Continuous factorial factors require explicit physical levels ({v.id})')
+                raise ValueError(f'Factorial levels must be nonempty and unique ({v.id})')
+            parts=[part.strip() for part in raw.split(',')]
+            if any(not part for part in parts):
+                raise ValueError(f'Factorial levels must be nonempty and unique ({v.id})')
+            if isinstance(v,ContinuousVariable):
+                parsed=[]
+                for part in parts:
+                    try: val=float(part)
+                    except ValueError as exc: raise ValueError(f'Continuous factorial level for {v.id} must be a finite number: {part!r}') from exc
+                    parsed.append(val)
+                levels[v.id]=tuple(parsed)
+            elif isinstance(v,DiscreteVariable):
+                parsed=[]
+                for part in parts:
+                    try: val=float(part)
+                    except ValueError as exc: raise ValueError(f'Not a discrete level for {v.id}: {part!r}') from exc
+                    parsed.append(val)
+                levels[v.id]=tuple(parsed)
+            else:
+                levels[v.id]=tuple(parts)
+        return levels
+
+    def _build_config(self)->DOEConfig:
+        method=self.method.currentText()
+        levels=self._parse_factorial_levels() if method=='full-factorial' else {}
+        return DOEConfig(
+            method=method,
+            n_samples=self.n_samples.value(),
+            seed=self.seed.value(),
+            budget=self.budget.value(),
+            criterion=self.criterion.currentText(),
+            restarts=self.restarts.value(),
+            iterations=self.iterations.value(),
+            levels=levels,
+            centers=self.centers.value(),
+            ccd_type=self.ccd_type.currentText(),
+        )
+
+    def configuration(self)->DOEConfig:
+        cfg=self._build_config()
+        self.projected_count=projected_design_count(self.space,cfg,check_budget=True)
+        self.config=cfg
+        return cfg
+
+    def _update_preview(self,*args):
+        method=self.method.currentText()
+        self.method_guide.setText(_DOE_METHOD_GUIDES.get(method,''))
+        summary=self._active_settings_summary()
+        try:
+            cfg=self._build_config()
+            count=projected_design_count(self.space,cfg,check_budget=True)
+            self.config=cfg; self.projected_count=count
+            self.projected_label.setText(f'Projected points: {count} / {self.budget.value()} budget · Active: {summary}')
+            self.error.clear()
+        except (ValueError,TypeError) as exc:
+            self.config=None
+            raw_count=None
+            try:
+                cfg=self._build_config()
+                raw_count=projected_design_count(self.space,cfg,check_budget=False)
+            except (ValueError,TypeError):
+                raw_count=None
+            self.projected_count=raw_count
+            if raw_count is not None:
+                self.projected_label.setText(f'Projected points: {raw_count} / {self.budget.value()} budget (exceeds budget) · Active: {summary}')
+            else:
+                self.projected_label.setText(f'Projected points: — / {self.budget.value()} budget · Active: {summary}')
+            self.error.setText(str(exc))
+
+    def accept(self):
+        try:
+            self.configuration()
+        except (ValueError,TypeError) as exc:
+            self._update_preview()
+            self.error.setText(str(exc))
+            return
+        self.error.clear()
+        super().accept()

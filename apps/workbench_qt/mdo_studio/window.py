@@ -19,7 +19,10 @@ from .bridge import MDOExecutionBridge
 from .design_points_model import DesignPointsTableModel,DesignPointsProxyModel
 from .study_tree import StudyTreeWidget
 from .setup_dock import SetupDockWidget
-from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog,SurrogateTrainingDialog
+from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog,SurrogateTrainingDialog,DOEGenerationDialog
+from caelab.mdo.doe import DOEConfig
+from caelab.mdo.variables import CategoricalVariable
+import hashlib
 from .views.pareto_view import ParetoFrontWidget,PARETO_LEGEND_TEXT,pareto_result_note
 from .views.parallel_view import ParallelCoordinatesWidget
 from .views.response_surface_view import ResponseSurfaceWidget
@@ -58,7 +61,8 @@ class MDOStudioWindow(QMainWindow):
         self.setFont(QFont('Segoe UI',9)); self.is_dark=current_theme_mode()=='dark'
         self._generation=0; self._busy=None; self._selected_ids=set(); self._pending_records={}; self._closing=False
         self._is_specification=False; self._editor=None; self._hidden_selection=False; self._sensitivity_job=0; self._initial_reveal_pending=True
-        self._sensitivity_running=False; self._sensitivity_pending=None
+        self._sensitivity_running=False; self._sensitivity_pending=None; self._sensitivity_pending_key=None
+        self._sensitivity_inflight_key=None; self._sensitivity_completed_key=None
         self.bridge=MDOExecutionBridge(self)
         self.bridge.itemFinished.connect(self._on_item_finished)
         self.bridge.batchProgress.connect(self._on_batch_progress)
@@ -163,7 +167,7 @@ class MDOStudioWindow(QMainWindow):
         self.viz_tabs.currentChanged.connect(lambda *args:self._viz_timer.start())
         for widget in (self.pareto_view,self.parallel_view,self.convergence_view): widget.point_selected.connect(self.select_point)
         self.parallel_view.filter_changed.connect(self._brush_filter)
-        self.tornado_view.analysis_requested.connect(lambda:self._sensitivity(self._filtered_records()))
+        self.tornado_view.analysis_requested.connect(lambda:self._sensitivity(self._filtered_records(),force=True))
         self.tornado_view.response_selected.connect(self._invalidate_sensitivity)
         self.tornado_view.experiment_selected.connect(self._load_sensitivity_report)
         visualization=QWidget(); visual_layout=QVBoxLayout(visualization); visual_layout.setContentsMargins(0,0,0,0)
@@ -181,16 +185,21 @@ class MDOStudioWindow(QMainWindow):
 
     def _task_finished(self,generation,name,result,error):
         if name.startswith('Sensitivity '):
-            self._sensitivity_running=False
+            finished_key=self._sensitivity_inflight_key
+            self._sensitivity_running=False; self._sensitivity_inflight_key=None
             if generation==self._generation and not self._closing and name==f'Sensitivity {self._sensitivity_job}':
                 if error:
+                    self._sensitivity_completed_key=None
                     self.tornado_view.empty('Sensitivity analysis is unavailable for this experiment.'); self.tornado_view.note.setText(error)
                 else:
+                    self._sensitivity_completed_key=finished_key
                     self.tornado_view.set_experiments([item for item in getattr(self.service,'sensitivity_reports',[]) if item['revision']==self._display_revision])
                     self.tornado_view.set_report(result)
             pending,self._sensitivity_pending=self._sensitivity_pending,None
+            pending_key,self._sensitivity_pending_key=self._sensitivity_pending_key,None
             if pending is not None and pending[0]==self._generation and not self._closing:
-                self._sensitivity_running=True; QThreadPool.globalInstance().start(StudioTask(*pending,self.bridge))
+                self._sensitivity_running=True; self._sensitivity_inflight_key=pending_key
+                QThreadPool.globalInstance().start(StudioTask(*pending,self.bridge))
             self._sync_actions()
             return
         if generation!=self._generation or self._closing: return
@@ -311,7 +320,6 @@ class MDOStudioWindow(QMainWindow):
         if rec:
             self.setup_widget.lbl_guide.setPlainText((rec.error_message+'\n' if rec.error_message else '')+f'{getattr(rec,"mode","ACTUAL")} · revision {getattr(rec,"revision","1")}\nSelection does not apply or run this design.')
         self._restore_selection_label()
-        self._viz_timer.start()
 
     def _restore_selection_label(self):
         visible=sum(self.tdp_proxy.mapFromSource(self.tdp_model.index(self.tdp_model.row_for_id(p),0)).isValid() for p in self._selected_ids if self.tdp_model.row_for_id(p) is not None)
@@ -400,40 +408,116 @@ class MDOStudioWindow(QMainWindow):
             self.tornado_view.set_responses(self.tdp_model.response_keys,definition['response_units'])
             self.tornado_view.set_experiments([item for item in getattr(self.service,'sensitivity_reports',[]) if item['revision']==self._display_revision])
             if self.tornado_view.experiment.currentData(): self._load_sensitivity_report(self.tornado_view.experiment.currentData())
-            elif self.tornado_view.method_selector.currentData()=='spearman': self._sensitivity(records)
+            elif self.tornado_view.method_selector.currentData()=='spearman': self._sensitivity(records,force=False)
         elif index==4: self.convergence_view.set_study(records,definition['objectives'],units,self._display_revision)
 
-    def _sensitivity(self,records):
-        self._sensitivity_job+=1
-        if self._busy: return
-        target=self.tornado_view.response.currentData()
+    def _file_fingerprint(self,path:Path):
+        try:
+            st=path.stat()
+            if st.st_size<=262144:
+                return (True,st.st_size,hashlib.sha256(path.read_bytes()).hexdigest())
+            return (True,st.st_size,st.st_mtime_ns)
+        except OSError:
+            return (False,None,None)
+
+    def _spearman_condition_key(self,records,target):
+        if not target:
+            return None
+        actual=[r for r in records if getattr(r,'mode','ACTUAL')=='ACTUAL']
+        var_ids=tuple(v.id for v in self.study.space.variables if not isinstance(v,CategoricalVariable))
+        sources=tuple(sorted((str(k),self._file_fingerprint(Path(p))) for k,p in getattr(self.service,'_sources',{}).items()))
+        point_sources=getattr(self.service,'_point_sources',{})
+        rows_sig=[]
+        for r in actual:
+            ev=point_sources.get(r.point_id,{})
+            workdir=Path(ev['workdir']) if ev.get('workdir') else None
+            files_sig=()
+            if workdir is not None:
+                tracked=sorted(set(ev.get('files',{}).keys())|{'job.json'})
+                files_sig=tuple((rel,self._file_fingerprint(workdir/rel)) for rel in tracked)
+            rows_sig.append((
+                r.point_id,
+                r.status,
+                r.run_id,
+                getattr(r,'revision',None),
+                tuple(sorted((str(k),r.physical_values.get(k)) for k in getattr(r,'physical_values',{}))),
+                r.observations.get(target) if getattr(r,'observations',None) else None,
+                len(getattr(r,'attempts',())),
+                files_sig,
+            ))
+        return (
+            id(self.service),
+            getattr(self.service,'study_id',None),
+            self._display_revision,
+            self.service.revision,
+            target,
+            self.response_units.get(target),
+            var_ids,
+            sources,
+            tuple(rows_sig),
+        )
+
+    def _sensitivity(self,records,*,force=False):
         if self._display_revision!=self.service.revision:
+            self._sensitivity_job+=1; self._sensitivity_pending=None; self._sensitivity_pending_key=None
+            self._sensitivity_inflight_key=None; self._sensitivity_completed_key=None
             self.tornado_view.empty('Choose the current revision to create a new sensitivity analysis. Historical rows remain available in the table and export.'); return
+        if self._active_batch_id or self._busy or getattr(self.service,'busy_operation',None) not in (None,'sensitivity'):
+            self._sensitivity_pending=None; self._sensitivity_pending_key=None
+            if self.tornado_view.report is not None:
+                note=self.tornado_view.note.text()
+                suffix='Campaign evaluation is in progress; sensitivity will update after the batch finishes.'
+                if suffix not in note:
+                    self.tornado_view.note.setText((note+' '+suffix).strip())
+            else:
+                self.tornado_view.empty('Campaign evaluation is in progress; sensitivity analysis will run after the batch finishes.')
+                self.tornado_view.note.setText('Spearman sensitivity is deferred while native evaluations are running.')
+            return
+        target=self.tornado_view.response.currentData()
         method=self.tornado_view.method_selector.currentData(); service=self.service
+        condition_key=self._spearman_condition_key(records,target) if method=='spearman' else None
+        if not force and method=='spearman' and condition_key is not None:
+            if (condition_key==self._sensitivity_completed_key and self.tornado_view.report is not None
+                    and self.tornado_view.report.get('method')=='spearman'
+                    and self.tornado_view.report.get('response_id')==target):
+                self.tornado_view._render_report()
+                return
+            if self._sensitivity_running and condition_key==self._sensitivity_inflight_key and self._sensitivity_pending is None:
+                return
+            if self._sensitivity_pending is not None and self._sensitivity_pending_key==condition_key:
+                return
+        self._sensitivity_job+=1
         point_ids=[r.point_id for r in records if getattr(r,'mode','ACTUAL')=='ACTUAL'] if method=='spearman' else None
         from dataclasses import replace
         config=replace(self.tornado_view.config,method=method) if method!='spearman' else None
         def compute():
             return service.analyze_sensitivity(target,method=method,point_ids=point_ids,config=config)
         request=(self._generation,f'Sensitivity {self._sensitivity_job}',compute)
-        self._queue_sensitivity(request)
+        self._queue_sensitivity(request,key=condition_key)
 
     def _invalidate_sensitivity(self,*args):
-        self._sensitivity_job+=1; self._sensitivity_pending=None
+        self._sensitivity_job+=1; self._sensitivity_pending=None; self._sensitivity_pending_key=None
+        self._sensitivity_inflight_key=None; self._sensitivity_completed_key=None
+        if (self.viz_tabs.currentIndex()==3 and not self.tornado_view.experiment.currentData()
+                and self.tornado_view.method_selector.currentData()=='spearman'):
+            self._viz_timer.start()
 
-    def _queue_sensitivity(self,request):
-        if self._sensitivity_running: self._sensitivity_pending=request
+    def _queue_sensitivity(self,request,*,key=None):
+        if self._sensitivity_running:
+            self._sensitivity_pending=request; self._sensitivity_pending_key=key
         else:
-            self._sensitivity_running=True; QThreadPool.globalInstance().start(StudioTask(*request,self.bridge))
+            self._sensitivity_running=True; self._sensitivity_inflight_key=key
+            QThreadPool.globalInstance().start(StudioTask(*request,self.bridge))
         self._sync_actions()
 
     def _sensitivity_write_busy(self):
         return not self.service.read_only and (self._sensitivity_running or getattr(self.service,'busy_operation',None)=='sensitivity')
 
     def _load_sensitivity_report(self,experiment_id):
-        if not experiment_id: self.tornado_view.report=None; self._update_visualizations(); return
+        if not experiment_id:
+            self.tornado_view.report=None; self._sensitivity_completed_key=None; self._update_visualizations(); return
         self._sensitivity_job+=1; service=self.service
-        self._queue_sensitivity((self._generation,f'Sensitivity {self._sensitivity_job}',lambda:service.sensitivity_report(experiment_id)))
+        self._queue_sensitivity((self._generation,f'Sensitivity {self._sensitivity_job}',lambda:service.sensitivity_report(experiment_id)),key=None)
 
     def _tree_selected(self,category,key):
         if category in ('variables','criteria'): self._on_configure(tab=0 if category=='variables' else 1)
@@ -541,18 +625,23 @@ class MDOStudioWindow(QMainWindow):
             return candidate
         self._background('Open input',open_candidate)
 
-    def _on_generate_doe(self,n_samples=None,seed=None):
+    def _on_generate_doe(self,n_samples=None,seed=None,*,method='lhs',config=None,**kwargs):
         if self._active_batch_id or self._busy: return
-        method='lhs'
-        if n_samples is None:
-            method,ok=QInputDialog.getItem(self,'Generate DOE','Method',['lhs','opt-lhs','full-factorial','sobol','ccd','box-behnken'],0,False)
-            if not ok: return
-            n_samples,ok=QInputDialog.getInt(self,'Generate DOE','Sample count',16,1,10000)
-            if not ok: return
-        if seed is None:
-            seed,ok=QInputDialog.getInt(self,'Generate DOE','Random seed',42,0,2147483647)
-            if not ok: return
-        self._background('Generate DOE',lambda:self.service.generate_doe(n_samples,seed,method=method))
+        if isinstance(n_samples,DOEConfig):
+            config=n_samples; n_samples=None
+        if config is None and n_samples is None and not kwargs:
+            if not self.study.space.independent_variables:
+                QMessageBox.warning(self,'Generate DOE','Configure the study variables and objectives before generating a DOE.')
+                return
+            dialog=DOEGenerationDialog(self.study.space,self)
+            if dialog.exec()!=QDialog.DialogCode.Accepted: return
+            config=dialog.configuration()
+        if config is not None:
+            self._background('Generate DOE',lambda:self.service.generate_doe(config=config))
+            return
+        if n_samples is None: n_samples=16
+        if seed is None: seed=42
+        self._background('Generate DOE',lambda:self.service.generate_doe(n_samples,seed,method=method,**kwargs))
 
     def _callbacks(self):
         generation=self._generation; service=self.service

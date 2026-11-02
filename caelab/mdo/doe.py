@@ -110,6 +110,73 @@ def _quadratic_rank(z):
     return int(np.linalg.matrix_rank(matrix)),matrix.shape[1]
 
 
+def projected_design_count(space: VariableSpace, config: DOEConfig, *, check_budget: bool = True) -> int:
+    d=space.dimension
+    if d<1:
+        raise ValueError("DOE requires at least one independent factor")
+    method=config.method
+    if method=="full-factorial":
+        factors=[]; count=1
+        for v in space.independent_variables:
+            levels=config.levels.get(v.id)
+            if levels is None:
+                if isinstance(v,ContinuousVariable):
+                    raise ValueError("Continuous factorial factors require explicit physical levels")
+                levels=v.values if isinstance(v,DiscreteVariable) else v.choices
+            if not levels or len(set(levels))!=len(levels):
+                raise ValueError("Factorial levels must be nonempty and unique")
+            if isinstance(v,ContinuousVariable):
+                normalized=[]
+                for raw in levels:
+                    if isinstance(raw,(bool,str)) or not isinstance(raw,(int,float)) or not math.isfinite(float(raw)):
+                        raise ValueError(f"Continuous factorial level for {v.id} must be a finite number")
+                    val=float(raw)
+                    if not v.lower<=val<=v.upper:
+                        raise ValueError(f"Outside physical bounds for {v.id}: {val:g} not in [{v.lower:g}, {v.upper:g}]")
+                    if val in normalized:
+                        raise ValueError("Factorial levels must be nonempty and unique")
+                    normalized.append(val)
+                factors.append(tuple(normalized))
+            elif isinstance(v,DiscreteVariable):
+                normalized=[]
+                for raw in levels:
+                    if isinstance(raw,(bool,str)) or not isinstance(raw,(int,float)) or float(raw) not in v.values:
+                        raise ValueError(f"Not a discrete level for {v.id}")
+                    val=float(raw)
+                    if val in normalized:
+                        raise ValueError("Factorial levels must be nonempty and unique")
+                    normalized.append(val)
+                factors.append(tuple(normalized))
+            else:
+                for raw in levels:
+                    if raw not in v.choices:
+                        raise ValueError(f"Unknown category for {v.id}")
+                factors.append(tuple(levels))
+            count*=len(factors[-1])
+        if set(config.levels)-{v.id for v in space.independent_variables}:
+            raise ValueError("Unknown factorial factor")
+        if check_budget and count>config.budget:
+            raise ValueError(f"Projected {count} attempts exceed budget {config.budget}")
+        return count
+    if method in ("box-behnken","ccd"):
+        if not all(isinstance(v,ContinuousVariable) and v.transform=="linear" for v in space.independent_variables):
+            raise ValueError("Response-surface designs require linear continuous factors")
+        count=(2*d*(d-1)+config.centers if method=="box-behnken" else 2**d+2*d+config.centers)
+        if check_budget and count>config.budget:
+            raise ValueError(f"Projected {count} attempts exceed budget {config.budget}")
+        if method=="box-behnken" and d<3:
+            raise ValueError("Box-Behnken requires at least three factors")
+        if method=="ccd" and config.ccd_type=="circumscribed" and d>0:
+            raise ValueError("Circumscribed CCD axial points exceed hard bounds; choose inscribed or face-centered")
+        return count
+    n=config.n_samples
+    if check_budget and n>config.budget:
+        raise ValueError(f"Projected {n} attempts exceed budget {config.budget}")
+    if method=="sobol" and (n&(n-1)):
+        raise ValueError(f"Sobol requires a balanced power-of-two count; requested {n}, next block {1<<(n-1).bit_length()}")
+    return n
+
+
 def generate_design(space: VariableSpace, config: DOEConfig, rng=None):
     try:
         import scipy
@@ -125,6 +192,7 @@ def generate_design(space: VariableSpace, config: DOEConfig, rng=None):
     state_before=copy.deepcopy(rng.bit_generator.state)
     method=config.method; roles=[]; extra={}
     physical=None
+    projected_design_count(space,config,check_budget=True)
     if method=="full-factorial":
         factors=[]; count=1
         for v in space.independent_variables:
