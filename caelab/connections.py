@@ -226,6 +226,15 @@ def _installer_manifest(manifest_path: Path | None = None) -> tuple[dict | None,
         return None, f"설치 매니페스트 형식이 잘못되었습니다: {exc}"
     if not isinstance(manifest, dict) or not isinstance(manifest.get("programs"), list):
         return None, "설치 매니페스트의 필수 구조(programs 목록)가 올바르지 않습니다."
+    for item in manifest["programs"]:
+        if not isinstance(item, dict):
+            return None, "설치 매니페스트의 프로그램 항목 형식이 올바르지 않습니다 (dict 필요)."
+        pid = item.get("id")
+        if not isinstance(pid, str) or not pid.strip():
+            return None, "설치 매니페스트의 프로그램 ID가 누락되었거나 올바르지 않습니다."
+        platforms = item.get("platforms")
+        if platforms is not None and not isinstance(platforms, dict):
+            return None, f"프로그램 '{pid}'의 platforms 정의 형식이 올바르지 않습니다."
     return manifest, ""
 
 
@@ -244,11 +253,22 @@ def _status(spec: ProgramSpec, registry: dict, registry_error: str, host: str,
     programs_list = manifest.get("programs", [])
     entry = next((program for program in programs_list if isinstance(program, dict) and program.get("id") == spec.id), None)
     if entry is not None:
-        platform = entry.get("platforms", {}).get(host) if isinstance(entry.get("platforms"), dict) else None
+        platforms = entry.get("platforms")
+        if not isinstance(platforms, dict):
+            status.reason = "설치 매니페스트의 플랫폼 정의가 올바르지 않습니다."
+            return status
+        platform = platforms.get(host)
         if platform is None:
             status.reason = f"{host} 실행 환경은 지원하지 않습니다."
             return status
-        status.execution_environment = platform.get("execution_environment", "unresolved")
+        if not isinstance(platform, dict):
+            status.reason = f"{host} 플랫폼 설정 형식이 올바르지 않습니다."
+            return status
+        raw_env = platform.get("execution_environment", "unresolved")
+        if not isinstance(raw_env, str):
+            status.reason = f"실행 환경 설정 형식이 올바르지 않습니다 ({host})."
+            return status
+        status.execution_environment = raw_env
         if status.execution_environment not in {"native", "apptainer"}:
             status.reason = f"{status.execution_environment} 실행 연결은 구현되지 않았습니다 ({host})."
             return status
