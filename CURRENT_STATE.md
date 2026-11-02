@@ -1,3 +1,14 @@
+<a id="mdo-calculix-evaluator-41"></a>
+
+## CalculiXEvaluator 동적 탐색 및 미사용 인자 정리 (2026-11-02)
+
+기준 main `43ebd15`에서 `feat/calculix-evaluator-discovery-41`로 이슈 #41을 해결했다.
+
+- **개인 절대경로 제거 및 동적 실행 파일 탐색 (이슈 #41):** `DEFAULT_CCX`에 하드코딩되어 있던 개발자 개인 경로(`C:\SourceCodes\caelab-p7-public-native\...`)를 제거하고, 명시적 인자 `ccx_bin` → 환경 변수 `CAELAB_CCX` → `shutil.which("ccx")` → `caelab.connections` 공통 탐색 계약 순으로 동적 탐색하는 `find_ccx_binary()`를 도입했다.
+- **오류 안내 명확화:** 미설치 시 명확한 `FileNotFoundError("CalculiX binary (ccx) not found...")`를 발생시키고, 잘못 지정된 명시 경로(`FileNotFoundError("CalculiX binary not found at specified path: ...")`)와 명확히 구분했다.
+- **실패 프로세스 유효 관측 배제:** `extract_calculix_responses`에서 `run_result`의 실패 상태(`state == "failed"` 또는 `returncode != 0`)를 확인하여 실패 프로세스가 빈 관측치(`{}`)를 반환하도록 안전하게 방어했다.
+- **검증:** `tests/test_mdo_calculix_evaluator.py` 4 passed, 2 skipped, MDO 전체 집중 회귀 120 passed, 2 skipped, 0 failures.
+
 <a id="ui-schematic-radioss-kpi"></a>
 
 ## 스키매틱 자동 그리드 배치 및 OpenRadioss 요약·아웃라인 연동 (2026-11-02)
