@@ -40,10 +40,13 @@ def user_error(error) -> str:
 
     # 2. String fallback classification (with bounded domain keywords, avoiding naive single-syllable matching)
     text = str(error)
-    if '다른 창' in text or '충돌' in text or '덮어쓸 수' in text or ('개정' in text and '바뀌' in text):
-        return '다른 창에서 대화가 변경되었습니다. 초안은 유지됩니다. 다시 읽은 뒤 저장하세요.'
+    # Busy/lock conditions must take precedence over generic '다른 창' conflict keywords
     if '진행 중인 질문' in text:
         return '이 대화에 진행 중인 질문이 있습니다. 응답이 끝난 뒤 다시 질문하세요.'
+    if '저장하고 있' in text or '대화를 저장' in text or '대화 저장' in text or 'busy' in text.lower():
+        return '다른 창에서 대화를 저장하고 있습니다. 잠시 후 다시 시도하세요.'
+    if '다른 창' in text or '충돌' in text or '덮어쓸 수' in text or ('개정' in text and '바뀌' in text):
+        return '다른 창에서 대화가 변경되었습니다. 초안은 유지됩니다. 다시 읽은 뒤 저장하세요.'
     if '무결성' in text or '해시' in text or 'SHA' in text:
         return '첨부 자료의 무결성을 확인하지 못했습니다. 자료를 다시 불러온 뒤 질문하세요.'
     if '누락' in text or 'No such file' in text or '파일이 없' in text or '찾지 못했' in text:

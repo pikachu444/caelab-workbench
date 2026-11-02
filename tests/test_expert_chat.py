@@ -206,8 +206,22 @@ def test_user_error_type_and_string_classification():
     # 2. DiscussionBusy
     busy_turn = DiscussionBusy("이 대화에 진행 중인 질문이 있습니다.")
     assert "진행 중인 질문이 있습니다" in user_error(busy_turn)
+    assert "진행 중인 질문이 있습니다" in user_error(str(busy_turn))
+    
     busy_other = DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.")
-    assert "다른 창에서 대화를 저장하고 있습니다" in user_error(busy_other)
+    msg_busy_obj = user_error(busy_other)
+    msg_busy_str = user_error(str(busy_other))
+    # Both object and its serialized string form (as stored in pending['error'])
+    # must produce the exact same Busy advice, never conflict advice.
+    assert "다른 창에서 대화를 저장하고 있습니다" in msg_busy_obj
+    assert "다른 창에서 대화를 저장하고 있습니다" in msg_busy_str
+    assert "변경되었습니다" not in msg_busy_str
+    assert msg_busy_obj == msg_busy_str
+
+    # Final-save busy lock variants must map to busy advice, not conflict
+    assert "다른 창에서 대화를 저장하고 있습니다" in user_error("다른 프로세스가 대화를 저장하고 있습니다.")
+    assert "다른 창에서 대화를 저장하고 있습니다" in user_error("대화 저장 중 잠금 상태")
+    assert "다른 창에서 대화를 저장하고 있습니다" in user_error("Storage lock busy")
 
     # 3. FileNotFoundError & genuine missing file
     fnf = FileNotFoundError(2, "No such file or directory", "model.inp")
