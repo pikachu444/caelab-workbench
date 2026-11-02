@@ -11,6 +11,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from .model.schema import StructuralModel
 from .connections import LaunchRequest, ProgramStatus
+from .process_entry import needs_external_gate, windows_gate_command
 from .solvers.base import ResultSet, SolverConverter
 from .validate.checker import validate_model
 from .native.input_snapshot import snapshot_input
@@ -158,11 +160,13 @@ class _WindowsRunGroup:
         self.api.SetInformationJobObject.argtypes = [w.HANDLE, c.c_int, w.LPVOID, w.DWORD]
         self.api.AssignProcessToJobObject.argtypes = [w.HANDLE, w.HANDLE]
         self.api.CloseHandle.argtypes = [w.HANDLE]
+        self.api.TerminateJobObject.argtypes = [w.HANDLE, w.UINT]
         self.handle = self.api.CreateJobObjectW(None, None)
         if not self.handle:
             raise c.WinError(c.get_last_error())
         try:
             information = Extended()
+            self._information = information
             information.limits.flags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             if not self.api.SetInformationJobObject(self.handle, 9, c.byref(information), c.sizeof(information)):
                 raise c.WinError(c.get_last_error())
@@ -172,11 +176,84 @@ class _WindowsRunGroup:
             self.close()
             raise
 
+    def disown(self):
+        """Keep a successfully opened external GUI alive after this owner exits."""
+        import ctypes as c
+        self._information.limits.flags = 0
+        if not self.api.SetInformationJobObject(self.handle, 9, c.byref(self._information),
+                                               c.sizeof(self._information)):
+            raise c.WinError(c.get_last_error())
+        self.close()
+
+    def terminate(self):
+        # Explicit termination also covers failure after disown cleared limits.
+        if self.handle and not self.api.TerminateJobObject(self.handle, 126):
+            import ctypes as c
+            raise c.WinError(c.get_last_error())
+        self.close()
+
     def close(self):
         if self.handle:
             if not self.api.CloseHandle(self.handle):
                 raise OSError("Windows Job handle 종료를 확인하지 못했습니다.")
             self.handle = None
+
+
+class _ExternalLaunchError(RuntimeError):
+    """The gate's original serialized OS error, for existing UI classification."""
+
+
+def _launch_bundled_external(request: LaunchRequest, timeout: float = 10.0):
+    """Acknowledge OS process creation, with ownership until the handoff succeeds."""
+    with tempfile.TemporaryDirectory(prefix='caelab-launch-', ignore_cleanup_errors=True) as folder:
+        release, acknowledgement = Path(folder) / 'release', Path(folder) / 'ack.json'
+        process, group = None, None
+        try:
+            process = subprocess.Popen(windows_gate_command(release, request.argv, None, acknowledgement),
+                                       cwd=request.cwd, env=request.env, shell=False,
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
+            group = _WindowsRunGroup(process)
+            release.touch()
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    with acknowledgement.open('rb') as stream:
+                        data = stream.read(4097)
+                except FileNotFoundError:
+                    if process.poll() is not None:
+                        raise RuntimeError(f'External launch gate exited before acknowledgement: {process.returncode}')
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('External launch acknowledgement timed out')
+                    time.sleep(.01)
+                    continue
+                if len(data) > 4096:
+                    raise ValueError('External launch acknowledgement is too large')
+                receipt = json.loads(data)
+                if (isinstance(receipt, dict) and set(receipt) == {'started', 'pid'}
+                        and receipt['started'] is True and type(receipt['pid']) is int and receipt['pid'] > 0):
+                    group.disown()
+                    return process
+                if (isinstance(receipt, dict) and set(receipt) == {'started', 'error'}
+                        and receipt['started'] is False and isinstance(receipt['error'], str) and receipt['error']):
+                    raise _ExternalLaunchError(receipt['error'])
+                raise ValueError('Invalid external launch acknowledgement')
+        except Exception as error:
+            cleanup_errors = []
+            try:
+                if group is not None:
+                    group.terminate()
+                elif process is not None and process.poll() is None:
+                    process.terminate()
+            except Exception as cleanup:
+                cleanup_errors.append(str(cleanup))
+            if process is not None:
+                try:
+                    process.wait(timeout=3)
+                except Exception as cleanup:
+                    cleanup_errors.append(str(cleanup))
+            if cleanup_errors:
+                raise RuntimeError(f'{error}; owned launch cleanup failed: {"; ".join(cleanup_errors)}') from error
+            raise
 
 
 class JobManager:
@@ -313,14 +390,7 @@ class JobManager:
                     if os.name == "nt":
                         gate = run.workdir / ".start-solver"
                         gate.unlink(missing_ok=True)
-                        script = (
-                            "import json,subprocess,sys,time; from pathlib import Path; "
-                            "gate=Path(sys.argv[1]); deadline=time.monotonic()+30; "
-                            "exec('while not gate.exists():\\n if time.monotonic()>deadline: raise SystemExit(125)\\n time.sleep(.02)'); "
-                            "raise SystemExit(subprocess.Popen(json.loads(sys.argv[2]),stdin=subprocess.DEVNULL,"
-                            "stdout=sys.stdout,stderr=subprocess.STDOUT,shell=False).wait())"
-                        )
-                        process = subprocess.Popen([sys.executable, "-c", script, str(gate), json.dumps(request.argv)],
+                        process = subprocess.Popen(windows_gate_command(gate, request.argv, Path(run.log_path)),
                                                    cwd=request.cwd, env=request.env, stdout=log, stderr=subprocess.STDOUT,
                                                    shell=False, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
                         control["process"] = process
@@ -758,10 +828,15 @@ class JobManager:
         record = LaunchRecord(next(self._ids), request)
         self.launches[record.id] = record
         try:
-            record.process = subprocess.Popen(
-                request.argv, cwd=request.cwd, env=request.env, shell=False,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
+            if needs_external_gate(request.argv):
+                record.process = _launch_bundled_external(request)
+            else:
+                record.process = subprocess.Popen(
+                    request.argv, cwd=request.cwd, env=request.env, shell=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+        except _ExternalLaunchError as exc:
+            record.state, record.error = "failed", str(exc)
         except Exception as exc:
             record.state, record.error = "failed", f"{type(exc).__name__}: {exc}"
         return record
