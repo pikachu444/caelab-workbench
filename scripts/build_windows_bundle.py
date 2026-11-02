@@ -15,6 +15,11 @@ import subprocess
 import sys
 import tomllib
 
+if __package__:
+    from .bundled_optional_metadata import PACKAGES, verify_optional_metadata
+else:
+    from bundled_optional_metadata import PACKAGES, verify_optional_metadata
+
 
 SOURCE = Path(__file__).resolve().parents[1]
 APP_NAME = "CAELabWorkbench"
@@ -36,11 +41,22 @@ def _file_record(path: Path, root: Path) -> dict:
 def _source_inventory() -> list[dict]:
     paths = {SOURCE / "pyproject.toml", SOURCE / "scripts/workbench_bundle.spec",
              Path(__file__).resolve(), SOURCE / "scripts/pyi_runtime_hook.py",
+             SOURCE / "scripts/bundled_optional_metadata.py",
              SOURCE / "caelab/solvers/installer/manifest.json"}
     for package in ("apps", "caelab"):
         paths.update((SOURCE / package).rglob("*.py"))
     paths.update((SOURCE / "apps/workbench_qt/icons").glob("*.svg"))
     return [_file_record(path, SOURCE) for path in sorted(paths)]
+
+
+def _versions(names) -> dict:
+    versions = {}
+    for name in names:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
 
 
 def _static_checks(bundle: Path) -> dict[str, bool]:
@@ -85,17 +101,17 @@ def main(argv: list[str] | None = None) -> int:
     required = [SOURCE / relative for relative in (
         "apps/workbench_qt/desktop_entry.py", "caelab/native/windows_gate.py",
         "caelab/process_entry.py", "scripts/pyi_runtime_hook.py", "scripts/workbench_bundle.spec",
+        "scripts/bundled_optional_metadata.py",
         "caelab/solvers/installer/manifest.json", "apps/workbench_qt/icons/folder.svg",
     )]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         parser.error("Required source files are missing: " + ", ".join(missing))
-    versions = {}
-    for distribution in DISTRIBUTIONS:
-        try:
-            versions[distribution] = metadata.version(distribution)
-        except metadata.PackageNotFoundError:
+    versions = _versions(DISTRIBUTIONS)
+    for distribution, version in versions.items():
+        if version is None:
             parser.error(f"Missing build dependency: {distribution}. This script does not install packages.")
+    optional_versions = _versions(PACKAGES)
     source_files = _source_inventory()
     project = tomllib.loads((SOURCE / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
@@ -115,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         "source_files": source_files,
         "project": {"name": project["name"], "version": project["version"]},
         "builder": {"python": sys.version, "executable": sys.executable,
-                    "platform": platform.platform(), "distributions": versions},
+                    "platform": platform.platform(), "distributions": versions,
+                    "optional_build_inputs": optional_versions},
         "command": command,
         "standalone_runtime_validation": "not_performed",
     }
@@ -146,16 +163,31 @@ def main(argv: list[str] | None = None) -> int:
             print("Source changed during the build. Use a new output directory after freezing the candidate.",
                   file=sys.stderr)
             return 1
+        versions_after = _versions(DISTRIBUTIONS)
+        optional_after = _versions(PACKAGES)
+        if versions_after != versions or optional_after != optional_versions:
+            manifest.update(status="dependencies_changed_during_build",
+                            distributions_after=versions_after, optional_build_inputs_after=optional_after)
+            save_manifest()
+            return 1
         bundle = output / "dist" / APP_NAME
         inventory = [_file_record(path, bundle) for path in sorted(bundle.rglob("*")) if path.is_file()]
         checks = _static_checks(bundle)
-        manifest.update(status="built_static_only" if all(checks.values()) else "static_checks_failed",
-                        bundle_root=str(bundle), static_checks=checks, inventory=inventory,
+        checks['optional_package_metadata'] = False
+        manifest.update(bundle_root=str(bundle), static_checks=checks, inventory=inventory,
                         bundle_file_count=len(inventory), bundle_bytes=sum(item["bytes"] for item in inventory))
+        provenance = json.loads((output / 'build/workbench_bundle/collected-package-provenance.json').read_text(encoding='utf-8'))
+        verify_optional_metadata(bundle, provenance)
+        for package in provenance['distributions']:
+            if optional_versions[package['name']] != package['version']:
+                raise ValueError(f"Collected distribution differs from fixed build input: {package['name']}")
+        manifest['bundled_optional_packages'] = provenance
+        checks['optional_package_metadata'] = True
+        manifest['status'] = 'built_static_only' if all(checks.values()) else 'static_checks_failed'
         save_manifest()
         print(f"Static bundle manifest: {manifest_path}", flush=True)
         return 0 if all(checks.values()) else 1
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, KeyError, TypeError) as error:
         manifest.update(status="build_error", error=str(error))
         save_manifest()
         print(f"Bundle build failed: {error}", file=sys.stderr)

@@ -1,9 +1,14 @@
 from pathlib import Path
+import json
+import sys
 
 from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.building.utils import format_binaries_and_datas
 
 
 source = Path(SPECPATH).resolve().parent
+sys.path.insert(0, str(source))
+from scripts.bundled_optional_metadata import collect_optional_metadata
 datas = [
     (str(source / "apps/workbench_qt/icons"), "apps/workbench_qt/icons"),
     (str(source / "caelab/solvers/installer/manifest.json"), "caelab/solvers/installer"),
@@ -40,6 +45,10 @@ analysis = Analysis(
     excludes=["PyQt5", "PyQt6", "PySide2"],
     noarchive=False,
 )
+provenance = collect_optional_metadata(analysis, copy_metadata=copy_metadata,
+                                       expand_datas=format_binaries_and_datas)
+(Path(workpath) / 'collected-package-provenance.json').write_text(
+    json.dumps(provenance, ensure_ascii=False, indent=2), encoding='utf-8')
 pyz = PYZ(analysis.pure)
 executable = EXE(
     pyz,
