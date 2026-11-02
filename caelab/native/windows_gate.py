@@ -18,9 +18,19 @@ from caelab.process_entry import external_environment
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 3:
+    if len(args) not in (3, 4):
         return 2
-    gate, payload, log_path = args
+    gate, payload, log_path = args[:3]
+    acknowledgement = Path(args[3]) if len(args) == 4 else None
+    acknowledged = False
+
+    def acknowledge(receipt):
+        nonlocal acknowledged
+        if acknowledgement is not None and not acknowledged:
+            temporary = acknowledgement.with_suffix('.tmp')
+            temporary.write_text(json.dumps(receipt, ensure_ascii=False), encoding='utf-8')
+            temporary.replace(acknowledgement)
+            acknowledged = True
     try:
         command = json.loads(payload)
         if not isinstance(command, list) or not command or any(not isinstance(arg, str) or "\0" in arg for arg in command):
@@ -48,13 +58,18 @@ def main(argv: list[str] | None = None) -> int:
                 raise ctypes.WinError(ctypes.get_last_error())
         if log_path != "-":
             output = Path(log_path).open("ab", buffering=0)
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+        stdout = subprocess.DEVNULL if acknowledgement is not None and output is None else output
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stdout,
                                    stderr=subprocess.STDOUT, env=environment, shell=False,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        if acknowledgement is not None:
+            acknowledge({'started': True, 'pid': process.pid})
         return process.wait()
     except (OSError, ValueError) as error:
+        detail = f"{type(error).__name__}: {error}"
+        acknowledge({'started': False, 'error': detail[:900]})
         if output is not None:
-            output.write(f"External launch failed: {type(error).__name__}: {error}\n".encode("utf-8", errors="replace"))
+            output.write(f"External launch failed: {detail}\n".encode("utf-8", errors="replace"))
         return 126
     finally:
         if output is not None:

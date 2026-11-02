@@ -28,20 +28,20 @@ def desktop_environment() -> dict[str, str]:
     return environment
 
 
-def windows_gate_command(gate: Path | None, argv: list[str], log: Path | None) -> list[str]:
+def windows_gate_command(gate: Path | None, argv: list[str], log: Path | None,
+                         acknowledgement: Path | None = None) -> list[str]:
     args = [str(gate) if gate is not None else "-", json.dumps(argv, ensure_ascii=False),
             str(log) if log is not None else "-"]
+    if acknowledgement is not None:
+        args.append(str(acknowledgement))
     if getattr(sys, "frozen", False):
         return [sys.executable, "--caelab-solver-gate", *args]
     return [sys.executable, str(Path(__file__).resolve().parent / "native/windows_gate.py"), *args]
 
 
-def external_command(argv: list[str]) -> list[str]:
-    if not getattr(sys, "frozen", False) or os.name != "nt":
-        return argv
-    if argv[:2] == [sys.executable, "--caelab-module"]:
-        return argv
-    return windows_gate_command(None, argv, None)
+def needs_external_gate(argv: list[str]) -> bool:
+    return (getattr(sys, "frozen", False) and os.name == "nt"
+            and argv[:2] != [sys.executable, "--caelab-module"])
 
 
 def remember_caller_qt_environment() -> None:
