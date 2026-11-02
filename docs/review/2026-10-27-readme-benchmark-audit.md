@@ -10,7 +10,7 @@
 
 사실관계는 정확히 구분한다. 튜토리얼 파일은 존재한다. 실제 CalculiX 연결 코드와 과거 다른 사례의 실행 자료도 존재한다. 그러나 그것들이 **현재 GE 브래킷의 28,450절점 C3D10 모델을 50회 계산해 36.2% 감량했다는 증거는 아니다.** 36.5% 역시 출처가 검증된 상용 문헌값이라고 확정할 수 없다.
 
-README, DESIGN, ARCHITECTURE, CURRENT_STATE, 관련 AGENTS, 기존 리뷰·개선 계획, 벤치마크 2종, 튜토리얼 2종, MDO GUI·배치 입구·관련 테스트와 Git 이력을 대조했다. `docs/images/`의 PNG 8개를 직접 열어 확인했다. 읽기 전용 CAE 자문으로 수식과 모델·출력 의미, 공식 출처를 교차검토했다. 제품 코드 수정, 새 솔버 캠페인, 상용 솔버 비교, 실제 GUI 조작 검증은 이번 감사에서 수행하지 않았다.
+README, DESIGN, ARCHITECTURE, CURRENT_STATE, 관련 AGENTS, 기존 리뷰·개선 계획, 벤치마크 2종, 튜토리얼 2종, MDO GUI·배치 입구·관련 테스트와 Git 이력을 대조했다. [과거 화면 원문](../history/implementation-history.md#이전-화면-자료)의 PNG 8개를 직접 열어 확인했다. 읽기 전용 CAE 자문으로 수식과 모델·출력 의미, 공식 출처를 교차검토했다. 제품 코드 수정, 새 솔버 캠페인, 상용 솔버 비교, 실제 GUI 조작 검증은 이번 감사에서 수행하지 않았다.
 
 아래 줄 번호는 감사 대상 SHA 기준이다. 감사 완료와 비판 해소·제품 수정 완료는 별개다. 후속 수정과 원 비판자의 재검토는 남아 있다.
 
@@ -24,10 +24,10 @@ README, DESIGN, ARCHITECTURE, CURRENT_STATE, 관련 AGENTS, 기존 리뷰·개�
 
 | 위치 | 직접 확인한 내용 | 판정 |
 |---|---|---|
-| [README](../../README.md) 26–36행, `screen_project_launcher.png` | 프로그램 상자·연결·파일이 없는 시작 안내 화면 | 새 프로젝트의 빈 상태 설명에는 쓸 수 있지만 실제 연결 상태·프로젝트 관리 시연을 대신하지 못한다 |
-| 같은 위치, `screen_cae_main_window.png` | ‘모델’ 트리가 비어 있고 ‘프로젝트를 여세요’, ‘작업 없음’이 표시되는 자체 MainWindow | **FreeCAD 화면이 아니다.** CAD·메시·하중/구속 전처리라는 alt와 캡션이 틀렸다 |
+| [README](../../README.md) 26–36행, [screen_project_launcher.png](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/docs/images/screen_project_launcher.png) | 프로그램 상자·연결·파일이 없는 시작 안내 화면 | 새 프로젝트의 빈 상태 설명에는 쓸 수 있지만 실제 연결 상태·프로젝트 관리 시연을 대신하지 못한다 |
+| 같은 위치, [screen_cae_main_window.png](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/docs/images/screen_cae_main_window.png) | ‘모델’ 트리가 비어 있고 ‘프로젝트를 여세요’, ‘작업 없음’이 표시되는 자체 MainWindow | **FreeCAD 화면이 아니다.** CAD·메시·하중/구속 전처리라는 alt와 캡션이 틀렸다 |
 | README 38–42행 | NativeAnalysisWindow와 ParaView는 본문만 있고 이미지가 없음 | 독자가 해석 실행·로그·3D 결과를 이해할 근거가 빠졌다 |
-| README 50–51행, `screen_expert_window.png` | 연결 설정 필요, 첨부 0개, 대화 없음 | 결과 근거를 전달받아 토론하는 상태를 입증하지 못한다 |
+| README 50–51행, [screen_expert_window.png](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/docs/images/screen_expert_window.png) | 연결 설정 필요, 첨부 0개, 대화 없음 | 결과 근거를 전달받아 토론하는 상태를 입증하지 못한다 |
 | README 53–61행 | MDO 전체 화면 2개와 세부 차트 3개 | 총 8개 이미지 중 MDO가 5개. 본선 전후처리·해석은 설명되지 않은 채 MDO에 편중됐다 |
 
 왜 빈 화면인가: [main_window.py](../../apps/workbench_qt/main_window.py) 81–84행은 모델 없는 상태로 시작한다. [capture_windows.py](../../apps/workbench_qt/capture_windows.py) 39–70행은 빈 Workbench로 ProjectWindow/MainWindow를 만들고 파일을 열거나 계산하지 않은 채 `grab()`한다. FreeCAD·NativeAnalysisWindow·ParaView를 캡처하는 경로도 없다. 다만 이 스크립트의 출력명은 `windows_check_out/01_project_window.png`, `02_main_window.png`로 README PNG와 다르다. **이 스크립트가 해당 PNG의 실제 생성 명령이었다고 단정할 수는 없다.** 추적된 재현 기록은 찾지 못했고, 확인 가능한 것은 PNG의 빈 상태와 잘못된 캡션이다. VTK grab의 검은 영역 문제 가능성만으로 빈 모델 트리·작업 없음·다른 프로그램 캡션은 해명되지 않는다.

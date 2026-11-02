@@ -1,11 +1,9 @@
-# Git Branch and Review Guard Rule
+# Git 브랜치와 검토
 
-## 1. Direct Commit & Push on `main` Forbidden
-- All development, bug fixes, test adjustments, and refactoring MUST be done in dedicated feature/fix branches (e.g. `fix/...`, `feat/...`, `docs/...`).
-- Never run `git commit` directly on `main`. (Git pre-commit hook will block it).
-- Never run `git push origin main`. (Git pre-push hook will block it).
+[루트 AGENTS](../../AGENTS.md)의 작업 공간·단일 편집자·독립 검토·통합·게시 규칙을 적용합니다.
 
-## 2. Reviewer Review Mandate
-- Before merging any branch or declaring completion, the changes MUST be formally audited by the designated reviewers (`chief-reviewer`, `cae-user-expert` on Gemini Pro).
-- If any reviewer issues defects or B/C/D critique, the critique MUST be resolved or properly answered before proceeding.
-- Merging to `main` must always be done via Pull Request (`gh pr create` -> review -> `gh pr merge`).
+- 작업은 기능·수정·문서 브랜치에서 진행하고 main에 직접 commit/push하지 않습니다.
+- 메인이 현재 세션에서 작성자와 독립된 검토자를 배정합니다. 특정 공급자·과거 에이전트 이름을 필수 실행 환경으로 고정하지 않습니다.
+- 지적은 근거를 토의하고 수정 후 원 비판자가 재검토합니다. 검증된 후보를 정상 PR 경로로 게시·병합합니다.
+
+실제 권한과 모델 선택은 사용자 지시 및 AGENTS를 따릅니다.
