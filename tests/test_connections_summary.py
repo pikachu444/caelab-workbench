@@ -422,3 +422,43 @@ def test_prep_and_prepomax_allowed_without_installer_manifest_entries(tmp_path, 
         assert "지원 실행 환경" in prepomax.reason
 
 
+def test_installer_manifest_stat_permission_error_fails_closed_without_crashing(tmp_path, monkeypatch):
+    import errno
+    from caelab.workbench import Workbench
+
+    manifest = tmp_path / "protected_manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    real_stat = Path.stat
+
+    def injected_stat(self, *args, **kwargs):
+        if self == manifest:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", injected_stat)
+
+    # 1. Direct program_statuses call with target manifest path
+    statuses = program_statuses(manifest_path=manifest)
+    assert len(statuses) == len(PROGRAMS)
+    for s in statuses:
+        assert not s.available
+        if s.spec.platforms and s.host_os not in s.spec.platforms:
+            assert "지원 실행 환경" in s.reason
+        else:
+            assert "설치 매니페스트를 읽지 못했습니다" in s.reason
+
+    # 2. Real Workbench.programs() boundary with injected _DEFAULT_MANIFEST_PATH
+    monkeypatch.setattr("caelab.connections._DEFAULT_MANIFEST_PATH", manifest)
+    wb = Workbench(tmp_path / "wb")
+    wb_programs = wb.programs()
+    assert len(wb_programs) == len(PROGRAMS)
+    for p in wb_programs:
+        assert not p.available
+        if p.spec.platforms and p.host_os not in p.spec.platforms:
+            assert "지원 실행 환경" in p.reason
+        else:
+            assert "설치 매니페스트를 읽지 못했습니다" in p.reason
+
+
+

@@ -218,11 +218,13 @@ def _installer_manifest(manifest_path: Path | None = None) -> tuple[dict | None,
     """Read solver installer manifest safely without crashing on missing/corrupt files."""
     if manifest_path is None:
         manifest_path = _DEFAULT_MANIFEST_PATH
-    if not manifest_path.is_file():
-        return None, f"설치 매니페스트가 없거나 일반 파일이 아닙니다: {manifest_path}"
     try:
+        if not manifest_path.is_file():
+            return None, f"설치 매니페스트가 없거나 일반 파일이 아닙니다: {manifest_path}"
         content = manifest_path.read_text(encoding="utf-8")
         manifest = json.loads(content)
+    except FileNotFoundError:
+        return None, f"설치 매니페스트가 없거나 일반 파일이 아닙니다: {manifest_path}"
     except OSError as exc:
         return None, f"설치 매니페스트를 읽지 못했습니다: {exc}"
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
