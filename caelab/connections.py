@@ -177,6 +177,11 @@ def _radioss_installation(path: Path, host: str):
     if host == "linux":
         runtime["RAD_H3D_PATH"] = str(home / "extlib/h3d/lib/linux64")
         runtime["LD_LIBRARY_PATH"] = os.pathsep.join((str(home / "extlib/hm_reader/linux64"), runtime["RAD_H3D_PATH"], os.environ.get("LD_LIBRARY_PATH", ""))).rstrip(os.pathsep)
+    elif host == "windows":
+        runtime["RAD_H3D_PATH"] = str(home / "extlib/h3d/lib/win64")
+        runtime["KMP_STACKSIZE"] = "400m"
+        runtime["PATH"] = os.pathsep.join(str(home / directory) for directory in
+                                        ("extlib/intelOneAPI_runtime/win64", "extlib/hm_reader/win64", "extlib/h3d/lib/win64"))
     return starter, engine, runtime
 
 
@@ -414,13 +419,15 @@ def radioss_run_requests(status: ProgramStatus, workdir: Path, input_path: Path)
     """Serial run-1 profile: the JobManager owns sequencing and process cleanup."""
     if status.spec.id not in {"radioss", "openradioss", "opencourant"} or not status.available:
         raise ValueError(status.reason or "OpenCourant 실행 환경이 없습니다.")
-    starter, engine, runtime = _radioss_installation(Path(status.path), host_platform())
+    host = host_platform()
+    starter, engine, runtime = _radioss_installation(Path(status.path), host)
     env = {**runtime, **status.runtime_env, **os.environ}
     # Runtime paths already incorporate the caller's library search path; do not
     # accidentally replace the required reader/H3D libraries with that suffix.
-    if host_platform() == "linux":
-        libraries = runtime["LD_LIBRARY_PATH"].split(os.pathsep) + env.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(dict.fromkeys(part for part in libraries if part))
+    if host in {"linux", "windows"}:
+        search_path = "PATH" if host == "windows" else "LD_LIBRARY_PATH"
+        libraries = runtime[search_path].split(os.pathsep) + env.get(search_path, "").split(os.pathsep)
+        env[search_path] = os.pathsep.join(dict.fromkeys(part for part in libraries if part))
     target = Path(input_path).name
     if not target.lower().endswith("_0000.rad"):
         raise ValueError("Starter 입력은 *_0000.rad여야 합니다.")

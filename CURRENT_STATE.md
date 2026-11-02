@@ -2,13 +2,23 @@
 
 ## RAD W3 구현과 확인 상태 (2026-11-02)
 
-기준 main `d6f05a3b1abc0cb9e83e7e96311f743e626ab086`에서 `feat/rad-two-stage-runs`로 N21/W3를 구현했다. 아래는 현재 후보의 상태이며 PR/최종 CI/병합 근거를 확인한 뒤 갱신한다. W1/W2의 과거 기록과 Windows 후속 검증을 구별한다.
+기준 main `d6f05a3b1abc0cb9e83e7e96311f743e626ab086`에서 N21/W3를 구현해 PR #55 최종 head `a328253bf837e6db86a809d99a8ba0a7be428b12`를 main `865ee159c9bd1375d996a72eacf898484f1d96cb`에 병합했다. [최종 CI](https://github.com/pikachu444/caelab-workbench/actions/runs/41368317991)의 Python 3.11/3.12·실제 CalculiX·OpenCourant/X11 네 작업은 성공했다. 아래 Linux 개발 기록과 후속 Windows 확인을 구별한다.
 
 - **구현:** CAD 없는 사용자 RAD Starter/Engine/상대 INCLUDE 두 묶음의 원문·이름·해시 snapshot, 실제 설치 home→Starter/Engine 탐색, 기존 JobManager의 순차 실행·재시작 파일 확인·단계별 로그/상태·취소/합산 timeout, 실행 입력 변조 거부, 원본 변경 stale, 실제 결과 원본 등록과 저장·재열기.
 - **독립 검토에서 고친 문제:** 실패 후 Engine이 pending으로 남던 상태를 `not_started`로 종결했다. 실제 runname 결과가 고정 출력명과 달라 등록되지 않던 문제를 실제 원본 결과/해시 연결로 수정했다. 단계·오류 표시의 높이 부족도 보완했다. 원 지적자가 재검사했다.
-- **현재 검사:** 최종 집중 56 passed(실제 4건 별도), 독립 QA 25 passed, 기존 CCX/native 핵심 120 passed/6 skipped. 넓은 GUI 검사에서 기존 fixture의 snapshot 필드 누락 16건을 재현하고 fixture에 그 계약을 보완한 뒤 같은 GUI 묶음을 통과했다. 서로 겹치는 수치를 합산하지 않는다.
-- **실제 실행:** 공식 unmodified OpenCourant의 tetra 입력은 Workbench→JobManager→Starter→Engine→partial 결과/해시/재열기가 성공했다. shell/INCLUDE와 GUI shell은 현 컨테이너에서 Starter ERROR760을 재현했고 Engine을 실행하지 않았다. 이 실패를 제품 성공으로 바꾸지 않았다. 제품에는 환경 우회 shim을 넣지 않았다.
-- **남은 판정:** `.github/workflows/product-tests.yml`의 공식 SHA 고정 solver/X11 job에서 service 두 입력·GUI 두 입력을 실제 실행하고 입력·로그·receipt·PNG를 보존한다. 이 최종 CI가 통과하기 전에는 N21 전체를 닫지 않는다. Windows GUI/배포는 사용자가 지정한 일괄 후속이며 binary 후처리 전체 지원은 이 묶음의 기능이 아니다.
+- **병합 전 Linux 검사:** 최종 집중 56 passed(실제 4건 별도), 독립 QA 25 passed, 기존 CCX/native 핵심 120 passed/6 skipped. 넓은 GUI 검사에서 기존 fixture의 snapshot 필드 누락 16건을 재현하고 fixture에 그 계약을 보완한 뒤 같은 GUI 묶음을 통과했다. 서로 겹치는 수치를 합산하지 않는다.
+- **병합 전 개발 환경:** 공식 unmodified OpenCourant의 tetra 입력은 Workbench→JobManager→Starter→Engine→partial 결과/해시/재열기가 성공했다. 당시 컨테이너의 shell/INCLUDE·GUI shell은 Starter ERROR760으로 실패했고 Engine을 실행하지 않았다. 이 실패 원자료와 이후 최종 CI 성공은 별개다. 제품에는 환경 우회 shim을 넣지 않았다.
+- **남은 판정:** N21의 제한된 RAD 두 단계 연결과 전체 제품 인도는 구별한다. Windows 실제 GUI·배포와 전체 binary 후처리 지원은 완료하지 않았다.
+
+### Windows 로컬 후속 확인 (2026-11-02)
+
+- **시간 초과 검사 수정:** 기존 전체 예산 0.5초가 Starter에서 만료됐는데 테스트는 Engine 실패를 단정했다. Starter를 0.75초 늦춰 같은 실패를 재현했다. 제품 JobManager의 `failed`/`not_started` 의미는 유지하고, 실제 대상 probe 시작 후 전용 시계를 진행하도록 테스트를 Starter·Engine으로 분리했다. 자식 heartbeat 정지, 재시도와 이전 기록 보존을 확인했고 지연 조건에서도 두 경우가 통과했다. 실제 솔버 계산이나 OS 입력 검사는 아니다.
+- **공용 위젯 호스트:** Workbench 실행 코드 `865ee159`와 임시 독립 복제한 Prep `89bd7005e0eb1c687e48c9a2f259f0b0df8685b9`의 `src`를 시스템 Python 3.13.5/Qt 6.9.1에 연결했다. W1·W2 계약·RAD 프로세스 probe 관련 다섯 파일은 49 passed, skip 0이며 실제 RAD 네 검사는 이 묶음에서 제외했다. 앞선 Prep 미설치에 따른 네 skip을 이 고정 소스 조합에서 실행한 것으로, 배포 설치·독립 Prep GUI 왕복·Windows IME·GPU 품질의 완료가 아니다.
+- **Windows 실행 환경 수정 후보:** 공식 설치본 `INSTALL.md`에 따라 두 단계 솔버 자식의 PATH에 패키지 DLL 경로를 보존하고 Windows H3D·KMP 스택 기본값을 연결했다. 호출자 환경의 우선순위와 레지스트리 상대경로 해석을 유지하며 전역 PATH는 변경하지 않는다. home/직접 Starter와 호출자·빈 PATH·레지스트리 대체 경로를 검사한다.
+- **기존 설치본 실패(PATH 보완 전):** `latest-20260520` 설치본의 service 두 입력·Qt action 두 입력은 모두 Starter 종료 코드 `3221225781`로 실패했고 Engine은 시작하지 않았다. PE import에는 `mkl_intel_thread.3.dll`·`libiomp5md.dll`이 있으나 해당 패키지의 Intel 런타임 폴더와 포함 `extlib.zip`에는 이 파일이 없다. reader/H3D는 존재한다. 최초로 실패한 loader DLL은 특정하지 않았으며, 이 설치본은 그대로 보존했다.
+- **새 배포본의 실제 Windows 서비스 실행:** 사용자 승인으로 [OpenCourant `latest-20261011`](https://github.com/OpenCourant/OpenCourant/releases/tag/latest-20261011)(source `cb760c206e346eff12161a2268b134ef9d48a4ef`) Windows ZIP을 별도 임시 경로에 받았다. 350,476,183 bytes와 공식 SHA256 `6d0ea8b43b68aa12f0a2787b339384a554978cbb65a5d3dbaf1e40598f02e7e6`을 대조하고 동봉 라이선스를 확인했다. DLL을 옛 빌드와 섞거나 전역 PATH·서비스·시스템 설치를 변경하지 않았다. 현재 후보와 이 고정 배포본에서 저장소 tetra·shell/INCLUDE의 실제 서비스 검사 두 건이 통과했다. Starter/Engine 종료 코드 0/0, 원본·결과 해시와 같은 프로세스 내 새 Workbench 객체의 저장·재열기를 확인했다. 판독은 `partial`, frames/exchange_files는 비어 있으며 OMP 스택 우선순위 경고도 보존한다. 원 QA가 ZIP 해시·XML·receipt를 독립 대조했다. 코드와 배포본을 함께 바꾼 결과이므로 PATH 수정만의 효과, 옛 빌드 복구, 독립 앱 GUI·OS 입력·전체 필드·물리 oracle 검증으로 확대하지 않는다.
+- **설치·사용 문서:** README를 목적·지원 범위·빠른 시작·문서 링크로 줄이고 기존 시작 가이드에 Windows 가상환경 직접 실행, 선택 의존성, Prep 위젯/독립 GUI 구분, RAD 배포 런타임, 저장·재개와 오류 진단을 모았다. 현재 추적 파일의 별도 임시 사본에서 system-site-packages 없는 새 Python 3.13.5 venv로 `pip install -e ".[gui,rag]"`와 `pip check`를 실행했다. PySide6 6.12.0/VTK 9.7.1/NumPy 2.5.4/SciPy 1.18.1/Matplotlib 3.11.2/pypdf 6.21.4가 설치됐고 import·API 프로젝트 생성/저장/재열기·세 앱 `--help`가 통과했다. 이 검사는 미게시 로컬 후보 사본이며 새 원격 clone·실제 GUI 생성/조작·MDO 수치 계산·공급자 연결 검증은 아니다. 전체 회귀의 기존 Python/Qt 환경도 바꾸지 않았다.
+- **전체 회귀:** 기존 May 설치본을 지정한 전체 제품 회귀는 아직 진행 중이다. 새 배포본의 GUI 경로 검사와 최종 실패 분류는 별도로 남는다.
 
 ## Prep 공용 위젯과 RAD 파일 연결 (2026-11-01)
 
