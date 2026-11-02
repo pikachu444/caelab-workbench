@@ -121,6 +121,14 @@ class StructuralModel:
     # -- serialization -------------------------------------------------
     def to_dict(self) -> dict:
         data = asdict(self)
+        for index, bc in enumerate(data['bcs']):
+            values = {}
+            for dof, value in bc['values'].items():
+                key = str(dof)
+                if key in values and values[key] != value:
+                    raise ValueError(f'bcs[{index}].values.{key}: 같은 자유도의 값이 충돌합니다.')
+                values[key] = value
+            bc['values'] = values
         data["schema_version"] = self.schema_version
         return data
 

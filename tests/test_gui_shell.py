@@ -34,6 +34,7 @@ def _completed_model_runs(workbench, model, folder, results, monkeypatch):
     from types import SimpleNamespace
     from caelab.jobs import RunActivity
     from caelab.native.run_store import NativeRun
+    workbench.save_project(model, folder)
     records, payloads, calls = [], {}, []
     selection = {'id': None}
     outcomes = iter(results)

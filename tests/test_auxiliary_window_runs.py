@@ -34,9 +34,9 @@ class RunWorkbench(Workbench):
     def run(self, *args):
         pytest.fail('GUI used synchronous solver entry')
 
-    def save_project(self, model, folder):
+    def save_project(self, model, folder, **kwargs):
         self.saved.append(Path(folder))
-        return super().save_project(model, folder)
+        return super().save_project(model, folder, **kwargs)
 
     def submit_model(self, model, folder, solver_id='calculix', timeout=3600):
         run_id = f'{len(self.records) + 1:032x}'
@@ -74,6 +74,34 @@ class RunWorkbench(Workbench):
         self.cancelled.append(run_id)
         return True
     def close(self): pytest.fail('window closed a shared Workbench')
+
+
+def test_stale_window_run_preserves_model_saved_by_another_window(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setenv('CAELAB_UI_SETTINGS_PATH', str(tmp_path / 'ui.ini'))
+    folder = tmp_path / 'project'
+    first, second = Workbench(), Workbench()
+    first.save_project(cantilever_model(), folder)
+    left, right = MainWindow(first), MainWindow(second)
+    calls = []
+    def unexpected_submit(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError('unexpected stale submit')
+    monkeypatch.setattr(first, 'submit_model', unexpected_submit)
+    try:
+        left.set_model(first.open_project(folder), folder)
+        right.set_model(second.open_project(folder), folder)
+        right.model.name = 'saved in second window'
+        assert right.save_project()
+        before = (folder / 'model.json').read_bytes()
+        left.run_solve()
+        assert (folder / 'model.json').read_bytes() == before
+        assert calls == [] and left._active_run_id is None
+        assert '다른 창' in left.status.text()
+    finally:
+        left.close()
+        right.close()
+        app.processEvents()
 
 
 @pytest.fixture

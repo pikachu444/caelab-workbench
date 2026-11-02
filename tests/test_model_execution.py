@@ -41,6 +41,7 @@ def completed(tmp_path, monkeypatch, outcome=None):
     initial = adapter.persist_input(workdir)
     snapshot = adapter.snapshot_input('model.json', workdir, lambda: None)
     (workdir / 'job.log').write_bytes(b'raw log')
+    (workdir / 'model.frd').write_bytes(b'raw output')
     result = adapter.collect_results(workdir, check_cancelled=lambda: None)
     artifacts = {path.relative_to(workdir).as_posix(): file_revision(path)
                  for path in adapter.artifact_paths(workdir, snapshot)}
@@ -59,6 +60,31 @@ def test_model_revision_includes_raw_unit_declaration():
     assert module.model_revision(model) != initial
     model.unit_system = None
     assert module.model_revision(model) != initial
+
+
+def test_model_revision_and_saved_snapshot_accept_mixed_distinct_dof_keys(tmp_path):
+    module = implementation()
+    model = cantilever_model()
+    model.bcs[0].values = {1: 0.0, '2': 0.0}
+    revision = module.model_revision(model)
+    module.ModelRunAdapter(model, CalculiXConverter()).persist_input(tmp_path)
+    saved = json.loads((tmp_path / 'model-snapshot.json').read_text(encoding='utf-8'))
+    restored = type(model).from_dict(saved)
+    assert module.model_revision(restored) == revision
+    assert not CalculiXConverter().validate(restored)
+
+
+@pytest.mark.parametrize('name', ['model.inp', 'model.frd', 'job.log'])
+@pytest.mark.parametrize('change', ['mutate', 'delete'])
+def test_changed_execution_artifacts_refuse_successful_saved_result(tmp_path, monkeypatch, name, change):
+    module, _, run, _, _ = completed(tmp_path, monkeypatch)
+    path = run.workdir / name
+    if change == 'mutate':
+        path.write_bytes(path.read_bytes() + b'\n')
+    else:
+        path.unlink()
+    with pytest.raises((OSError, ValueError), match=name.replace('.', r'\.')):
+        module.read_model_result(run)
 
 
 def test_adapter_detaches_nested_model_before_worker_persistence(tmp_path):
@@ -156,6 +182,7 @@ def test_collector_propagates_cancellation_before_publishing_result(tmp_path, mo
         pytest.fail('cancel callback was swallowed')
     monkeypatch.setattr(converter, 'read_result', read)
     adapter = module.ModelRunAdapter(cantilever_model(), converter)
+    adapter.snapshot_input('model.json', tmp_path, lambda: None)
     def cancel():
         if reading:
             raise InterruptedError('reading cancelled')

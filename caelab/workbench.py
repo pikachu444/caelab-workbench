@@ -49,8 +49,8 @@ class Workbench:
     def native_run_snapshot(self, run_id: str) -> NativeRun | None:
         return self.jobs.native_snapshot(run_id)
 
-    def save_project(self, model: StructuralModel, folder: str | Path) -> Path:
-        return save_project(model, folder)
+    def save_project(self, model: StructuralModel, folder: str | Path, *, expected_revision=None) -> Path:
+        return save_project(model, folder, expected_revision=expected_revision)
 
     def _model_run_store(self, folder: str | Path) -> RunStore:
         folder = Path(folder).resolve()

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from caelab.model.schema import StructuralModel
+from caelab.model.store import model_revision, project_revision
 from caelab.workbench import Workbench
 
 from .icons import GROUP_ICONS, LEAF_ICONS, icon
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self.workbench = workbench or Workbench()
         self.model: StructuralModel | None = None
         self.project_folder: Path | None = None
+        self._saved_model_revision = ''
         self._issue_target: str | None = None
         self._path_items: dict[str, QTreeWidgetItem] = {}
         self._group_items: dict[str, QTreeWidgetItem] = {}
@@ -360,6 +362,7 @@ class MainWindow(QMainWindow):
         self.model = model
         self.unit_system_status.setText(f"솔버: CalculiX · 단위계: {self._unit_system_text()}")
         self.project_folder = Path(folder).resolve() if folder is not None else None
+        self._saved_model_revision = model_revision(model) if folder is not None else ''
         self._last_result = None
         self._issue_target = None
         self.btn_goto.setEnabled(False)
@@ -561,25 +564,32 @@ class MainWindow(QMainWindow):
             self.status.setText('계산 정리를 마친 뒤 모델을 저장하세요.')
             return False
         folder = self.project_folder
+        expected_revision = self._saved_model_revision
         if folder is None:
             chosen = QFileDialog.getExistingDirectory(self, '프로젝트 저장 폴더 선택')
             if not chosen:
                 self.status.setText('저장을 취소했습니다.')
                 return False
             folder = Path(chosen).resolve()
-            if (folder / 'model.json').exists():
+            try:
+                expected_revision = project_revision(folder)
+            except Exception as error:
+                self.status.setText(f'저장 위치의 모델을 확인하지 못했습니다: {error}')
+                return False
+            if expected_revision:
                 answer = QMessageBox.question(self, '기존 모델 저장',
                     '이 폴더의 model.json을 현재 모델로 바꾸시겠습니까? 실행 이력은 보존합니다.',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if answer != QMessageBox.Yes:
                     return False
         try:
-            self.workbench.save_project(self.model, folder)
+            self.workbench.save_project(self.model, folder, expected_revision=expected_revision)
         except Exception as error:
             self.status.setText(f'프로젝트를 저장하지 못했습니다: {error}')
             self._log(self.status.text())
             return False
         self.project_folder = folder
+        self._saved_model_revision = model_revision(self.model)
         self.status.setText(f"저장했습니다: {folder}")
         self._log(f"프로젝트를 저장했습니다: {folder}")
         return True

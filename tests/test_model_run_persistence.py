@@ -85,3 +85,36 @@ def test_active_run_lease_refuses_another_model_save(tmp_path):
         assert path.read_bytes() == previous
     finally:
         lease.release()
+
+
+def test_conflicting_dof_aliases_are_not_silently_saved_as_a_valid_boundary(tmp_path):
+    model, path = _existing_project(tmp_path)
+    before = path.read_bytes()
+    model.bcs[0].values = {1: 1.0, '1': 0.0}
+    with pytest.raises(ValueError, match=r'bcs\[0\]\.values'):
+        store.save_project(model, tmp_path)
+    assert path.read_bytes() == before
+    assert model.bcs[0].values == {1: 1.0, '1': 0.0}
+
+
+def test_equal_dof_aliases_have_one_deterministic_persisted_key(tmp_path):
+    model = cantilever_model()
+    model.bcs[0].values = {1: 0.0, '1': 0.0, '2': 0.0}
+    store.save_project(model, tmp_path)
+    assert store.load_project(tmp_path).bcs[0].values == {'1': 0.0, '2': 0.0}
+    assert model.bcs[0].values == {1: 0.0, '1': 0.0, '2': 0.0}
+
+
+def test_revision_is_rechecked_after_obtaining_the_store_lease(tmp_path, monkeypatch):
+    model, path = _existing_project(tmp_path)
+    original_revision = store.model_revision(model)
+    other = cantilever_model()
+    other.name = 'changed before lease acquisition'
+    lease = RunStore.lease
+    def intervening_save(owner):
+        store.atomic_json(path, {**other.to_dict(), 'run_store_expected': True})
+        return lease(owner)
+    monkeypatch.setattr(RunStore, 'lease', intervening_save)
+    with pytest.raises(ValueError, match='다른 창'):
+        store.save_project(model, tmp_path, expected_revision=original_revision)
+    assert store.load_project(tmp_path).name == other.name

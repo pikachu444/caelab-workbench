@@ -31,14 +31,15 @@ def probe(monkeypatch):
     forces[model.sets['FIX'].members[0]] = [0, 1000, 0]
     frd = (_frd_block('DISP', displacement) + _frd_block('FORC', forces)
            + _frd_block('STRESS', {node: [0] * 6 for node in model.mesh.nodes}))
-    settings = {'delays': {}, 'requests': []}
+    settings = {'delays': {}, 'requests': [], 'mutate_input': False}
     def request(found, workdir):
         folder = Path(workdir).parent.parent.resolve()
         delay = settings['delays'].get(folder, .15)
+        mutation = "Path('model.inp').write_bytes(Path('model.inp').read_bytes()+b'\\n'); " if settings['mutate_input'] else ''
         code = ("import time; from pathlib import Path; "
                 "assert Path('model.inp').is_file(); "
                 "Path('probe-started').write_text('started'); "
-                f"time.sleep({delay!r}); Path('model.frd').write_text({frd!r},encoding='ascii'); "
+                f"time.sleep({delay!r}); {mutation}Path('model.frd').write_text({frd!r},encoding='ascii'); "
                 "print('synthetic result written',flush=True)")
         settings['requests'].append(Path(workdir))
         return LaunchRequest([sys.executable, '-c', code], Path(workdir), dict(os.environ), 'calculix')
@@ -62,6 +63,22 @@ def wait_run(wb, run_id, app=None):
     activity = wb.native_run_activity(run_id)
     assert not activity.cleanup_error
     return wb.native_run_snapshot(run_id)
+
+
+def test_input_changed_inside_owned_process_cannot_publish_original_model_result(tmp_path, probe):
+    probe['mutate_input'] = True
+    wb = Workbench()
+    try:
+        model = cantilever_model()
+        wb.save_project(model, tmp_path)
+        run = wait_run(wb, wb.submit_model(model, tmp_path).id)
+        assert run.returncode == 0 and run.parse_state == 'failed'
+        assert 'model.inp' in run.error
+        assert not (run.workdir / 'model-result.json').exists()
+        with pytest.raises(ValueError, match=r'model\.inp'):
+            wb.model_run_result(tmp_path, run.id)
+    finally:
+        assert wb.close()
 
 
 def test_real_owner_keeps_frozen_units_failed_history_and_reopens_without_execution(tmp_path, probe):
@@ -98,7 +115,8 @@ def test_real_owner_keeps_frozen_units_failed_history_and_reopens_without_execut
         assert wb.close()
 
 
-def test_actual_owner_qt_completion_reopen_and_tampered_result_refusal(tmp_path, monkeypatch, probe):
+@pytest.mark.parametrize('tampered', ['model-result.json', 'model.inp', 'model.frd', 'job.log'])
+def test_actual_owner_qt_completion_reopen_and_tampered_result_refusal(tmp_path, monkeypatch, probe, tampered):
     pytest.importorskip('PySide6')
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication, QFileDialog
@@ -131,7 +149,7 @@ def test_actual_owner_qt_completion_reopen_and_tampered_result_refusal(tmp_path,
         reopened.set_model(fresh.open_project(folder), folder)
         assert reopened._last_result.success and reopened._displayed_run_id == run_id
         assert len(probe['requests']) == 1
-        result_path = folder / 'runs' / run_id / 'model-result.json'
+        result_path = folder / 'runs' / run_id / tampered
         result_path.write_bytes(result_path.read_bytes() + b'\n')
         reopened._last_result = None
         reopened.select_path('model')
