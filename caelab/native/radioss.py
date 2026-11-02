@@ -44,9 +44,10 @@ def parse_radioss_starter(path: Path) -> dict:
 
 
 def parse_radioss_output(path: Path) -> dict[str, float]:
-    """Extract the last explicitly labelled global-energy values from an Engine listing."""
+    """Extract the last explicitly labelled global-energy values or cycle-table KPIs from an Engine listing."""
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     values: dict[str, float] = {}
+    has_explicit_energy = False
     for key, label in _ENERGY_LABELS.items():
         pattern = re.compile(rf"{label}(?:\s*\([^)]*\))?\s*(?:=|:)?\s*({_NUMBER})\s*%?", re.I)
         matches = pattern.findall(text)
@@ -54,46 +55,111 @@ def parse_radioss_output(path: Path) -> dict[str, float]:
             value = float(matches[-1].replace("D", "E").replace("d", "e"))
             if math.isfinite(value):
                 values[key] = value
+                if key in ("internal_energy", "kinetic_energy"):
+                    has_explicit_energy = True
 
-    # OpenRadioss standard Engine cycle table lines:
+    # Parse OpenRadioss standard Engine cycle table lines:
     # CYCLE TIME TIME-STEP ELEMENT ERROR I-ENERGY K-ENERGY T K-ENERGY R EXT-WORK [MAS.ERR]
-    cycle_pattern = re.compile(
-        rf"^\s*(\d+)\s+({_NUMBER})\s+({_NUMBER})\s+(.+?)\s+({_NUMBER})\s*%\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})(?:$|\s+({_NUMBER}))",
-        re.M,
-    )
-    cycle_rows = cycle_pattern.findall(text)
-    if cycle_rows:
-        last = cycle_rows[-1]
-        try:
-            cycle_val = float(last[0])
-            time_val = float(last[1].replace("D", "E").replace("d", "e"))
-            err_val = float(last[4].replace("D", "E").replace("d", "e"))
-            i_val = float(last[5].replace("D", "E").replace("d", "e"))
-            kt_val = float(last[6].replace("D", "E").replace("d", "e"))
-            kr_val = float(last[7].replace("D", "E").replace("d", "e"))
-            work_val = float(last[8].replace("D", "E").replace("d", "e"))
-            mas_err = float(last[9].replace("D", "E").replace("d", "e")) if last[9] else None
+    # Enforce preceding header validation and defense against corrupted/incomplete trailing rows.
+    in_cycle_table = False
+    last_valid_cycle: dict[str, float] | None = None
+    cycle_table_corrupted = False
 
-            if "internal_energy" not in values and math.isfinite(i_val):
-                values["internal_energy"] = i_val
-            if "kinetic_energy" not in values and math.isfinite(kt_val + kr_val):
-                values["kinetic_energy"] = kt_val + kr_val
-            if "energy_error" not in values and math.isfinite(err_val):
-                values["energy_error"] = err_val
-            if "cycle" not in values and math.isfinite(cycle_val):
-                values["cycle"] = cycle_val
-            if "time" not in values and math.isfinite(time_val):
-                values["time"] = time_val
-            if math.isfinite(kt_val):
-                values["kinetic_energy_t"] = kt_val
-            if math.isfinite(kr_val):
-                values["kinetic_energy_r"] = kr_val
-            if math.isfinite(work_val):
-                values["external_work"] = work_val
-            if mas_err is not None and math.isfinite(mas_err):
-                values["mass_error"] = mas_err
-        except (ValueError, TypeError):
-            pass
+    cycle_row_re = re.compile(
+        rf"^(\d+)\s+({_NUMBER})\s+({_NUMBER})\s+(.+?)\s+({_NUMBER})\s*%\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})\s+({_NUMBER})(?:$|\s+({_NUMBER}))"
+    )
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Header detection
+        if (
+            re.search(r"\bCYCLE\b", stripped, re.I)
+            and re.search(r"\bTIME\b", stripped, re.I)
+            and re.search(r"\b(?:I-ENERGY|ERROR|K-ENERGY)\b", stripped, re.I)
+        ):
+            in_cycle_table = True
+            cycle_table_corrupted = False
+            continue
+
+        # Section end detection
+        if (
+            re.search(r"\b(?:NORMAL|ERROR)\s+TERMINATION\b", stripped, re.I)
+            or re.search(r"\bELAPSED\s+TIME\b", stripped, re.I)
+            or stripped.startswith("---")
+            or stripped.startswith("===")
+        ):
+            in_cycle_table = False
+            continue
+
+        if in_cycle_table:
+            # Check if line begins with integer cycle token
+            if re.match(r"^\d+\s+", stripped):
+                # Detect corrupted values: NaN, Inf, ***
+                if re.search(r"(?:NaN|Inf|\*{3,})", stripped, re.I):
+                    last_valid_cycle = None
+                    cycle_table_corrupted = True
+                    continue
+
+                m = cycle_row_re.match(stripped)
+                if m:
+                    try:
+                        c_val = float(m.group(1))
+                        t_val = float(m.group(2).replace("D", "E").replace("d", "e"))
+                        err_val = float(m.group(5).replace("D", "E").replace("d", "e"))
+                        i_val = float(m.group(6).replace("D", "E").replace("d", "e"))
+                        kt_val = float(m.group(7).replace("D", "E").replace("d", "e"))
+                        kr_val = float(m.group(8).replace("D", "E").replace("d", "e"))
+                        w_val = float(m.group(9).replace("D", "E").replace("d", "e"))
+                        m_val = float(m.group(10).replace("D", "E").replace("d", "e")) if m.group(10) else None
+
+                        if all(math.isfinite(x) for x in (c_val, t_val, err_val, i_val, kt_val, kr_val, w_val)):
+                            last_valid_cycle = {
+                                "printed_cycle": c_val,
+                                "printed_time": t_val,
+                                "internal_energy": i_val,
+                                "kinetic_energy": kt_val + kr_val,
+                                "kinetic_energy_t": kt_val,
+                                "kinetic_energy_r": kr_val,
+                                "external_work": w_val,
+                                "energy_error": err_val,
+                            }
+                            if m_val is not None and math.isfinite(m_val):
+                                last_valid_cycle["mass_error"] = m_val
+                            cycle_table_corrupted = False
+                        else:
+                            last_valid_cycle = None
+                            cycle_table_corrupted = True
+                    except (ValueError, TypeError):
+                        last_valid_cycle = None
+                        cycle_table_corrupted = True
+                else:
+                    # Line started with a cycle number but failed standard column layout
+                    last_valid_cycle = None
+                    cycle_table_corrupted = True
+
+    if last_valid_cycle and not cycle_table_corrupted:
+        values["printed_cycle"] = last_valid_cycle["printed_cycle"]
+        values["printed_time"] = last_valid_cycle["printed_time"]
+
+        # Only populate energy metrics from cycle table if no explicit energy scalar labels were present
+        if not has_explicit_energy:
+            values["internal_energy"] = last_valid_cycle["internal_energy"]
+            values["kinetic_energy"] = last_valid_cycle["kinetic_energy"]
+            values["kinetic_energy_t"] = last_valid_cycle["kinetic_energy_t"]
+            values["kinetic_energy_r"] = last_valid_cycle["kinetic_energy_r"]
+            values["external_work"] = last_valid_cycle["external_work"]
+            if "energy_error" not in values:
+                values["energy_error"] = last_valid_cycle["energy_error"]
+            if "mass_error" not in values and "mass_error" in last_valid_cycle:
+                values["mass_error"] = last_valid_cycle["mass_error"]
+
+        if "cycle" not in values:
+            values["cycle"] = last_valid_cycle["printed_cycle"]
+        if "time" not in values:
+            values["time"] = last_valid_cycle["printed_time"]
 
     total_cycles_match = re.search(r"TOTAL NUMBER OF CYCLES\s*:\s*(\d+)", text, re.I)
     if total_cycles_match:

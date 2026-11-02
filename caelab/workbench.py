@@ -58,8 +58,19 @@ class Workbench:
 
     def add_program_node(self, project: NativeProject, kind: str, program_id: str, position=None):
         if position is None:
-            idx = len(project.nodes)
-            position = (40.0 + 250.0 * (idx % 3), 40.0 + 150.0 * (idx // 3))
+            existing_positions = [node.position for node in project.nodes.values() if node.position is not None]
+            slot = 0
+            while True:
+                cand_x = 40.0 + 250.0 * (slot % 3)
+                cand_y = 40.0 + 150.0 * (slot // 3)
+                collides = any(
+                    abs(pos[0] - cand_x) < 210 and abs(pos[1] - cand_y) < 98
+                    for pos in existing_positions
+                )
+                if not collides:
+                    position = (cand_x, cand_y)
+                    break
+                slot += 1
         return project.add_node(kind, program_id, position)
 
     def set_node_program(self, project: NativeProject, node_id: str, program_id: str) -> None:

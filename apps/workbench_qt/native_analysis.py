@@ -812,12 +812,27 @@ class NativeAnalysisWindow(QMainWindow):
         run_summary = result.get("summary", {})
         if run_summary.get("solver_id") == "radioss" or "internal_energy" in run_summary:
             lines += ["", "OpenRadioss 에너지·사이클 요약:"]
-            if "total_cycles" in run_summary:
-                lines.append(f"  총 사이클 수: {int(run_summary['total_cycles'])}")
-            elif "cycle" in run_summary:
-                lines.append(f"  최종 사이클: {int(run_summary['cycle'])}")
-            if "time" in run_summary:
-                lines.append(f"  최종 시간: {run_summary['time']:.6g} {run.units.get('time', 's')}")
+            tot_c = run_summary.get("total_cycles")
+            prt_c = run_summary.get("printed_cycle", run_summary.get("cycle"))
+            prt_t = run_summary.get("printed_time", run_summary.get("time"))
+            time_unit = run.units.get("time", "s")
+
+            if tot_c is not None:
+                if prt_c is not None and prt_c != tot_c:
+                    lines.append(f"  총 사이클 수: {int(tot_c)} (마지막 출력 사이클: {int(prt_c)})")
+                else:
+                    lines.append(f"  총 사이클 수: {int(tot_c)}")
+            elif prt_c is not None:
+                lines.append(f"  마지막 출력 사이클: {int(prt_c)}")
+
+            if prt_t is not None:
+                if tot_c is not None and prt_c is not None and tot_c != prt_c:
+                    lines.append(f"  마지막 출력 시간: {prt_t:.6g} {time_unit}")
+                else:
+                    lines.append(f"  최종 시간: {prt_t:.6g} {time_unit}")
+            elif "time" in run_summary:
+                lines.append(f"  최종 시간: {run_summary['time']:.6g} {time_unit}")
+
             if "internal_energy" in run_summary:
                 lines.append(f"  내부 에너지 (I-ENERGY): {run_summary['internal_energy']:.6g}")
             if "kinetic_energy" in run_summary:

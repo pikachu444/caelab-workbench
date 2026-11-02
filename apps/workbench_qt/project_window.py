@@ -1337,11 +1337,6 @@ class ProjectWindow(QMainWindow):
         for item in list(self.scene.items()):
             if item is not self.empty_hint:
                 self.scene.removeItem(item)
-        zero_pos_nodes = [node for node in self.project.nodes.values() if tuple(node.position) == (0.0, 0.0)]
-        if len(zero_pos_nodes) >= 2:
-            for idx, node in enumerate(self.project.nodes.values()):
-                if tuple(node.position) == (0.0, 0.0):
-                    node.position = (40.0 + 250.0 * (idx % 3), 40.0 + 150.0 * (idx // 3))
         for node in self.project.nodes.values():
             self._add_node_box(node)
         for connection in self.project.connections:
@@ -1399,8 +1394,7 @@ class ProjectWindow(QMainWindow):
         return box
 
     def add_box(self, kind: str, program_id: str | None = None) -> SystemBox:
-        position = (40 + 250 * (len(self.boxes) % 3), 40 + 150 * (len(self.boxes) // 3))
-        node = self.workbench.add_program_node(self.project, kind, program_id or _PROGRAM_IDS[kind], position)
+        node = self.workbench.add_program_node(self.project, kind, program_id or _PROGRAM_IDS[kind], position=None)
         box = self._add_node_box(node)
         self.empty_hint.setVisible(False)
         self.scene.clearSelection()

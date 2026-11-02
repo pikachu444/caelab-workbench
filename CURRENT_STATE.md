@@ -2,12 +2,12 @@
 
 ## 스키매틱 자동 그리드 배치 및 OpenRadioss 요약·아웃라인 연동 (2026-11-02)
 
-기준 main `865ee15`에서 `feat/schematic-grid-and-radioss-kpi`로 UI/UX 및 솔버 요약 연동을 구현했다.
+기준 main `865ee15`에서 `feat/schematic-grid-and-radioss-kpi`로 UI/UX 및 솔버 요약 연동을 구현하고, Codex(ChatGPT) 코드 검토 지적 4건을 정밀 반영했다.
 
-- **스키매틱 (0, 0) 박스 중첩 해소 (FINDING-06a):** 프로그래밍 방식으로 추가되거나 기본 좌표 (0, 0)을 공유하는 노드가 2개 이상일 때 `ProjectWindow._show_project`에서 비중첩 그리드 좌표 `(40 + 250*(idx%3), 40 + 150*(idx//3))`를 자동 부여하고, `Workbench.add_program_node`의 기본 위치를 auto-grid로 연동했다.
-- **OpenRadioss Engine 사이클 테이블 파싱 (FINDING-06b):** `parse_radioss_output`에 표준 Engine 사이클 테이블 정규식 파서를 추가하여 최종 사이클, 시간, 내부 에너지, 운동 에너지, 에너지 오차, 외부 일, 질량 오차, 총 사이클 수를 추출하고 기존 명시적 라벨 파싱을 100% 보존했다.
-- **네이티브 해석창 덱 아웃라인 및 구문 강조 (FINDING-07):** `NativeAnalysisWindow`에서 OpenRadioss `/` 카드 및 `#include`를 step, material, bc_load, contact, mesh 카테고리로 아웃라인에 파싱하고, 카드/주석 구문 강조 및 로그 요약 정규식(`ERROR ID :`, `WARNING ID :`)을 정밀화하여 클린 로그의 오탐을 방지했다.
-- **검증:** `tests/test_radioss_native.py` 9 passed, `tests/test_radioss_gui_runs.py` 3 passed, `tests/test_native_project.py` 43 passed.
+- **저장 좌표 보존 및 비충돌 신규 배치 (FINDING-06a):** 프로젝트 열기(`ProjectWindow._show_project`) 시 저장된 `(0, 0)` 좌표의 묵시적 변조를 제거하여 기존 배치를 100% 보존했다. 위치 미지정(`position=None`) 신규 노드 추가 시 `Workbench.add_program_node`에서 기존 노드들의 점유 영역(`abs(dx) < 210, abs(dy) < 98`)을 충돌 검사하여 첫 번째 빈 슬롯을 자동 배정했다.
+- **OpenRadioss Engine 사이클 테이블 파싱 및 표본 분리 (FINDING-06b):** `parse_radioss_output`에서 명시적 스칼라 에너지 라벨(`INTERNAL/KINETIC ENERGY`)이 있을 때 사이클 테이블 성분과의 오혼합을 배제하고, `CYCLE TIME TIME-STEP` 헤더 선행 상태 검증 및 `NaN`/`***` 손상 행 발생 시 이전 행 오독을 무효화하는 방어 로직을 추가했다.
+- **마지막 출력 vs 최종 시간 구분 및 키워드 연동 (FINDING-07):** `NativeAnalysisWindow`에서 `total_cycles != cycle`일 때 "최종 시간" 대신 "마지막 출력 사이클/시간"으로 분리 표기했다. OpenRadioss `/` 카드 및 `#include` 아웃라인 트리 분류, 구문 강조 및 클린 로그 배지(`오류 0 / 경고 0`)를 유지했다.
+- **검증:** `tests/test_radioss_native.py` 11 passed, `tests/test_radioss_gui_runs.py` 3 passed, `tests/test_native_project.py` 44 passed (총 58 passed, 2 skipped, 0 failures).
 
 <a id="rad-w3"></a>
 
