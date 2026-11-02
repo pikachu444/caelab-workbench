@@ -198,27 +198,43 @@ TOTAL NUMBER OF CYCLES : 1039
     assert res["summary"].get("hourglass_ratio") is None
 
 
-def test_footer_less_listing_reports_last_printed_time_not_final_time(tmp_path):
-    """Point 2: In the absence of total cycles (footer), printed time is strictly last printed time, not final time."""
+@pytest.mark.parametrize(
+    ("total_cycles", "expected_label", "unexpected_label"),
+    [
+        pytest.param(None, "마지막 출력 시간", "최종 시간", id="footer-missing"),
+        pytest.param(1039.0, "마지막 출력 시간", "최종 시간", id="different-cycle"),
+        pytest.param(1000.0, "최종 시간", "마지막 출력 시간", id="equal-cycle"),
+    ],
+)
+def test_printed_time_label_uses_footer_cycle(total_cycles, expected_label, unexpected_label):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
     from apps.workbench_qt.native_analysis import NativeAnalysisWindow
+
     summary = {
         "solver_id": "radioss",
         "printed_cycle": 1000.0,
         "printed_time": 1.0e-3,
         "internal_energy": 30.0,
     }
-    tot_c = summary.get("total_cycles")
-    prt_c = summary.get("printed_cycle")
-    prt_t = summary.get("printed_time")
-    time_unit = "s"
-    lines = []
-    if prt_t is not None:
-        if tot_c is not None and prt_c is not None and tot_c == prt_c:
-            lines.append(f"  최종 시간: {prt_t:.6g} {time_unit}")
-        else:
-            lines.append(f"  마지막 출력 시간: {prt_t:.6g} {time_unit}")
-    assert lines == ["  마지막 출력 시간: 0.001 s"]
-    assert "최종 시간" not in lines[0]
+    if total_cycles is not None:
+        summary["total_cycles"] = total_cycles
+
+    run = SimpleNamespace(
+        result={"summary": summary, "frames": [], "dat": {}},
+        units={"time": "s"},
+    )
+    view = Mock(_runs={"run": run}, _displayed_run_id="run")
+    view.frame_selector.currentData.return_value = None
+    view.result_text.toPlainText.return_value = ""
+
+    NativeAnalysisWindow.show_result(view)
+
+    view.result_text.setPlainText.assert_called_once()
+    text = view.result_text.setPlainText.call_args.args[0]
+    assert f"  {expected_label}: 0.001 s" in text.splitlines()
+    assert f"  {unexpected_label}:" not in text
 
 
 def test_dynamic_header_column_order_and_truncated_row(tmp_path):
