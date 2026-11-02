@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -178,7 +179,11 @@ with Path('probe-events.txt').open('a') as stream:
     stream.write(stage + '\n')
 print(stage + ' process started', flush=True)
 if mode == stage + '_wait':
-    time.sleep(30)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        with Path(stage + '-heartbeat').open('ab') as heartbeat:
+            heartbeat.write(b'.')
+        time.sleep(.02)
 if mode == stage + '_fail':
     print(stage + ' deliberately failed', flush=True)
     raise SystemExit(9)
@@ -267,15 +272,45 @@ def test_radioss_cancel_owns_each_stage_and_does_not_run_next(tmp_path, radioss_
         wb.close()
 
 
-def test_radioss_timeout_is_terminal_and_releases_run_for_retry(tmp_path, radioss_probe):
+@pytest.mark.parametrize("stage_name", ["starter", "engine"])
+def test_radioss_timeout_is_terminal_and_releases_run_for_retry(tmp_path, radioss_probe, monkeypatch, stage_name):
+    import caelab.jobs as jobs
+
+    # Target a running stage without charging OS/process startup to this deadline.
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=time.sleep))
     wb, project, node = _project(tmp_path, _input_pair(tmp_path / "source"))
-    radioss_probe["mode"] = "engine_wait"
+    radioss_probe["mode"] = stage_name + "_wait"
     try:
         submitted = wb.submit_native(project, node.id, timeout=.5)
+        running = _await_stage(wb, project, submitted.id, stage_name)
+        heartbeat = running.workdir / (stage_name + "-heartbeat")
+        ready_deadline = time.monotonic() + 10
+        while not heartbeat.is_file() or not heartbeat.read_bytes():
+            assert time.monotonic() < ready_deadline, "Solver probe did not start"
+            time.sleep(.01)
+        with wb.jobs._native_lock:
+            owned_process = wb.jobs._controls[submitted.id]["process"]
+            assert owned_process is not None and owned_process.poll() is None
+        clock.now = 1.0
         failed = _wait(wb, project, submitted.id)
         assert failed.state == "failed" and "TimeoutError" in failed.error
-        assert failed.snapshot["stages"][-1]["name"] == "engine"
-        assert failed.snapshot["stages"][-1]["state"] == "failed"
+        stages = failed.snapshot["stages"]
+        timed_out = next(stage for stage in stages if stage["name"] == stage_name)
+        assert timed_out["state"] == "failed" and "TimeoutError" in timed_out["error"]
+        assert timed_out["started_at"] and timed_out["finished_at"] and timed_out["pid"]
+        expected_stages = ["starter"] if stage_name == "starter" else ["starter", "engine"]
+        assert (failed.workdir / "probe-events.txt").read_text().splitlines() == expected_stages
+        if stage_name == "starter":
+            assert stages[1]["state"] == "not_started" and stages[1]["pid"] is None
+        else:
+            assert stages[0]["state"] == "completed"
+        assert owned_process.poll() is not None
+        last_heartbeat = heartbeat.read_bytes()
+        time.sleep(.15)
+        assert heartbeat.read_bytes() == last_heartbeat
+        assert "output" not in project.nodes[node.id].files
+        old_files = {name: (failed.workdir / name).read_bytes() for name in ("job.json", "job.log")}
         radioss_probe["mode"] = "normal"
         retried = wb.submit_native(project, node.id, timeout=10)
         completed = _wait(wb, project, retried.id)
@@ -286,8 +321,11 @@ def test_radioss_timeout_is_terminal_and_releases_run_for_retry(tmp_path, radios
         assert len(wb.native_runs(project, node.id)) == 2
         assert wb.selected_native_run(project, node.id).id == completed.id
         assert wb.jobs.native_snapshot(failed.id).state == "failed"
+        assert wb.jobs.native_snapshot(failed.id).snapshot == failed.snapshot
+        for name, original in old_files.items():
+            assert (failed.workdir / name).read_bytes() == original
     finally:
-        wb.close()
+        assert wb.close()
 
 
 def test_radioss_rerun_keeps_old_snapshot_and_detects_include_and_engine_changes(tmp_path, radioss_probe):
