@@ -46,6 +46,13 @@ PrePoMax 실프로그램/Windows 실화면과 Salome·OpenRadioss·Naksha 끝단
 
 # 현재 상태
 
+## MDO DoE 기법별 설정·생성 예정 점 수·연속 변수 수준값 및 민감도 중복 재분석 방지 (#38, #39, #40, 2026-11-02)
+
+- **DoE 기법별 단일 설정 대화상자 및 생성 예정 점 수 표시 (#38)**: `apps/workbench_qt/mdo_studio/window.py`의 연속 `QInputDialog` 호출을 단일 `DOEGenerationDialog`(`apps/workbench_qt/mdo_studio/study_config.py`)로 교체하고 `caelab/mdo/doe.py`의 `projected_design_count`와 연결했다. 선택한 기법(`lhs`, `opt-lhs`, `sobol`, `full-factorial`, `box-behnken`, `ccd`)에 실제로 적용되는 입력(`n_samples`, `seed`, `criterion`, `restarts`, `iterations`, `centers`, `ccd_type`, 변수별 `levels`, `budget`)만 활성화·표시하고, 사용하지 않는 표본 수·난수 시드는 비활성·숨김 처리한다. 생성 전에 정확한 생성 예정 점 수(`Projected points`)와 Sobol 2의 거듭제곱 제약을 안내·검증하며 취소 시 스터디 상태를 변경하지 않는다.
+- **연속 변수 full-factorial 수준값 GUI 설정·전달 및 사전 검증 (#39)**: `full-factorial` 선택 시 독립 변수별 수준값 표를 제공하고, 연속 변수는 임의 기본 수준값을 몰래 채우지 않고 사용자가 명시적으로 물리 수준값을 입력하도록 강제한다. `StudyService.generate_doe`(`caelab/mdo/service.py`)가 `DOEConfig` 및 변수별 `levels`를 전달받아 지정한 연속 변수 물리 수준값 조합을 정확히 생성하며, 빈 수준값·중복 수준값·물리 범위(`[lower, upper]`) 밖 수준값·예산 초과는 생성 전에 차단한다.
+- **실행 중 민감도 자동 요청 억제 및 동일 조건 중복 재분석 방지 (#40)**: 활성 배치(`active_batch_id`) 또는 작업 실행 중에는 `_update_visualizations`의 자동 Spearman 민감도 요청을 보내지 않고 이전 보고서와 진행 안내(또는 대기 안내)를 유지해 `Finish or cancel the active study operation first` 오류가 반복되지 않도록 수정했다. 단순 행 선택(`_show_selection`)의 불필요한 시각화 타이머 재시작을 제거하고, 응답·모집단(`ACTUAL` 행 상태)·개정·외부 원본/실행 산출물 지문(`_spearman_condition_key`)이 동일한 화면 갱신이나 탭 전환은 중복 분석과 보고서 디렉터리 생성을 건너뛴다. 모집단 필터·응답·개정 변경이나 외부 파일 변경/손상 시에는 즉시 재분석하며 `_verified_run`의 외부 파일 무결성 검증을 그대로 유지한다.
+- **검증 구분**: `QT_QPA_PLATFORM=offscreen` 환경에서 `tests/test_mdo_doe.py`, `tests/test_mdo_sensitivity.py`, `tests/test_mdo_phase3_service.py`, `tests/test_mdo_phase3_gui.py`, `tests/test_mdo_studio_gui.py` 전체 **116 passed**로 수치·서비스·Qt 위젯 동작을 확인했다. 이는 offscreen Qt 및 로컬 서비스 검증이며 Windows 실화면 OS 마우스·키보드 E2E 최종 인도와 구분한다.
+
 ## MDO Phase 3 구현·수치 검증, Windows 최종 인도 대기 (2026-10-28)
 
 기준 main `7bfcdd4`에서 개발한 Phase 3 구현과 검증 기록이다. 아래 과거 실행 기록과 구분한다. Windows GUI의 전체 최종 인도 조건은 아직 완료하지 않았다.

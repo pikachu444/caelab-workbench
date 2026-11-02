@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from caelab.mdo.variables import ContinuousVariable, DiscreteVariable, CategoricalVariable, VariableSpace
-from caelab.mdo.doe import DOEConfig, generate_design
+from caelab.mdo.doe import DOEConfig, generate_design, projected_design_count
 
 
 def space(k=3):
@@ -92,3 +92,30 @@ def test_lhs_swap_search_never_worsens_initial_candidate():
     a=generate_design(space(),DOEConfig(method="opt-lhs",n_samples=10,seed=9,restarts=1,iterations=0))
     b=generate_design(space(),DOEConfig(method="opt-lhs",n_samples=10,seed=9,restarts=1,iterations=100))
     assert b.diagnostics["minimum_distance"]>=a.diagnostics["minimum_distance"]
+
+
+def test_projected_design_count_matches_generated_batches_and_validates_continuous_factorial_bounds():
+    sp = space(3)
+    configs = [
+        DOEConfig(method="lhs", n_samples=11, seed=3),
+        DOEConfig(method="opt-lhs", n_samples=9, seed=5, criterion="hybrid", restarts=2, iterations=15),
+        DOEConfig(method="sobol", n_samples=8, seed=7),
+        DOEConfig(method="full-factorial", levels={"x0": (-1.0, 0.0, 1.0), "x1": (-0.5, 0.5), "x2": (-1.0, 1.0)}),
+        DOEConfig(method="box-behnken", centers=2),
+        DOEConfig(method="ccd", ccd_type="face-centered", centers=3),
+    ]
+    for cfg in configs:
+        projected = projected_design_count(sp, cfg)
+        batch = generate_design(sp, cfg)
+        assert projected == len(batch.points)
+    with pytest.raises(ValueError, match="Outside physical bounds"):
+        projected_design_count(sp, DOEConfig(method="full-factorial", levels={"x0": (-2.0, 0.0), "x1": (0.0,), "x2": (0.0,)}))
+    with pytest.raises(ValueError, match="nonempty and unique"):
+        projected_design_count(sp, DOEConfig(method="full-factorial", levels={"x0": (0.5, 0.5), "x1": (0.0,), "x2": (0.0,)}))
+    with pytest.raises(ValueError, match="exceed budget"):
+        projected_design_count(sp, DOEConfig(method="full-factorial", levels={"x0": (-1.0, 0.0, 1.0), "x1": (-0.5, 0.5), "x2": (-1.0, 1.0)}, budget=5))
+    assert projected_design_count(
+        sp,
+        DOEConfig(method="full-factorial", levels={"x0": (-1.0, 0.0, 1.0), "x1": (-0.5, 0.5), "x2": (-1.0, 1.0)}, budget=5),
+        check_budget=False,
+    ) == 12

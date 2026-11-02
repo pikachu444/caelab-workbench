@@ -520,13 +520,32 @@ class MDOStudyService:
     def clone(self, point_id):
         return self.clone_point(point_id)
 
-    def generate_doe(self, n_samples, seed, method="lhs"):
+    def generate_doe(self, n_samples=16, seed=0, method="lhs", *, config: DOEConfig | None = None,
+                     levels=None, centers=1, ccd_type="face-centered", criterion="maximin",
+                     restarts=4, iterations=200, budget=10000):
         self._writable()
         if self.revision == "0":
             raise ValueError("Configure the study first")
         if not {t.lower() for t in self.template.token_names} <= {v.id.lower() for v in self.study.space.variables}:
             raise ValueError("Configure the newly parameterized variables before generating points")
-        batch = generate_design(self.study.space, DOEConfig(method=method, n_samples=n_samples, seed=seed))
+        if isinstance(n_samples, DOEConfig):
+            cfg = n_samples
+        elif config is not None:
+            cfg = config
+        else:
+            cfg = DOEConfig(
+                method=method,
+                n_samples=int(n_samples),
+                seed=int(seed),
+                levels={str(k): tuple(v) for k, v in dict(levels or {}).items()},
+                centers=int(centers),
+                ccd_type=ccd_type,
+                criterion=criterion,
+                restarts=int(restarts),
+                iterations=int(iterations),
+                budget=int(budget),
+            )
+        batch = generate_design(self.study.space, cfg)
         rows = [self._add_point(p.values) for p in batch.points]
         self._persist()
         return copy.deepcopy(rows)

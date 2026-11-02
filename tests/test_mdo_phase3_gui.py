@@ -14,7 +14,7 @@ from caelab.mdo.variables import ContinuousVariable,VariableSpace
 from caelab.mdo.objectives import ObjectiveSpec
 from apps.workbench_qt.mdo_studio.window import MDOStudioWindow,startup_service
 from apps.workbench_qt.mdo_studio.design_points_model import DesignPointsTableModel,DesignPointsProxyModel
-from apps.workbench_qt.mdo_studio.study_config import StudyConfigEditor,ParameterizeDialog,SurrogateTrainingDialog
+from apps.workbench_qt.mdo_studio.study_config import StudyConfigEditor,ParameterizeDialog,SurrogateTrainingDialog,DOEGenerationDialog
 from test_mdo_phase3_service import service as native_service,measured
 
 
@@ -543,3 +543,196 @@ def test_convergence_resize_keeps_actual_ylabel_inside_without_recomputing(win,q
         assert view.ax.lines[0] is line and view._picks[line]==picks and view.rows==rows and win._selected_ids==selected
         np.testing.assert_array_equal(line.get_xdata(),x); np.testing.assert_array_equal(line.get_ydata(),y)
     assert not win.service.calls
+
+
+def test_doe_generation_dialog_method_specific_inputs_projected_count_and_cancel(native_service,qapp,monkeypatch):
+    from pathlib import Path
+    from caelab.mdo.doe import generate_design
+    space3=VariableSpace(variables=(
+        ContinuousVariable(id='x1',name='X1',unit='mm',lower=0.,upper=10.,initial=5.),
+        ContinuousVariable(id='x2',name='X2',unit='mm',lower=1.,upper=5.,initial=3.),
+        ContinuousVariable(id='x3',name='X3',unit='mm',lower=-2.,upper=2.,initial=0.),
+    ))
+    dlg=DOEGenerationDialog(space3,budget=50)
+    assert dlg.method.currentText()=='lhs'
+    assert dlg.n_samples.isEnabled() and not dlg.n_samples.isHidden()
+    assert dlg.seed.isEnabled() and not dlg.seed.isHidden()
+    assert not dlg.criterion.isEnabled() and dlg.criterion.isHidden()
+    assert not dlg.centers.isEnabled() and dlg.centers.isHidden()
+    assert not dlg.ccd_type.isEnabled() and dlg.ccd_type.isHidden()
+    assert not dlg.levels_table.isEnabled() and dlg.levels_table.isHidden()
+    assert dlg.projected_count==16 and 'Projected points: 16 / 50 budget' in dlg.projected_label.text()
+
+    dlg.method.setCurrentText('opt-lhs'); dlg.n_samples.setValue(12)
+    assert dlg.n_samples.isEnabled() and dlg.seed.isEnabled()
+    assert dlg.criterion.isEnabled() and dlg.restarts.isEnabled() and dlg.iterations.isEnabled()
+    assert not dlg.centers.isEnabled() and not dlg.levels_table.isEnabled()
+    assert dlg.projected_count==12 and len(generate_design(space3,dlg.configuration()).points)==12
+
+    dlg.method.setCurrentText('sobol'); dlg.n_samples.setValue(7)
+    assert dlg.projected_count is None and 'power-of-two' in dlg.error.text()
+    dlg.accept()
+    assert dlg.result()!=QDialog.DialogCode.Accepted
+    dlg.n_samples.setValue(8)
+    assert dlg.projected_count==8 and not dlg.error.text()
+    assert len(generate_design(space3,dlg.configuration()).points)==8
+
+    dlg.method.setCurrentText('box-behnken'); dlg.centers.setValue(2)
+    assert not dlg.n_samples.isEnabled() and dlg.n_samples.isHidden()
+    assert not dlg.seed.isEnabled() and dlg.seed.isHidden()
+    assert dlg.centers.isEnabled() and not dlg.centers.isHidden()
+    assert not dlg.ccd_type.isEnabled() and not dlg.levels_table.isEnabled()
+    assert dlg.projected_count==14 and len(generate_design(space3,dlg.configuration()).points)==14
+
+    dlg.method.setCurrentText('ccd'); dlg.ccd_type.setCurrentText('face-centered'); dlg.centers.setValue(1)
+    assert not dlg.n_samples.isEnabled() and not dlg.seed.isEnabled()
+    assert dlg.ccd_type.isEnabled() and dlg.centers.isEnabled()
+    assert dlg.projected_count==15 and len(generate_design(space3,dlg.configuration()).points)==15
+    dlg.ccd_type.setCurrentText('circumscribed')
+    assert dlg.projected_count is None and 'hard bounds' in dlg.error.text()
+    dlg.accept()
+    assert dlg.result()!=QDialog.DialogCode.Accepted
+
+    dlg.method.setCurrentText('full-factorial')
+    assert not dlg.n_samples.isEnabled() and dlg.n_samples.isHidden()
+    assert not dlg.seed.isEnabled() and dlg.seed.isHidden()
+    assert dlg.levels_table.isEnabled() and not dlg.levels_table.isHidden()
+    assert dlg.factor_levels_text('x1')=='' and dlg.factor_levels_text('x2')=='' and dlg.factor_levels_text('x3')==''
+    assert dlg.projected_count is None and 'explicit physical levels' in dlg.error.text()
+    dlg.accept()
+    assert dlg.result()!=QDialog.DialogCode.Accepted
+
+    dlg.set_factor_levels('x1','-1, 5'); dlg.set_factor_levels('x2','1, 5'); dlg.set_factor_levels('x3','-2, 2')
+    assert dlg.projected_count is None and 'Outside physical bounds' in dlg.error.text()
+    dlg.accept(); assert dlg.result()!=QDialog.DialogCode.Accepted
+
+    dlg.set_factor_levels('x1','2, 2.0')
+    assert dlg.projected_count is None and 'nonempty and unique' in dlg.error.text()
+    dlg.accept(); assert dlg.result()!=QDialog.DialogCode.Accepted
+
+    dlg.set_factor_levels('x1','2, , 8')
+    assert dlg.projected_count is None and 'nonempty and unique' in dlg.error.text()
+    dlg.accept(); assert dlg.result()!=QDialog.DialogCode.Accepted
+
+    dlg.budget.setValue(10)
+    dlg.set_factor_levels('x1','0, 5, 10'); dlg.set_factor_levels('x2','1, 5'); dlg.set_factor_levels('x3','-2, 2')
+    assert dlg.projected_count==12 and 'Projected points: 12 / 10 budget (exceeds budget)' in dlg.projected_label.text()
+    assert 'exceed budget' in dlg.error.text()
+    dlg.accept(); assert dlg.result()!=QDialog.DialogCode.Accepted
+
+    dlg.budget.setValue(50)
+    assert dlg.projected_count==12 and not dlg.error.text()
+    dlg.accept(); assert dlg.result()==QDialog.DialogCode.Accepted
+    dlg.close()
+
+    service=native_service; service.workbench.jobs.close=lambda:True
+    two_var_space=VariableSpace(variables=(
+        ContinuousVariable(id='width',name='Width',unit='mm',lower=1.,upper=5.,initial=2.),
+        ContinuousVariable(id='load',name='Load',unit='N',lower=10.,upper=50.,initial=20.),
+    ))
+
+    service.configure(two_var_space,service.study.objectives,service.study.constraints,service.response_units)
+    window=MDOStudioWindow(service=service)
+    before_count=len(service.study.records)
+    monkeypatch.setattr(DOEGenerationDialog,'exec',lambda self:QDialog.DialogCode.Rejected)
+    window._on_generate_doe()
+    assert len(service.study.records)==before_count and not window._busy
+
+    def accept_full_factorial(dialog):
+        dialog.method.setCurrentText('full-factorial')
+        dialog.set_factor_levels('width','1.5, 3.5')
+        dialog.set_factor_levels('load','10, 30, 50')
+        assert dialog.projected_count==6 and not dialog.error.text()
+        dialog.accept()
+        return dialog.result()
+
+    monkeypatch.setattr(DOEGenerationDialog,'exec',accept_full_factorial)
+    window._on_generate_doe()
+    deadline=time.monotonic()+5
+    while window._busy and time.monotonic()<deadline:
+        qapp.processEvents(); time.sleep(.01)
+    assert len(service.study.records)==before_count+6
+    generated=[(r.physical_values['width'],r.physical_values['load']) for r in service.study.records[before_count:]]
+    assert generated==[(1.5,10.),(1.5,30.),(1.5,50.),(3.5,10.),(3.5,30.),(3.5,50.)]
+    window.close(); qapp.processEvents()
+
+
+def test_sensitivity_skips_active_batch_and_coalesces_identical_spearman_refreshes(native_service,qapp,monkeypatch):
+    from pathlib import Path
+    service=native_service; records=measured(service,(1.2,1.8,2.4,3.0)); service.workbench.jobs.close=lambda:True
+    window=MDOStudioWindow(service=service)
+    calls=[]
+    orig_analyze=service.analyze_sensitivity
+    def tracked_analyze(*args,**kwargs):
+        calls.append((args,kwargs))
+        return orig_analyze(*args,**kwargs)
+    monkeypatch.setattr(service,'analyze_sensitivity',tracked_analyze)
+
+    def wait_sensitivity():
+        deadline=time.monotonic()+5
+        while (window._sensitivity_running or window._viz_timer.isActive()) and time.monotonic()<deadline:
+            qapp.processEvents(); time.sleep(.01)
+        for _ in range(3):
+            qapp.processEvents(); time.sleep(.01)
+
+    window.viz_tabs.setCurrentIndex(3)
+    wait_sensitivity()
+    assert len(calls)==1 and len(service.sensitivity_reports)==1
+    first_report=window.tornado_view.report
+    assert first_report is not None and first_report['sample_count']==4
+
+    window.select_point(records[0].point_id)
+    window.select_point(records[1].point_id)
+    window.tdp_table.selectRow(2)
+    window._update_visualizations()
+    window.viz_tabs.setCurrentIndex(0); qapp.processEvents()
+    window.viz_tabs.setCurrentIndex(3); wait_sensitivity()
+    assert len(calls)==1 and len(service.sensitivity_reports)==1
+    assert window.tornado_view.report['experiment_id']==first_report['experiment_id']
+
+    service.active_batch_id='active-batch-1'
+    window._pending_records[records[0].point_id]=records[0]
+    window._flush_deltas()
+    window._update_visualizations()
+    wait_sensitivity()
+    assert len(calls)==1 and len(service.sensitivity_reports)==1
+    assert window.tornado_view.report['experiment_id']==first_report['experiment_id']
+    assert 'Campaign evaluation is in progress' in window.tornado_view.note.text()
+    assert 'unavailable' not in window.tornado_view.note.text().lower()
+
+    window.tornado_view.report=None
+    window._update_visualizations()
+    assert len(calls)==1 and ('Campaign evaluation is in progress' in window.tornado_view.note.text() or 'deferred' in window.tornado_view.note.text())
+
+    service.active_batch_id=None
+    window._on_batch_finished('active-batch-1','COMPLETED',4,0)
+    wait_sensitivity()
+    assert len(calls)==2 and window.tornado_view.report['sample_count']==4
+    window._update_visualizations(); wait_sensitivity()
+    assert len(calls)==2
+
+    window.search.setText(records[0].name)
+    wait_sensitivity()
+    assert len(calls)==3 and window.tornado_view.report['sample_count']==1
+    window.search.clear()
+    wait_sensitivity()
+    assert len(calls)==4 and window.tornado_view.report['sample_count']==4
+
+    next_idx=(window.tornado_view.response.currentIndex()+1)%window.tornado_view.response.count()
+    window.tornado_view.response.setCurrentIndex(next_idx)
+    wait_sensitivity()
+    assert len(calls)==5 and window.tornado_view.report['sample_count']==4
+
+    ev=service.point_evidence(records[0].point_id)
+    sta_path=Path(ev['workdir'])/'model.sta'
+    original_bytes=sta_path.read_bytes()
+    try:
+        sta_path.write_bytes(original_bytes+b'\ncorrupted')
+        window._update_visualizations()
+        wait_sensitivity()
+        assert len(calls)==6
+        assert window.tornado_view.report['sample_count']==3
+        assert any(item['point_id']==records[0].point_id for item in window.tornado_view.report['excluded_rows'])
+    finally:
+        sta_path.write_bytes(original_bytes)
+    window.close(); qapp.processEvents()
