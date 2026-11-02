@@ -1,8 +1,8 @@
 # 구조
 
-2026-10-27 MDO Phase 3 구현 후보: 수치 API는 `caelab/mdo/`, 실행·저장·출처·현재 설계 적용은 `MDOStudyService`가 소유한다. 독립 Studio는 Study Tree, Setup Dock, 설계점 표, 다섯 시각화 영역을 제공한다. 부모/보조 창 → Workbench → 독립 프로세스와 Studio → 서비스 → JobManager 경계를 유지한다. 실제 검증 결과와 미완료 인도 조건은 CURRENT_STATE에 구분한다.
+MDO 구현: 수치 API는 `caelab/mdo/`, 실행·저장·출처·현재 설계 적용은 `MDOStudyService`가 소유한다. 독립 Studio는 Study Tree, Setup Dock, 설계점 표, 다섯 시각화 영역을 제공한다. 부모/보조 창 → Workbench → 독립 프로세스와 Studio → 서비스 → JobManager 경계를 유지한다. 실제 검증 결과와 미완료 인도 조건은 CURRENT_STATE에 구분한다.
 
-기준은 이 저장소 DESIGN.md의 제품 정의와 5가지 결정입니다. 본문 정합성 개정일은 2026-10-23입니다. 목표 구조와 현재 구현을 구분하며, 기존 저장소의 문서는 이식 근거 자료로만 사용합니다.
+기준은 이 저장소 DESIGN.md의 제품 정의와 5가지 결정입니다. 과거 변경·실행 기록은 [구현 이력](docs/history/implementation-history.md)에서 확인합니다. 목표 구조와 현재 구현을 구분하며, 기존 저장소의 문서는 이식 근거 자료로만 사용합니다.
 
 ## 설계 원칙 (목표)
 
@@ -28,7 +28,7 @@
 - 제안 검토: 명시적인 원본 대조·거절만 제안 상태와 검토 이력을 갱신합니다. 대상은 보존 근거의 원본 input/include이며, 실행용 복사본을 편집 대상으로 삼지 않습니다. 원본 전체 입력/INCLUDE와 보존 자산이 유효해도 상태는 전용 프로그램 수정 필요이며 자동 적용은 지원하지 않습니다. 실제 파일 수정과 다음 계산은 별도 사용자 행동입니다. 과거 제안의 파일 출처는 프로젝트 이동이나 새 결과 첨부로 다시 쓰지 않습니다.
 - 보조 변환기: CalculiX 1종. 입력·지원 검사 뒤 덱을 생성하고 ccx를 실행한다. 미방출 조건·옵션은 객체 위치와 함께 거부한다. FRD/DAT의 최종 프레임·요청 필드를 검사하며 실행·판독 오류는 failed와 디스크 로그로 남긴다. 이 지원표는 네이티브 덱 실행에 적용하지 않는다.
 - 새 MDO 수치 엔진 (`caelab/mdo`): 변수·목적함수·제약·DOE·대리모델(Kriging/RBF/PRS)·최적화(SLSQP/DE/NSGA-II)·Pareto·민감도(Sobol/Morris) 8대 코어와 StudyManager, INP 파라메트릭 덱 바인딩(`TemplateDeck`), 결과 스칼라 축소 추출(`responses.py`)의 구현을 제공한다. API 존재와 GUI 연결·실제 솔버 검증 완료는 구분한다. Qt나 레거시 코드를 일절 가져오지 않으며, 선택적 라이브러리는 안전한 런타임 검사로 관리된다.
-- 기존 수치 경로: 레거시 수치 구현과 `optimization_panel.py`는 제거되었다. `caelab/numerical`에는 보존용 `__init__.py`와 안내용 AGENTS만 남았으며, 모든 기능은 `caelab/mdo/`로 전면 이관되었다.
+- 기존 수치 경로: 레거시 수치 구현과 `optimization_panel.py`는 제거되었다. `caelab/numerical`에는 보존용 `__init__.py`만 남아 있다. 새 MDO의 구현 소유자는 `caelab/mdo/`이며, 레거시 디렉터리 제거와 전체 기능 인도는 별도 판정이다.
 - PDE 라인: `caelab/pde` — FEniCSx(dolfinx) 실행 환경. 공통 모델 스키마에 넣지 않고 자체 형식을 유지한다.
 - GUI: PySide6 (`apps/workbench_qt`). 부모는 빈 프로젝트에서 사용자 파일과 여러 프로그램 상자를 등록·연결하는 화면입니다. `native_analysis`의 별도 프로세스에서 실제 INP를 읽기 전용으로 확인하고 비동기 계산·취소·실행 선택·로그·결과 프레임을 조회합니다. 현재 입력과 조회 중인 과거 실행은 구분하며 파일 선택이나 프로젝트 재열기로 계산하지 않습니다. `expert_window`는 별도 진입점과 대화 문서를 가지며 자료 미리보기와 질문 근거 선택을 분리합니다. MDO Studio(`apps/workbench_qt/mdo_studio/`)는 `--study`, `--project`/`--node`, `--read-only` 진입점을 제공합니다. Tree/Setup은 이름 있는 독, 중앙은 설계점 표와 Pareto·Parallel·Surface·Sensitivity·Convergence 탭입니다. 숫자 스냅샷과 ID 기반 프록시가 정렬·필터·선택을 연결하고, 계산·모델 학습·표면 예측은 작업 스레드에서 수행합니다. VTK를 사용할 수 없는 환경의 표면은 명시적인 2D 대체 표시이며 3D 검증 통과로 세지 않습니다.
 

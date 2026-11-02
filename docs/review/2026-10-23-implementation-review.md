@@ -125,7 +125,7 @@ return ResultSet(
 from .expert_panel import ExpertPanel
 ```
 
-해당 커밋에는 `expert_panel.py`가 없다. MainWindow 생성과 구조 해석·전문가 상자 열기가 ModuleNotFoundError로 실패했다. 관련 테스트 4개도 같은 이유로 실패했다. `caelab/assist/MERGE_REQUEST.md`의 파일 작성·통합 기록과 원격 파일 목록이 다르다.
+해당 커밋에는 `expert_panel.py`가 없다. MainWindow 생성과 구조 해석·전문가 상자 열기가 ModuleNotFoundError로 실패했다. 관련 테스트 4개도 같은 이유로 실패했다. [당시 assist/MERGE_REQUEST 기록](https://github.com/pikachu444/caelab-workbench/blob/32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba/caelab/assist/MERGE_REQUEST.md)의 파일 작성·통합 기록과 원격 파일 목록이 다르다.
 
 **[정정 C2 — 사용자 전달 독립 검증으로 확정된 원인]** `expert_panel.py`(7,006B), `tests/test_workbench_expert_panel.py`, `tests/test_assist_knowledge.py`는 개발자 로컬 main과 작업 브랜치에 있지만 원격 main에는 없다. 패널 커밋 `fcac805`와 `c3c8c79`는 `origin/main`의 조상이 아니며, PR 방식의 파일 업로드 병합 과정에서 세 파일이 빠졌다. 따라서 원인을 미확인으로 남기지 않는다. 이번 문서 정정에서도 원격 main 새 clone에 세 파일이 없음을 직접 확인했다. 개발자 로컬의 파일 크기와 커밋 관계는 전달받은 검증 결과이며 이 정정 작업에서 개발자 컴퓨터를 다시 조회한 것은 아니다.
 

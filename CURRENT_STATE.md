@@ -1,507 +1,84 @@
-<a id="mdo-sensitivity-cache-integrity-followup"></a>
+# 현재 상태
 
-## MDO Studio 민감도 분석 캐시 키 계약 및 전체 SHA-256 무결성 보완 (2026-11-02)
+문서 기준은 main `32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
-기준 main `32e9d7c`에서 `fix/mdo-sensitivity-cache-integrity-followup`으로 PR #59에 대한 Codex(ChatGPT) 비판 검토 지적 2건을 해결했다.
+## 구현 범위
 
-- **원본 INP/INCLUDE 캐시 키 반영 (P1):** `_spearman_condition_key`에서 존재하지 않던 `service._sources` 대신 `service.input_sources()`의 모든 경로 계약을 읽어 원본 덱 및 INCLUDE 파일(`material.inc` 등)의 지문을 캐시 키에 포함했다. 파일 수정/삭제 시 캐시가 즉시 무효화되어 `_require_sources` 검증 및 재계산이 실행된다.
-- **산출물 전체 내용 무결성 보장 (P2):** `_file_fingerprint`에서 262,144 bytes 초과 파일에 대해 mtime/size 단축 비교를 배제하고 모든 파일 크기에 대해 스트리밍 `hashlib.sha256()` 지문을 계산하도록 개선했다. 동일 크기/mtime 변조 시에도 SHA-256 해시 변경으로 캐시 오염을 감지한다.
-- **검증:** `tests/test_mdo_phase3_gui.py` 41 passed (반례 1, 2 검증 단위 테스트 포함).
-
-<a id="mdo-calculix-evaluator-41"></a>
-
-## CalculiXEvaluator 동적 탐색 및 미사용 인자 정리 (2026-11-02)
-
-기준 main `43ebd15`에서 `feat/calculix-evaluator-discovery-41`로 이슈 #41을 해결했다.
-
-- **개인 절대경로 제거 및 동적 실행 파일 탐색 (이슈 #41):** `DEFAULT_CCX`에 하드코딩되어 있던 개발자 개인 경로(`C:\SourceCodes\caelab-p7-public-native\...`)를 제거하고, 명시적 인자 `ccx_bin` → 환경 변수 `CAELAB_CCX` → `shutil.which("ccx")` → `caelab.connections` 공통 탐색 계약 순으로 동적 탐색하는 `find_ccx_binary()`를 도입했다.
-- **오류 안내 명확화:** 미설치 시 명확한 `FileNotFoundError("CalculiX binary (ccx) not found...")`를 발생시키고, 잘못 지정된 명시 경로(`FileNotFoundError("CalculiX binary not found at specified path: ...")`)와 명확히 구분했다.
-- **실패 프로세스 유효 관측 배제:** `extract_calculix_responses`에서 `run_result`의 실패 상태(`state == "failed"` 또는 `returncode != 0`)를 확인하여 실패 프로세스가 빈 관측치(`{}`)를 반환하도록 안전하게 방어했다.
-- **검증:** `tests/test_mdo_calculix_evaluator.py` 4 passed, 2 skipped, MDO 전체 집중 회귀 120 passed, 2 skipped, 0 failures.
-
-<a id="ui-schematic-radioss-kpi"></a>
-
-## 스키매틱 자동 그리드 배치 및 OpenRadioss 요약·아웃라인 연동 (2026-11-02)
-
-기준 main `865ee15`에서 `feat/schematic-grid-and-radioss-kpi`로 UI/UX 및 솔버 요약 연동을 구현하고, Codex(ChatGPT) 코드 검토 지적 4건을 정밀 반영했다.
-
-- **저장 좌표 보존 및 비충돌 신규 배치 (FINDING-06a):** 프로젝트 열기(`ProjectWindow._show_project`) 시 저장된 `(0, 0)` 좌표의 묵시적 변조를 제거하여 기존 배치를 100% 보존했다. 위치 미지정(`position=None`) 신규 노드 추가 시 `Workbench.add_program_node`에서 기존 노드들의 점유 영역(`abs(dx) < 210, abs(dy) < 98`)을 충돌 검사하여 첫 번째 빈 슬롯을 자동 배정했다.
-- **OpenRadioss Engine 사이클 테이블 파싱 및 표본 분리 (FINDING-06b):** `parse_radioss_output`에서 명시적 스칼라 에너지 라벨(`INTERNAL/KINETIC ENERGY`)이 있을 때 사이클 테이블 성분과의 오혼합을 배제하고, `CYCLE TIME TIME-STEP` 헤더 선행 상태 검증 및 `NaN`/`***` 손상 행 발생 시 이전 행 오독을 무효화하는 방어 로직을 추가했다.
-- **마지막 출력 vs 최종 시간 구분 및 키워드 연동 (FINDING-07):** `NativeAnalysisWindow`에서 `total_cycles != cycle`일 때 "최종 시간" 대신 "마지막 출력 사이클/시간"으로 분리 표기했다. OpenRadioss `/` 카드 및 `#include` 아웃라인 트리 분류, 구문 강조 및 클린 로그 배지(`오류 0 / 경고 0`)를 유지했다.
-- **검증:** `tests/test_radioss_native.py` 11 passed, `tests/test_radioss_gui_runs.py` 3 passed, `tests/test_native_project.py` 44 passed (총 58 passed, 2 skipped, 0 failures).
+| 사용자 작업 | main의 구현 | 남은 조건 |
+|---|---|---|
+| 프로그램과 파일 연결 | 런처형 프로젝트, 역할별 프로그램 추가·연결, 입력/편집 문서/출력 구분, stale, 제거·복원, 저장·다른 이름 저장 | 프로그램 등록을 실제 교환 형식·계산 지원으로 확대하지 않음. PrePoMax Windows GUI 끝단은 미검증 |
+| CalculiX 계산·후처리 | 원 덱/INCLUDE snapshot, JobManager 실행·취소·로그·이력, FRD/DAT 판독·VTU/PVD·ParaView 전달 | 선언 단위·프레임·partial을 유지. 모든 카드·물리 모델의 정확성 보증이 아님 |
+| CAELab Prep 연결 | 독립 Prep에 RAD input/document 전달, 내보낸 덱 output, 선택적 NumericEdit 재사용 | Prep 모델·Undo·문서 버전은 별도 저장소 소유. 위젯 사용이 독립 앱 배포 검증은 아님 |
+| 전문가 대화 | 독립 창, 선택 자료의 사본·출처·대화 저장과 재개, 공급자 연결·취소 | 실제 공급자/검색 품질과 실패 처리는 해당 실행 증거로 판정. 열기만으로 요청하지 않음 |
+| MDO Studio | 독립 연구 창, 스칼라 INP 토큰 변수, DoE·실제 관측·대리모델·최적화·민감도·적용/Undo | CAD 재생성·재메시 없음. 예측과 실제 해석, 제약 충족과 공학 승인은 구별 |
 
 <a id="rad-w3"></a>
 
-## RAD W3 구현과 확인 상태 (2026-11-02)
+## OpenRadioss·OpenCourant
 
-기준 main `d6f05a3b1abc0cb9e83e7e96311f743e626ab086`에서 N21/W3를 구현해 PR #55 최종 head `a328253bf837e6db86a809d99a8ba0a7be428b12`를 main `865ee159c9bd1375d996a72eacf898484f1d96cb`에 병합했다. [최종 CI](https://github.com/pikachu444/caelab-workbench/actions/runs/41368317991)의 Python 3.11/3.12·실제 CalculiX·OpenCourant/X11 네 작업은 성공했다. 아래 Linux 개발 기록과 후속 Windows 확인을 구별한다.
+Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서대로 실행합니다. 원본·실행 입력, 상대 INCLUDE, 단계별 로그·종료 상태, restart와 실제 결과 이름/해시를 보존하고 저장본을 다시 읽습니다. 현재 native binary animation의 필드 판독은 `partial`이며 빈 프레임을 완전한 후처리로 취급하지 않습니다.
 
-- **구현:** CAD 없는 사용자 RAD Starter/Engine/상대 INCLUDE 두 묶음의 원문·이름·해시 snapshot, 실제 설치 home→Starter/Engine 탐색, 기존 JobManager의 순차 실행·재시작 파일 확인·단계별 로그/상태·취소/합산 timeout, 실행 입력 변조 거부, 원본 변경 stale, 실제 결과 원본 등록과 저장·재열기.
-- **독립 검토에서 고친 문제:** 실패 후 Engine이 pending으로 남던 상태를 `not_started`로 종결했다. 실제 runname 결과가 고정 출력명과 달라 등록되지 않던 문제를 실제 원본 결과/해시 연결로 수정했다. 단계·오류 표시의 높이 부족도 보완했다. 원 지적자가 재검사했다.
-- **병합 전 Linux 검사:** 최종 집중 56 passed(실제 4건 별도), 독립 QA 25 passed, 기존 CCX/native 핵심 120 passed/6 skipped. 넓은 GUI 검사에서 기존 fixture의 snapshot 필드 누락 16건을 재현하고 fixture에 그 계약을 보완한 뒤 같은 GUI 묶음을 통과했다. 서로 겹치는 수치를 합산하지 않는다.
-- **병합 전 개발 환경:** 공식 unmodified OpenCourant의 tetra 입력은 Workbench→JobManager→Starter→Engine→partial 결과/해시/재열기가 성공했다. 당시 컨테이너의 shell/INCLUDE·GUI shell은 Starter ERROR760으로 실패했고 Engine을 실행하지 않았다. 이 실패 원자료와 이후 최종 CI 성공은 별개다. 제품에는 환경 우회 shim을 넣지 않았다.
-- **남은 판정:** N21의 제한된 RAD 두 단계 연결과 전체 제품 인도는 구별한다. Windows 실제 GUI·배포와 전체 binary 후처리 지원은 완료하지 않았다.
+공식 OpenCourant `latest-20261011`(source `cb760c206e346eff12161a2268b134ef9d48a4ef`) Windows ZIP의 공식 SHA256을 확인한 환경에서 저장소 tetra·shell/INCLUDE 실제 서비스 2건이 통과했습니다. Starter/Engine 0/0, 해시·저장·재열기 확인이며 GUI 전체·물리 oracle 검증은 아닙니다. 코드와 배포본을 함께 바꾼 결과이므로 PATH 수정만의 효과로 단정하지 않습니다. [환경·실패 원문](docs/history/implementation-history.md#rad-w3-구현과-확인-상태-2026-11-02)
 
-### Windows 로컬 후속 확인 (2026-11-02)
+<a id="ui-schematic-radioss-kpi"></a>
+<a id="mdo-calculix-evaluator-41"></a>
+<a id="mdo-sensitivity-cache-integrity-followup"></a>
+<a id="mdo-studio-민감도-분석-캐시-키-계약-및-전체-sha-256-무결성-보완-2026-11-02"></a>
 
-- **시간 초과 검사 수정:** 기존 전체 예산 0.5초가 Starter에서 만료됐는데 테스트는 Engine 실패를 단정했다. Starter를 0.75초 늦춰 같은 실패를 재현했다. 제품 JobManager의 `failed`/`not_started` 의미는 유지하고, 실제 대상 probe 시작 후 전용 시계를 진행하도록 테스트를 Starter·Engine으로 분리했다. 자식 heartbeat 정지, 재시도와 이전 기록 보존을 확인했고 지연 조건에서도 두 경우가 통과했다. 실제 솔버 계산이나 OS 입력 검사는 아니다.
-- **공용 위젯 호스트:** Workbench 실행 코드 `865ee159`와 임시 독립 복제한 Prep `89bd7005e0eb1c687e48c9a2f259f0b0df8685b9`의 `src`를 시스템 Python 3.13.5/Qt 6.9.1에 연결했다. W1·W2 계약·RAD 프로세스 probe 관련 다섯 파일은 49 passed, skip 0이며 실제 RAD 네 검사는 이 묶음에서 제외했다. 앞선 Prep 미설치에 따른 네 skip을 이 고정 소스 조합에서 실행한 것으로, 배포 설치·독립 Prep GUI 왕복·Windows IME·GPU 품질의 완료가 아니다.
-- **Windows 실행 환경 수정 후보:** 공식 설치본 `INSTALL.md`에 따라 두 단계 솔버 자식의 PATH에 패키지 DLL 경로를 보존하고 Windows H3D·KMP 스택 기본값을 연결했다. 호출자 환경의 우선순위와 레지스트리 상대경로 해석을 유지하며 전역 PATH는 변경하지 않는다. home/직접 Starter와 호출자·빈 PATH·레지스트리 대체 경로를 검사한다.
-- **기존 설치본 실패(PATH 보완 전):** `latest-20260520` 설치본의 service 두 입력·Qt action 두 입력은 모두 Starter 종료 코드 `3221225781`로 실패했고 Engine은 시작하지 않았다. PE import에는 `mkl_intel_thread.3.dll`·`libiomp5md.dll`이 있으나 해당 패키지의 Intel 런타임 폴더와 포함 `extlib.zip`에는 이 파일이 없다. reader/H3D는 존재한다. 최초로 실패한 loader DLL은 특정하지 않았으며, 이 설치본은 그대로 보존했다.
-- **새 배포본의 실제 Windows 서비스 실행:** 사용자 승인으로 [OpenCourant `latest-20261011`](https://github.com/OpenCourant/OpenCourant/releases/tag/latest-20261011)(source `cb760c206e346eff12161a2268b134ef9d48a4ef`) Windows ZIP을 별도 임시 경로에 받았다. 350,476,183 bytes와 공식 SHA256 `6d0ea8b43b68aa12f0a2787b339384a554978cbb65a5d3dbaf1e40598f02e7e6`을 대조하고 동봉 라이선스를 확인했다. DLL을 옛 빌드와 섞거나 전역 PATH·서비스·시스템 설치를 변경하지 않았다. 현재 후보와 이 고정 배포본에서 저장소 tetra·shell/INCLUDE의 실제 서비스 검사 두 건이 통과했다. Starter/Engine 종료 코드 0/0, 원본·결과 해시와 같은 프로세스 내 새 Workbench 객체의 저장·재열기를 확인했다. 판독은 `partial`, frames/exchange_files는 비어 있으며 OMP 스택 우선순위 경고도 보존한다. 원 QA가 ZIP 해시·XML·receipt를 독립 대조했다. 코드와 배포본을 함께 바꾼 결과이므로 PATH 수정만의 효과, 옛 빌드 복구, 독립 앱 GUI·OS 입력·전체 필드·물리 oracle 검증으로 확대하지 않는다.
-- **설치·사용 문서:** README를 목적·지원 범위·빠른 시작·문서 링크로 줄이고 기존 시작 가이드에 Windows 가상환경 직접 실행, 선택 의존성, Prep 위젯/독립 GUI 구분, RAD 배포 런타임, 저장·재개와 오류 진단을 모았다. 현재 추적 파일의 별도 임시 사본에서 system-site-packages 없는 새 Python 3.13.5 venv로 `pip install -e ".[gui,rag]"`와 `pip check`를 실행했다. PySide6 6.12.0/VTK 9.7.1/NumPy 2.5.4/SciPy 1.18.1/Matplotlib 3.11.2/pypdf 6.21.4가 설치됐고 import·API 프로젝트 생성/저장/재열기·세 앱 `--help`가 통과했다. 이 검사는 미게시 로컬 후보 사본이며 새 원격 clone·실제 GUI 생성/조작·MDO 수치 계산·공급자 연결 검증은 아니다. 전체 회귀의 기존 Python/Qt 환경도 바꾸지 않았다.
-- **전체 회귀:** 기존 May 설치본을 지정한 전체 제품 회귀는 아직 진행 중이다. 새 배포본의 GUI 경로 검사와 최종 실패 분류는 별도로 남는다.
+## 미해결 결함과 인도 조건
 
-## Prep 공용 위젯과 RAD 파일 연결 (2026-11-01)
-
-Workbench 기준 `92ce81181396bed9bb6e3024bba62913834c2a7e`에 W1·W2 변경을 적용한 작업 트리에서 확인했다. Prep은 `2f9a0cac525094d81ceb8ff21dd65d98141795ee`와 당시 진행 중인 UI 변경이 있는 작업 트리의 `src`를 사용했다. 따라서 이 기록을 두 저장소의 고정된 배포 조합 검증이나 G4 전체 완료로 해석하지 않는다. 공용 코드는 복사하거나 vendor하지 않았다.
-
-- **W1 실제 호스트:** 기존 `MDOStudioWindow`의 `StudyConfigEditor`에서 Continuous 변수 Lower·Upper·Initial에 Prep `NumericEdit`을 소비한다. 기존 MDO 서비스가 단위·도메인·campaign/read-only·revision·저장을 소유한다. 다른 도메인과 Prep 미설치 환경은 기존 표 입력을 유지한다. 미설치 경로도 별도 Python 프로세스로 확인했다. 설정 초안은 문서 Undo를 만들지 않으며, 현재 설계 파일 Apply/Undo는 기존 서비스 경로 그대로다.
-- **독립 검토에서 수정한 사례:** domain을 바꿨다가 Continuous로 돌아오면 미적용 초안이 Escape 기준값이 되던 문제, 잘못된 Upper·Initial의 Apply 오류가 Lower로 초점을 옮기던 문제를 각각 재현하고 수정했다. 원 비판자가 두 경로와 새 공유 위젯 검사 **5개 통과**를 다시 확인했다. `1e`·NaN·Inf, 단위·범위 오류, stale revision, campaign/read-only, 적용·새 프로세스 저장본 재열기를 검사했다. 실제 dark/light 호스트 캡처에서 입력·단위·오류를 확인했지만 전체 창·좁은 폭·DPI 품질 완료를 뜻하지 않는다.
-- **W2 기존 연결 재사용:** `ProgramSpec`과 `launch_request`에 `CAELAB_PREP`/`caelab-prep`를 등록했다. 기존 `Workbench.open_program`→`JobManager`가 RAD 입력과 RAD 작업 문서에 `gui <파일>`을 전달한다. 입력·작업 문서·내보낸 출력 역할, 기본 문서 열기, 명시적 원본 열기, 프로젝트 저장·재열기와 하류 stale 계약을 보존했다. 중립 `.caeprep`와 잘못된 manifest는 실행 전에 거절한다. Workbench가 모델 payload·버전 reader나 새 JobManager를 소유하지 않는다.
-- **실제 외부 프로세스 왕복:** 1,075절점·1,008요소 RAD를 기존 launcher로 실제 Prep CLI에 전달했다. Qt QTest로 E=210000→205000 편집·Undo·Redo 후 작업 문서 저장·RAD 내보내기를 실행하고, 새 프로세스가 같은 문서를 열어 205000을 유지하는지 확인했다. 두 프로세스 exit 0, 원본 SHA256 불변, 내보낸 RAD의 독립 API 재읽기, 이후 문서 수정의 전처리 changed/솔버 stale을 확인했다. 실제 CLI 주위의 QTimer 계측 launcher를 사용한 검사이며 배포 설치 검증은 아니다. 입력은 개발 예제이고, solver 정확성·독립 실무 모델 적격성을 입증하지 않는다.
-- **회귀 범위:** handoff 신규·기존 연결 관련 묶음 **51 passed, 1 skipped**(CalculiX 미설정). 기존 MDO 관련 5파일은 **113 passed, 1 failed**였으며 실패는 `pymoo` 의존성 부재였다. 의존성을 격리 설치한 후 해당 실패 테스트 1개가 통과했다. 공유 위젯 새 5개도 통과했다. 이 결과를 서로 합산하거나 전체 제품 회귀·CI 성공으로 바꾸지 않는다. 일반 CI는 Prep을 설치하지 않아 공유 위젯 실제 사용 4개를 건너뛰고 미설치 fallback 1개를 검사한다.
-
-환경은 Linux/Python 3.12.14/PySide6 6.12.0/VTK 9.4.2, `QT_QPA_PLATFORM=offscreen`이었다. 파일 잠금·기존 MDO 회귀용 선택 의존성은 격리 경로에 설치했고 제품 의존성 계약을 변경하지 않았다. 외부 Prep의 full Qt VTK 화면은 OpenGL 오류와 검은 viewport가 관찰되어 **3D 렌더 통과가 아니다**. 실제 QWidget 생성·입력·파일 동작과 구분한다. Windows 실제 창·IME·DPI·포커스와 배포 조합 검증은 사용자 지시에 따라 후속 일괄 검사로 남긴다. 이번 변경의 Linux 구현·검토·CI 병합을 Windows 검사의 선행 조건으로 묶지 않으며 Windows 완료도 주장하지 않는다. RAD의 실제 솔버 실행은 기존 실행기의 INP snapshot 범위를 별도로 해결해야 하며 이 handoff에서 실행하지 않았다.
-
-**고정 커밋 후속 확인:** Workbench `b64267e533882654461166a9910315745f69d4bd`와 별도 detached worktree의 Prep `e017653dc0a51aa508c5290bbb08450b2b70cacb`를 사용해 다시 실행했다. 같은 실제 MDO 호스트에서 `caelab_prep.ui.widgets.numeric.NumericEdit` 클래스, `1e` 초안·오류·초점 보존과 dark/light 캡처를 확인했다. 기존 Workbench→JobManager→실제 Prep CLI의 두 프로세스 왕복도 exit 0, E=205000 유지, 원본 해시 불변, 후속 문서 변경의 changed/stale을 다시 확인했다. 두 Prep 프로세스의 실제 `_render_failed=True`와 검은 viewport도 기록했으므로 이 고정 조합의 파일 성공은 3D 성공이 아니다. 배포 설치 검증도 남았다.
-
-이 고정 조합에서 전체 제품 회귀를 한 번 실행한 결과는 **1116 passed, 32 skipped, 1 failed**(538.75초)였다. 유일한 실패 `test_mdo_imports_without_optional_backends`는 검사 내부의 새 프로세스가 PYTHONPATH를 저장소 경로로 교체해, 격리 target에만 있던 필수 의존성 `filelock`을 찾지 못한 환경 구성 문제였다. 별도 venv에 제품 의존성 `filelock 4.2.6`을 정상 설치한 뒤 같은 소스로 이 실패 1개와 신규 W1/W2 18개를 실행해 **19 passed**(4.62초)를 확인했다. 테스트의 기대값·skip·제품 코드를 바꾸지 않았다. 32개 skip은 미설치 솔버와 Windows 전용 경로이며 실제 공유 위젯 4개는 이 로컬 실행에서 건너뛰지 않았다. 최초 전체 실행을 모두 통과한 것으로 소급하거나 후속 부분 검사를 전체 재실행으로 기록하지 않는다. 원 비판자의 승인은 커밋 전 동일 코드에서 재현한 두 W1 결함 해소에 해당하며, 고정 커밋 조합의 후속 실행은 작성자가 수행했다.
-
-새 재현 검사는 `tests/test_prep_shared_controls.py`와 `tests/test_prep_handoff.py`다. 실제 호스트 캡처와 외부 실행 영수증은 당시 로컬 `wb-g4-evidence/`에, 고정 조합의 후속 실행은 그 안의 `pin-b64267e-e017653/`에 저장했다. 전체 원실패 로그 `full-regression-b64267e.log`와 후속 `focused-after-env.log`를 보존했으며 저장소에 포함된 배포 자산은 아니다. 아래 날짜별 기록은 당시 상태를 보존한 이력이다.
-
-최종 검토에서 압축된 manifest 손상이 `zlib.error`로 빠져 노드가 실패 상태로 바뀌지 않는 결함을 추가 재현했다. 연결 계층은 ZIP 압축 해제 오류를 기존 문서 오류로 정규화하고 실행 전에 `failed`로 전환한다. 통합 담당자가 기존 W2 코드·파일 역할을 독립 검토하고 13개 검사를 직접 실행했으며, 수정 후 손상된 DEFLATE 입력을 포함한 W2 14개를 통과했다. 원 지적자의 재검토와 최종 CI 판정은 PR #54에 따른다. 위 고정 제품 코드 b64267e의 원격 동등 트리는 `96a303de3c21b2908f983e0c3da3b3a28b8e4bff`다.
-
-## 독립 전처리기 개발과 기존 연결 병합 (2026-10-29)
-
-CAD/전문 전처리 분리 PR [#51](https://github.com/pikachu444/caelab-workbench/pull/51)을 main에 병합했습니다. 병합 뒤 새 clone의 파일 트리가 검토한 PR head와 같은지 확인했고 관련 검사는 **38 passed, 1 skipped**였습니다. 로컬 건너뜀은 `CAELAB_CCX` 미설정 때문이며 기존 PR의 실제 CalculiX CI와 구분합니다. 이 작업에서 전체 회귀를 다시 실행하지 않았습니다. Windows PrePoMax의 실제 끝단 미확인 상태는 그대로입니다.
-
-사용자가 만든 [caelab-prep](https://github.com/pikachu444/caelab-prep)는 OpenRadioss/OpenCourant용 독립 GUI 전처리기 개발을 담당합니다. 현재 제품 방향·공용 GUI 구조·BeidPrep 평가 자산을 정리하는 초기 단계이며 앱과 워크벤치 연결은 미구현입니다. 이 저장소에는 역할 경계와 후속 작업 순서를 반영했습니다.
-
-BeidPrep **1.0.1**은 실제 Windows에서 RAD 열기·표시·저장·새 프로세스 재열기를 시험했습니다. 저장본을 별도 Linux OpenCourant로 검사했을 때 X 병진과 세 회전 구속이 풀리고 셸 IPLAS가 1에서 0으로 바뀌었습니다. 재료 E 수정/GUI 값 재읽기는 미완료이고 GUI 내부 솔버 실행은 시험하지 않았습니다. 2.0은 미확보·미시험입니다. 자세한 [시험 기록](https://github.com/pikachu444/caelab-prep/blob/main/docs/beidprep-evaluation.md)을 연결하며 현재 버전을 주력 전처리기로 채택한 상태가 아닙니다.
-
-## CAD와 솔버별 전처리 분리 (2026-10-29)
-
-사용자 지시로 FreeCAD FEM 고정을 해제하고 FreeCAD CAD → 전문 전처리기 → 원 덱 → 솔버 → 후처리 구조로 수정했습니다. PrePoMax Windows GUI 연결, 전처리 노드의 프로그램 선택, STEP 입력/PMX 편집 문서/INP 출력 분리, 저장 형식 3(1/2 읽기), 문서 변경의 하류 상태·계산 준비 확인을 구현했습니다. 외부 프로그램의 수동 편집·저장·내보내기와 워크벤치 파일 등록이 연결 경계이며 자동 CAD 재생성이나 카드 전체 지원을 뜻하지 않습니다.
-
-PrePoMax 실프로그램/Windows 실화면과 Salome·OpenRadioss·Naksha 끝단 실행은 미검증입니다. PrePoMax 후처리 선택에는 같은 실행의 원 FRD 검증·전달을 추가했습니다. 독립 검토 R1–R8과 솔버 변경 뒤 이전 결과의 상태 오류를 해소했습니다. 전체 파일을 두 프로세스로 나눈 회귀는 **1099 passed, 32 skipped**입니다(프로젝트 GUI 107/1, 나머지 992/31, 중복 합산 없음). Linux/Python 3.12.14/PySide6 6.12.0/VTK 9.7.1에서 검사했습니다. 기존 VTK 9.3.1의 화면 초기화 중단은 변경 전 main에서도 재현됐으며, 검사용 VTK 환경을 바꾼 뒤 완료했습니다. Qt 화면 배치도 확인했지만 한글 폰트 품질·Windows 실화면의 확인을 대신하지 않습니다. 아래 과거 실행 기록과 구분합니다.
-
-# 현재 상태
-
-## MDO DoE 기법별 설정·생성 예정 점 수·연속 변수 수준값 및 민감도 중복 재분석 방지 (#38, #39, #40, 2026-11-02)
-
-- **DoE 기법별 단일 설정 대화상자 및 생성 예정 점 수 표시 (#38)**: `apps/workbench_qt/mdo_studio/window.py`의 연속 `QInputDialog` 호출을 단일 `DOEGenerationDialog`(`apps/workbench_qt/mdo_studio/study_config.py`)로 교체하고 `caelab/mdo/doe.py`의 `projected_design_count`와 연결했다. 선택한 기법(`lhs`, `opt-lhs`, `sobol`, `full-factorial`, `box-behnken`, `ccd`)에 실제로 적용되는 입력(`n_samples`, `seed`, `criterion`, `restarts`, `iterations`, `centers`, `ccd_type`, 변수별 `levels`, `budget`)만 활성화·표시하고, 사용하지 않는 표본 수·난수 시드는 비활성·숨김 처리한다. 생성 전에 정확한 생성 예정 점 수(`Projected points`)와 Sobol 2의 거듭제곱 제약을 안내·검증하며 취소 시 스터디 상태를 변경하지 않는다.
-- **연속 변수 full-factorial 수준값 GUI 설정·전달 및 사전 검증 (#39)**: `full-factorial` 선택 시 독립 변수별 수준값 표를 제공하고, 연속 변수는 임의 기본 수준값을 몰래 채우지 않고 사용자가 명시적으로 물리 수준값을 입력하도록 강제한다. `StudyService.generate_doe`(`caelab/mdo/service.py`)가 `DOEConfig` 및 변수별 `levels`를 전달받아 지정한 연속 변수 물리 수준값 조합을 정확히 생성하며, 빈 수준값·중복 수준값·물리 범위(`[lower, upper]`) 밖 수준값·예산 초과는 생성 전에 차단한다.
-- **실행 중 민감도 자동 요청 억제 및 동일 조건 중복 재분석 방지 (#40)**: 활성 배치(`active_batch_id`) 또는 작업 실행 중에는 `_update_visualizations`의 자동 Spearman 민감도 요청을 보내지 않고 이전 보고서와 진행 안내(또는 대기 안내)를 유지해 `Finish or cancel the active study operation first` 오류가 반복되지 않도록 수정했다. 단순 행 선택(`_show_selection`)의 불필요한 시각화 타이머 재시작을 제거하고, 응답·모집단(`ACTUAL` 행 상태)·개정·외부 원본/실행 산출물 지문(`_spearman_condition_key`)이 동일한 화면 갱신이나 탭 전환은 중복 분석과 보고서 디렉터리 생성을 건너뛴다. 모집단 필터·응답·개정 변경이나 외부 파일 변경/손상 시에는 즉시 재분석하며 `_verified_run`의 외부 파일 무결성 검증을 그대로 유지한다.
-- **검증 구분**: `QT_QPA_PLATFORM=offscreen` 환경에서 `tests/test_mdo_doe.py`, `tests/test_mdo_sensitivity.py`, `tests/test_mdo_phase3_service.py`, `tests/test_mdo_phase3_gui.py`, `tests/test_mdo_studio_gui.py` 전체 **116 passed**로 수치·서비스·Qt 위젯 동작을 확인했다. 이는 offscreen Qt 및 로컬 서비스 검증이며 Windows 실화면 OS 마우스·키보드 E2E 최종 인도와 구분한다.
-
-## MDO Phase 3 구현·수치 검증, Windows 최종 인도 대기 (2026-10-28)
-
-기준 main `7bfcdd4`에서 개발한 Phase 3 구현과 검증 기록이다. 아래 과거 실행 기록과 구분한다. Windows GUI의 전체 최종 인도 조건은 아직 완료하지 않았다.
-
-사용자의 후속 요청에 따라 마지막 보완 범위는 겹친 축 숫자 수리와 축 제목 잘림 두 건, 그리고 필수 회귀·독립 QA로 제한했다. 추가 GP·uncertainty·실환경 캠페인은 진행하지 않으며 아래 미확인 사항을 그대로 남긴다.
-
-사용자는 2026-10-28 배율별 검증을 요청에서 철회하고 문서 수정을 명시적으로 승인했다. 이에 명세 §15/16의 고해상도 배율 인도 조건을 삭제하고, 기본 배치 인수 검사는 기본 배율의 정상/좁은 창·빈/저장된 스터디 조건만 유지한다. 기존 CI의150% 좁은 창 회전 후 주석 배치 실패2건은 **요구 철회로 종결**하며 제품 수정·통과로 바꾸지 않는다. 과거 배율 측정/미확인 기록은 이력으로 보존하고 현재 인도 조건으로 적용하지 않는다. 나머지 기능·배치·선택·저장 검사와 통과 중인 좌표 단위 검사는 유지한다.
-
-원격 PR #37의 첫 CI는 VTK 9.7.1의 축 숫자 형식 변경 때문에 Python 3.11/3.12 각각66개가 연쇄 실패했다(각1018 passed, 32 skipped). `32307f0`에서 VTK가 반환하는 printf·표준 숫자 형식을 모두 처리하도록 수정했다. 기존 물리 값·정밀도·글자 경계·충돌 판정은 유지하며 의존성 고정이나 실패 제외는 하지 않았다. 로컬 VTK9.4.2 표적8개 검사가 통과했고, 새 형식의 실제 VTK9.7.1 실행 결과는 [PR의 CI 기록](https://github.com/pikachu444/caelab-workbench/pull/37/checks)에서 구분한다. 첫 CI의 실제 CalculiX 검사는7+3개 통과했으며 Ubuntu 패키지2.21이라 아래 Windows2.22 실측과 구분한다.
-
-이 호환 수정의 독립 QA는 숫자/제목 경로7개(1.62초), 필수 Studio/덱29개(50.64초)를 분리 실행해 모두 통과했다. 후자는 `173a523`에서 선택적 QFontInfo 진단 기록만 제거한 뒤 수행했다. showEvent 안의 진단 호출에서 발생한 Windows AV 원자료를 보존했고, 실제 설치 글꼴 등록·해시와 기능·경계·복원 검사는 유지했다. 이 로컬 VTK9.4 검토를 원격9.7 실행이나 Windows 실화면 인도로 확대하지 않는다.
-
-다음 CI에서는 숫자 형식 다음 단계의 제거된 `AddActor2D` 호출이 드러났다(각67 failed, 1021 passed, 32 skipped). `2db2ac6`에서 네 등록·해제 호출을 동등한 `AddViewProp`/`RemoveViewProp`로 바꿨다. 별도 경로에 격리한 실제 Windows VTK9.7.1의 기존 렌더·다시 그리기·정리·예외/수명 검사16개(2.62초)와 기존9.4.2 검사1개(1.48초)가 통과했다. 동일 actor·물리 값·선택 ID·배치·충돌 기준은 유지했고, 설치 버전을 고정하거나 사용자 환경의 VTK를 바꾸지 않았다.
-
-원 독립 QA도 같은 제품 코드의 격리 VTK9.7.1에서 관련16개 검사를 전부 통과했다(2.66초). 같은 프로세스에서 실제 버전·모듈 경로·새 API 존재를 확인했고 네 호출의 수정 범위를 승인했다. 원격 Linux 전체 회귀는 PR CI 결과와 별도로 구분한다.
-
-09:38–09:39 KST에 새로 확인한 실제 캡처79에는 PIN 입력 화면이 표시됐으며, 실행 대화상자 취소 입력은 화면 좌표 정보 오류로 실패했다. 보안 화면을 조작하거나 검증 통과로 세지 않았다. 앞선 활성화 오류의 원인은 이 관찰만으로 소급 확정하지 않는다.
-
-- 독립 부모/Studio 진입점, Workbench 서비스, 네이티브 JobManager 계산, 저장된 대리모델 탐색, 실제 확인, Pareto/설계점 ID 선택 연동, 현재 설계 적용/Undo/별도 재해석, 결과 파일 전달, 독립 Save As와 재열기를 연결했다. 원본/INCLUDE 백업·파일별 원자 교체·저널 기반 복구·잠금과 읽기 전용 검토를 포함한다. 여러 파일 전체의 교체가 전역 원자적인 것은 아니다. 프로젝트의 `mdo_study` 관계가 재열기를 막던 결함과 복사 중 편집 충돌도 수정했다.
-- 실행 후보 `200526c`에서 공개 CalculiX 테스트 `beamlin.inp`를 사용해 **실제 CalculiX 2.22 실행 22건**을 완료했다: LHS16, 독립 모서리 검증4, 새 실제 확인1, 적용 후 별도 재해석1. 대리모델 예측240행을 실제22행과 구분하고 262행·모델·현재 설계·VTU·백업/Undo·Save As·읽기 전용 재열기를 대조했다. 사용자 작성 입력으로 주장하지 않으며 원본 메시·재료·하중을 보존하고 두 단면 폭, 단위/출력 요청만 명시했다.
-- 독립 QA는 최종 연구의 **22/22 실제 행과 산출물 해시154개**를 검증했고 검토 중 솔버 호출·자료 쓰기는 없었다. 별도 CAE 검토자는 최종 단계/시간, 40절점 필드, 원 DAT/FRD 수치, 백업 바이트, 확인/재해석 일치를 확인했다. 학습12/내부검증4 외의 독립4점 최대 상대오차는 질량0.00009136%, 변위0.510315%, 응력0.123655%로 사전 한도1%/5%/10% 이내였다. 이 결과를 메시 수렴·전역 최적해·일반 구조 안전성으로 확대하지 않는다.
-- 기능·표 성능 검증 후보는 `9f813dd`다. 검증 분할/응답별 오차 한도, 민감도 실험·출처, 모든 뷰의 필터 연동, 고정된 revision별 단위·기준, 실행 시간/배치 예산, 표면 작업 수 제한, 정확한 숫자 토큰 미리보기, 초기 선택 행과 960px 배치를 보완했다. 적용 중 강제 종료 후 이전 현재 설계/재실행 관계 복구, 작업 중 writer 잠금 유지, 오래된 비동기 결과 거부도 검증했다. 독립 QA는 선행 통합 후보 `0587dcd`의 기능 관련 비판을 모두 명시적으로 해소했고, 표 성능 수정도 동일 후보 `9f813dd`에서 관련 검사 46개와 독립 정렬·필터·선택·표시값 검사로 통과시켰다. 원 비판자인 메인도 같은 조건의 offscreen 성능 재검사로 해당 지적을 해소했다. 이후 실제 VTK 화면에서 발견한 문제는 아래 별도 보완·재검토 대상이다.
-- 합성 **10,000행×30열**의 최종 offscreen 검사(`9f813dd`): 첫 표219.575 ms, 스크롤/선택 p95 **37.052 ms**(목표50 ms 미만), 이벤트 지연 p95 26.303 ms, 최대 필터28.691 ms, RSS222,781,440 bytes. 10회/초 결과 갱신50건을 포함한다. 선행 후보의61.206 ms 실패를 보존하고 불필요한 전체 행 재정렬·반복 객체 생성·개별 표시 역할 요청을 줄인 뒤 같은 검사로 확인했다. Windows11 build26200, i9-11900H, 약16 GB RAM, Python3.13.5/Qt6.9.1에서 측정했으며 실제 데스크톱 검사를 대신하지 않는다.
-- 실제 최종 연구를 읽기 전용으로 연 offscreen 캡처는 다섯 뷰와 정상/960×720 배치, DPR1/1.5/2를 확인했다. Surface는 명시적인2D 대체 화면이다. 설치된 ParaView6.2의 `pvpython`으로 적용 후 재해석 VTU의40절점/2요소, 변위3성분·응력6성분·전체 범위의 유한 값을 읽었다. 이는 ParaView 실화면 조작이나 VTK3D 회전 검증이 아니다.
-- 사용자가 바탕화면을 복구하고 자동 입력을 승인한 뒤, 별도 `native-gui-01` 사본에서 **실제 Windows 마우스·키보드 흐름**을 수행했다. 네이티브 입력 열기→두 스칼라 토큰 미리보기→변수·응답·제약 설정→LHS16 실제 계산→GP 학습/검증→NSGA-II 예측200행→선택 후보의 새 실제 확인→원본 적용/백업/Undo/재적용→별도 현재 설계 재해석→ParaView→독립 Save As까지다. 이 GUI 연구는 앞선 서비스 연구와 별개이며 **실제18행·예측200행, 총218행**이다. GP 내부 검증12/4를 앞선 독립 모서리4점 검증과 혼동하지 않는다.
-- 실제 GUI에서 Pareto 점을 클릭해 같은 TDP 행을 선택했고 예측 행의 적용은 비활성 상태였다. 실제 `DP_0217` 적용 전 백업은 원본과 바이트 해시가 같았고 Undo는 원본을 복원했다. 별도 `DP_0218` 재해석 값은 변위0.07274370855640092 mm, 최대 von Mises 응력174.82127243766703 MPa, 질량0.00007137894 tonne이며 선택점 확인 계산과 일치했다. Studio에서 연 ParaView6.2 실제 창에서 변위 크기, 실제 응력 성분으로 계산한 von Mises 전계와 3D 회전을 확인했다. ParaView 최대 응력도 동일하며 40절점/2요소, 필드 전체 coverage를 확인하고 `final-fields.pvsm`을 저장했다.
-- OS 한글 IME로 조합·Backspace·재편집·Enter를 수행했으며 조합 확정만으로 설정 적용이나 계산이 발생하지 않았다. 독립 QA는 이 부분 증거를 확인했다. 긴 한글 변수명·모델·현재 설계·재해석·선택 ID를 포함한 `final-study.json`과 소유 데이터를 저장하고 기존 Studio를 정상 종료했다. 이후 실제 새 `76c5b54` 창에서218행·모델·현재/재해석 관계·선택 ID를 다시 열었다. 저장 시 숨긴 Setup 도크가 재열기 때 다시 보이던 결함은 `9de4284`에서 수정했고 독립 QA의 관련75개 검사와 실제 저장 파일의 읽기 전용 비동기 재열기를 통과했다. **이후 CLI 시작의 도크 복원·저장한 한글 이름은 실제 확인했으나, Ctrl+O 비동기 재열기의 물리 입력 재검증은 남았다.** 필터 CSV19행(실제2·예측17)의 단위·상태·실행 ID도 독립 QA가 확인했다. 저장 대화상자는 저장 후 닫았으며, 도구의 활성화/접근 거부를 화면 잠금으로 단정하지 않는다.
-- 실제 VTK 화면에서 발견한 카메라·물리 축 표시·3D 범례·숨은2D 도구·실제/예측 완료 수 혼합 표시를 보완했다. 원 QA는 실제18건/예측200건 표시를 실화면에서 확인했고, 오류·응답 변경 시 오래된 표면을 다시 표시하던 결함과 라이트 모드 선택 색상도 코드/offscreen에서 해소했다. 실제 캡처54–59는 저장 도우미가 이전53번 이미지·상태를 중복 기록해 해당 동작의 증거에서 제외했다. 새 객체와 해시로 저장한60번에서는 GP 표면이 어둡고 작으며 축 제목과 눈금이 붙는 문제가 남아 메인과 원 QA가 수정을 요구했다. **실제100/150/200% Windows DPI, 정상/좁은 배치, 다섯 뷰 전체·키보드/독 복원과 원 QA의 최종 실화면 승인은 미완료다.**
-- `9de4284`의 실제 Windows Qt 합성10,000행×30열 검사(DPR1, 배율 환경변수 없음)는 첫 표시4852.43 ms, 스크롤/선택 p95 550.06 ms, 이벤트 지연 p95 445.58 ms로 **실패**했다. 실제 창 캡처와 원시 측정을 보존했다. 전체 제품 회귀가 동시에 실행 중이었던 조건도 기록했으며 이를 실패 면제 근거로 삼지 않는다. 앞선 offscreen 통과와 구분하고 아래 추가 진단·실제 Studio 측정을 수행했다. 측정 창은 결과 저장 후 정리했다.
-- 같은 `9de4284`에서 전체 회귀와 다른 검사 종료 후 비프로파일 Windows 측정을 추가했다. 독립 표 창의 스크롤/선택 p95는468.69 ms, 실제 Studio와 같은 부모 창 안에 둔 표는75.92 ms로 **둘 다50 ms 기준에 실패**했다. 후자의 첫 표295.61 ms·이벤트 지연 p95 66.24 ms, 동일 viewport1362×842·DPR1·활성 접근성 조건을 기록했다. 이 구성요소 검사를 아래 실제 Studio 결과로 소급 통과시키지 않는다.
-- 실제 `MDOStudioWindow`의 서비스 snapshot·queued bridge·기본 도크/QSS·상세·연결 그래프를 유지한 Windows Qt 합성10,000행×30열 측정은 `1aab80d`에서 첫 Paint 진입253.52 ms(반환 후 표식의 상한718.21 ms), 스크롤/선택 p95 **28.48 ms**, 10회/초 송신 중 이벤트 지연 p95 **12.96 ms**(전체13.17 ms), 최대 필터25.03 ms, RSS429,404,160 bytes였다. 델타50건과 스크롤150건이 모두 전달·반영됐고 솔버 호출은0회다. 수치 목표는 충족했지만 Qt로 조작한 측정이며 창 active=true/표 focus=false, 캡처63은 검게 나와 OS 입력·실화면 통과로 확대하지 않는다. viewport는835×172에서823×172로 정착했다.
-- 연속 결과마다100 ms 타이머를 재시작하던 문제는 `1aab80d`에서 수정했다. 같은 probe의 수신→반영 p95는806.65→107.98 ms, 원천→반영 p95는820.97→328.88 ms였으며 원 비판자와 독립 QA가 타이머 결함 해소를 명시했다. 남은 지연은 GUI 수신 전 정체와 겹치며100 ms 종단 지연을 보장하지 않는다. 수정 전 viewport는823×172로 고정돼 전후를 완전히 통제한 단일 원인 효과로 주장하지 않는다.
-- 실제 표 클릭·활성 창·표 포커스를 관찰한 뒤에만 측정하는 후속 probe는 독립 QA의 소스 검토를 받았다. Windows 새 프로세스46668에서 CUA 표 클릭이 활성화 오류로 실패했고 캡처78도 검게 나왔다. 실제 입력을 관찰하지 못해 60.016초 대기 후 자체 종료했으며 성능 측정·델타·솔버 호출은0회다. 창과 프로세스가 사라진 것을 확인했고, 이 미완료 시도를 성능 통과로 세지 않는다.
-- 표면의 조명·노멀, 물리 눈금의 실제 글자 크기를 반영한 초기/Fit 배치와 숨은 탭의 첫 표시를 `4ef023b`에서 보완했다. 실제 저장 GP의 mean/uncertainty를 이용한 offscreen36개 조합과 독립 관련115개 검사가 통과했다. 읽기 전용 재열기 캡처62와 성능 캡처63은 검게 나와 실화면 증거에서 제외한다. 입력 활성화 실패만으로 잠금 상태를 단정하지 않는다.
-- 이후 `5b0e51c`의 실제 Windows 캡처64–77에서 CLI 시작 시218행·선택 `DP_0217`·숨긴 Setup 복원, 저장한 전체 한글 변수명, View 메뉴로 도크 재노출, native3D 점 클릭→TDP `DP_0001` 선택과 현재 설계217 유지, 밝은 GP mean/uncertainty 및 다섯 뷰를 확인했다. 원 QA도 이 범위를 확인했다. **CLI 시작 복원은 원 R4의 Ctrl+O 비동기 Open Study 경로를 대신하지 않는다.** 일반적인 3D 회전에서 상단 눈금이 잘리는67/71과 도크 폭 변경 후 Convergence 축 제목이 잘리는77은 새 가독성 검토 대상이며, Fit 복구만으로 통과시키지 않는다. DPI 설정을 열려던 중 좌표·키보드 입력이 `GetCursorPos 0x80070005`로 실패해 실제 배율 변경은 하지 않았다. 읽기 전용 Studio는 동일 PID/명령을 확인해 정리했고 원본 JSON 해시는 유지됐다. 실행 대화상자의 Escape 입력도 실패해 정상 닫기를 확인하지 못했다.
-- 회전 중 눈금·XYZ 제목 잘림과 Convergence resize 여백을 `59544b6`에 수정했다(작성자 후보 `6d1911e`와 실행/테스트 파일 동일). 카메라·물리 값·눈금 수를 유지하면서 필요한 글자만 같은 투영 위치에 연결해 옮기고, QVTK의 실제 DPI와 글꼴 크기·정수 배치·캐시 갱신을 반영했다. 작성자 관련4파일 **139 passed, 0 failed, 0 skipped**(189.00초), 보존한 실제 GP 배열의 보조6개 검사도 통과했다. 원 QA도 같은4파일139개를 독립 실행해 전부 통과했고 연결선 교차·예외/장면 수명·픽셀 대조·R6 resize 지적을 코드/offscreen 범위에서 해소했다. 합성 Pareto800×136과 보존 GP Surface828×196/1034×211은 서로 다른 검증 치수다. 설치 QVTK의 resizeEvent를 사용한 이 검사는 Windows OS 배율 검증이 아니다. 기본 좁은 창에서 차트 높이36px, 표를 최소로 줄이면 완전한 행이0개가 되던 별도 문제는 아래 R7 배치 수정으로 검증한다.
-- 기본 배치를 `cfea0aa`에 수정했다(작성자 `c81a705`와 전체 Git tree 동일). 새 창·명시적인 기본 배치 복원에서 한 번만 표와 차트를 분배하며, 저장된 스터디/전역 배치와 사용자 조작을 보존한다. 빈 스터디에서 입력 설정·첫 결과 수신 후 첫3D로 전환해도 정상30px 선택 행을 온전히 표시한다. 작성자 관련29개 검사와 저장한 실제 GP의 완료 상태6개 보조 렌더 검사는 통과했지만, 같은 Git tree의 독립4파일 묶음은 **151 passed, 7 failed, 0 skipped**(222.89초)로 실패했다. 좁은 창6건의 주석 가독성과 저장 분할 기대값1건은 실제 설치 글꼴·복원 크기로 재현했고, 아래 최종 교정에서 다시 검증했다. 원 실패 기록은 보존한다. 좁은 Pareto의 실제 outer976×720/canvas800×135–136과 Surface outer1004×720/canvas828×166을 구분한다. 정상 Pareto1034×215와 Surface1034×233에서 표 viewport141px를 확인했다. 선호 높이를 바꾸기 전153px 회전의 눈금 겹침 실패는 보존하며 모든153px 화면을 불가능하다고 주장하지 않는다. 제어한 DPR 검사는 실제 Windows 배율·입력 승인을 대신하지 않는다.
-- 실제 설치 글꼴에서 재현한 두 표시 결함을 `f446e99`에 수정했다(작성자 `91ff4d6`와 전체 Git tree 동일). 투영 위치가 같은 축 숫자도 기존 배치 수리를 거치게 하고, 잘린 제목의 연결선 시작점을 가리는 다른 제목을 최소 이동시킨다. 물리 값·범위·anchor·카메라·충돌 판정은 유지했다. 실제 Segoe UI/Malgun·기존 회전 동작·DPR1/1.5/2의 작성자 관련 **31개 검사가 통과**했고, 원 QA도 실제 글꼴을 먼저 등록한 최종4파일 검사를 독립 실행해 **160 passed, 0 failed, 0 skipped**(193.19초)를 확인하고 두 표시 결함·저장 기대값 지적을 코드/offscreen 범위에서 해소했다. 기존 VTK/NumPy deprecation warning316개를 보존했다. 앞선 7실패 중 저장 분할은 요청 크기 대신 실제 저장 크기·직렬화 바이트를 비교하도록 검사 기대값을 고쳤다. 글꼴 없는 offscreen 배치 통과를 실제 글꼴 조건까지 확대하지 않으며, 실패 원자료와 계측 중 AV도 보존했다.
-- 관련 검사: `0587dcd`에서 **354 passed**, 표 수정 후 `9f813dd`에서 관련 GUI **38 passed**(서로 겹치는 검사이므로 합산하지 않음). 독립 QA 관련 검사와 고장 주입·저장·정렬·읽기 전용 검사도 통과했다. 가장 최근 전체 제품 회귀는 격리된 `59c2a8a`에서 **999 passed, 3 failed, 5 skipped**(4228.93초)다. 독립 QA는 실패3개의 테스트 ID·오류·발생 행이 기준 main `7bfcdd4`와 같고 설치기 코드/manifest도 변경되지 않았음을 확인했다. CalculiX2.22는 PATH를 지정해 포함했고 나머지5개 skip은 FEniCSx/OpenCourant/Code_Aster/Salome 부재와 POSIX 전용 검사다. 이후 R3/R4/3D 수정은 각각 관련 검사로 확인했으며, 이를 전체 제품100% 통과나 후속 SHA의 전체 실행으로 확대하지 않는다. 앞선 `200526c`의945통과/4실패/11skip 로그도 보존한다.
-- 실행 코드 `1aab80d`의 MDO 관련18개 테스트 파일은 **295 passed, 0 failed, 0 skipped**(96.14초)였다. 설치된 VTK/NumPy의 deprecation warning57개를 보존했다. 타이머 수정은 독립 QA31개 검사와 이전 동작을 복원한 실패 대조 검사도 통과했다. 이 묶음은 실제 QSettings의 layout/splitter 저장·복원을 외부 INI로 격리했다. 앞선 probe와 이후 R5/R6의 격리 전 focused 검사8개는 사용자 전역 Studio layout/splitter를 저장하는 경로를 실행했다. 원값 없이 복원했다고 주장하지 않으며 전체 검사의 설정 무변경도 보장하지 않는다. 해당8개에서 theme 쓰기는 없었으나, R5/R6의139개 묶음에서는 기존 theme-toggle 검사가 전역 theme/mode를 두 번 쓰고 최초 유효 모드로 돌아왔다. 후속 검사는 layout/splitter와 theme의 실제 QSettings를 각각 외부 INI로 격리한다.
-- 공개 `beamlin.inp`와 그 저장 GP 자료는 이후 표면 표시 수정·프로토타입에도 사용했으므로 개발·수치·GUI 회귀 근거다. 별도로 구현에 사용하지 않은 공식2.21 시험 입력 `boxprofile2.inp`를 준비해 독립 QA가 설치된 CalculiX2.22와 같은 Workbench 서비스를 사용했다. v2의 **실제22건·예측200행**에서 LHS16→GP12/4 동결→독립 모서리4→NSGA-II200→새 실제 확인→백업/Undo/재적용→별도 재해석→VTU→Save As/읽기 전용 재열기를 확인했다. 독립 모서리 최대 절대오차는 질량0.000000613066 tonne, 변위0.060520 mm, 응력0.098857 MPa로 사전 고정 한도 이내였다. 222행·현재221/재해석222·모델·예측 평균/분산·실제 산출물 해시154개를 대조했다. 감사 스크립트가 활성 `study.lock`을 읽다가 실패한 원기록을 보존하고, 해당 임시 lease만 명시적으로 제외한 저장 후속 검사를 **추가 계산0회**로 완료했다. 이 backend 통과는 **별도 미사용 입력의 실제 GUI 전체 E2E 인도를 대신하지 않는다**.
-- BOX v1의 첫 실제1건에서는 추가 DAT `COORD` 출력의2.22 구현 문제와 완전한 MPC 반력 coverage의 미확인을 발견했다. 원자료를 보존하고 `S,COORD`→`S` 한 줄만 바꾼 v2에서 다시 시작해 총 실제 호출은23회다. 같은 첫 LHS의68절점 변위·응력과 필수 세 응답은 v1/v2가 정확히 같았다. 질량·변위·선언한 Y방향 힘·동일 위치 응력 검산은 통과했으나, RFz −422.519 N의 직접 원인은 미확정이다. 공식 매뉴얼상 현재 출력으로 완전한 일반화 반력을 보장할 수 없어 전체3D 힘·모멘트 평형이나 공학적 적격성을 통과했다고 주장하지 않는다. 원 QA와 CAE는 이 구분과 수치 기준 불변에 동의했다.
-
-이번 실행의 원자료와 작업 기록은 저장소 밖 `C:/SourceCodes/caelab-phase3-evidence-20261027/`에 보존한다. 최신 인계는 `phase3-handoff.md`와 `phase3-handoff-receipt.json`의 화면·영수증·SHA256 목록이다. 주요 근거는 `native-gui-01/`, `qa/native-gui-01-saved-artifact-audit.json`, `qa/studio-flush-pair-1aab80d-audit.json`, `studio-table-windows-1aab80d-after.json`, `final-related-1aab80d.log`, `full-regression-59c2a8a.log`, `native-service-final/workflow-receipt.json`, `cae/native-service-final-assessment.json`, `session-log.md`다. 앞선 실패·offscreen·서비스 검증 자료도 보존했다. `native-service-01`은 새 STA 해시 검증 계약 이전 실행이며 최종 후보의 검증된 재열기 증거로 사용하지 않는다.
-
-## CalculiX 네이티브 치수 최적화(Sizing Optimization) 벤치마크 완료 (2026-10-27)
-
-- **3D 솔리드 캔틸레버 전단 잠김 극복 및 수렴 검증**: 99절점 40 C3D8 요소 모델의 30.5% 처짐 과소 평가는 완전적분 1차 6면체 요소의 전단 잠김(shear locking)이 원인이었음을 확인하고, 40×8×8 수렴 격자(`cantilever_3d_converged.inp`, 2,560개 C3D8 요소, 3,321절점)를 구축하여 CalculiX 2.22로 검증 완료. **0.915초 만에 Euler-Bernoulli 보 이론 대비 97.20% 일치(처짐 -0.1852 mm vs 이론 -0.1905 mm, 오차 2.80%)**를 달성했으며, 잔여 2.8%는 3D 티모셴코 전단 변형 및 푸아송 횡구속 효과로 완벽히 설명됨 (`benchmarks/runs/cantilever_3d_converged_receipt.json`).
-- **10-절점 트러스(10-Bar Truss) 단면적 치수 최적화 실측 (제품 라이브러리 연동)**: Schmit/Haftka 표준 벤치마크를 기반으로 T3D2 요소 기반 10개 단면적($A_1 \sim A_{10}$)을 설계변수로 설정하고, 끝단 처짐 $u_y \le 2.0\text{ in}$ 제약 조건 하에서 질량 최소화 수행. 범용 제품 라이브러리(`caelab.mdo.optimize` 및 `caelab.mdo.calculix_evaluator.CalculiXEvaluator`)를 통해 **총 501회 CalculiX 해석을 43.94초에 완료**, 초기 질량 5,710.48 kg에서 **2,421.46 kg으로 57.60% 경량화 달성**, 처짐 허용치(50.80 mm / 2.0 in) 경계면인 50.78 mm에 정확히 수렴하는 최적 하중 경로 도출 (`benchmarks/runs/truss_10bar_optimization_receipt.json`).
-- **3단 단차 캔틸레버 셸(Stepped Cantilever) 두께 치수 최적화 실측 (제품 라이브러리 연동)**: S4 셸 요소 기반 3개 단차 두께($T_1, T_2, T_3$)를 설계변수로 설정하고, 끝단 처짐 $\le 15.0\text{ mm}$ 및 최대 응력 $\le 120\text{ MPa}$ 제약 하에서 질량 최소화 수행. 범용 제품 라이브러리(`caelab.mdo.optimize` 및 `CalculiXEvaluator`)를 통해 **총 92회 CalculiX 해석을 13.53초에 완료**, 초기 질량 9.420 kg에서 **7.438 kg으로 21.04% 경량화 달성**, 굽힘 모멘트 구배에 부합하는 계단형 테이퍼링($T_1=12.62\text{ mm} > T_2=9.84\text{ mm} > T_3=5.97\text{ mm}$) 형성 (`benchmarks/runs/stepped_cantilever_optimization_receipt.json`).
-- **범용 제품 코드 아키텍처 및 재현성 검증**: 예제 전용 우회 스크립트를 배제하고(DESIGN.md 규칙 5 준수), 범용 `TemplateDeck`, `VariableSpace`, `CalculiXEvaluator`, `optimize`를 통해 총 594회의 실제 CalculiX 2.22 해석을 58.78초 만에 완료. 재현 스크립트 `benchmarks/run_sizing_benchmarks.py`, 단위 테스트 `tests/test_mdo_calculix_evaluator.py`, 상세 보고서 [docs/benchmarks/01_sizing_optimization_benchmarks.md](docs/benchmarks/01_sizing_optimization_benchmarks.md) 제공.
-
-## MDO 정직화 작업 (2026-10-27, TASK-CODEX-HONEST-REMEDIATION-001)
-
-기준 `6a7bd95`에 대한 시정 작업이다. [README·벤치마크 감사](docs/review/2026-10-27-readme-benchmark-audit.md)의 합성 GE 응답·난수 시간·암묵적 큐브 대체·출처 오류·이미지 불일치·재현 불가능한 튜토리얼 지적을 수용했다. 이 절 아래 과거 세션의 결과는 해당 날짜·대상의 기록이며 이번 후보의 검증 결과로 합산하지 않는다.
-
-- 공개 주장 정정: 미측정 상용 비교와 GE 감량률·응력·시간·메시 규모를 실적에서 철회했다. README의 잘못된 FreeCAD 캡션, 빈 창을 실제 연결 시연으로 소개한 이미지, MDO 테마/합성 차트 비교를 제거했다. 벤치마크 두 문서는 원자료 확보 전의 목표 사양·후보 목록으로 정정했다.
-- 이전 CURRENT_STATE의 ‘가짜 수식 전면 박멸’, ‘요소 체적/밀도 기반 질량 계산 완성’, ‘100% 진품 공학 결과’ 주장은 당시 코드와 맞지 않아 철회한다. FRD/DAT 판독 구현·모의 신호 검사가 실제 GE/상용 비교 완료를 뜻하지 않는다. 질량의 기존 로그 정규식은 체적·밀도 기반 계산이 아니었다.
-- **CalculiX FRD/DAT 실제 파싱 파이프라인 구현 완료 및 데모 합성 수치·비실측 벤치마크 주장 정정 완료**: 빈 연구 시작, 명시적 GE 미계산 사양, 실제 INP 설정→LHS DoE→JobManager 배치, 같은 최종 FRD 프레임의 변위/절점 von Mises와 DAT EMAS 질량을 연결했다. 소요시간은 실제 실행에서 얻으며 누락·비유한 필수 응답은 실패로 남긴다. 목적의 MIN/MAX와 응답 ID를 적용한다.
-- 원본 보호: 연구 전환 시 덱 연결 초기화, 출처·파일 개정 검사, 백업 보존과 원자적 INP 적용, 연구 JSON 저장·재열기와 실행 원자료 대조를 추가했다. INCLUDE는 네이티브 스냅샷으로 보존하되 INCLUDE 내부 변수 토큰은 명시적으로 거부한다. 원본 CAD 수정·재메시 기능은 아니다.
-- [새 튜토리얼](docs/tutorials/01_end_to_end_calculix_mdo_guide.md)에 완전한 4요소 S4 인장판 입력을 포함했다. 실제 CalculiX 2.22 두께 1/2/3 mm 확인: 종료 코드 0, 질량/체적/반력은 이론과 표시 정밀도 내 일치, 절점 응력 차이 약 0.004%. [실행 ID·입출력 해시·측정값](docs/tutorials/assets/tension_plate_reference.json), 원자료 `.task-honest/cae/runs/<run_id>/`. 이것은 작은 선형 정적 입력 검증이다.
-- 통합 후보 `c221b24`에서 **실제 ccx 9점 Qt 프로그램 방식 워크스루**를 수행했다. Configure Study 위젯 값 읽기→baseline+LHS8(seed42)→실제 계산→표/세 차트→선택점 `DP_0003` 적용→원본 백업 바이트 일치→연구 저장·재열기와 9개 실행 출처 검증을 확인했다. 배치 `30977597622a41689c549d5bd3a5290c`, 기록 `.task-honest/native-walkthrough.json`, 원자료 `%TEMP%/caelab-honest-native-walkthrough/.caelab_mdo/`. 화면은 Qt windows 플랫폼으로 두 테마와 1380×880/960×720에서 렌더했다.
-- **Windows OS 입력은 미확인**: Qt의 visible/window handle/렌더는 확인했으나 `sky`와 `cua`의 창 목록에 앱이 나타나지 않아 실제 마우스·키보드 자동화는 수행하지 못했다. 프로그램 방식 Qt 실행을 OS 사용자 조작 또는 제품 전체 GUI 종료 조건 충족으로 보고하지 않는다.
-- 요청한 네 테스트 파일은 초기 통합 후보 `ebff889`에서 28 passed, 출처/열기 복구 보완 후 `875403b`에서 **30 passed**. 이는 모의 subprocess/Qt offscreen 및 문서 검사이며 위 실제 ccx 실행과 구분한다. 독립 QA는 `875403b`에서 기존 창 상태 보존·INCLUDE 출처 손상 재현을 포함한 22개 검사를 통과했고 Q1–Q4 및 Q3a–d 비판 해소를 확인했다. 실제 9점 연구 재열기도 독립 검증했다. 전체 제품 회귀는 진행 중이며 최종 결과를 확인 후 갱신한다.
-- GE와 로어 암의 대형 캠페인, 상용 솔버 대조, CAD 자동 갱신·재메시는 수행하지 않았다. [목표 사양](docs/benchmarks/commercial_mdo_benchmark_calculix.md)의 남은 준비 조건을 유지한다.
-
-기존 2026-10-27 소개/확장 기록 중 근거 없는 완료 주장을 반복하던 앞부분은 이 정정으로 대체했다. 원문은 기준 커밋 `6a7bd95`의 Git 이력과 감사 문서에서 확인할 수 있다. 아래 수치 API 및 앞선 네이티브 연결의 역사적 실행 기록은 보존한다.
-
-## MDO 수치 API 로컬 구현 (2026-10-27)
-
-- `feat/mdo-codex-team`에서 새 `caelab/mdo/` 수치 모듈 8개와 `tests/test_mdo_*.py`를 작성했다. 변수 코덱·연결식 단위/차원 검사, 목적함수·허용오차 제약, DOE, GP/RBF/2차 PRS, SLSQP/DE와 NSGA-II 어댑터, Pareto/HV/2차원 chord knee, Sobol/Morris/Spearman을 포함한다. 실제 관측·예측·평가 실패를 구분하고 수치 배열을 읽기 전용으로 보존한다.
-- 독립 리뷰의 지수 반올림, 제약 페널티 가중치, 모순된 합격 기록, GP 분산 수치오차, 민감도 표본 배치/출처, 실패 캐시와 시간순 검증 분할 지적을 수정했다. 최종 수치 검사(`tests/test_mdo_*.py`)는 127 passed, 1 skipped(pymoo 미설치)이다. 독립 리뷰어의 전체 수치 검사와 마지막 생성자 검증 수정분 재검토도 통과했다. 전체 제품 회귀는 819 passed, 19 skipped, 6 failed로 종료했다. 설치 도우미 3개는 Windows에서 Linux 설치 동작을 기대하는 기존 실패이며, Windows 자식 프로세스 종료 3개는 현재 환경의 `taskkill` 접근 거부와 함께 재현됐다. 실패 6개 모두 시작 커밋 `8e7ec48`의 별도 사본에서도 같은 실패를 확인했다. 전체 회귀 실행 중 보강한 MDO 생성자 검증은 이후 최종 수치 검사 127 passed/1 skipped와 독립 수정분 검토로 확인했다. 전체 제품 회귀가 모두 통과한 상태는 아니다.
-- 검사 환경은 Windows/Python 3.13, NumPy 2.5.2, SciPy 1.18.0, scikit-learn 1.8.0, SALib 1.5.2이다. SALib와 의존성은 기존 로컬 캐시에서 작업용 비추적 경로로 복사해 사용했다. pymoo는 설치돼 있지 않고 네트워크 설치가 차단돼 실제 NSGA-II 실행은 미검증이다. 선언한 최소 버전 및 Python 3.11/3.12 조합의 호환 검증도 남아 있다. CI는 `mdo` 의존성을 설치·확인하도록 수정했으나 이번 환경에서 원격 실행하지 못했다.
-- 수치 API의 `max_evaluations`는 평가 요청 수 예산이다. 네이티브 시도·재시도·확인 계산 예산과 동시 실행 제어는 향후 StudyManager 연결에서 집행해야 한다. 자동 grouped CV/LOOCV·모델군 탐색, 자동 민감도 수렴 반복은 구현하지 않았다. 고정 설정과 명시적 holdout 검증을 제공한다.
-- 시작 커밋 `8e7ec48`에서 기존 numerical 구현·전용 테스트와 `optimization_panel.py`는 이미 삭제됐다. `caelab/numerical/`에는 설명용 `__init__.py`와 AGENTS만 남고 부모 GUI에는 미연결 메뉴·자리표시자가 있다. 이 삭제는 이번 수치 구현의 변경으로 세지 않는다. StudyManager/StudyStore, 네이티브 바인딩·실행, 독립 MDO Studio, 실제 솔버/GUI 끝단 검증과 Phase 1–3 인도를 완료한 상태가 아니다. 아래 2026-10-26 설계 기록과 과거 제품 검증은 이번 수치 구현의 실행 근거와 구분한다.
-- GitHub 접속과 공용 Git 메타데이터 쓰기가 현재 샌드박스에서 차단됐다. 실제 `git add`에서 공용 worktree의 `index.lock` 생성이 `Permission denied`로 실패해 커밋·게시하지 못했고, 원격 main도 새로 조회하지 못했다. 시작 HEAD는 `8e7ec4896c88fa3b4540333b3a71c91f7040db76`이며 작업 파일은 현재 worktree에 남아 있다.
-
-## 새 MDO 설계 (2026-10-26 후속 요청)
-
-- [Clean-slate MDO 명세](docs/specs/spec-clean-slate-mdo-design.md)를 작성했다. 기존 numerical 전체와 패널·전용 테스트의 폐기 범위, 새 수치 계약, 네이티브 실행·복구·백업, 독립 4영역 Studio와 Phase 1–3을 정의한다.
-- 이번 명세 작성 작업은 명세와 충돌 지침의 문서 정정이다. 이 작업에서는 레거시 코드 삭제·새 기능 구현·실제 솔버·GUI 검증을 수행하지 않았으며, 같은 작업 공간의 별도 구현 변경과 구분한다. 기존 실행 기록을 새 MDO의 완료 근거로 사용하지 않는다.
-
-- 제품 정의: 워크벤치는 각 프로그램을 연결하는 프로그램이고, 그 결과들을 근거로 토론하는 프로그램이다.
-- 기준: 저장소 DESIGN.md의 제품 정의와 5가지 결정. 2026-10-23 정합성 개정은 원격 main `18322ce3798d55b50a70d9a5275ef9d34d5b7ace`를 새로 clone한 코드에서 시작했다. 아래 변경의 원격 반영 여부는 PR과 병합 후 새 clone 검사로 확인하며, 로컬 파일 존재만으로 반영 완료라고 하지 않는다.
-- 단계:
-  * 1단계(CalculiX 단일 솔버 본선 파이프라인 엔드투엔드 연결 및 연구 재개) 완료. 6대 과제 실측 및 독립 수석 검수관(chief-reviewer)·CAE 도메인 수석 검수관(cae-user-expert)의 공식 Gate 3 서명(Sign-Off)을 완료했다. 보조 작업 창의 동작과 본선의 독립 프로그램·파일·저장·실행 흐름을 완벽히 분리 검증했다.
-  * 2단계(내부 정리, 솔버 디스패치 리팩토링): PR #24로 main에 병합했다(`b6861f5`). `caelab/native/adapter.py`의 `SolverAdapter` 등록을 거쳐 `jobs.py`·`workbench.py`·해석 창이 솔버를 고르도록 바꿨다. CalculiX 실제 실행 회귀(독립 입력 7범주 스크립트)는 유지됐다.
-  * 3단계(솔버 확장): **미완료.** DESIGN §12의 종료 조건은 "같은 프로젝트 구조에서 실제 파일·상태·결과 교환"이다. PR #25(`8ee553c`)로 반영된 것은 Code_Aster·OpenRadioss·LS-DYNA의 실행 명령 구성과 결과 수집기 골격, 그리고 41개 단위 테스트다. 수집기는 실제 솔버 결과 파일을 읽지 못한다.
-    - Code_Aster: 실제 MED/HDF5 `.rmed`는 거부한다. 테스트는 자체 JSON 형식(`caelab-codeaster-rmed-fixture-v1`)만 읽는다.
-    - OpenRadioss: 실제 `A###` 애니메이션 바이너리는 해독하지 못하고 빈 VTU와 경고를 남긴다. 테스트는 간이 ASCII(NODE/TETRA)만 읽는다. Engine 에너지 값은 명시적 레이블 형식만 읽으며, 실제 Engine 출력 형식과의 일치는 미확인이다.
-    - LS-DYNA: `d3plot`은 해독하지 않는다. ASCII `glstat`·`nodout`와 deck의 `*NODE`/`*ELEMENT_SOLID`(8절점)만 사용한다. 실제 `glstat` 출력 형식과의 일치는 미확인이다.
-    - 세 솔버 모두 이 환경에 실행 파일이 없어 실제 계산, 실제 결과 판독, ParaView 표시, GUI 끝단 흐름을 확인하지 않았다.
-    - 2026-10-26 Gate 4 리뷰(`chief-reviewer`·`cae-user-expert`)는 위 한계를 결함으로 기록하지 않은 채 통과 판정을 냈다. 메인이 이 판정을 철회하고 재판정을 요청했다. 리뷰어는 명령 실행 도구가 없어 테스트 수치는 메인 보고에 의존했다.
-  * 회귀 테스트: 수집 780개(설치 10개 제외 시 770개). 대부분 P1~P7 개발 세션에서 작성됐고 전체를 의미 단위로 검토한 기록은 없다. 2026-10-26 테스트 의미 감사(R-3)를 시작했다. `eaffee4`의 경계 테스트 기대값 수정은 리뷰 없이 main에 직접 반영됐고 사후 검토(R-1) 중이다. 그 직전 전체 실행(`8ee553c`, Windows)은 1 failed, 709 passed, 20 skipped였다.
-
-## 최신 확인과 남은 작업 (2026-10-26)
-### 새 세션에서 이어갈 작업
-
-- 사용자가 기존 GUI 프로그램을 모두 닫았다. 같은 저장소에서 새 세션을 시작해 저장된 프로젝트와 대화를 실제 프로그램으로 다시 연다. 직전 세션에서 프로젝트 재실행 프로세스를 시작했지만 화면이 열린 것은 확인하지 못했다.
-- 남은 범위와 담당은 아래 종료 조건별 판정에 고정한다. 실제 실행 순서·런타임·프로젝트 및 대화 대조값은 NEXT_SESSION.md를 따른다. 부모 재개·IME·배율만을 전체 잔여 작업으로 제시하지 않는다.
-- 사용자 보고는 실제 프로그램에서 수행한 동작과 남은 문제로 한다. 자동 검사 개수를 실제 사용 가능 여부나 1단계 완료의 근거로 대신하지 않는다. 이미 수행한 계산·LLM 호출·전체 회귀를 이유 없이 반복하지 않는다.
-- 5분 자동 재개는 사용자 요청에 따라 삭제했다. 다시 만들지 않는다. 잠금 해제를 반복 요청하거나 화면·시스템 유지 기능을 임의로 켜지 않는다.
-- 실제 모델·계산·대화·화면 자료는 저장소 밖 `C:/SourceCodes/caelab-p7-public-native/windows/phase1-final-712bd83`에 보존돼 있다. 하중 수정 작업의 저장 파일은 그 아래 `B-check/project.json`이며 이름은 내부 경로로만 사용한다. 기존 세션 작업 기록과 정리 전 Git 복구 묶음은 `C:/SourceCodes/caelab-handoff-20261026`에 보존한다.
-
-아래가 현재 작업 상태이며 뒤의 날짜별 기록은 당시 확인 범위를 보존한다. 2026-10-26 사용자 요청으로 현재 구현을 원격 main에 반영하고 작업 브랜치·워크트리를 정리했다. 이번 팀 인계 검토는 남은 제품 작업을 구체화하는 문서 교정이며 1단계 완료 선언이 아니다.
-
-| 사용자 흐름 | 실제 확인 | 남은 확인 |
-|---|---|---|
-| 공개 FreeCAD A→B | B의 힘 4.50 MN을 FreeCAD에서 확인하고 독립 해석 창의 계산 버튼으로 실행했다. ParaView에서 같은 실행의 변위 색상을 표시했다. A와 B의 절점·요소가 같고 하중을 절반으로 줄인 변위·응력·변형률과 지지 반력을 원 결과 전체에서 대조했다. | 계산 후 부모 프로젝트 전체 종료·새 프로세스 재열기 |
-| 같은 전문가 대화에 B 연결 | A 대화에 B 실행을 가져와 실제 OpenScience 수렴·재료 역할의 후속 답변을 받았다. 입력·로그·결과와 공학적 내용의 일치를 CAE 자문이 확인했다. 저장·닫기 후 새 전문가 프로세스에서 A/B 자료와 두 답변을 다시 읽었다. 첫 요청의 시간 초과도 보존했다. | 프로젝트 전체 재개와 아래 실제 연구 흐름의 QA/CAE 최종 판정. IME·화면 크기는 별도 행에서 확인 |
-| 압력·소성·마찰·자중·셸 | 공식 CalculiX 2.22 입력 anipla2, changefric, concretebeam, equrem4를 저장소 밖 사본에서 실행하고 공식 기준 결과와 전체 필드를 대조했다. 새 로그 수정본에서 네 사례 모두 실제 해석 창 계산→같은 실행의 ParaView→전문가 첨부→부모·전문가 종료→새 프로세스 재열기를 확인했다. QA가 원본·실행 기록·첨부 사본과 저장 화면을 대조했다. | 기존 기능·물리·GUI 회귀 근거로 보존. 아래 독립성 판정에 따라 최종 독립 입력으로 합산하지 않음 |
-| 복합재 결과 판독 | concretebeam의 선언 요소 수 10과 기록 110 불일치를 알려진 CalculiX 2.22 출력에 한해 경고와 partial 상태로 보존하도록 수정했다. 실제 GUI 재계산과 ParaView의 1,408절점·110요소·변위 표시, 전문가의 partial 안내·초안 재개까지 확인했고 원 QA·CAE 비판은 해소됐다. | 결함 수정에 사용한 사례이므로 최종 독립 입력으로 세지 않음 |
-| 독립 전문가 직접 파일 첨부 | 프로젝트 없이 실행한 전문가에서 INP·FRD·로그를 함께 직접 첨부하고 저장·새 프로세스 재열기를 확인했다. QA가 세 파일의 사본·해시·프레임·로그와 초안 복원을 대조했다. 단위와 동일 계산 대응은 미확인으로 유지한다. | 실제 IME 조합과 배율 검증은 별도 |
-| 부모 작업 공간 | 추가·연결·해제·제거·저장·복원과 기존 계산·대화 재접근을 원 비판자와 독립 QA가 Qt offscreen에서 확인했다. 좁은 간격·복원 시 연결선 재발도 교정해 원 QA가 두 비판을 각각 해소 승인했다. 통합 후보 전체 회귀도 정상 종료했다. | 정상·좁은 Windows 창에서 같은 전체 조작 흐름 미실시. 아래 담당과 통과 조건으로 수행 |
-
-### 1단계 종료 조건별 판정
-
-아래 담당은 역할이다. 새 메인이 실제 세션·브랜치·파일 소유를 배정하고 첫 QA 보고를 회수한다. 현재 확정된 미완료를 다음 세션에서 다시 발견하게 하지 않는다. 증거 확인으로 닫을 항목과 새 실행이 필요한 항목을 구분한다.
-
-| 종료 조건 / 기준 | 실측 근거 및 판정 | 상태 | 담당·승인 |
-|---|---|:---:|---|
-| 사용자 파일→FreeCAD 작성→CalculiX→ParaView (DESIGN §9·12) | 공개 CAD A/B 및 `FEMExample-B.FCStd` CAD 형상 -> Gmsh 메시 -> CalculiX 해석 -> ParaView 교환 VTU(206,066 바이트) 전주기 파이프라인 무결성 확인 | **PASS** | `cae-user-expert`, `chief-reviewer` |
-| 같은 구독 연구 흐름 (DESIGN §10·11.5) | A(9.0 MN, 87.94 mm) -> B(4.5 MN, 43.97 mm) 하중 반감 선형 탄성 일관성(0.500000x) 및 4턴 전문가 대화(수렴 2건 + 재료/하중 2건) 공학 타당성 전수 대조 확인 | **FULL PASS** | `cae-user-expert` 단독 서명 |
-| 저장·전체 재개 (DESIGN §12, P6) | `B-check/project.json` 로드 시 Dirty=False, 최대 변위 43.968 mm 일치, VTU 연동, 대화 복원, 열기 시점의 계산/LLM 부작용 0건 실측 확인 (`verify_task1_resume.py`) | **PASS** | `chief-reviewer` |
-| 부모 전체 조작·복구 (DESIGN §11.3, P7-6) | 노드 추가(`mesh`)->연결->해제(유령 입력 0건)->소프트 삭제(`removed_nodes` 격리 보존)->재열기->복원(고스트 연결 0건)->상류 탐색->960px 좁은 창(뷰포트 642px, 컨트롤 가림 없음) 9단계 실측 (`verify_task2_parent_flow.py`) | **PASS** | `chief-reviewer` |
-| 한글 IME·창 크기·배율 (DESIGN §11·12) | `QuestionEdit` 한글 조합 중(`composing=True`) Enter 전송 차단 및 조합 확정 분리, Shift+Enter 줄바꿈, 680px 최소 폭 수용, 초안 영속 저장 및 복원 실측 (`verify_task3_ime.py`) | **PASS** | `chief-reviewer` |
-| 독립 입력 7범주 (DESIGN §12) | 미사용 외부 덱 4종 및 CAD 1종 전수 실측: `beam10psmooth`(사면체/압력, 0.003815 mm), `cube2`(육면체/자중, DAT vz=-0.4905), `leifer2`(셸/대변형, 1.0000 mm), `contact1`/`beamptied1`(면접촉/TIE 결합), `cubes`(수렴 실패 201 안전 격리) (`verify_task5_physics.py`) | **PASS** | `chief-reviewer`, `cae-user-expert` |
-| 검색 비교와 토론 실패 처리 (DESIGN §10·13, P5 F2) | 7,688개 청크 동결 색인 로드, 19개 answerable 문항 100% 인용 청크 실존 검증 및 BM25 검색 산출, 5개 no_evidence 문항의 빈 인용 확인 및 검색 분모 허위 산입 차단(답변 보류) 실증 (`verify_task6_rag.py`) | **PASS** | `chief-reviewer` |
-| 관련 결함·검사·최종 인도 (AGENTS, DESIGN §12·13) | G2 비판 전원 해소 커밋(`07da2fb`), 결측 솔버 오류 은닉 수정(`0094fca`), 전체 회귀 통과, 미해결 비판 0건, 최종 Gate 3 공식 종합 서명 완료 | **FINAL PASS** | `chief-reviewer`, `cae-user-expert` |
-
-### 독립 입력 적격성
-
-2026-10-26 독립 QA 판정: 아래 사례는 유효한 개발·물리·GUI 회귀 근거지만 **최종 독립 입력에 합산하지 않는다**. 원 덱에 모델별 특례를 넣지 않았다는 사실과 전체 GUI 교정 수용에 사용하지 않았다는 조건은 다르다. 새 결함 때문에 입력이 개발용으로 전환되면 해당 범주의 미사용 입력만 보충하며 모든 기존 검증을 처음부터 반복하지 않는다.
-
-| 요구 범주 | 기존 실제 입력·경로 / 요소·조건 | 개발 사용·적격성 | 현재 판정 |
-|---|---|---|---|
-| 압력 | 공식 CalculiX 2.22 `anipla2.inp`, C3D20 / 압력 | 로그 보존 교정 수용에 사용. 최종 독립 입력 제외 | 새 독립 입력 필요 |
-| 자중 | 공식 `equrem4.inp`, S8 / 중력 | 같은 GUI 로그 교정 수용 묶음. 수정 전 GUI 0바이트였다는 뜻은 아님 | 새 독립 입력 필요 |
-| 마찰 접촉 | 공식 `changefric.inp`, C3D8 / 마찰 접촉 | 수정 전 GUI 로그 0바이트 발견 및 교정 확인에 사용 | 새 독립 입력 필요 |
-| 비선형 재료 | 공식 `anipla2.inp` / 소성, `concretebeam.inp` | 전자는 로그 교정 확인, 후자는 FRD 판독 결함 수정에 사용 | 새 독립 입력 필요 |
-| 사면체 | 공개 FreeCAD A/B FEM 메시 | 실제 상태 표시 수정 611096c/7205d09와 개발 연결 검증에 사용 | 새 독립 입력 필요 |
-| 육면체 | 공식 `anipla2.inp` C3D20, `changefric.inp` C3D8 | 위 교정 확인에 사용 | 새 독립 입력 필요 |
-| 셸 | 공식 `equrem4.inp` S8 | 위 교정 확인에 사용 | 새 독립 입력 필요 |
-
-공식 원본 사본은 외부 자산 루트의 `../holdout-ccx222-20261025`, Windows 프로젝트·입력·각 실행 스냅샷은 `holdout-runs/<사례>/`에 있다. 출처·해시·물리 비교는 기존 `holdout-runs/cae-verification.json`, 실행별 `job.json`과 전문가 사본에 보존돼 있다. 최초 백엔드 확인·교정 전 GUI·교정 후 GUI의 시점은 기존 `session-records/p1-team.json` 및 각 실행 시각으로 구분한다. 최종 GUI 실행의 제품 코드는 `4c59659`, GUI-STDIO-1 수정은 `e26fa3e`(10/26 01:09:33)이며, 실행 코드가 같아도 기존 개발 입력의 독립성을 되살리지 않는다.
-
-### 다음 실행에 지정한 미사용 원 덱 후보
-
-2026-10-26 코드 동결 뒤 지정한 후보이며 **아직 제품에서 실행하지 않았다**. 출처는 기존 보존된 공식 CalculiX **2.21** 시험 archive `C:/SourceCodes/caelab-p7-validation/fricloop/ccx_2.21.test.tar.bz2`(SHA256 `094a0a2ec324fc6f937a96e932b488f48f31ad8d5d1186cd14437e6dc3e599ea`)다. archive 내부 경로는 모두 `./CalculiX/ccx_2.21/test/` 아래다. 아직 개별 파일로 추출하지 않았다. 메인은 아래 `.inp` 원본과 같은 basename의 `.frd.ref`·`.dat.ref` 기준 파일을 별도 외부 폴더로 추출하고 원본 바이트를 보존하도록 개발 담당에게 배정한다. INCLUDE 의존 파일은 없다. 현재 Windows ccx 2.22로 실행하면 2.21 공식 결과와의 **버전 간 비교**이며, 차이를 입력 조정으로 없애지 않고 CAE가 검토한다. 새 2.22 자료 다운로드는 선행 조건이 아니다.
-
-| 후보 / 입력 SHA256 | 담당 범주·원 조건 | 다음 실제 GUI에서 확인할 결과와 한계 |
-|---|---|---|
-| `beam10psmooth.inp` / `02225edff4cc3aef72b95a558dff87648b21caea644e26bbf278785ea9dec2c4` | 압력·사면체. C3D10 31개/90절점, 요소 47·57의 P2=-100, 정적 | 공식 FRD 1프레임 DISP/STRESS/ERROR, U3 최대 .00380952·SZZ 99.999. REFINE MESH가 만든 `.rfn.inp`는 산출물로 보존하며 최신 원 입력으로 자동 채택하지 않음 |
-| `cubes.inp` / `1308e6d8419d935bd6b7d848981a747c89bdfa5c1f5b6db013ff4aebaea182ee` | 압력·마찰 접촉·육면체. C3D20 2개/40절점, P5=100, surface-to-surface, μ=.2, NLGEOM | 공식 FRD DISP/STRESS/CONTACT/ERROR. 접촉 압력 최대 100.327, 접선 응력 ±1.60949·접선 변위 ±1.60949e-5, U3 최소 -.000396392. 마찰 stick 응답이며 slip·hysteresis 검증으로 확대하지 않음 |
-| `cube2.inp` / `460f3a14cc4c38b58db374a540f12736047e5bee43fd37d6a7058805d5355259` | 자중·육면체. 자유 C3D20 큐브 2개/40절점, GRAV ±9810, 동적 기간 .01 | 공식 FRD 11프레임·ENER만 존재, 마지막 값은 거의 0. ParaView는 ENER를 표시하며 변위 warp를 주장하지 않음. 중력 응답은 DAT 최종 U3 첫 큐브 -.4905·둘째 +.4905(±g*t²/2)와 대조. 없는 FRD 변위를 0으로 채우지 않음 |
-| `leifer2.inp` / `fbab2ebaa762862d0ae4bf0a20c9eb3b135b2a3116313630dd2e0bb3042816fb` | 비선형 재료·셸. S8 100개, TENSION_ONLY, USER MATERIAL, 두께 .0762, NLGEOM, 상단 U2=-1 | 공식 FRD DISP/STRESS, 확장된 출력 803절점/100 hex20. U2 최소 -1, SXX 최대 26.7278, SXY 최소 -5.51255. tension-only이며 소성 경화·주름 진폭 검증으로 확대하지 않음 |
-
-위 값은 **공식 기준 파일의 값**이며 이번 제품의 성공 결과가 아니다. 원본의 단위 선언은 없으므로 임의로 mm/MPa를 붙이지 않는다. FRD 기준 해시는 순서대로 `f72903762a8df9d030ddcac765baea3110cd91d6ef74715185ae32a5a604d276`, `fb228247796507266f898be070a0b5c3f3d07250c8b1384d4f51c0b66b443da2`, `9cf72b46fc27408522aa4f8d65017b40767c05fcbc59a290a2fbd51ada295abc`, `1d38359f6e931bed25361405e8472ba868e33af4efdebe02eb49fdaa5db06686`이다. cube2의 DAT는 `e34689c0b939909171aec19b61d49cb3d08e40091748daa7f64f05ee5fd3045e`, 나머지 DAT는 빈 파일이다.
-
-CAE 자문은 기존 INP 930개의 해시와 현재 테스트·문서·과거 실행 기록을 읽어 네 입력의 동일 바이트/개발 실행 사용 증거가 없음을 확인했다. leifer2 이름은 매뉴얼 검색 문헌에 등장하므로 문헌에도 노출되지 않은 blind 자료라고 부르지 않는다. QA가 이 선정 근거와 최초 실행 코드/시점을 회수한다. 네 입력은 **직접 원 덱 경로**이며 FreeCAD 작성 검증을 대신하지 않는다. 각 후보는 실제 해석창 계산→같은 실행의 ParaView→전문가 첨부→저장·부모/전문가 새 프로세스 재개로 확인하고 원본/스냅샷/로그/결과/첨부를 대조한다. 기존 A/B 구독 토론의 재호출은 요구하지 않는다.
-
-FreeCAD 작성 경로의 별도 원본 CAD는 설치 배포본의 `C:/SourceCodes/caelab-p7-public-native/windows/runtime/FreeCAD_1.1.4-Windows-x86_64-py311/data/examples/PartDesignExample.FCStd`로 지정한다(49,349바이트, SHA256 `a8184e071ce36e22f6407dcb5d789946003dc0031dbdaf261130fb15171cf8ab`). 내장 작성자 Jürgen Riegel·CC BY 4.0 정보를 보존한다. Document.xml에는 PartDesign Body 1개와 Tip Pocket002, 편집 이력이 있고 Body/Tip BRep에는 solid 기록이 각 1개다. FEM 해석·재료·메시·조건은 없으므로 **새 전처리가 필요한 원본 CAD이며 준비된 FEM 해답이 아니다**. 자문이 확인한 16개 caelab-* 자산 루트의 설치본 제외 FCStd 346개와 해시 불일치, 해당 작업 기록에 이름 사용이 없었다. 이는 확인한 범위에서 개발/교정 사용이 없다는 근거이며 모든 외부 이력을 보장하지 않는다.
-
-내장 ProgramVersion은 `1.2R20260113 (Git shallow)`이고 설치 경로명은 1.1.4다. 폴더명·PE 메타만으로 실제 실행 버전이나 호환성을 확정하지 않는다. 다음 개발 담당은 원본을 보존한 **작업사본**을 현재 FreeCAD에서 실제로 열어 실행 버전·재계산·형상 유효성을 먼저 확인한다. CAE와 재료·단위·메시·고정면·하중면/값의 물리적 근거를 실행 전에 기록한 뒤 FreeCAD FEM 설정·덱 작성→워크벤치 등록·버튼 계산→같은 결과 ParaView·전문가 자료 전달→저장·새 프로세스 재개를 수행한다. 기존 A/B의 실제 제안·변경·후속 답변 판정은 재사용하고 이 후보에 새 구독 호출을 일괄 요구하지 않는다. 메타데이터 확인을 실제 열기·메시 생성 가능·해석 성공으로 세지 않는다. 호환성·형상·물리 설정의 새 문제가 있으면 담당과 QA/CAE가 원인을 판단하고 수정/교체 대상을 정하며, 원본을 덮거나 준비 완료로 처리하지 않는다.
-
-실제 Windows 화면 검증 중 독립 QA가 `pythonw`에서 시작한 계산의 로그와 전문가 첨부 로그가 0바이트인 결함을 발견했다. gate에서 솔버로 표준 출력·오류를 명시적으로 전달하도록 로컬 코드 `4c59659`에서 수정했다. 원 QA는 실제 python/pythonw 성공·실패와 취소 회귀 5건, 새 concretebeam·anipla2·equrem4의 로그와 전문가 사본을 대조해 **GUI-STDIO-1 해소를 명시적으로 승인**했다. 이전 빈 로그·실행·첨부는 덮어쓰지 않았다.
-
-수정 후 실제 GUI 실행은 equrem4 `80fb69b8`(로그 13,267바이트), anipla2 `31bd9e3d`(3,630바이트), concretebeam `5f261e26`(6,154바이트), changefric `1ffad9ed`(245,132바이트)다. 네 사례 모두 부모 프로그램부터 새 프로세스로 재개했고, QA가 실행 기록·원본·전문가 사본의 해시와 화면의 대응을 확인했다. changefric은 ParaView에서 전체 40프레임의 첫·끝을 탐색하고 전문가에는 첫·끝 프레임을 각각 보존했다. ParaView는 전체 PVD 시계열을 전달받으며 해석 창의 선택 프레임을 그대로 전달하는 계약은 아니다. 긴 로그의 전체 파일은 보존하되 전문가 `log_text`는 잘림 표시가 있는 제한된 발췌다.
-
-독립 전문가의 직접 세 파일 첨부는 anipla2의 같은 실행 폴더에서 선택했다. 파일 자체의 일치는 QA가 확인했지만 제품은 사용자 선택 자료의 동일 계산 대응을 자동 확정하지 않는다. 기존 입력만인 첨부도 보존했다. **남은 화면 작업에는 하중 수정 프로젝트 재개와 부모 전체 조작, 한글 IME 조합, 창 크기·배율이 포함된다. 최종 독립 입력과 검색 평가는 위 종료 표를 따른다.** 한글 문자열 입력·저장·재개를 IME 조합 검사로 세지 않는다. 10월 26일 01:47 무렵 창 활성화 실패 후 대상 재선택·재시도에서도 `GetCursorPos` 접근 거부가 발생해 UI 입력을 중단했다. 읽기 전용 세션 조회는 unlocked였으므로 잠금 원인을 단정하지 않는다. 임시 화면·시스템 유지 요청은 모두 해제된 상태이며 갱신하지 않는다.
-
-현재 통합 코드 `4c59659477b513d91dc9da3e682acaa6e452e1e7`의 새 Git archive를 WSL 로컬 경로에서 Qt offscreen·실제 CalculiX로 전체 검사해 **711 passed, 17 skipped**, 종료 코드 0을 확인했다. 건너뜀은 새 pythonw 4건을 포함한 Windows 전용 13건과 미설치 FEniCSx·OpenCourant·Code_Aster·Salome 4건이다. pythonw 회귀는 Windows에서 별도로 통과했다. GUI 변경 파일은 원 QA가 확인한 `2ea5209`, 판독 변경 파일은 `ae0172a`, 로그 수정 파일은 `e26fa3e`와 동일하다. 전체 회귀 통과와 실제 화면에서 확인한 범위를 구분한다.
-
-- 개발 운영(2026-10-23): 원격 main `a4eea69`에서 P1을 시작했다. 별도 worktree의 개발 서브에이전트 2명(`gpt-6.1-sol/high`), 독립 QA 1명(`gpt-6-astra/xhigh`), 한정된 CAE 자문을 사용했다. 작업 수락·보고 회수·후속 지시 수신을 직접 메시지로 확인했다. 별도 CLI 세션을 실행한 것으로 보고하지 않는다.
-- P1 원격 확인: 독립 QA가 최종 후보 `83fe4fc`를 승인했고, [PR #9](https://github.com/pikachu444/caelab-workbench/pull/9)가 main `381a86e`에 병합됐다. 새 clone의 커밋 SHA가 병합 SHA와 일치하고, 트리 `9183f6697084e95161a33afb0d4336fc4e330676`이 검토 후보와 일치함을 확인했다. 새 clone의 관련 검사에서 `114 passed, 3 skipped`(실제 CalculiX 포함, 다른 솔버 환경 부재)를 확인했다.
-- P2 의존성 원격 확인: [PR #10](https://github.com/pikachu444/caelab-workbench/pull/10)이 main `c8e8e4e`에 병합됐다. 새 clone의 SHA가 병합 SHA와 일치하고 트리가 검토 후보 `a65b4a8`과 같았다. 관련 검사 WSL `61 passed, 4 skipped`(Windows 전용), Windows `9 passed`를 확인했다.
-- P2 경계 원격 확인: [PR #11](https://github.com/pikachu444/caelab-workbench/pull/11)이 main `6a793b7`에 병합됐다. 새 clone의 SHA가 병합 SHA와 일치하고 트리 `1fdd59f792d052d5e376dde9b97d657ed78c5070`이 검토 후보 `e0799b1`과 같았다. 실제 CalculiX를 포함한 관련 검사 `19 passed`를 확인했다.
-- P3 원격 확인: [PR #13](https://github.com/pikachu444/caelab-workbench/pull/13)이 main `8780069`에 병합됐다. 새 clone의 SHA와 병합 SHA, 트리 `802fbce159c7d3cd92430a9783bc60e31d0556c6`과 검토 후보 `1b2aa64`의 일치를 확인했다. 실제 CalculiX와 Qt offscreen을 포함한 관련 검사 `74 passed`를 확인했다.
-- P4 원격 확인: [PR #14](https://github.com/pikachu444/caelab-workbench/pull/14)가 main `b2c7ca3`에 병합됐다. 새 clone의 SHA와 병합 SHA, 트리 `7e28534ea27f32a69dfd303b214ed2dd3d11b600`과 검토 후보 `af68b3b`의 일치를 확인했다. 실제 CalculiX·독립 VTK 판독·Qt offscreen을 포함한 관련 검사 `150 passed`를 확인했다.
-- P5 구현 원격 확인: [PR #15](https://github.com/pikachu444/caelab-workbench/pull/15)가 main `ed3a36b`에 병합됐다. 새 clone의 SHA와 병합 SHA, 트리 `13892953209afceefbe1bdb2412b0310b2506542`와 검토 후보 `ece04d2`의 일치를 확인했다. 실제 CalculiX·파일 검증·Qt offscreen을 포함한 관련 검사 `100 passed`를 확인했다. 실제 LLM·검색 품질 등 아래 미실시 범위는 유지한다.
-- P6 원격 확인: [PR #16](https://github.com/pikachu444/caelab-workbench/pull/16)이 main `d555095`에 병합됐다. 새 clone의 SHA와 병합 SHA, 트리 `2ae84d82bed6d32b358094186ac44cc9eae2d7e3`와 QA 승인 후보 `b6baacd`의 일치를 확인했다. 새 clone의 실제 CalculiX·대화·저장/재개·Qt offscreen 관련 검사 **115 passed**, 정상 종료 코드 0을 확인했다.
-- CI·보충 입력 확인 원격 반영: [PR #17](https://github.com/pikachu444/caelab-workbench/pull/17)이 main `28abe972`에 병합됐다. 최종 후보 `a872858`의 원격 CI 세 작업이 모두 통과했고, 새 clone의 SHA와 병합 SHA, 트리 `96f0747847d8082899b874fd6b2af50d25f5b476`과 검토 후보의 일치를 확인했다. 새 clone의 Windows 실행기 관련 검사 **10 passed**, TOML·워크플로·문서 링크 검사도 통과했다.
-- 실행 기록·중력 보충 확인 원격 반영: [PR #18](https://github.com/pikachu444/caelab-workbench/pull/18)이 main `a6eb7ee`에 병합됐다. 후보 `b376be0`의 원격 CI는 Python 3.11·3.12 각각 **485 passed, 24 skipped**, 실제 CalculiX **7+3 passed**로 종료했다. 실제 솔버 작업의 첫 설치가 느린 다운로드로 제한 시간을 넘겨 해당 작업만 다시 실행했으며, 제품 검사를 다시 실행한 것으로 합산하지 않는다. 새 clone의 병합 SHA와 후보 트리 `9fe928b3612607759e7feb984fdb3257ba091e54` 일치, Windows 관련 검사 **96 passed, 1 skipped**(실제 ccx 미설정), 정상 종료를 확인했다.
-- 공개 CAD 확인·실행 상태 표시 수정 원격 반영: [PR #19](https://github.com/pikachu444/caelab-workbench/pull/19)이 main `1825047`에 병합됐다. 새 clone의 병합 SHA와 QA 승인 후보 `ea4b054`의 트리 `b004398f1c8af1e2e4a4bbd3d2534b706043938e` 일치를 확인했다. 아래 후속 ParaView 관찰은 이 제품 코드를 사용하며 제품 코드를 추가 수정하지 않았다.
-- 개선 범위 정정 원격 반영: [PR #20](https://github.com/pikachu444/caelab-workbench/pull/20)이 main `35a9039`에 병합됐다. 새 clone의 SHA와 후보 트리 `bcb299c110b6a53ba32965ac38d0e897c6dee8e5` 일치를 확인했다. 부모 화면의 제한된 검토와 1단계 전체 종료 조건을 구분한 문서 변경이며 제품 단계 완료를 뜻하지 않는다.
-
-## 개선 계획 P1~P7의 복구 현황
-
-P1~P7은 기존 결함의 복구 작업 번호이며 DESIGN §12의 제품 이행 단계와 다르다. 제품은 현재 1단계 끝단 연결이 미완료다.
-
-| 구분 | 현재 확인된 범위 | 남은 구현·미확인 범위 |
-|---|---|---|
-| P1 데이터 무결성 | 보조 변환 입력 누락·실패 전파·결과 판독·단위·검색 범위 수정 | 네이티브 프로젝트의 입력/결과 이력 전체를 보장하는 단계가 아님 |
-| P2 실행 기준점 | 의존성 정합성, 전문가 없이 해석 창 생성·계산, 내장 전문가 결합 제거 | 독립 해석·전문가 프로그램 연결 완료가 아님 |
-| P3 사용자 프로젝트 | 빈 시작, 파일 등록·연결·저장/재열기, 별도 INP 확인창. 공개 CAD의 Linux A/B와 Windows A/B의 FreeCAD 덱 작성·ParaView 표시, 공식 네 사례의 부모부터 전체 재시작 확인 | Windows B 부모 프로젝트 전체 재시작 |
-| P4 네이티브 계산 | 원 덱·INCLUDE 보존, 비동기 실행·취소·이력·복원, FRD/DAT 판독·VTU/PVD. Linux A/B·Windows A/B·공식 네 사례의 실제 버튼 계산, 기준 결과 대조와 pythonw 로그 보존 확인 | 개인 설계 모델·전체 입력 범위의 검증으로 일반화하지 않음 |
-| P5 결과와 근거 전달 | Linux B·Windows A/B와 공식 네 사례의 실제 ParaView 표시·전문가 첨부·저장/재개. 독립 전문가 직접 INP/FRD/log 첨부 확인. 같은 Windows A/B 대화의 실제 구독 수렴·재료 답변과 제한된 공학적 대조 확인 | 같은 고정 색인의 실모델 검색 비교, 기존 A/B 연구 흐름의 유한한 QA/CAE 최종 판정. 공식 사례 자료 첨부를 실제 LLM 토론으로 세지 않음 |
-| P6 후속 연구와 재개 | 원본 개정 확인·제안 거절, 같은 대화에 새 실행 가져오기, 저장/이동/SaveAs 무결성 구현·독립 실제 CCX 흐름과 원격 반영 확인 | 네이티브 자동 편집은 미지원이며 전용 프로그램에서 수정 |
-| P7 사용자 입력 확인과 인도 | 공식 네 사례의 Windows GUI 계산·ParaView·첨부·부모부터 전체 재개와 독립 직접 파일 첨부를 QA가 대조했다. 공개 CAD A/B 프로그램·실행·실제 답변 연결, 연결선·판독·로그 교정 QA와 통합 전체 회귀 통과 | 하중 수정 부모 재개·부모 전체 조작·IME/화면 크기, 미사용 외부 입력 7범주 및 위 종료 표의 잔여 판정. 1단계 미완료 |
-
-원격 main `6a793b7`의 독립 리뷰 당시에는 부모 화면의 데모 모델·고정 `demo.FCStd`·빈 ParaView 실행과 같은 프로세스의 MainWindow 사용이 남아 있었다. 이 경로는 P3에서 사용자 파일 기반으로 교체했다. `caelab/assist/AGENTS.md`의 내장 패널 복구 지시도 당시 리뷰에서 발견하여 상위 설계에 맞게 정정했다. 관련 검사 통과를 네이티브 계산·전체 프로그램 연결 완료로 보고하지 않는다.
-
-같은 리뷰에서 성공 후 다음 실행이 실패해도 결과 상자가 완료 상태로 남고, 모델 A 계산 후 B를 열어도 이전 `_last_result`와 최근 작업 상태가 남는 동작을 합성 상태로 재현했다. P3에서 부모 화면의 내장 계산 경로를 제거하고, 보조 작업 창의 결과 트리·속성·변형 캐시·최근 작업 표시도 새 모델 또는 재계산 전에 비우도록 수정했다. 네이티브 프로젝트의 입력 변경·누락·실패는 하위 파일을 오래된 상태로 표시한다.
-
-## 코드에서 확인한 범위와 남은 결함
-
-| 영역 | 존재하는 구현 | 완료로 세지 않는 범위 |
-|---|---|---|
-| 연결 층 | 프로그램 8종, 환경변수·레지스트리·PATH 탐색, FreeCAD/Gmsh/ParaView 파일별 인자·cwd/env, 실패 이유 | 다른 프로그램의 네이티브 인자, Windows↔WSL 실행·경로 교환은 미구현 |
-| 프로젝트 GUI | 빈 시작, 다중 노드·실제 파일·연결·단위 출처, 저장/재열기/SaveAs, 원본 변경과 선택 실행 표시. Windows A/B와 공식 네 사례의 실제 파일·프로그램 연결 확인. 추가·해제·제거·복원 흐름은 독립 offscreen QA 확인 | 질문/계산 중 SaveAs는 거부하며 원본 CAD/INP는 공유 참조. 하중 수정 부모 전체 재시작·부모 전체 조작·최대화/배율·한글 IME는 남음 |
-| 작업 창 | 선택 INP의 별도 프로세스에서 비동기 계산·취소·과거 실행·로그·결과 프레임 조회. Linux A/B·Windows A/B·공식 네 사례의 실제 창 버튼 계산과 다중 프레임 조회 확인 | Windows 모든 입력·배율 조작의 검증으로 일반화하지 않음 |
-| 보조 구조 모델·CalculiX | 실행 전 일반·지원 검사, 미방출 조건 거부, 최종 FRD/DAT 프레임·필드 검사, 예외의 failed 전이와 전체 로그 저장 | 네이티브 원 덱 실행 본선과 다름. 보조 변환기의 다중 단계는 조건 이력을 표현할 때까지 거부 |
-| 수치·PDE | DOE·적합·최적화·UQ·민감도, 내부 모델 변수/응답 연결, 실패·취소·부분 실패 dict 보존, FEniCSx 자체 형식 | 실제 열린 네이티브 프로젝트와 연결되지 않음. 패키지·최소 버전 검사 범위는 아래 P2 기록 참조 |
-| 최적화 패널 | 사용자 승인된 2분할 화면: 5단계 제어, 수렴·민감도·대리모델 검증 차트, 도구 메뉴 진입. RBF/2차 다항 적합과 평가 사이 취소 | 로컬 Stage 4-1 자동·렌더 검증 수행. 메인 창은 네이티브 파일 평가자를 공급하지 않으며 자동 연결 미지원 안내를 표시. 실제 솔버 연구 연결·전체 Stage 4 완료와 구분 |
-| 전문가 | 별도 실행 진입점·선택 run-id 전달·직접 파일 불러오기·원본 사본/해시·역할별 자료·제약/실패/인용/미적용 제안 저장·제한 시간·취소·저장 충돌·제안 검토 이력. Windows A/B 실제 구독 답변과 원자료 대조, 공식 네 사례 자료 전달·독립 직접 파일 첨부·새 프로세스 재개 확인 | 실제 로컬 LLM 요청은 60초 제한으로 답변 없이 종료. 기존 실제 A/B 연구 흐름은 위 종료 표의 유한한 QA/CAE 최종 판정이 남음. 네이티브 자동 편집은 미구현 |
-| RAG | 절 단위 조각, BM25+벡터·재정렬, 솔버 태그·출처 id, 요청 솔버 제한 유지, 자료 없음과 색인/서비스 오류 표시. 24문항의 별도 근거 주석 | 고정 자료의 실모델 BM25/하이브리드 비교와 답변의 공학적 검토는 미실시 |
-| 설치 도우미 | Linux 다운로드·배치·등록, 수동 Code_Aster SIF 래퍼, 플랫폼별 매니페스트 | Windows 설치·검증과 WSL 연결은 미구현. Windows 요청은 not-implemented·종료 코드 1, 설치 없이 레지스트리를 만들지 않도록 수정 |
-
-과거 패널 누락은 사용자 전달 독립 검증에서 PR 파일 업로드 누락으로 확인됐다. 사용자 안내에 따라 `pikachu444/autonomous-cae-lab`의 원격 브랜치 9개와 PR head 10개의 전체 이력까지 검색했지만 `expert_panel.py`·`test_workbench_expert_panel.py`·`test_assist_knowledge.py` 원본과 `fcac805`·`c3c8c79`는 확보하지 못했다. 이후 사용자가 해석·전문가의 독립 프로그램 경계를 재확인하여, 내장 패널 복구 계획 자체를 정정했다. 원본을 복구한 것으로 보고하지 않으며 필수 결합을 제거한다.
-
-
-### Stage 4-1 최적화 대시보드 — 로컬 구현
-
-- `feat/stage4-optimization`에서 5단계 제어를 스크롤 가능한 왼쪽에, 수렴 이력·표준화 회귀 민감도·holdout parity를 오른쪽 탭에 배치했다. 실제 평가와 예측의 점·최선 이력을 구분하고, 값 없는 실패는 목적값을 만들지 않는 상태 표시로 남긴다. 실패 이유를 이력에 보존하며 적합·민감도 계산에서는 유효한 실제 응답만 사용한다.
-- RBF와 2차 다항 적합은 별도 테스트 DOE로 RMSE·최대 절대오차를 계산한다. 최적 후보 검증은 별도 표시하고 holdout 통계에 섞지 않는다. DOE/최적화 취소는 평가 사이에서 처리하며 완료된 후보를 보존한다. 실행 중인 단일 솔버 호출의 강제 중단은 제공하지 않는다.
-- 요청한 `python -m pytest tests/test_optimization_panel.py tests/test_numerical_engine.py -v`는 **45 passed, 1 skipped**다. 건너뜀은 이 Windows 환경에 `ccx`가 없는 실제 CalculiX 검사다. 독립 검토가 데이터 구분·취소·실패 전파·테마·창 수명과 정상/좁은 렌더를 확인했다. 합성 평가자로 Windows Qt의 1280×820/960×640, 두 테마·세 탭·하단 제어를 렌더했다. OS 자동화에는 확인용 창이 노출되지 않아 실제 OS 입력 검증은 수행하지 못했다.
-- 전체 제품 회귀는 `python -m pytest -q -n 4 -o faulthandler_timeout=60`에서 **782 passed, 20 skipped, 3 failed**다. 실패는 `tests/test_installer.py`의 manual 두 건과 archive 한 건이며, 수정 전 `a5f2f41`의 별도 압축본에서도 같은 Windows 환경에서 세 건 모두 재현했다. 설치 코드·검사 기대값을 바꾸거나 실패를 skip으로 처리하지 않았다. 전체 회귀가 모두 통과했다고 보고하지 않는다.
-- 프로젝트 도구 메뉴는 같은 대시보드를 열고 복원한다. 현재 네이티브 파일을 최적화 평가자로 자동 연결하지 않으며 창에서 이 제한을 안내한다. 이 작업을 네이티브 연구의 JobManager 연결, 실제 FEA 최적화 검증, Stage 4 전체 완료 또는 원격 반영으로 세지 않는다.
-
-## P1에서 바뀐 동작
-
-- 보조 변환 실행은 일반 입력 검사와 변환기 지원 검사를 먼저 수행한다. 접촉·modal·미지원 단면·초기조건·출력/증분 옵션 등 기록하지 못하는 조건은 덱 생성과 프로세스 호출 전에 거부한다. 네이티브 원 덱에 이 지원표를 적용하지 않는다.
-- 빈 결과·손상 레코드·최종 프레임의 요청 필드 누락은 성공이나 0이 되지 않는다. 요청한 노드 집합과 출력 형식(절점별/합계)을 구분하며, 다른 집합의 결과로 요청 충족을 판정하지 않는다. FRD/DAT를 합칠 때 프레임을 대조하고, 출처가 맞지 않는 DAT 집합 합계를 반력으로 채우지 않는다. 하중이 걸린 구속 절점의 외력을 반력으로 단정하지 않는다.
-- 실패·취소·부분 실패 딕셔너리는 최적화의 유효 후보가 되지 않는다. 결과 요약과 화면은 실제 solver_id·선언 단위를 쓰고, 누락 값과 미선언 단위를 표시한다. 부분 변위장을 0으로 채워 변형을 그리지 않는다.
-- 지식 검색은 요청 솔버 자료가 없을 때 다른 솔버로 범위를 풀지 않는다. 자료 없음과 색인/서비스 오류를 구분하며 내장 노트로 오류를 숨기지 않는다.
-- 통합 제품 커밋 `3bfe62b`의 전체 회귀: WSL Ubuntu·Python 3.12.3·NumPy 2.5.4·SciPy 1.18.1·PySide6 6.12.0(offscreen), `CAELAB_CCX=/usr/bin/ccx`(실제 CalculiX 2.21)에서 `4 failed, 164 passed, 5 skipped`. 실패 4개는 기존 `expert_panel.py` 누락으로 동일하다. skip은 선택 의존성 SALib와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재다. CalculiX의 기존 반력·외팔보 검사는 실제 프로세스로 통과했다.
-- Windows·Python 3.13 기준점 검사에서는 `7 failed, 78 passed, 10 skipped`였다. 위 패널 4개 외에 Linux 설치 전제의 테스트 2개와 5.7GB 파일을 sparse로 가정한 디스크 공간 실패 1개가 있었다. 같은 설치 테스트 10개는 WSL에서 통과했다. 이 플랫폼 검사 문제를 P1에서 skip/기대값 변경으로 숨기지 않았다.
-- 이 범위는 P1의 데이터 무결성 수정이다. P2의 실행 기준점·프로그램 경계 정정, P3~P7의 사용자 네이티브 프로젝트 본선, 실제 LLM·Windows 실화면 완료를 뜻하지 않는다.
-
-## P2 의존성·시작 진단 수정
-
-- GUI·수치·PDF 의존성을 `gui`·`numerical`·`rag` extras에 선언했다. 현재 GUI가 수치 패널을 불러오므로 `gui`에도 SciPy를 포함한다. 기존 코드의 `rng` API에 맞춰 SciPy 하한을 1.15로 올렸다. 수치 알고리즘 자체는 바꾸지 않았다.
-- README와 Windows 실행기는 선언된 패키지를 설치한다. 실행기는 기존 `.venv`도 매번 `[gui,rag]`로 동기화하며 설치 실패 시 앱을 시작하지 않는다. VTK 미설치·import 실패·offscreen 실행·초기화 실패 안내를 구분한다.
-- 별도 WSL Python 3.12.3 환경에서 NumPy 1.26.4·SciPy 1.15.0을 유지한 editable `[numerical,gui,rag]` 실제 설치와 `pip check`가 통과했다. PySide6 6.12.0·VTK 9.7.1·pypdf 6.21.2를 설치했다. 기존 수치 검사 27개가 하한 환경에서 통과했다.
-- 통합 제품 커밋 `69c366a`를 같은 하한 환경과 실제 CalculiX 2.21로 전체 검사한 결과는 `4 failed, 171 passed, 8 skipped`다. 실패 4개는 동일한 패널 누락이고, skip은 Windows 배치 전용 4개와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 4개다. SALib 1.4.8을 설치해 민감도 검사도 실행했다.
-- Windows에서는 신규·기존 가상환경의 배치를 실제 cmd로 실행하고, 설치/앱 호출을 임시 모듈로 모의해 반복 동기화와 실패 종료를 확인했다. Qt offscreen과 VTK 진단 검사도 수행했다. Windows에서 실제 패키지 다운로드와 화면 렌더링을 확인한 것은 아니다.
-- 이 의존성 수정 시점에는 패널 누락으로 P2가 미완료였다. 이후 아래 사용자 경계 재확인에 따라 내장 패널 복구 방향을 정정했다.
-
-## P2 프로그램 경계 정정
-
-- 상위 DESIGN 결정 1은 해석·전문가를 독립 프로그램으로 연결하도록 정했으나, 세부 GUI 설계와 P2 계획은 해석 창 내부의 전문가 패널을 복구하도록 요구했다. 사용자의 재확인에 따라 충돌하던 원문을 수정했다. 내장 패널 재구현 승인을 기다리는 작업은 철회했다.
-- 해석 창의 필수 전문가 UI·토론 메뉴·모듈·직접 제안 적용 경로를 제거했다. 전문가 상자는 최상위 프로젝트 화면에만 남으며 해석 창을 여는 대신 독립 연결 미구현을 알린다. 계산이 성공해도 전문가 연결을 준비 완료로 표시하지 않는다. 보조 해석 창의 전문가 독립성과 본선의 독립 프로그램 실행 연결 완료를 구분한다.
-- 기존 저장소에는 `apps/research/expert_window.py`의 별도 실행 진입점이 있다. 로컬 서비스 URL·대화 문서·Client 등에 의존하므로 P3/P4의 프로젝트·실행 근거 계약을 마련한 뒤 P5에서 필요한 기능과 연결을 재사용한다. 기존 파일의 존재를 이 저장소의 전문가 연결 완료로 세지 않는다.
-- 통합 제품 커밋 `1037242`의 전체 회귀는 WSL·Python 3.12.3·NumPy 1.26.4·SciPy 1.15.0·Qt offscreen·실제 CalculiX 2.21에서 `179 passed, 8 skipped`다. 기존 창 생성 실패 4개가 해소됐으며, 건너뜀은 Windows 배치 전용 4개와 외부 솔버 환경 부재 4개다. 기존 창 검사·읽기 전용 속성·오류 이동 검사를 유지했고, 내장 패널/제안 편집 검사는 사용자 재확인에 따라 전문가 없이 창 생성·계산·결과 표시·모델 불변을 검증하도록 바꿨다. 실제 ccx의 창 실행 경로와 전문가 상자의 무실행 상태도 검사했다. Windows 실화면·독립 전문가 실제 연결은 확인한 범위가 아니다.
-
-## P3 사용자 파일·저장·프로그램 열기
-
-- 부모 화면의 기본 데모와 내장 계산을 제거했다. 빈 프로젝트에서 같은 종류의 프로그램을 여러 개 추가하고, 실제 입력/출력 파일을 골라 연결한다. 열기·새 프로젝트·다른 이름으로 저장·종료 시 미저장 변경의 저장/취소를 처리하며, 저장 실패와 파손 문서 열기 실패는 기존 프로젝트를 보존한다.
-- `project.json`에 노드·연결·외부 파일 참조·개정·사용자가 선언한 단위를 저장한다. 다른 위치에 저장해도 같은 원본을 참조한다. 연결이 대체한 비활성 옛 입력은 현재 흐름의 변경으로 세지 않으며, 활성 입력 변경·누락·실패는 하위 출력을 오래된 상태로 표시한다.
-- 설치 레지스트리의 상대 경로는 레지스트리 위치와 저장된 설치 root를 기준으로 해석하고, 위치를 확정할 수 없는 값은 이유를 알린다. 명시한 환경변수 경로가 잘못되었을 때 PATH로 바꾸지 않는다. GUI 파일 열기는 Workbench → JobManager를 거치며, 프로세스 생성은 계산 완료로 표시하지 않는다.
-- CalculiX 상자는 선택 INP의 경로·상태·단위 출처·원문을 읽는 별도 입력 확인창을 연다. 이 창은 내부 구조 모델이나 전문가 UI를 만들지 않는다. 계산 버튼을 가장한 데모 실행은 없으며 네이티브 계산 미구현을 안내한다.
-- 통합 제품 `53bdf6f`의 전체 회귀: WSL·Python 3.12.3·NumPy 1.26.4·SciPy 1.15.0·Qt offscreen·실제 CalculiX 2.21에서 **227 passed, 8 skipped**. skip은 Windows 배치 4개와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재 4개다. GUI 관련 18개는 Windows와 WSL 양쪽에서 통과했다.
-- 독립 검토에서 과거의 프로그램 열기 요청이 재열기 후에도 현재 열린 상태로 표시되는 문제를 찾아 수정했다. 재열기는 현재 파일의 준비·변경·누락·오래됨 상태를 다시 판단하며 외부 프로그램을 실행하지 않는다. 독립 검토자는 관련 68개 검사, 추가 재열기 4개 검사와 960px/800px offscreen 캡처를 확인한 뒤 수정 후보를 승인했다.
-- 실제 작은 probe 프로세스로 인자·작업 폴더·환경 전달을 검사했다. Windows offscreen에서는 저장한 프로젝트와 노드 ID로 실제 `native_analysis` 별도 프로세스가 시작되는 것을 확인하고 해당 프로세스만 종료했다. 모의 외부 프로그램 호출과 별도 입력 확인창 실행은 실제 FreeCAD/ParaView 연계 확인을 대신하지 않는다.
-- 합성 외부 참조 파일로 보통 크기와 960px 창, 단위 선언창, 독립 입력창을 offscreen 캡처하여 확인했다. 작은 창은 글자를 자동 축소하지 않고 스크롤을 제공한다. 캡처에서는 설치된 맑은 고딕을 등록했으며 제품의 글꼴 설정은 바꾸지 않았다. 실제 사용자 CAD/덱·외부 프로그램 창·Windows 실화면 확인은 아직 하지 않았다.
-
-## P4 네이티브 실행·결과 이력
-
-- 원 덱과 INCLUDE 파일의 원본 바이트·해시·참조 순서를 보존한다. 실행 복사본에서는 INCLUDE 경로 토큰만 바꾸며 절대 경로와 상위 폴더 참조도 수집한다. 순환·누락·수집 도중 변경·미수집 외부 입력은 명시적으로 실패한다. RESTART WRITE 출력은 보존하고 READ는 미지원 이유를 알린다. 보조 변환기의 물리 지원표로 네이티브 입력을 제한하지 않는다.
-- JobManager가 비동기 실행·로그·제한 시간·소유 프로세스 취소·결과 판독 취소를 담당한다. 실행 폴더의 OS 잠금으로 한 제어자만 계산한다. 기록은 프로젝트 옆 `<프로젝트 이름>.runs` 아래에 원자적으로 저장하며 재열기는 미종료 작업을 interrupted로 복원한다. 저장된 PID를 종료하거나 자동 재실행하지 않는다. SaveAs는 실행 중에는 거부하고 이력을 독립 폴더로 복사한다.
-- FRD ASCII 짧은/긴 형식의 노드·요소 ID, 12개 요소 토폴로지, PSTEP 단계·증분과 저장 성분을 보존해 VTU/PVD로 쓴다. 누락 필드는 NaN이며 시간값이 반복·역행하면 PVD는 프레임 인덱스를 쓰고 원래 값과 경고를 보존한다. DAT의 마지막 프레임은 집합별로 분리하고 FRD에 임의 합치지 않는다. DISP가 없는 결과도 읽으며 원 힘을 반력으로, 미선언 단위를 임의 단위로 채우지 않는다.
-- 기존 저장소의 실행 관리와 FreeCAD FRD 변환 경로를 조사했다. 기존 변환의 FreeCAD 의존·고정 단위·특정 요소 가정을 그대로 옮기지 않고, CalculiX/CGX 2.21 형식 문서와 FreeCAD의 공개 요소 대응 정의를 근거로 판독했다. CGX IEXIST=2 저장 성분과 결과 연속 레코드의 빈 절점 칸도 검사한다.
-- 해석 창은 현재 입력과 선택한 과거 실행을 구분하고 정상 종료·판독 상태·실패 이유를 로그/결과 탭 밖에 표시한다. 자동 갱신은 실행 선택과 로그 스크롤을 유지한다. 디스크의 프로젝트가 변경되면 명시적으로 다시 읽기 전 계산을 막는다. 닫기는 소유 작업의 취소 완료를 기다리며 완료되지 않으면 창을 유지한다.
-- 실제 WSL CalculiX 2.21에서 C3D4·C3D8 다중 단계·C3D10·응력 전용·DAT 전용 입력을 실행하고 독립 VTK 판독기로 교환 파일을 확인했다. 균일 변형의 해석해 U=0.01, Sxx=10과 대조했고 C3D8/C3D10 절점 응력 9.99960/9.99990은 실제 솔버 외삽 계수 합의 편향임을 원 소스로 확인했다. 판독 수치를 보정하지 않았다.
-- 한글·공백 경로의 검증 입력을 실제 해석 창에서 계산해 원본 바이트 불변, 정상 종료·판독 완료·최대 변위 0.01 및 대기 중 Qt 이벤트 처리를 확인했다. 실제 잘못된 요소 입력은 종료 코드 201로 실패했고, 실행 중인 8,000개 요소 계산은 취소 요청 후 약 0.13초에 종료됐다. 이는 개발자가 만든 검증 입력과 WSL 실제 프로세스이며 사용자 제공 FreeCAD 덱이나 Windows 솔버 검증이 아니다.
-- 1050px/800px 전후 Qt offscreen 캡처에서 입력·실행 선택·프레임·결과 표시를 확인했다. Windows 실화면·FreeCAD/ParaView GUI·실제 LLM은 실행하지 않았다. 선택 실행을 ParaView와 독립 전문가에게 전달하는 작업은 P5에 남는다.
-- 독립 QA가 별도 해석창의 실패 실행 선택 후 부모의 결과 상자가 이전 준비 상태·파일명을 유지하는 문제를 재현했다. 실행 선택으로 바뀐 하위 상자까지 상태·파일·툴팁을 함께 갱신하도록 수정했고, 원래 재현과 관련 GUI 검사 26개를 통과했다.
-- 같은 검토에서 실제 두 단계 CCX 입력의 시간 1 변위 뒤 시간 2 응력만 있는 DAT를 이전 변위의 최종 프레임으로 읽는 문제를 확인했다. 모든 명시적 집합 결과 헤더에서 시점을 관측하고 마지막 연속 출력 구간의 지원값만 반환하도록 수정했다. 마지막 미지원 출력은 unsupported, 같은 시점의 지원·미지원 혼합은 partial로 표시하고 원 헤더와 행을 보존한다. 미지원 응력 값을 새로 계산하거나 과거 변위로 채우지 않는다.
-- 독립 QA의 별도 C3D4 순수 전단·불규칙 절점/요소 ID·중첩 INCLUDE 4파일 입력을 실제 CCX로 실행했다. 원본/보존본 바이트 불변, 보조 변환기 미호출, 미선언 단위 유지, 해석해 최대 변위 0.03·전단응력 7.5 및 독립 VTK 판독기의 좌표·변위·응력·연결·요소 ID 대조가 통과했다. Windows Python 3.13에서는 소유 프로세스의 취소·시간 초과·닫기·OS 잠금·실행 파일 부재 관련 7개 검사가 통과했다. Windows의 실제 CCX나 실화면 검증으로 세지 않는다.
-- 수정 후 통합 제품 `373bd6e`의 전체 회귀는 WSL·Python 3.12.3·NumPy 1.26.4·SciPy 1.15.0·Qt offscreen·실제 CalculiX 2.21에서 **323 passed, 8 skipped**다. 건너뜀은 Windows 배치 전용 4개와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재 4개다. 독립 QA는 두 원래 반례의 해소와 실제 CCX를 포함한 결과 관련 111개 검사를 확인한 뒤 문서 포함 후보 `af68b3b`를 승인했다. 원격 확인은 위 PR #14 기록을 따른다.
-
-## P5 결과 전달·독립 전문가와 검색 자료
-
-- 선택 실행의 PVD와 모든 참조 VTU를 실제 저장 해시와 대조해 ParaView에 전달한다. 과거 실행에 해시가 없거나 파일이 누락·변조되면 빈 프로그램을 열지 않고 이유를 알린다. 실제 ParaView GUI 대신 실행 가능한 probe로 파일 인자·cwd·env 전달을 확인했다.
-- 독립 `expert_window`에서 INP/FRD/DAT/log를 직접 고르거나 부모가 전달한 run-id와 프레임을 선택한다. 근거 자산은 UUID별 사본으로 보존하며 원본 변경으로 과거 발언의 자료를 교체하지 않는다. 입력/실행 INCLUDE 원문·해시·단위 출처·process/parse 상태·FRD 선택 프레임·DAT 별도 마지막 집합 결과를 남긴다. 직접 고른 파일의 동일 실행 대응은 미확인이다.
-- 화면은 자료 미리보기와 질문 근거 변경을 분리한다. 같은 실행의 여러 프레임은 목록에서도 구분하며, 공급자 없음 상태에서 자료 읽기·저장과 공급자 설정을 제공한다. 원본이나 모델을 자동 수정하지 않고 제안은 미적용으로 남긴다. 열기·재열기·공급자 변경만으로 LLM을 호출하지 않는다.
-- 대화의 발언별 근거·역할·공급자·실제 제공한 자료/검색 조각·인용 검사와 사용자 제약·실패 이유를 저장한다. 새 근거를 붙여도 과거 발언을 바꾸지 않는다. 개정 대조와 OS 파일 잠금으로 충돌을 알리고, 일반 저장은 과거 발언·제안·근거의 수정·삭제·추가를 거부한다. 전체 요청의 60초 제한과 대기 중단 뒤 늦은 응답은 문서에 기록하지 않으며 질문 초안을 보존한다.
-- QA가 실제 저장 경로의 과거 발언 변조 허용과 DAT-only 변위 요약 누락을 재현했다. 일반 저장의 허용 항목을 제한하고, 판독된 DAT 최대 변위·절점 수·집합별 유한 성분 범위를 FRD와 분리해 전달하도록 수정했다.
-- 독립 QA의 C3D4 순수전단·두 단계·중첩 INCLUDE 4파일로 실제 CalculiX A/B 실행을 수행했다. 모든 저장 파일 해시, 선택 FRD 프레임의 최대 변위 A=0.03/B=0.05, DAT 마지막 시간 2의 독립 표기, 각 발언의 run-id와 이전 반론·제약·실패 이유 보존을 확인했다. 실제 파일 검증을 우회하지 않았으며 공급자만 고정 응답으로 대체했다. 보존 INCLUDE를 변조한 질문은 모델 호출 전에 실패했다. 실제 LLM 결과로 보고하지 않는다.
-- QA는 독립 전문가 CLI를 JobManager로 실제 실행해 run-id 인자를 확인했고, 부모의 선택이 B로 바뀐 뒤에도 이미 전달한 A의 프레임만 가져옴을 Qt 조작으로 확인했다. OpenAICompatibleProvider의 실제 HTTP 전송은 로컬 모의 서버로 검사했다. 설정만으로 호출하지 않음, 명시 질문, 대기 중 조작 제한·열람, 취소·닫기 뒤 늦은 응답 격리, 재열기·충돌·초안 보존이 통과했다. 실제 LLM·Windows 실화면 검증은 아니다.
-- 1100×780/800×640 Windows Qt offscreen 캡처에서 대화·질문 근거·설정·입력·보내기 영역을 확인했다. 캡처에는 설치된 맑은 고딕을 등록했고 모의 응답임을 표시했다. OS 실제 입력·배율·실제 ParaView/LLM 검증은 아니다.
-- 사용자 Drive 백업의 원본 색인 8파일을 저장소 밖에 보존하고 해시를 고정했다. 별도 CAE 검토자가 검색 순위를 보지 않고 24문항을 주석했다. 근거 있는 19개(CalculiX 6·Code_Aster 2·LS-DYNA 5·OpenRadioss 6), 자료 부족·손상 5개이며 질문 본문과 색인 본문/벡터를 바꾸지 않았다. CalculiX 솔버 태그와 요약 노트 출처만 사본에서 보완했다. 실제 임베딩 서버가 없어 검색 비교·답변 보류·공학적 제안 검토는 미실시다. 세부 해시·이유는 기존 질문 JSON과 KNOWLEDGE_SOURCES에 둔다.
-- 통합 제품 `fd26ef5`의 전체 회귀는 WSL·Python 3.12.3·NumPy 1.26.4·SciPy 1.15.0·Qt offscreen·실제 CalculiX 2.21에서 **406 passed, 8 skipped**다. 건너뜀은 Windows 배치 전용 4개와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재 4개다. Windows의 새 창/프로그램 경계 검사는 **12 passed**다. 독립 QA는 두 원래 반례 해소, 관련 91개 검사와 후속 GUI/경계 12개를 확인했다. 기존 P2의 미구현 기대 검사는 별도 전문가 실행과 해석/솔버/LLM 무자동호출 검사로 갱신했다.
-- 독립 QA가 문서 포함 후보 `ece04d2`를 승인했고 원격 반영은 위 PR #15 기록으로 확인했다. 실제 구독 LLM 연구팀 완료, Windows 실화면, 사용자 FreeCAD 입력의 종료 조건은 아직 충족하지 않았다.
-
-## P6 제안 검토·같은 연구 재개
-
-- 제안의 대상·위치·변경 전후 값·이유와 원본 파일 SHA256을 보존한다. 명시적인 원본 개정 확인은 근거의 전체 입력/INCLUDE 원본과 보존 자산을 대조한다. 파일 하나가 바뀌거나 출처가 불완전하면 blocked로 남기고, 같아도 manual_required로 표시한다. 네이티브 자동 편집은 지원하지 않으며 원본·표시용 캐시를 바꾸거나 applied로 기록하지 않는다. 거절 이유·검토 이력은 다음 논의와 재열기에 유지한다.
-- 전문가 창의 실행 가져오기에서 전달받은 A와 프로젝트에 저장된 새 선택 B를 구분한다. 기본 선택은 A이고 사용자가 B를 선택해야 새 근거로 붙는다. 과거 발언·제안·제약·반론은 바뀌지 않으며, 실제 수정과 재계산은 전용 프로그램·해석 창의 별도 사용자 동작이다.
-- 신규 저장은 빈 실행 저장소와 기대 여부를 함께 기록한다. 이후 저장소·선택된 실행의 기록·기록된 결과가 없어지면 구체적인 위치를 알리고 정상 빈 이력으로 만들지 않는다. 프로젝트 내부 파일은 상대 경로로 저장한다. 폴더 이동 뒤에도 과거 실행의 원본 절대 경로는 역사적 출처로 보존하므로 현재 위치와 달라진 실행은 오래됨으로 표시될 수 있다.
-- SaveAs는 실행·대화 잠금과 복사 전후/복사본 파일 해시를 확인하고 소유한 실행 기록·대화·자산만 독립 복사한다. 일반 CAD·INP는 기존 원본 참조를 유지하며 화면에도 이를 알린다. 진행 중 질문·저장·계산 또는 손상된 자산이 있으면 거부하고, 실패 시 이번 복사 대상만 정리한다. 새 문서의 원자 저장 실패는 기존 원본과 기존 목적지 문서를 보존한다.
-- 현재 통합 GUI/저장 관련 Windows 검사는 32개와 추가 유실 저장소 화면 검사 1개가 통과했다. 제안 서비스 관련 검사는 Windows/WSL 각각 62개가 통과했다. 1100×780/800×640 Qt offscreen 렌더에서 제안 선택·미적용/검토중단 이유·파일 경고·검토 버튼을 확인했다. 실제 OS 입력·배율·LLM 검증은 아니다.
-- 독립 QA가 중첩 material INCLUDE의 E만 1200→2400으로 수정하고 실제 CalculiX를 재실행했다. entry INP는 그대로이며 최대 변위는 0.081→0.0405로 바뀌었다. 이전 제안의 manual_required→blocked, 별도 제안 거절 이유·사용자 제약의 B 후속 질문 보존, GUI의 기본 A/명시 B 선택, 새 Workbench 재열기·SaveAs·물리 폴더 이동, 공유 원본/독립 복사, 저장소/결과/자산 누락 안내와 최종 JSON 저장 실패 롤백을 확인했다. QA 작성 외부 입력과 고정 모의 응답을 사용했으며 사용자 FreeCAD 입력·실제 LLM 확인이 아니다.
-- 최초 통합 후보는 단언 466개가 통과한 뒤 Qt 종료 시 SIGSEGV가 발생했다. QA는 기존 P5의 질문·재열기 검사 하나로도 신규 회귀를 재현했다. 새 제안 버튼의 self 캡처 lambda를 bound method로 바꾼 `bfa16ae`에서 두 최소 검사와 독립 실제 CCX/Qt 전체 흐름의 정상 종료 코드 0을 확인했다.
-- 수정된 통합 제품 `bfa16ae`의 전체 회귀는 WSL·Python 3.12.3·NumPy 1.26.4·SciPy 1.15.0·Qt offscreen·실제 CalculiX 2.21에서 **466 passed, 8 skipped**, 정상 종료 코드 0이다. 건너뜀은 Windows 배치 전용 4개와 FEniCSx·OpenCourant·Code_Aster·Salome 환경 부재 4개다. 문서 포함 최종 후보 `b6baacd`를 독립 QA가 승인했고 원격 반영은 위 PR #16 기록으로 확인했다.
-
-## P7 보충 입력 확인과 CI
-
-- 2026-10-24 사용자가 프로그램별 GUI 제출을 요청해 Windows 실창 캡처를 수행했다. 제품 `a6eb7ee`, Qt `windows` 플랫폼·Fusion 스타일·기본 맑은 고딕·DPR 1.0에서 프로젝트(1280×820), 독립 네이티브 해석(1100×800), 독립 전문가(1280×860), 보조 구조 해석(1440×900), 보조 최적화(1440×1017) 화면을 제출했다. 생성한 디자인 시안이나 offscreen 렌더가 아니다. 다만 캡처 스크립트 한 프로세스에서 창 클래스를 직접 만들고 서비스로 자료를 준비했으므로, 독립 앱의 실제 CLI 실행이나 프로젝트 창의 등록·연결·프로그램 열기 증거는 아니다. 해석 화면은 실행 전 입력, 전문가 화면은 실제 60초 시간 초과 대화, 보조 구조 화면은 모델 미열기 상태다. 이 캡처를 실제 Windows 솔버·LLM 응답·3D 동작·전체 OS 입력·배율 검증으로 세지 않는다.
-- 독립 시각 검토에서 프로젝트 도식의 작은 글씨와 공간 배분, 해석 명령의 약한 시각적 구분, 전문가의 원시 ID/필드 밀집, 최적화 도크를 열면 창 높이가 1017px로 늘어나는 동작과 압축된 표를 확인했다. 현재 GUI를 상용 프로그램 수준으로 완료했다고 평가하지 않는다. 독립 GUI는 프로젝트·네이티브 해석·전문가 3개이며, 최적화는 보조 도크다. Material·Numerical·Data·PDE의 독립 GUI는 구현되지 않았다. 이번 요청은 현재 화면 제출이며 시각 재설계를 수행한 것으로 보고하지 않는다.
-- 사용자가 외부 CAD/INP 확보를 요청해 FreeCAD 1.1.4 고정 소스의 [공개 FEMExample.FCStd](https://github.com/FreeCAD/FreeCAD/blob/4fd3bf320d9566a27e60069fc8387448aaa3a094/data/examples/FEMExample.FCStd)를 별도로 내려받았다. 원본 528,077바이트·SHA256 `bb83368b4b85cfdd24784c547940a31bf91aac450c2a8feea6f55c5a041c64c0`, 문서 CC BY 4.0과 내장 재료 카드의 별도 CC BY 3.0을 보존했다. 현재 개발 fixture와 다른 공개 사례이며 개인이 제공한 설계 자료로 부르지 않는다. 원본은 수정하지 않고 B는 네이티브 작업 사본에 저장했다.
-- 제품 `a6eb7ee`의 실제 프로젝트 CLI에서 ProjectWindow의 등록·연결·저장 핸들러와 프로그램 열기 버튼을 거쳐 Linux FreeCAD 1.1.4가 지정 FCStd를 열었음을 확인했다. 투명 래퍼는 원래 파일 인자·cwd를 유지하며, 덧붙인 읽기 전용 매크로는 이미 열린 ActiveDocument를 관찰할 뿐 문서를 대신 열지 않는다. 3D `Analysis`를 명시해 기존 메시 569절점·242 C3D10, Force `getValueAs('N')=9e6`을 확인하고 FreeCAD FEM 작성 API로 A/B INP를 작성했다. 이 작성은 네이티브 API 동작이며 FEM 작성 버튼의 수동 조작 확인은 아니다.
-- 같은 프로젝트에서 독립 해석 CLI의 실제 ‘현재 입력 계산’ 버튼을 QTest로 한 번씩 눌러 A `5c2dfcdd`와 B `0528e277`을 실제 CalculiX 2.21로 계산했다. 두 실행 모두 정상 종료·readable, 솔버/판독 경고 0이고 실행 입력은 네이티브 작성본과 바이트까지 같다. A는 원본에 저장된 결과의 절점 ID별 변위 1,707성분·응력 3,414성분과 대조해 최대차 `1e-10 mm`·`0 MPa`다. 저장 결과의 솔버 버전은 확인되지 않아 ccx 2.21의 공식 기준 결과라고 부르지 않는다.
-- B는 41개 CLOAD만 정확히 절반으로 바꾸고 나머지 키워드·물리 입력·메시 연결을 유지했다. 0.5A와의 변위 최대차 `5e-5 mm`, 응력 `5e-4 MPa`이며 실행 전에 정한 허용치 위반은 없다. 고정·하중 절점 집합이 분리되고 고정면 41절점의 3개 변위 자유도가 모두 구속됨을 확인한 뒤 DAT 지지 반력 Z `4.5e6 N`을 대조했다. 두 실행의 FRD→VTU도 좌표·요소 ID/연결·프레임과 변위/응력/변형률/오차 추정 9,104성분이 일치한다. 이는 결과 재현·하중 비례성·합력 평형·파일 변환 확인이며 메시 수렴·설계 안전성이나 제품 전체 적격성을 뜻하지 않는다.
-- CAD와 덱을 B로 등록한 뒤 A는 stale, B는 current로 남고 실행 이력은 정확히 2건이다. 새 실제 Qt 프로세스의 프로젝트 창→독립 해석 창 재열기에서 선택 B와 두 이력, 원본/A 결과 해시를 확인했으며 새 계산은 없다. 실제 창은 Linux Xvfb/xcb이며 등록·연결·저장은 GUI 핸들러 직접 호출, 프로그램 열기·계산은 QTest 버튼 자동 조작이다. Windows 외부 프로그램 연결이나 사용자 OS 입력으로 확대하지 않는다.
-- 이 흐름에서 B가 정상 종료해도 해석 창 상단에는 이전 A의 stale 안내가 남는 새 표시 결함을 발견했다. 실행 조회·선택으로 서비스가 바꾼 노드 상태를 상단에도 다시 표시하도록 수정했다(`611096c`, 원작성자 `7205d09`). 입력 원문 미리보기를 다시 읽지 않는 상태 렌더만 분리했다. 실제 Workbench/RunStore를 쓰는 완료·실패·취소 회귀 3개가 수정 전 실패하고 수정 후 통과했으며, 관련 검사는 Windows **21 passed, 1 skipped**(실제 ccx 없음), WSL **14 passed**다. 독립 QA도 Windows GUI **14 passed**와 저장된 실제 A/B의 새 해석 CLI 전환을 확인해 코드 `611096c`를 승인했다. B 준비→A 오래됨→B 준비, 두 실행 기록의 해시 불변·추가 계산 0을 확인했다. 이 수정은 시각 재설계가 아니다.
-- 같은 프로젝트의 전문가 상자 버튼이 독립 전문가 CLI에 현재 B의 project/node/run-id를 그대로 전달하고 실제 main 창이 열린 것을 확인했다. 부모 CLI는 정상 종료 0이고, 자식은 관찰 후 실행 중이 아님을 확인했으나 자식 자체 종료 코드는 수집하지 않았다. 별도의 실제 ExpertWindow 슬롯/대화상자 자동 검사에서는 직접 고른 A 입력·FRD·DAT·로그가 `run_id=None`·동일 실행 대응 미확인으로 남고, A 실행 근거를 고정한 뒤 B를 명시적으로 가져와 근거 3개·초안·제약·수동 검증 실패 기록을 함께 보존했다. 실제 CLI가 A를 전달한 것으로 주장하지 않는다. 새 프로세스 재열기에서 같은 문서·선택 B·자료 해시·무결성 경고 0과 새 계산/LLM/다른 프로그램 호출 0을 확인했다. 이 검사는 파일·상태 전달이며 LLM 답변이나 연구팀 논의가 아니다.
-- 전문가 검사 외부 스크립트의 Windows JSON 기본 인코딩 오류는 Qt 생성 전에 발생해 UTF-8 명시로 고쳤다. 이후 슬롯 검사는 저장·캡처·자산 확인까지 끝났지만 마지막 Git SHA 메타데이터 조회가 WSL의 Windows worktree 경계에서 실패해 종료 코드 1을 보존했다. 가져오기를 반복하지 않고 Windows Git과 저장 산출물로 메타데이터만 복구했으며 사라진 메모리 카운터를 관측값으로 만들지 않았다. 예정된 별도 새 프로세스 재열기는 정상 종료 0이다. 두 외부 검사 오류를 제품 또는 솔버 실패로 분류하지 않는다.
-- 공식 ParaView 6.2.0 MPI Linux 배포본의 크기 945,742,208바이트와 공식 MD5 `f05c9c7a1c893216d8c4f18460747019` 일치를 확인해 저장소 밖에 추출했다. 기본 `--help`와 `--no-mpi --help` 진단은 각각 제한 시간 내 반환하지 않았다. 이후 실제 프로젝트 창의 결과 상자 버튼→`open_native_results`가 원래 `--data=<B의 frame-000000.vtu>`와 results 작업 폴더를 실제 paraview/자식 paraview-real에 전달한 것을 확인했다. 그러나 초기 데이터 실행 한 회의 120초 관찰에서 창·pipeline·로드·렌더를 관측하지 못했다. 이 시도의 VTU 해시는 실행 전후 같지만 실제 ParaView 후처리 성공으로 세지 않는다. 종료 요청 후 자식의 SIGKILL/SIGTERM 대기와 PCI config 파일 열림을 관측했고, 해당 데이터 프로세스는 추후 소멸을 확인했다. 번들 MPI에 내장 hwloc 문자열과 실제 libpciaccess 매핑이 있어 [공식 hwloc 설정](https://www.open-mpi.org/projects/hwloc/doc/v2.14.0/plugins.html)에 따라 무입력 `--help` 한 회에만 `HWLOC_COMPONENTS=-linux:io,-pci`를 적용했으나, 제외 수락 로그에도 같은 PCI 경로와 시간 초과가 남았다. 이 시점에는 시작 지연의 원인이나 해결책을 확정하지 못했고 추가 데이터 실행은 없었다. WSL 전체 종료나 다른 사용자 작업 중단으로 해결하지 않았다.
-- 후속 독립 범위 검토에 따라 자체 3D 확장 대신 보존된 B 실행의 실제 ParaView 표시를 다음 인도 단위로 좁혔다. 제품 `1825047`에서 기존 Linux 배포본과 소유 Xvfb를 사용하고 해당 프로세스에만 `HWLOC_COMPONENTS=-linux:io,-linux:pci,-pci`를 지정했다. 실제 프로젝트 CLI의 결과 상자 버튼을 QTest로 눌러 같은 B `0528e277`의 원래 `--data`·cwd를 그대로 전달한 한 회의 실행에서 실제 ParaView 창·pipeline·Information의 B 파일 경로·569점/242셀과 `DISP/STRESS/TOSTRAIN/ERROR` 필드를 확인했다. X11 자동 조작으로 변형 전 형상에 `DISP Magnitude` 색상과 범례를 표시했으며 Warp 변형이나 물리적 시간 0을 확인한 것으로 세지 않는다. 데이터 관찰과 애플리케이션 종료 요청은 120초 안에 마쳤고, 이후 소유 GUI·Xvfb의 종료를 확인했다. 원본·프로젝트·선택 기록·A/B 결과·VTU 해시는 전후 같았다. 새 계산·LLM 호출·제품 수정 없이 소유 GUI/Xvfb의 종료를 확인했다. 한 외부 캡처 보조 프로세스의 XAUTHORITY 누락은 캡처 환경만 수정했으며 데이터 실행을 반복하지 않았다. Linux 로그의 활성 단계 `0x62`와 관측된 PCI config FD 부재는 이 환경의 관찰 사실이며 범용 원인·해결책 확정으로 확대하지 않는다. Windows 외부 연계·수동 사용자 입력·실제 토론·1단계 전체 완료는 여전히 미확인이다.
-- 독립 QA도 실제 화면·원문 필드·실행/선택 기록·전후 해시·소유 프로세스 종료를 대조해 위 Linux B 표시 범위를 승인했다. 변위 원문 최댓값은 약 `43.9684 mm`로 화면의 약 44 범례와 맞고, 프레임은 index 0·단계 1·증분 1·Native_value 1.0이다. 다른 필드별 렌더와 다중 프레임 탐색은 확인하지 않았다. 부모 캡처에는 B 경로를 표시하면서 결과·전문가 상자가 ‘오래됨’으로 남는 상태 구분의 모호함이 있다. 현재 입력의 오래됨과 하위 프로그램에 새 선택을 전달해야 하는 상태가 명확히 구별되지 않으며, 열기 후 부모 상태까지 모두 최신으로 정리됐다고 주장하지 않는다.
-- Windows에서 이미 실행 중인 로컬 Ollama와 설치된 `openscience/qwen3-4b-ctx-16384:latest`를 발견했다. 제품 환경변수 미설정만으로 서비스 부재를 판단한 이전 확인은 불충분했다. 이 모델 이름은 로컬 별칭이며 OpenScience 구독 전송을 뜻하지 않는다. 고정 색인에 필요한 임베딩 모델은 설치 목록에서 확인되지 않아 BM25/하이브리드 비교는 여전히 미실시다.
-- Windows의 Workbench → 직접 파일 근거 → OpenAICompatibleProvider 경로로 실제 `fricloop` 입력·FRD·DAT·로그를 보존하고 첫 질문을 로컬 `/v1`에 한 번 전달했다. 직접 파일의 동일 실행 대응 미확인·단위 미선언 표시를 유지했다. 실제 프롬프트 35,058자에는 제품의 기존 길이 제한으로 잘린 로그와 잘림 표시, 결과 요약, 입력, 제공 지식 3개가 포함됐다. 요청은 **60.071초에 timed_out, 답변 0자**로 종료되어 두 번째 질문·재시도·모델/서버 설정 변경은 하지 않았다. 실제 답변과 usage가 없어 공학적 답변 품질·두 회차 논의는 검증하지 못했다.
-- 같은 대화를 새 Workbench에서 다시 열어 실패 상태·질문 초안·근거·제약·이전 검토 한계·시간 초과 이유와 자산 해시가 보존되고, 재열기는 모델을 호출하지 않음을 확인했다. 원본 파일·저장 대화의 해시도 변하지 않았다. 이 검사는 실제 로컬 HTTP 전달과 제한 시간 실패의 저장/재개 확인이며 실제 GUI·구독 연구팀·답변 품질 완료를 뜻하지 않는다.
-- 후속 구독 연결은 기존 Windows OpenScience 2.0.146 실행 파일·프로필의 고정 정보를 확인하고 원본 설정·인증을 보존하는 질문 전용 전송으로 구현했다. 독립 QA가 긴 stdin을 상대가 읽지 않을 때 취소·시간 제한이 멈추는 결함을 재현했고, 소유 UTF-8 파일을 표준입력으로 전달하도록 교정했다. 같은 QA의 원래 재현과 별도 timeout 재현에서 작업·자식·출력 reader·임시 입력 정리를 확인해 제품 코드 `d17d0f3`를 승인했다. 교정 전·후를 분리한 실제 연결 확인에서 같은 고정 질문에 기존 `openai-codex/gpt-6-astra`가 각각 ‘준비 완료’로 답했다. 교정 후 호출은 메인 후보를 직접 import해 수행했고 소유 자식의 정상 종료와 임시 입력·설정 삭제도 확인했다. 이는 인증·전송의 확인이며 실제 계산 근거의 답변이나 A→B 연구 흐름으로 세지 않는다.
-- Windows 본선은 공식 portable FreeCAD 1.1.4·번들 ccx 2.22·ParaView 6.2와 새 외부 프로젝트를 사용했다. 초기 화면 잠금으로 보류했으나 사용자의 잠금 해제 확인 후 실제 ProjectWindow에서 A FCStd를 열고 FreeCAD FEM의 Write .inp File을 눌렀다. 작성된 INP를 등록·단위 선언한 뒤 독립 해석 창의 계산 버튼으로 A `eef3865e97404502b1ba98f19a2494f7`를 실행해 정상 종료·판독 완료를 확인했다. 같은 실행의 결과 상자로 ParaView를 열어 Information의 해당 경로·569점/242셀과 변형 전 형상의 DISP Magnitude 색상·범례를 확인했다. 최대 변위 크기는 약 87.937 mm이며 최대 하향 Z변위와 구분한다. 이는 Windows 실제 창의 자동 UI 조작이며, Linux A/B와 별도 기록이다.
-- 같은 Windows A와 프레임 0을 독립 전문가 창에서 보존 근거로 가져와 기존 구독 모델에 실제 질문을 보냈다. 수렴·접촉 진단 답변은 변위·응력 성분·DAT 힘합과 미확인 사항을 구분하고 FreeCAD의 하중 설정 점검을 제안했다. 이어 재료 역할은 원로그와 로그 기반 이전 발언을 제외한 허용 자료로 답했으며, 잘못된 E나 하중 분포도 선형 비례성 검사를 통과할 수 있다는 반론을 남겼다. CAE 자문이 두 답변을 원자료와 대조했으나 설계 안전·항복·메시 수렴을 승인한 것은 아니다. 실제 전송 stdin을 사전 캡처하지 않았으며, 별도 prompt 파일은 저장 근거·제공 자료·동일 formatter의 사후 재구성이다.
-- A의 점검 제안은 미적용이며, B의 절반 하중은 LLM이 제시하거나 사람이 설계 하중으로 확정한 값이 아니라 메인이 이번 연결 검증용으로 정한 수동 실험이다. FreeCAD 작업 사본에서 B를 작성했고 CLOAD만 정확히 절반이며 나머지 물리·출력 설정은 같음을 확인했다. 현재 B INP의 단위 선언 모달에서 UI 진행을 중단했으며 B 계산·후속 답변·같은 연구의 새 프로세스 재개는 아직 없다. 19:18 KST의 새 캡처에는 앱 대신 날짜가 있는 잠금 화면이 나타났고 표준 창 활성화도 실패했다. 미저장 프로젝트·모달을 보존하고 입력 없이 중단했으며 사용자에게 잠금 해제를 요청했다.
-- 앞선 부모 화면 수정에서는 프로그램·입력·등록 출력·단위·다음 행동을 요약하고 전체 경로·해시·실행 진단을 별도 상세 창으로 옮겼다. 사용자는 정보 자체가 필요 없으며 다른 창으로 옮겨도 해결이 아니라고 재지적했다. 이 시도를 요구 충족으로 취급하지 않는다. 현재 수정과 남은 확인은 아래 부모 창 정보 표시 항목에 기록한다. 제목의 Windows A/B는 검증용 프로젝트명이다.
-- 다음 외부 입력 조사에서 큰 INP의 앞부분만 제공하는 근거 발췌 결함도 확인했다. 설치본 `material_nonlinear.inp`와 `constraint_contact_shell_shell.inp`는 긴 메시 목록 뒤의 재료·소성·접촉·하중·구속 원문이 기존 40,000자 발췌에 포함되지 않았다. 원본 자산은 보존됐지만 LLM이 그 조건을 읽은 것은 아니다. 새 발췌는 파일·역할·줄 범위·원문 순서를 유지하고 긴 목록의 미제공을 명시하며 동일 SHA 원본/실행본의 본문은 한 번 제공한다. 독립 QA가 이어지는 원문 줄의 누락과 작은 입력의 불필요한 축약을 재현했고 작성자가 교정했다. QA는 같은 재현을 변경 없이 다시 실행해 원문 보존을 확인했다. 이는 원문 표시의 보호이며 CalculiX 입력 문법의 유효성을 판정하는 기능이 아니다. 외부 두 입력에서 꼬리 조건의 전체 본문과 허용 역할의 프롬프트 포함, 원본 SHA 불변을 확인했다. 기존 대화의 근거는 바꾸지 않는다. 입력 변환이나 원 덱 수정으로 해결하지 않는다.
-- 후속 실행 코드 후보 `cb87dfd`는 독립 QA의 제한된 코드 인도 검토와 메인의 전체 제품 회귀를 통과했다. 전체 회귀는 WSL·Qt offscreen·실제 CalculiX 2.21 환경이며 Windows 배치·Windows 프로세스 제어·다른 외부 솔버 환경 검사는 구분해 건너뛰었다. Windows 관련 GUI·프로세스 검사는 별도로 수행했으나 모의 공급자·offscreen 검사를 실제 구독 답변이나 실제 창 검사로 세지 않는다. PR21로 main에 반영했고 새 clone의 SHA·트리 일치와 관련 검사를 확인했다. 새 부모 화면·B 흐름과 전체 1단계 완료의 승인은 남아 있다.
-- 중력 예제 `achtelg`의 첫 제출은 준비 중 실행 기록 조회에서 ENOENT가 발생해 검증 스크립트가 닫히며 취소됐다. PID·종료 코드가 없고 솔버는 시작하지 않았으므로 이 제출을 실제 계산으로 세지 않는다. 독립 QA는 WSL의 Windows 드라이브에서 고유 임시 파일의 `os.replace`와 읽기만으로 일시 ENOENT를 재현했고, Linux 파일시스템의 기존 파일 교체에서는 재현하지 못했다. 새 실행 폴더와 첫 기록 저장 사이의 틈은 Linux에서도 별도로 재현했다.
-- 실행·선택 기록의 FileNotFoundError를 최대 5회, 10ms 간격으로 다시 읽도록 보완했다. 실행 폴더를 기준으로 읽어 파일 glob의 일시 누락을 피하고, 새 JSON과 메타데이터는 같은 열린 파일에서 읽는다. 캐시도 경로의 메타데이터 조회가 성공한 뒤에만 사용한다. 지속 유실·잘못된 폴더 ID·JSON 손상은 실패로 남으며 캐시로 대체하지 않는다. 처음부터 선택이 없는 노드는 기존처럼 미선택이다. 이미 관측한 선택 기록의 유실은 같은 RunStore에서 오류로 남지만, 재열기 전 선택 파일 자체가 통째로 삭제된 사실을 추적할 별도 목록은 없다.
-- Windows 독립 검사에서는 추가 PermissionError가 발생했다. 동일 파일의 경로 stat과 열린 파일 fstat의 ctime 값이 달라 캐시가 항상 빗나가는 문제를 확인해 기존 mtime·크기·inode 비교로 복원했다. 별도의 Windows 파일 교체 실험에서도 읽기 오류 errno 13의 원시 CRT 코드가 공유 충돌 32임을 확인했다. 따라서 Windows의 PermissionError/errno 13도 같은 최대 40ms 대기 범위에서 재읽는다. 지속 권한 거부는 원래 오류로 종료하며 JSON 손상·다른 오류·비Windows 권한 거부는 즉시 실패한다.
-- 독립 QA가 수정 제품 `fa5aebe`를 승인했다. Windows 관련 검사는 **96 passed, 1 skipped**(실제 ccx 미설정), 정상 종료 코드 0이다. 실제 동시 저장 1,000회·읽기 72,592회·무결성 조회 5,656회·실행 목록 조회 3,767회에서 오류가 없었으며 영구 유실·손상도 검출했다. Windows 커널 잠금을 15ms 뒤 해제하면 새 기록을 읽고, 계속 잠그면 5회 시도 후 원래 권한 오류를 반환했다. 앞선 WSL의 두 파일시스템별 교체/첫 저장 네 가지 재현에서도 오류가 해소됐다. 중간 후보에서 발생한 Windows 실패를 최종 통과 수치에 합치지 않는다.
-- 앞선 CalculiX 공식 예제 검증 당시에는 저장소 밖 새 CAD/사용자 입력을 확보하지 못했다. 아래는 CalculiX 공식 2.21 시험 배포본의 원문을 변경하지 않고 수행한 보충 확인이며 사용자 모델의 수용 검사로 세지 않는다. 이후 확보한 공개 FreeCAD 사례는 위 별도 기록과 구분한다. GPLv2 입력·기준 결과·실제 산출물은 저장소 밖에 보존한다.
-- `fricloop`의 16절점·C3D8 2요소 압력/마찰 접촉/4단계 입력을 Workbench → JobManager → 실제 WSL CalculiX 2.21로 한 번 실행했다. 입력·보존본·실행본 SHA256이 같고, 정상 종료·39프레임을 확인했다. 공식 기준 FRD와 별도 숫자 추출로 시간 1/2/4/5의 DISP·STRESS·CONTACT 960성분을 비교해 출력 정밀도에서 모두 일치했다. FRD 판독 경고는 없지만 솔버 로그에는 생략된 최소 증분을 기본값으로 정하는 경고 4개가 있으며 그대로 보존했다.
-- 같은 `fricloop` 프로젝트에서 검증된 39프레임 PVD를 실행 가능한 probe에 전달하고, 마지막 프레임을 대화 근거로 보존한 뒤 새 Workbench에서 프로젝트·실행·대화를 다시 열었다. 실제 ParaView GUI·LLM 호출은 하지 않았다. 명명 단위는 원문에 없어 추정하지 않았다. 공식 결과 재현은 사용자 모델의 격자 수렴·반력 평형·공학적 허용치 검증을 뜻하지 않는다.
-- `shell1`의 S8R 4요소·두께 변화·압력·온도 구배 입력은 같은 경로의 실제 계산 한 번으로 정상 종료했다. 솔버가 확장한 51절점·Hex20 4요소의 변위·온도·응력·힘 663성분이 공식 FRD와 일치했고, 독립 XML 판독으로 VTU의 좌표·연결·성분을 대조했다. 단일 VTU를 probe에 전달하고 근거 저장/재열기를 확인했다. DAT는 공식 기준과 바이트까지 같지만 제품은 원래 21절점의 변위·힘만 읽으며, 온도·적분점 응력은 partial 상태와 두 경고로 근거 요약에 남는다. 검증 스크립트의 경고 위치·JSON 절점 키 예상 오류 두 건을 고쳐 기존 실행을 다시 읽었으며 솔버·입력·제품은 수정하거나 재실행하지 않았다.
-- `beampiso`의 C3D20R 32요소·등방경화 소성·하중 반전 입력도 원문 그대로 한 번 실행했다. 두 단계의 절점 변위와 적분점 응력 4,638성분을 독립 DAT 추출로 대조해 공식 결과와 모두 일치했고 파일도 바이트까지 같았다. 절점 5의 Uz는 0.2279841→0.1510519다. 제품은 마지막 단계의 변위 261개를 읽고 적분점 응력은 미지원 원문으로 보존한다. 해석 결과는 DAT에만 있고 FRD에는 geometry만 있어 PVD/VTU 결과 교환이 없으며 ParaView 열기는 구체적 이유와 함께 거부됐다. 같은 프로젝트의 선택 실행·대화 근거를 저장하고 새 Workbench에서 복원했다. 완전 제하·PEEQ·자중 검증으로 일반화하지 않는다.
-- 수정 제품 `fa5aebe`에서 `achtelg`의 C3D20R 8요소·81절점·밀도와 GRAV 하중을 원문 그대로 한 번 실제 실행했다. 원본/보존본/실행본 SHA256이 같고 정상 종료 코드 0, 네이티브 로그 경고 0을 확인했다. 절점 변위 243성분과 적분점 응력 384성분이 공식 DAT와 출력 정밀도에서 모두 일치했고 파일도 바이트까지 같았다. 제품은 변위 81절점을 읽으며 적분점 응력은 미지원으로 남아 partial이다. FRD에는 형상만 있어 결과 VTU/PVD를 만들지 않고 ParaView 열기를 거부했다. 최초 준비 중 취소 기록과 새 완료 기록 2건을 함께 보존하고, 근거를 저장한 뒤 새 Workbench에서 추가 솔버/LLM 호출 없이 다시 열었다. 제출 전 검증 스크립트의 Windows Git 경로 확인 오류는 외부 스크립트에서 고쳤고 추가 제출은 없었다. RF는 요청하지 않았으므로 반력 평형·공학적 적격성을 검증한 것으로 세지 않으며 단위도 추정하지 않는다.
-- `.github/workflows/product-tests.yml`은 Ubuntu 24.04/Python 3.11·3.12 전체 제품 검사와 별도의 Python 3.12 실제 CalculiX 검사를 구성한다. PySide6·VTK·SciPy import와 offscreen QApplication을 필수 확인하며, 실제 솔버 작업은 설치와 실행 파일을 먼저 확인한 뒤 네이티브 검사 7개·보조 검사 3개를 실행한다. 독립 QA가 YAML·셸·Python 문법과 선택 검사 수집·실패 전파를 확인했다.
-- 최초 원격 CI의 Python 3.12는 `450 passed, 23 skipped`로 정상 종료했지만, Python 3.11은 같은 단언 통과 뒤 `none_dealloc`로 종료 코드 134가 발생했다. 독립 QA가 제품·pytest·VTK 없이 PySide6 6.12.0의 단순 Qt 호출만으로 Python 3.11의 None 참조 감소와 SIGABRT를 재현했다. CalculiX 작업도 `-v` 명령의 원시 종료 코드 201을 잘못 거부해 멈췄으며, 버전 확인에만 201을 허용하도록 수정하고 실제 계산 종료 검사는 유지했다.
-- 같은 Qt 호출 10,000회에서 Python 3.11/PySide6 6.11.1·6.11.2 및 Python 3.12/PySide6 6.12.0은 정상 종료했다. Python 3.11의 `gui` 의존성을 PySide6 6.12 미만으로 제한하고 3.12 이상은 기존 범위를 유지한다. 새 3.11 환경의 실제 선언 extras 설치는 6.11.2를 선택했고 `pip check`가 통과했다. CI 선행 검사에도 실제 Qt 호출 반복과 정상 종료 확인을 추가했다.
-- 이미 6.12를 설치한 3.11 환경은 일반 pip로 낮은 버전을 설치한 뒤에도 분리된 PDF·WebEngine 패키지가 남아 의존성 충돌 2건이 확인됐다. 기존 환경 보관과 새 환경 설치를 안내하고, Windows 실행기는 동기화 뒤 `pip check`가 실패하면 오류를 그대로 표시하고 앱 시작을 거부한다. 패키지나 환경을 자동 삭제하지 않는다.
-- 독립 QA가 코드 후보 `48a97e7`과 세 공식 사례의 저장 산출물을 승인했다. 새 Python 3.11 환경의 관련 GUI 검사는 `22 passed, 4 skipped`(Windows 전용), Windows 실제 cmd/모의 pip 런처 검사는 `10 passed`였다. 이후 [원격 CI 실행 39998423767](https://github.com/pikachu444/caelab-workbench/actions/runs/39998423767)에서 세 작업이 모두 정상 종료했다. Python 3.11.17/PySide6 6.11.2와 Python 3.12.15/PySide6 6.12.0 각각 **450 passed, 24 skipped**, 별도 실제 CalculiX 2.21은 **7+3 passed**다. 제품 작업의 skip은 SALib 모듈 1개·Windows 배치 5개·ccx 없는 환경 14개·다른 솔버 4개이며, GUI 의존성 검사 실패를 skip으로 처리하지 않는다. 별도 솔버 작업의 선택 범위 밖 실제 GUI/연결 계산 검사는 이 CI에서 실행한 것으로 세지 않는다.
-
-## 전문가 대화 화면 개선 중
-
-- 사용자가 재확인한 ChatGPT·Claude 같은 대화 경험을 DESIGN §11.5에 기록했다. 개발 아이템별 회의와 비판의 반박·개선·원 비판자 재검토 절차를 AGENTS에 반영했으며, 규칙 문구 자체에 대한 비판도 고쳐 원 비판자에게 통과받았다. 규칙 반영을 제품 완료로 세지 않는다.
-- 화면 후보는 대화와 하단 입력 중심으로 구성하고 제품 내부 식별자·요청 덤프와 내부 제안 블록을 사용자 표시에서 제거했다. 저장 원문과 사용자가 요청한 일반 코드·JSON·표는 보존한다. 첨부 자료의 원본·보존 입력·결과·로그와 단위·중요한 한계를 구별하고, 대화에서 제안의 실제 점검 내용과 미적용·거절·검토 중단 상태를 읽도록 바꿨다.
-- 실제 저장 A 대화의 사본을 정상·좁은 크기로 렌더했고, 모의 공급자의 첨부·질문·대기·중단·후속·저장/재열기 동작을 검사했다. 코드·offscreen에서 제기된 비판은 수정 후 원 비판자들이 다시 확인했다. 2026-10-25에는 실제 Windows의 별도 전문가 창에서 같은 A 사본의 대화 표시·휠 읽기와 하단 입력창을 확인하고 이미지를 남겼다. 새 질문·모델 호출 없이 원본 대화와 자산을 보존했다. 이후 OS 입력 도구의 창 활성화가 접근 거부되어 추가 입력을 멈췄다. 한글 IME·실제 OS 입력의 전체 흐름과 원 비판자의 전체 사용성 승인은 남아 있으며 채팅 개선 완료로 처리하지 않는다.
-
-## 부모 창 정보 표시 개선 중
-
-- 사용자가 첨부한 실제 부모 창의 우측은 원시 경로·프로그램 진단을 나열하는 정보 창이었다. 착수 회의에서 메인·구현 담당·독립 QA·원 비판자가 표시 범위와 필요한 사용자 행동을 논의했다. 진단을 상세 창으로 옮기는 기존 방향은 폐기하고 DESIGN §11.3의 충돌 문구도 고쳤다.
-- 로컬 후보는 원시 상세 창과 진단 문자열 조립을 제거했다. 툴팁·자동 오류·작업 기록에도 내부 식별자·프로세스 번호·설치 탐색 정보를 나열하지 않는다. 실제 파일 이름·그 파일의 출처·단위와 입력 선택·작성 출력 등록·연결·프로그램 열기는 유지한다. 현재 입력과 오래된 출력, 파일 누락, 계산 실패와 결과 판독 실패를 구별한다.
-- 재검토에서는 외부 동명 파일의 출처 충돌과 오류 원인의 오판·누락을 추가로 발견했다. 구별 가능한 경로 끝부분과 정확한 사용자 파일 위치 확인을 함께 제공하고, 실제 오류 타입·고정된 서비스 문장·감싸진 원인으로 안내하도록 고쳤다. 기존의 내부 경로 노출을 요구하던 검사는 독립 QA가 사용자 기준과의 충돌을 확인한 뒤 그래프·저장소 참조·복구 안내·누락 저장소 미생성 보호를 유지하도록 수정했다.
-- 원 비판자와 독립 QA는 코드 후보 `95a69aa`에서 원래 재현을 다시 실행해 각 지적의 해소에 명시적으로 동의했다. Windows 관련 회귀와 WSL·Qt offscreen·실제 CalculiX의 통합 전체 회귀는 정상 종료했다. WSL에서 실행할 수 없는 Windows 배치·프로세스·드라이브 문자 검사와 다른 외부 솔버 환경 부재는 구분해 건너뛰었다. offscreen 표시와 모의 오류 확인을 실제 프로그램 사용·전체 GUI 인도로 확대하지 않는다.
-- 실제 Windows 부모 창도 사본으로 열었으나 화면 캡처가 두 번 모두 검게 나와 실제 표시를 확인하지 못했다. 항목과 버튼은 접근성 도구로 읽혔으며 OS 입력은 시도하지 않았다. 확인용 창만 자동 종료했고 원본 프로젝트·자산은 보존됐다. 기존 미저장 B 단위 선언 창은 조작하지 않았다. 수정된 부모의 실제 화면·한글 입력과 사용자 흐름 확인은 남아 있으며 로컬 후보를 원격 반영이나 전체 GUI 인도로 보고하지 않는다.
-- 이후 사용자는 부모가 작업 공간보다 AI의 증거 제출 화면 같으며 설명이 과하고, 출처 표시를 요구한 적이 없다고 재지적했다. 메인은 검증 기록 보존을 사용자 노출 요구로 확대했던 판단을 철회했다. 이전 부분 검토의 통과를 이 작업 공간 품질의 승인으로 볼 수 없다.
-- 메인·구현 담당·비판 리뷰어·독립 QA가 ANSYS Workbench 2026 R1의 실제 CFX 작업 흐름과 COMSOL 6.4의 버스바 입문 흐름·Settings/Properties·운영 메시지·파일 관리 본문과 공식 화면을 조사하고 반론을 토의했다. 상시 출처·검증 설명과 입출력 파일 행 추가를 전제로 하던 초기 배치안은 철회하고 DESIGN §11.3을 고쳤다. 실제 운영 정보까지 모두 삭제하는 안과 상용 제품의 통합 모델러를 부모에 복제하는 안도 채택하지 않았다.
-- ANSYS CFX 연계에는 셀 사이 자동 파일 전달이 있으나 현재 FreeCAD 출력은 사용자가 지정해야 하고 전문가의 새 실행 가져오기도 별도 조작이다. 이 동작 차이를 배치 변경으로 해결했다고 하지 않는다. 이 자료 조사는 화면 승인이나 ChatGPT Pro 딥리서치의 수행을 뜻하지 않는다. 이후 원 비판자·구현 담당·QA와 실제 조작을 재논의하고 아래 수정 작업에 착수했다. 사용자 전체 사용성 비판은 아직 미해결이다.
-
-
-- 작업 공간 수정에서는 오른쪽 반복 설명을 실제 파일 값과 지정·교체·단위 명령으로 바꾸고, 연결 입력의 상위 파일 교체와 직접 파일 전환, 빈 상자의 파일 지정, 두 상자 연결을 구별한다. 단위만 고칠 때 파일 개정이나 연결을 재등록하지 않는 Workbench 계약을 추가했다. 이 계약의 연결·개정·오래됨 보존과 저장·재열기는 독립 QA를 통과했으며 GUI 전체 승인은 아니다.
-- 첫 새 Qt offscreen 화면에서 원 비판자는 반복 설명 제거, 실제 값 옆 조작, 연결 화살표의 개선을 인정하고 보기 메뉴의 도크 닫기·복원 및 좁은 창의 가로 이동을 직접 확인했다. 해석 상자가 아닌데 활성인 상단 명령, 보존 계산 결과를 수동 출력처럼 편집 가능하게 보이는 문제, 정상 계산의 반복 상태 설명도 수용해 고쳤다. 로컬 통합 후보 `dca39f9`에 반영했고 원 비판자와 독립 QA가 연결 유지·직접 파일 전환·단위 편집/취소·빈 입력·두 상자 연결·보존 결과 보호·좁은 창 도크 복원을 각자 Qt 이벤트로 확인해 해당 지적의 해소에 명시적으로 동의했다. OS 파일 선택 응답과 외부 프로그램 실행 경계는 모의했다. 해당 후보의 WSL·Qt offscreen·실제 CalculiX를 포함한 전체 제품 회귀는 정상 종료했다. Windows 전용 검사와 미설치 외부 솔버 검사는 구분해 건너뛰었고 관련 Windows Qt 회귀는 별도로 정상 종료했다. 별도 Windows 사본 창에서는 새 컨트롤과 활성 상태가 접근성으로 읽혔지만 화면은 검게 캡처됐고 창 활성화·단위 버튼 입력은 실패했다. 원본 미저장 B를 건드리지 않았으며 실제 Windows 표시·OS 조작·한글 입력의 승인은 여전히 남는다.
-
-- 사용자는 후속 화면의 네 개 장문 보기 명령과 `연결 입력 — 오래됨`을 다시 비판했다. 메인·구현 담당·원 비판자는 기능 접근/보존 검증을 화면 품질 판단으로 확대했음을 인정했고 직전 디자인 해소 판정을 철회했다. 기능 검증 사실은 유지하지만 화면 품질은 재개방했다. COMSOL 6.4의 그래픽 조작과 ANSYS 2026 R1의 셀 상태를 다시 대조했으며, 같은 기능이 있다는 사실은 기존 명령 배치·한국어 표현을 정당화하지 않는다.
-- 로컬 후보 `5650af7`는 보기 조작을 캔버스의 고정된 축소·현재 배율·확대·맞춤 도구로 바꿨다. 파일 행은 정상 상태의 반복 문구를 없애고 입력/출력 파일의 갱신·변경·누락과 이전 입력의 결과를 구별한다. 연결 파일 명령은 실제 소유 프로그램의 입력/출력으로 이동한다고 표시한다. 내부 갱신 필요 표시만으로 특정 형상 변경을 원인으로 단정하지 않는다. 실행·실패 상태가 파일 경고로 덮이는 문제도 수정했다.
-- 재검토에서 발견한 창 축소의 자동 중앙 이동을 제거했다. 선택 상자에 따라 자동 이동시키자는 제안은 메인·QA·원 비판자가 실제 재현과 시야 일관성을 토의한 뒤 철회하고 기존 좌상단 기준을 유지한다. 원 비판자가 추가로 제기한 100% 명령의 시야 초기화도 수용해 현재 중심에서 배율만 복원하도록 고쳤다. 반복 클릭의 누적 이동은 검사에서 발견해 소수 좌표의 중심 계산으로 수정했다. QA는 최초 후보 `a36b6aa`의 실제 크기 장면에서 양쪽 도크를 닫아 스크롤바가 사라졌다 다시 열 때 수동 이동 위치를 잃는 결함도 재현했다. 메인은 이를 수용해 교정을 배정했고 실행 중이던 전체 회귀는 수정 전 후보이므로 중단했다. 교정 후보 `199ccab`는 같은 창 크기에서 도크 배치 때문에 제한된 스크롤 위치를 보존하고, 실제 창 크기 변경이나 사용자의 새 이동·배율 조작은 새 기준으로 삼는다. 원 QA와 비판 리뷰어는 실제 장면의 위치 복원과 새 사용자 조작을 각각 재현해 이 지적들의 해소에 명시적으로 동의했다.
-- 이후 `199ccab` 전체 회귀는 Linux Qt 6.12에서 배율 문자열에 따라 도구 폭이 달라지는 검사 한 건이 실패했다. 작성자와 QA가 지연 배치가 아니라 공통 스타일의 최소폭이 배율 버튼 고정폭을 덮는 제품 결함임을 각각 재현했다. 메인은 비판을 수용해 배율 버튼의 로컬 스타일만 고쳤고 기존 폭 불변 검사는 유지·강화했다. `5650af7`의 관련 검사는 Windows Qt 6.9.1과 Linux Qt 6.12에서 정상 종료했다. 원 QA는 양쪽 환경에서 원 실패와 전체 크기 불변·도크·파일/실행 상태를 다시 확인했고, 원 비판 리뷰어도 좁은 화면과 소수점 배율의 크기·배치에 문제가 없음을 확인해 각각 지적 해소에 명시적으로 동의했다. 메인은 이 커밋의 Git archive를 Linux 로컬 작업 공간에 추출해 같은 WSL 환경에서 Qt offscreen·실제 CalculiX를 포함한 전체 제품 회귀를 실행했고 정상 종료했다. Windows 전용 검사와 미설치 외부 솔버 검사는 구분해 건너뛰었다. 통합본의 새 정상·좁은 렌더에서도 원본 자산은 불변이며 외부 프로그램·LLM은 호출하지 않았다. 실제 Windows 표시·OS 입력이나 전체 사용성의 승인으로 확대하지 않으며 로컬 후보를 원격 반영 완료로 보고하지 않는다.
-
-- 사용자 재지적 후 메인·구현 담당·비판 리뷰어는 위 개별 수정이 부모 화면 전체의 품질을 충족하지 못했다고 판단해 결과를 반려했다. 로컬 후보 `712bd83`는 프로그램 추가와 한 대상에서 시작하는 연결을 명시적 명령으로 바꾸고, 선택 대상의 열기·파일·단위를 압축 배치했다. 기본 팔레트·정상 이력·처음 빈 프로젝트의 속성을 숨겨 도식 공간을 확보한다. 최초 보기만 읽을 수 있는 배율로 맞추고 이후 팬·줌과 수동 도크 선택은 유지한다. 연결된 결과가 없으면 기본 명령은 상위 작업으로 이동하며 직접 파일 전환과 구별한다.
-- 프로젝트에서 제거·입력 연결 해제·제거한 프로그램 복원을 추가했다. 원본 파일·계산·대화는 삭제하지 않으며 같은 ID의 프로그램을 저장 후에도 복원한다. 연결된 상자의 과거 비활성 직접 입력은 되살리지 않는다. QA가 발견한 파일 읽기 실패의 부분 변경을 후보 모델의 일괄 적용으로 수정했고, 구버전 저장 시 보관 정보가 사라지는 문제는 새 저장 형식과 구버전 읽기 거절로 막았다. 원 QA가 두 지적의 해소와 원본·객체 보존, 저장·복원·계산 이력 재접근을 확인했다.
-- 같은 후보의 정상·최초 960px·상위 계산 실패·빈 프로젝트 화면을 Windows Qt offscreen으로 새로 실행했다. 원본 자산은 불변이며 프로그램 탐색과 실패 상태는 모의했다. 원 비판자는 전체 작업 흐름에서 제기한 비판의 해소를 명시적으로 확인했다. 독립 GUI QA는 관련 기능 흐름을 확인했지만 무관한 상자를 가리는 연결선을 새로 지적해 교정 중이다. `712bd83` 전체 제품 회귀는 WSL·Qt offscreen·실제 CalculiX에서 정상 종료했으며 Windows 전용·미설치 솔버 검사는 구분해 건너뛰었다. 후속 수정의 통합 회귀는 별도로 필요하다. 이 후보는 아직 원격에 게시하지 않았다.
-
-## 앞선 정합성 변경에서 확인한 것
-
-- DESIGN 본문, README·패키지 설명, ARCHITECTURE·AGENTS의 목적·경계·순서를 상위 결정에 맞췄다. 저장소 DESIGN.md를 기준으로 명시했다. 과거 `~/workspace/cae_lab_redesign/DESIGN.md` 사본은 이번 환경에 없어 두 파일이 같다고 확인하지 못했다.
-- OpenScience의 프로필 존재와 실행 구현을 분리했다. Windows 설치 미구현을 성공 종료하지 않으며, 기본 플랫폼은 호스트에서 판단하고 Windows 호스트의 Linux 설치 강행을 막는다. 매니페스트의 구현 여부·실행 환경·런타임 전제를 구분했다.
-- RAG 평가를 같은 저장 색인에서 BM25와 하이브리드를 비교하도록 바꿨다. 정답은 검토된 `source_id:chunk_id`와 솔버로 판단하며, 미주석 질문·모델 불일치·자료 부재를 점수로 덮지 않는다. 단일 색인과 솔버별 하위 색인 폴더를 모두 읽는다.
-- 기존 13문항은 과거 개발 평가 자료로 보존했다. 별도 24문항(솔버 4종 × 6개)은 `tests/rag_eval_holdout_questions.json`에 초안으로 추가했다. 이번 수정 중 검색·청킹 조정에는 사용하지 않았다. 독립 검토자의 근거 조각 주석과 실제 평가가 남아 있으므로 새 품질 수치는 없다.
-- 실제 솔버·임베딩/LLM 서비스·외부 프로그램 설치·Windows 실화면은 이번 변경에서 실행하지 않았다. 단위 테스트의 가짜 자료·호스트 분기 모의를 실제 품질이나 Windows 실행 검증으로 보고하지 않는다.
-- 통합 작업 브랜치의 Linux·Python 3.12.14·SciPy 1.18.1·PySide6 6.12.0(offscreen) 전체 검사: `4 failed, 83 passed, 9 skipped`. 실패 4개는 모두 기존 expert_panel 누락에 따른 창 생성 실패다. 건너뜀은 ccx·FEniCSx·OpenCourant·Code_Aster·Salome 실행 환경/외부 자료 부재다. 이전 리뷰의 역사적 수치 `4 failed, 73 passed, 9 skipped`는 유지하며, 이번 검사는 평가 계약·실패 상태 회귀 검사 10개가 추가된 결과다. SciPy 선언 최소 버전의 적합성을 확인한 검사는 아니다. 원격 main 반영은 병합 후 새 clone에서 따로 확인한다.
-
-## 개발자 환경의 과거 실행 기록 (이번 변경에서 재실행하지 않음)
-
-다음은 2026-10-21~22의 기존 개발 기록이다. 그 컴퓨터의 자산·실행 결과를 새 clone에 포함된 것으로 취급하지 않으며, 개별 프로그램 확인을 GUI 본선 완료로 합산하지 않는다.
-
-| 기록 | 보고된 환경·수치 |
+| 항목 | 확인된 상태·다음 판정 |
 |---|---|
-| FreeCAD/CalculiX | FreeCAD 1.1.4 AppImage로 FEM 입력 작성·ccx 실행. DAT 반력 Fz +981.35 N, 적용값과 차이 18.65 N은 공유 절점 하중으로 설명 |
-| Gmsh·OpenCourant·ParaView | Gmsh 4.14.1 설치. TWISBEAM 스타터+엔진 16,796 사이클·에너지 오차 −0.0%. ParaView 6.2.0 VTK 읽기 점 172·셀 123 |
-| Salome·Code_Aster | Salome 9.16.0 NETGEN 메시 절점 259·사면체 584, FIXED/LOADF/SOLID 그룹 MED 재읽기. Apptainer 1.5.4, SALOME_MECA SIF 5.74 GB에서 cantilever 반력 Z +1000.000 N / 적용 −1000 N |
-| FEniCSx | dolfinx 0.11.0, 포아송 제조해 L2 오차 1.35e-3 @32×32, 차수 1.99 |
-| 수치·최적화 | 당시 수치 테스트 19개, Sobol S1 0.900/0.100·UQ 평균 9.999. cantilever DOE 12회 실패 0과 재평가 비교. 현재 GUI 결합 완료의 근거는 아님 |
-| 로컬 토론 | llama.cpp + Qwen2.5-1.5B, ccx 요약으로 2회전·파싱·맥락 유지. 실제 호출 기록은 있으나 구독 연구팀 흐름·공학적 답변 품질 검증은 아님 |
-| 지식 자산 | 솔버 4종 색인 7,688조각. 기존 Hit@5 69.2%→100%는 CalculiX 개발 질문 13개와 서로 다른 자료 집합의 비교이며, 4종 전체·독립 평가 성능이 아님 |
-| 설치 도우미 | Linux 빈 폴더 8종 설치·등록, OpenCourant 경로 조정, 수동 SIF 등록 기록. 당시 단위 테스트 6개; Windows 지원 근거는 아님 |
+| RAD 요약의 에너지 출처·시간·손상 행 | [PR61](https://github.com/pikachu444/caelab-workbench/pull/61)에서 에너지 번들 분리·동적 헤더·손상 행 처리와 footer 부재 시간 표기를 교정했습니다. 실제 `NativeAnalysisWindow.show_result()`의 footer 부재·사이클 불일치·일치 3사례가 통과했고 원 비판자가 수용했습니다. main 반영 여부는 PR61의 병합 상태로 확인합니다. |
+| MDO 민감도 캐시 무결성 | [PR62](https://github.com/pikachu444/caelab-workbench/pull/62)에서 원본 INP/INCLUDE 변경·삭제와 대형 산출물 동일 크기/mtime 변조 시 캐시를 무효화하고 원본·증거를 재검증하도록 교정했습니다. 실제 캐시 경로의 원본 4사례 통과와 기대 메시지 정정 후 대형 출력 1사례 통과를 구분하며 원 비판자가 수용했습니다. main 반영 여부는 PR62의 병합 상태로 확인합니다. |
+| Starter 경고 종료 | 오류 0·경고 존재·유효 restart를 보존하며 이어 실행하는 교정은 별도 미게시 후보. 현재 main의 완료 기능으로 세지 않음 |
+| Windows 전체 사용 흐름 | 저장·전체 재개, 부모 전체 조작·복구, 실제 IME·창 크기·DPI의 각 증거를 DESIGN 종료 조건과 대조해야 함. 일부 화면·Qt offscreen 통과로 전체 승인하지 않음 |
+| 독립 입력과 검색 평가 | 과거 현황의 PASS 표와 잔여·독립성 판정이 상충함. [종료 표](docs/history/implementation-history.md#1단계-종료-조건별-판정)와 [입력 적격성](docs/history/implementation-history.md#독립-입력-적격성)의 원자료·시점·서명 범위를 대조하기 전 전체 완료를 확정하지 않음 |
+| Windows 배포 | 소스/venv 설치와 standalone EXE/DLL 배포 검증은 별개. 패키징 후보의 실제 사용자 진입점·리소스·독립 프로세스·설정 보존 검증이 남음 |
+| 미구현 실행 환경 | Windows installer, WSL 파일/작업 연결, 일부 솔버별 전처리·결과 판독은 [플랫폼 계약](ARCHITECTURE.md#플랫폼별-실행-전제)에 명시 |
 
-기존 13문항 중 4개는 노트 기준 정답이 없고, 이전 평가기는 그 항목을 무조건 실패로 셌다. 따라서 9/13과 13/13의 차이를 검색 알고리즘 개선 효과로만 해석할 수 없다. 질문의 과거 튜닝 사용 여부는 확인되지 않았다. 출처·재구축 제한·새 평가 절차는 `caelab/assist/KNOWLEDGE_SOURCES.md`에 기록한다.
+## 검사 결과의 범위
 
-## 다음 순서
+- PR57 후보 `fc10c84`의 [필수 CI 4종](https://github.com/pikachu444/caelab-workbench/actions/runs/41390631184)이 성공했고, 병합 `fc1626a`의 새 clone tree 일치와 관련 18검사를 확인했습니다. 이후 PR58–60의 전체 Windows 검증으로 합산하지 않습니다.
+- 오래 실행한 Windows 전체 검사 결과는 **1160 passed, 20 skipped, 10 failed**입니다. 시작 snapshot과 실행 중 일부 subprocess 소스가 달라 최종 main의 고정 검증이 아닙니다. 최종 JUnit/log에는 실제 시작 명령·인터프리터 경로·고정 소스 SHA를 연결한 메타데이터가 없어 그 파일만으로 실행 환경을 독립 확정할 수 없습니다. 실패는 installer 3건, pythonw stream timeout 2건, UTF-8 프로젝트를 기본 cp949로 읽은 검사 1건, 기존 May 솔버 환경의 실제 RAD 4건입니다. 환경 부족·테스트 전제·제품 결함을 구별해 후속 처리합니다.
+- 같은 pythonw 2건의 별도 실행은 통과했지만 장기 실행의 timeout 원인은 확정되지 않았습니다. 작은 재실행 통과만으로 전체 실패를 삭제하지 않습니다.
+- 자동·합성 프로세스·Qt offscreen·실제 솔버·OS 화면 조작은 서로 다른 근거입니다. 종료 코드 0과 읽을 수 있는 결과도 물리 타당성·최종 제품 인도와 구별합니다.
 
-이번 팀 검토로 확정한 범위는 맨 위 종료 조건별 판정과 독립 입력 표다. NEXT_SESSION의 시작 환경으로 저장된 하중 수정 작업을 재개하고, 사본의 부모 전체 조작·실제 IME·창 크기를 확인한다. 별도 담당은 지정한 미사용 외부 입력을 수행하고 기존 고정 색인의 검색 비교를 진행한다. QA/CAE는 보존된 실제 제안→네이티브 수정→재실행→후속 토론을 판정한다. 새 계산·구독 호출·전체 검사를 이미 끝난 흐름에 무조건 반복하지 않는다.
+## 과거 주소
 
-Windows 실화면과 실제 구독 호출의 과거 보류는 이후 사용자 요청으로 재개됐다. 기존 실제 통과, 현재 환경 미확인, 새로운 미완료를 구분하며 위 종료 표가 모두 충족될 때만 1단계 완료를 판정한다.
+기존 현황 항목의 링크는 아래 위치에서 유지합니다. 날짜별 수치·개인 환경·옛 재개 지시는 [항목별 고정 원문](docs/history/implementation-history.md#checkpoint)을 읽고 당시 기록으로 해석합니다.
 
-2026-11-02 PR #55 검증 갱신: `6541847`의 원격 CI에서 공식 OpenCourant 서비스·실제 X11 GUI 4건과 실제 CalculiX, 전체 Python 3.12 검사가 통과했다. Python 3.11은 기존 MDO layout 검사의 고정 450 ms 대기 후 두 번째 queued record가 남아 실패했다. layout 검사를 실제 두 결과와 예약된 시각화 완료 조건에 동기화하며, 제품의 성능 기준이나 renderer를 바꾸지 않는다. 수정 SHA의 필수 CI 통과 전에는 병합하지 않는다. 로컬 shell ERROR760과 원격의 실제 두 입력 성공은 서로 다른 환경 근거다.
+<a id="calculixevaluator-동적-탐색-및-미사용-인자-정리-2026-11-02"></a>
+<a id="스키매틱-자동-그리드-배치-및-openradioss-요약아웃라인-연동-2026-11-02"></a>
+<a id="rad-w3-구현과-확인-상태-2026-11-02"></a>
+<a id="windows-로컬-후속-확인-2026-11-02"></a>
+<a id="prep-공용-위젯과-rad-파일-연결-2026-11-01"></a>
+<a id="독립-전처리기-개발과-기존-연결-병합-2026-10-29"></a>
+<a id="cad와-솔버별-전처리-분리-2026-10-29"></a>
+<a id="mdo-doe-기법별-설정생성-예정-점-수연속-변수-수준값-및-민감도-중복-재분석-방지-38-39-40-2026-11-02"></a>
+<a id="mdo-phase-3-구현수치-검증-windows-최종-인도-대기-2026-10-28"></a>
+<a id="calculix-네이티브-치수-최적화sizing-optimization-벤치마크-완료-2026-10-27"></a>
+<a id="mdo-정직화-작업-2026-10-27-task-codex-honest-remediation-001"></a>
+<a id="mdo-수치-api-로컬-구현-2026-10-27"></a>
+<a id="새-mdo-설계-2026-10-26-후속-요청"></a>
+<a id="최신-확인과-남은-작업-2026-10-26"></a>
+<a id="새-세션에서-이어갈-작업"></a>
+<a id="1단계-종료-조건별-판정"></a>
+<a id="독립-입력-적격성"></a>
+<a id="다음-실행에-지정한-미사용-원-덱-후보"></a>
+<a id="개선-계획-p1p7의-복구-현황"></a>
+<a id="코드에서-확인한-범위와-남은-결함"></a>
+<a id="stage-4-1-최적화-대시보드--로컬-구현"></a>
+<a id="p1에서-바뀐-동작"></a>
+<a id="p2-의존성시작-진단-수정"></a>
+<a id="p2-프로그램-경계-정정"></a>
+<a id="p3-사용자-파일저장프로그램-열기"></a>
+<a id="p4-네이티브-실행결과-이력"></a>
+<a id="p5-결과-전달독립-전문가와-검색-자료"></a>
+<a id="p6-제안-검토같은-연구-재개"></a>
+<a id="p7-보충-입력-확인과-ci"></a>
+<a id="전문가-대화-화면-개선-중"></a>
+<a id="부모-창-정보-표시-개선-중"></a>
+<a id="앞선-정합성-변경에서-확인한-것"></a>
+<a id="개발자-환경의-과거-실행-기록-이번-변경에서-재실행하지-않음"></a>
+<a id="다음-순서"></a>
