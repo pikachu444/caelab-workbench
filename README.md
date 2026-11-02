@@ -41,6 +41,13 @@ python -m venv .venv
 
 [개발 규칙](AGENTS.md)을 먼저 확인하세요. GUI는 `apps/workbench_qt/`, 프로그램 연결은 `caelab/connections.py`, 실행 기록은 `caelab/native/`, 전문가 기능은 `caelab/assist/`, MDO는 `caelab/mdo/`에 있습니다.
 
+MDO의 `MDOStudioWindow`는 Workbench를 통해 `caelab.mdo`의 `VariableSpace`(변수), `StudyManager`(연구·설계점), `TemplateDeck`(덱 치환)을 사용합니다. 독립 진입점은 `python -m apps.workbench_qt.mdo_studio`이며 위 가상환경에서는 다음처럼 실행합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[mdo]"
+.\.venv\Scripts\python.exe -m apps.workbench_qt.mdo_studio
+```
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[gui,mdo,rag,dev]"
 .\.venv\Scripts\python.exe -m pytest
