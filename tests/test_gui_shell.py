@@ -249,3 +249,83 @@ def test_main_window_theme_toggle_updates_ui(app, tmp_path, monkeypatch):
     finally:
         set_theme_mode("dark")
 
+
+def _property_texts(window, path):
+    from PySide6.QtWidgets import QLabel
+
+    assert window.select_path(path)
+    return [label.text() for label in window.props_panel.findChildren(QLabel)]
+
+
+@pytest.mark.parametrize('omit_unit_key', [False, True])
+def test_auxiliary_si_units_follow_the_model_default(app, omit_unit_key):
+    from PySide6.QtWidgets import QLabel
+    from caelab.model.schema import StructuralModel
+
+    data = cantilever_model().to_dict()
+    if omit_unit_key:
+        data.pop('unit_system')
+    model = StructuralModel.from_dict(data)
+    before = model.to_dict()
+    window = MainWindow()
+    try:
+        window.set_model(model)
+        assert 'SI (m, kg, s, Pa)' in _property_texts(window, 'model')
+        assert any('단위계: SI' in label.text() for label in window.statusBar().findChildren(QLabel))
+        materials = _property_texts(window, 'materials[0]')
+        assert '210.00 GPa' in materials
+        assert '7,850 kg/m³' in materials
+        assert '-1,000.0 N' in _property_texts(window, 'loads[0]')
+        assert model.to_dict() == before
+    finally:
+        window.close()
+        app.processEvents()
+
+
+@pytest.mark.parametrize(('declaration', 'visible_declaration'), [
+    ('SI', 'SI'), (' si ', ' si '), ('mm-ton-s', 'mm-ton-s'), ('', '미선언'), (None, '미선언'),
+])
+def test_auxiliary_unknown_units_preserve_declared_values(app, declaration, visible_declaration):
+    from PySide6.QtWidgets import QLabel
+
+    model = cantilever_model()
+    model.unit_system = declaration
+    model.materials[0].params['youngs_modulus'] = 210000
+    model.materials[0].params['density'] = 7.8e-9
+    model.loads[0].values['fy'] = 1e-6
+    before = model.to_dict()
+    window = MainWindow()
+    try:
+        window.set_model(model)
+        materials = _property_texts(window, 'materials[0]')
+        assert '210000 (단위 미확인)' in materials
+        assert '7.8e-09 (단위 미확인)' in materials
+        assert '0.300' in materials
+        assert '1e-06 (단위 미확인)' in _property_texts(window, 'loads[0]')
+        description = next(text for text in _property_texts(window, 'model') if '단위 미확인' in text)
+        assert visible_declaration in description
+        assert any(description in label.text() for label in window.statusBar().findChildren(QLabel))
+        assert model.to_dict() == before
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_auxiliary_units_refresh_when_the_model_changes(app):
+    from PySide6.QtWidgets import QLabel
+
+    window = MainWindow()
+    try:
+        assert any('모델 없음' in label.text() for label in window.statusBar().findChildren(QLabel))
+        first, unknown, final = (cantilever_model() for _ in range(3))
+        unknown.unit_system = ''
+        for model in (first, unknown, final):
+            window.set_model(model)
+            description = _property_texts(window, 'model')
+            assert any(text in label.text() for text in description if text.startswith(('SI (', '미선언'))
+                       for label in window.statusBar().findChildren(QLabel))
+        assert '210.00 GPa' in _property_texts(window, 'materials[0]')
+    finally:
+        window.close()
+        app.processEvents()
+
