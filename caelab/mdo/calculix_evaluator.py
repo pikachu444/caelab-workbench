@@ -21,11 +21,47 @@ from caelab.mdo.inp_binder import TemplateDeck
 from caelab.mdo.optimize import EvaluationObservation, EvaluationRequest
 from caelab.native.results import _Reader
 
-DEFAULT_CCX = r"C:\SourceCodes\caelab-p7-public-native\windows\runtime\FreeCAD_1.1.4-Windows-x86_64-py311\bin\ccx.exe"
+import shutil
+
+
+def find_ccx_binary(explicit: str | Path | None = None) -> str | None:
+    """Discover the ccx executable path from explicit arg, env var, or system PATH."""
+    if explicit:
+        p = Path(explicit).expanduser()
+        if p.is_file():
+            return str(p.resolve())
+        return None
+
+    env_ccx = os.environ.get("CAELAB_CCX")
+    if env_ccx:
+        p = Path(env_ccx).expanduser()
+        if p.is_file():
+            return str(p.resolve())
+
+    which = shutil.which("ccx") or shutil.which("ccx.exe")
+    if which:
+        return str(Path(which).resolve())
+
+    try:
+        from caelab.connections import program_statuses
+        for status in program_statuses():
+            if status.spec.id == "calculix" and status.available and status.path:
+                if Path(status.path).is_file():
+                    return str(Path(status.path).resolve())
+    except Exception:
+        pass
+
+    return None
+
+
+DEFAULT_CCX = find_ccx_binary()
 
 
 def extract_calculix_responses(workdir: Path, run_result: dict | None = None) -> dict[str, float]:
     """Final FRD nodal fields and same-time DAT set totals, in declared deck units."""
+    if run_result is not None:
+        if run_result.get("returncode") not in (None, 0) or run_result.get("state") == "failed":
+            return {}
     obs = {}
     frd_path = workdir / "model.frd"
     final_time = None
@@ -82,11 +118,17 @@ class CalculiXEvaluator:
         extra_files: Sequence[Path] = (),
     ) -> None:
         self.template = template
-        self.ccx_bin = str(ccx_bin or os.environ.get("CAELAB_CCX", DEFAULT_CCX))
+        resolved = find_ccx_binary(ccx_bin)
+        if resolved is None:
+            if ccx_bin is not None:
+                raise FileNotFoundError(f"CalculiX binary not found at specified path: {ccx_bin}")
+            raise FileNotFoundError(
+                "CalculiX binary (ccx) not found. Specify ccx_bin, set CAELAB_CCX environment variable, "
+                "or ensure ccx is on PATH."
+            )
+        self.ccx_bin = resolved
         self.timeout = timeout
         self.extra_files = tuple(extra_files)
-        if not os.path.isfile(self.ccx_bin):
-            raise FileNotFoundError(f"CalculiX binary not found at: {self.ccx_bin}")
 
     def evaluate_batch(
         self, requests: tuple[EvaluationRequest, ...]
