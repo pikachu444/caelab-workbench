@@ -40,6 +40,7 @@ def test_bundled_external_start_failure_is_failed_with_original_reason(tmp_path,
     try:
         assert record.state == 'failed'
         assert 'FileNotFoundError' in record.error
+        assert record.error.startswith('FileNotFoundError: ')
         assert record.process is None and record.pid is None
         assert manager.launches[record.id] is record
     finally:

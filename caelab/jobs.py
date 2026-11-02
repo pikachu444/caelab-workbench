@@ -199,6 +199,10 @@ class _WindowsRunGroup:
             self.handle = None
 
 
+class _ExternalLaunchError(RuntimeError):
+    """The gate's original serialized OS error, for existing UI classification."""
+
+
 def _launch_bundled_external(request: LaunchRequest, timeout: float = 10.0):
     """Acknowledge OS process creation, with ownership until the handoff succeeds."""
     with tempfile.TemporaryDirectory(prefix='caelab-launch-', ignore_cleanup_errors=True) as folder:
@@ -231,7 +235,7 @@ def _launch_bundled_external(request: LaunchRequest, timeout: float = 10.0):
                     return process
                 if (isinstance(receipt, dict) and set(receipt) == {'started', 'error'}
                         and receipt['started'] is False and isinstance(receipt['error'], str) and receipt['error']):
-                    raise RuntimeError(receipt['error'])
+                    raise _ExternalLaunchError(receipt['error'])
                 raise ValueError('Invalid external launch acknowledgement')
         except Exception as error:
             cleanup_errors = []
@@ -831,6 +835,8 @@ class JobManager:
                     request.argv, cwd=request.cwd, env=request.env, shell=False,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 )
+        except _ExternalLaunchError as exc:
+            record.state, record.error = "failed", str(exc)
         except Exception as exc:
             record.state, record.error = "failed", f"{type(exc).__name__}: {exc}"
         return record
