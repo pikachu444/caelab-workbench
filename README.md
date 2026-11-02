@@ -34,8 +34,10 @@ python -m venv .venv
 | 설치·프로그램 연결·해석·결과·전문가·저장 | [워크벤치 시작 가이드](docs/tutorials/workbench_quickstart.md) |
 | 선택적 MDO 설치·연구·적용·재해석 | [MDO 실습 가이드](docs/tutorials/01_end_to_end_calculix_mdo_guide.md) |
 | 실제 수행한 벤치마크와 입력·재현 조건 | [Sizing 벤치마크](docs/benchmarks/01_sizing_optimization_benchmarks.md) |
-| 아직 실측하지 않은 산업 모델 목표 | [GE 브래킷·로어 암](docs/benchmarks/commercial_mdo_benchmark_calculix.md), [추가 후보](docs/benchmarks/comprehensive_commercial_mdo_benchmarks.md) |
+| 아직 실측하지 않은 산업 모델 목표와 후보 | [벤치마크 목표 사양](docs/benchmarks/commercial_mdo_benchmark_calculix.md) |
 | 제품 정의·코드 구조·현재 상태 | [DESIGN](DESIGN.md), [ARCHITECTURE](ARCHITECTURE.md), [CURRENT_STATE](CURRENT_STATE.md) |
+| 화면·차트의 의미 | [MDO 화면 참고자료](docs/tutorials/visual_mdo_guide.md) |
+| 과거 구현·실패·정정의 원문 | [구현 이력](docs/history/implementation-history.md) |
 
 ## 개발과 문제 보고
 
