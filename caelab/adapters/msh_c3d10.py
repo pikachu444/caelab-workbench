@@ -18,7 +18,21 @@ import os
 import tempfile
 from fractions import Fraction
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, Iterable, NamedTuple
+
+from ..model.schema import (
+    BoundaryCondition,
+    Load,
+    Material,
+    MeshData,
+    NamedSet,
+    Section,
+    Step,
+    StructuralModel,
+)
+from ..result_summary import summarize_result
+from ..solvers.base import ResultSet
+from ..solvers.calculix import CalculiXConverter
 
 
 class MshC3D10Error(ValueError):
@@ -563,3 +577,203 @@ def parse_c3d10_deck(inp_path: Path | str) -> tuple[dict[int, tuple[float, float
                 elements[eid] = [int(t) for t in tokens[1:]]
 
     return nodes, elements
+
+
+def _id_lines(ids: Iterable[int | str]) -> list[str]:
+    """CalculiX accepts at most 16 entries per data line."""
+    items = [str(i) for i in ids]
+    return [", ".join(items[i:i + 16]) for i in range(0, len(items), 16)] or [""]
+
+
+def extract_boundary_nodes(
+    mesh: ConvertedMesh,
+    predicate: Callable[[float, float, float], bool] | None = None,
+) -> list[int]:
+    """Extract sorted unique node IDs present in Tri6 boundary annotations satisfying predicate."""
+    candidates: set[int] = set()
+    for tri_nodes in mesh.tri6_boundary.values():
+        candidates.update(tri_nodes)
+
+    if predicate is None:
+        return sorted(candidates)
+
+    return [nid for nid in sorted(candidates) if predicate(*mesh.nodes[nid])]
+
+
+def assemble_c3d10_master_deck(
+    include_deck_filename: str | Path,
+    *,
+    fixed_nodes: list[int] | set[int],
+    loaded_nodes: list[int] | set[int] | None = None,
+    load_vector: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    youngs_modulus: float = 210000.0,
+    poissons_ratio: float = 0.3,
+    density: float | None = None,
+    heading: str = "CalculiX C3D10 Simulation Deck",
+    fixed_set_name: str = "FIXED_NODES",
+    loaded_set_name: str = "LOAD_NODES",
+    include_dat_totals: bool = False,
+) -> str:
+    """Assemble a complete CalculiX master simulation deck referencing a C3D10 include deck."""
+    inc_name = str(include_deck_filename).replace("\\", "/")
+    if not inc_name.strip():
+        raise MshC3D10Error("Include deck filename must not be empty")
+
+    fixed_list = sorted(set(fixed_nodes))
+    if not fixed_list:
+        raise MshC3D10Error("Fixed nodes list must not be empty")
+
+    loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
+
+    collision = set(fixed_list).intersection(set(loaded_list))
+    if collision:
+        raise MshC3D10Error(
+            f"Fixed and loaded node sets must be disjoint to prevent load-reaction ambiguity. Colliding: {sorted(collision)}"
+        )
+
+    lines: list[str] = [
+        "** -------------------------------------------------------------",
+        "** CalculiX C3D10 master simulation deck",
+        "** -------------------------------------------------------------",
+        "*HEADING",
+        heading,
+        f"*INCLUDE, INPUT={inc_name}",
+        f"*NSET, NSET={fixed_set_name}",
+    ]
+    lines.extend(_id_lines(fixed_list))
+
+    if loaded_list:
+        lines.append(f"*NSET, NSET={loaded_set_name}")
+        lines.extend(_id_lines(loaded_list))
+
+    lines.extend([
+        "*MATERIAL, NAME=STEEL",
+        "*ELASTIC",
+        f"{youngs_modulus!r}, {poissons_ratio!r}",
+    ])
+    if density is not None:
+        lines.extend([
+            "*DENSITY",
+            f"{density!r}",
+        ])
+
+    lines.extend([
+        "*SOLID SECTION, ELSET=EL_C3D10, MATERIAL=STEEL",
+        "*STEP",
+        "*STATIC",
+        "*BOUNDARY",
+        f"{fixed_set_name}, 1, 3, 0.0",
+    ])
+
+    if loaded_list and any(load_vector):
+        lines.append("*CLOAD")
+        n = len(loaded_list)
+        for comp, dof in zip(load_vector, (1, 2, 3)):
+            if comp != 0.0:
+                lines.append(f"{loaded_set_name}, {dof}, {comp / n!r}")
+
+    lines.extend([
+        "*NODE FILE",
+        "U, RF",
+        "*EL FILE",
+        "S",
+    ])
+    if include_dat_totals:
+        lines.extend([
+            f"*NODE PRINT, NSET={fixed_set_name}, TOTALS=ONLY",
+            "RF",
+        ])
+
+    lines.append("*END STEP")
+    return "\n".join(lines) + "\n"
+
+
+def build_c3d10_structural_model(
+    mesh: ConvertedMesh,
+    *,
+    name: str = "c3d10_simulation",
+    unit_system: str = "mm-t-s",
+    fixed_nodes: list[int] | set[int] | None = None,
+    loaded_nodes: list[int] | set[int] | None = None,
+    load_vector: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    youngs_modulus: float = 210000.0,
+    poissons_ratio: float = 0.3,
+    density: float | None = None,
+) -> StructuralModel:
+    """Construct a caelab.model.schema.StructuralModel from ConvertedMesh for CalculiX."""
+    fixed_list = sorted(set(fixed_nodes)) if fixed_nodes else []
+    loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
+
+    collision = set(fixed_list).intersection(set(loaded_list))
+    if collision:
+        raise MshC3D10Error(
+            f"Fixed and loaded node sets must be disjoint. Colliding: {sorted(collision)}"
+        )
+
+    mesh_data = MeshData(
+        nodes={nid: list(coords) for nid, coords in mesh.nodes.items()},
+        elements={eid: {"type": "C3D10", "nodes": list(conn)} for eid, conn in mesh.elements.items()},
+    )
+
+    sets: dict[str, NamedSet] = {
+        "ALL": NamedSet(kind="element", members=sorted(mesh.elements.keys())),
+        "EL_C3D10": NamedSet(kind="element", members=sorted(mesh.elements.keys())),
+    }
+    bcs: list[BoundaryCondition] = []
+    if fixed_list:
+        sets["FIXED_NODES"] = NamedSet(kind="node", members=fixed_list)
+        bcs.append(BoundaryCondition(name="fixed_support", target_set="FIXED_NODES", fixed_dofs=[1, 2, 3]))
+
+    loads: list[Load] = []
+    if loaded_list and any(load_vector):
+        sets["LOAD_NODES"] = NamedSet(kind="node", members=loaded_list)
+        vals = {}
+        for comp, key in zip(load_vector, ("fx", "fy", "fz")):
+            if comp != 0.0:
+                vals[key] = comp
+        loads.append(Load(name="applied_load", kind="force", target_set="LOAD_NODES", values=vals))
+
+    mat_params: dict[str, float] = {
+        "youngs_modulus": youngs_modulus,
+        "poissons_ratio": poissons_ratio,
+    }
+    if density is not None:
+        mat_params["density"] = density
+
+    materials = [Material(name="STEEL", law="linear_elastic", params=mat_params)]
+    sections = [Section(name="solid_section", kind="solid", element_set="ALL", material="STEEL")]
+    steps = [
+        Step(
+            name="static_step",
+            kind="linear_static",
+            loads=[ld.name for ld in loads],
+            bcs=[bc.name for bc in bcs],
+        )
+    ]
+
+    return StructuralModel(
+        name=name,
+        unit_system=unit_system,
+        mesh=mesh_data,
+        sets=sets,
+        materials=materials,
+        sections=sections,
+        loads=loads,
+        bcs=bcs,
+        steps=steps,
+        outputs={"fields": ["U", "RF", "S"]},
+    )
+
+
+def run_c3d10_simulation(
+    workdir: Path | str,
+    model: StructuralModel,
+    deck_path: Path | str,
+) -> tuple[ResultSet, dict]:
+    """Execute CalculiX simulation using CalculiXConverter and summarize results."""
+    workdir = Path(workdir).resolve()
+    deck_path = Path(deck_path).resolve()
+    conv = CalculiXConverter()
+    result = conv.run(model, deck_path, workdir)
+    summary = summarize_result(result)
+    return result, summary
