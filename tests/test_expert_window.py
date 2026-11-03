@@ -26,6 +26,7 @@ from caelab.workbench import Workbench
 def isolated_view_preferences(tmp_path, monkeypatch):
     from apps.workbench_qt.theme import set_theme_mode
     monkeypatch.setenv('CAELAB_UI_SETTINGS_PATH', str(tmp_path / 'ui.ini'))
+    monkeypatch.setenv('CAELAB_EXPERT_SETTINGS_PATH', str(tmp_path / 'expert-view.ini'))
     set_theme_mode('dark')
     previous = QSettings.defaultFormat()
     QSettings.setDefaultFormat(QSettings.IniFormat)
@@ -83,6 +84,14 @@ def finish(window, app):
         app.processEvents()
         time.sleep(.01)
     assert window._operation is None
+
+
+def wait_for_stage(window, app, label):
+    deadline = time.monotonic() + 2
+    while label not in window.wait_label.text() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(.01)
+    assert label in window.wait_label.text()
 
 
 def test_preview_is_not_question_basis_and_reopen_never_calls(window, app, tmp_path):
@@ -771,3 +780,90 @@ def test_opening_an_unvisited_document_resets_view_without_losing_previous_readi
     assert bar.value() == 350
     assert not ui.transcript.follow_tail
     assert ui.question.toPlainText() == '읽으면서 적어 둔 후속 질문'
+
+
+def test_request_stage_is_visible_through_real_service_callbacks(window, app, tmp_path, monkeypatch):
+    from caelab.assist.knowledge import KnowledgeSearchResult
+    ui, provider = window
+    attach(ui, tmp_path, '** stage source')
+    ui.role.setCurrentIndex(ui.role.findData('material'))
+    preparing, prep_release = threading.Event(), threading.Event()
+    responding, response_release = threading.Event(), threading.Event()
+    def search(*args, **kwargs):
+        preparing.set()
+        assert prep_release.wait(3)
+        return KnowledgeSearchResult('no_material', [], 'calculix')
+    def discuss(prompt):
+        responding.set()
+        assert response_release.wait(3)
+        return '모의 단계 응답'
+    monkeypatch.setattr(experts, 'search_knowledge_result', search)
+    provider.discuss = discuss
+    try:
+        ui.question.setPlainText('준비와 응답을 확인합니다.')
+        ui.ask()
+        assert preparing.wait(2)
+        wait_for_stage(ui, app, '자료 준비')
+        assert ui._operation == 'ask'
+        prep_release.set()
+        assert responding.wait(2)
+        wait_for_stage(ui, app, '모델 응답')
+        response_release.set()
+        finish(ui, app)
+        assert ui.document['turns'][-1]['status'] == 'completed'
+        assert ui.document['turns'][-1]['stage'] == 'provider'
+        assert ui.wait_label.text() == ''
+    finally:
+        prep_release.set()
+        response_release.set()
+        if ui._operation:
+            ui.cancel_request()
+            finish(ui, app)
+
+
+def test_cancelled_and_previous_request_stage_cannot_replace_active_label(window, app, tmp_path, monkeypatch):
+    ui, _ = window
+    attach(ui, tmp_path, '** stage token source')
+    callbacks = []
+    entered = [threading.Event(), threading.Event()]
+    release = [threading.Event(), threading.Event()]
+    def ask(*args, on_stage=None, **kwargs):
+        index = len(callbacks)
+        callbacks.append(on_stage)
+        assert on_stage is not None
+        on_stage('preparation')
+        entered[index].set()
+        assert release[index].wait(3)
+        return copy.deepcopy(ui.document)
+    monkeypatch.setattr(ui.workbench, 'ask_expert_discussion', ask)
+    try:
+        ui.question.setPlainText('첫 요청')
+        ui.ask()
+        assert entered[0].wait(2)
+        ui.cancel_request()
+        callbacks[0]('provider')
+        ui._poll()
+        assert '중단 요청' in ui.wait_label.text()
+        release[0].set()
+        finish(ui, app)
+        callbacks[0]('provider')
+        ui._poll()
+        assert ui.wait_label.text() == ''
+        ui.question.setPlainText('다음 요청')
+        ui.ask()
+        assert entered[1].wait(2)
+        callbacks[0]('provider')
+        ui._poll()
+        assert '자료 준비' in ui.wait_label.text()
+        callbacks[1]('provider')
+        ui._poll()
+        assert '모델 응답' in ui.wait_label.text()
+        callbacks[1]('unrecognized stage')
+        ui._poll()
+        assert '모델 응답' in ui.wait_label.text()
+    finally:
+        for event in release:
+            event.set()
+        if ui._operation:
+            ui.cancel_request()
+            finish(ui, app)
