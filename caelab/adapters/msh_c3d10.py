@@ -4,7 +4,7 @@ Enforces:
 1. Valid caelab.standalone-msh sidecar metadata (length_unit == 'mm', schema/version, SHA256 match).
 2. Pure MSH 4.1 ASCII format ($MeshFormat '4.1 0 8'), positive integer IDs, no duplicate nodes or elements.
 3. Strict admission: Tet10 (Gmsh type 11) physical solids only; Tri6 (type 9) boundary tags identified separately.
-4. Straight profile verification: finite coordinates, distinct node references, straight midside node placement, positive Jacobian volume.
+4. Straight profile verification: finite coordinates, distinct node references, exact 8-ULP midpoint residual budget, and exact corner-matrix perturbation norm positivity certificate.
 5. Exact 1-time mid-side swap: raw Gmsh type 11 (12, 23, 31, 14, 34, 24) -> C3D10 (12, 23, 31, 14, 24, 34) (slots 9 and 10).
 6. Lossless coordinate preservation and safe atomic writing preventing source file aliasing/overwrites.
 """
@@ -16,6 +16,7 @@ import json
 import math
 import os
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple
 
@@ -31,6 +32,9 @@ class ConvertedMesh(NamedTuple):
     tri6_boundary: dict[int, list[int]]
     metadata: dict
     raw_node_coords: dict[int, tuple[str, str, str]] | None = None
+
+
+GMSH_TET10_EDGES = ((0, 1), (1, 2), (2, 0), (0, 3), (2, 3), (1, 3))
 
 
 def verify_sidecar(msh_path: Path, sidecar_path: Path, msh_bytes: bytes | None = None) -> dict:
@@ -71,62 +75,125 @@ def verify_sidecar(msh_path: Path, sidecar_path: Path, msh_bytes: bytes | None =
     return data
 
 
+def _det3(a: tuple[tuple[Fraction, ...], ...]) -> Fraction:
+    return (
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+        - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+        + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+    )
+
+
+def _minor3(a: tuple[tuple[Fraction, ...], ...], row: int, col: int) -> Fraction:
+    remaining = [[a[r][c] for c in range(3) if c != col] for r in range(3) if r != row]
+    return remaining[0][0] * remaining[1][1] - remaining[0][1] * remaining[1][0]
+
+
+def _adjugate3(a: tuple[tuple[Fraction, ...], ...]) -> tuple[tuple[Fraction, ...], ...]:
+    return tuple(
+        tuple(
+            (-1 if (row + col) % 2 else 1) * _minor3(a, col, row)
+            for col in range(3)
+        )
+        for row in range(3)
+    )
+
+
+def certify_straight_tet10(
+    coords: list[tuple[float, float, float]],
+    *,
+    ulp_budget: int = 8,
+) -> dict:
+    """Exact, sufficient straight Tet10 certificate aligned with caelab-prep producer policy.
+
+    1. Midpoint proximity is validated within an exact ULP budget (default 8 ULP).
+    2. Jacobian positivity throughout the element is certified via exact matrix-norm
+       perturbation bound relative to the corner tetrahedron.
+    """
+    p = tuple(tuple(Fraction.from_float(float(v)) for v in pt) for pt in coords)
+    a = tuple(tuple(p[col + 1][row] - p[0][row] for col in range(3)) for row in range(3))
+    det = _det3(a)
+
+    residuals: dict[frozenset[int], tuple[Fraction, Fraction, Fraction]] = {}
+    within_budget = True
+    max_res = Fraction(0)
+
+    for midpoint, (i, j) in zip(p[4:], GMSH_TET10_EDGES):
+        avg = tuple((x + y) / 2 for x, y in zip(p[i], p[j]))
+        res = tuple(x - y for x, y in zip(midpoint, avg))
+        residuals[frozenset((i, j))] = res
+        max_res = max(max_res, *(abs(v) for v in res))
+        within_budget &= all(
+            abs(v) <= Fraction.from_float(math.ulp(float(exp))) * ulp_budget
+            for v, exp in zip(res, avg)
+        )
+
+    report = {
+        "certified_positive": False,
+        "reason": "parent_not_positive",
+        "relative_perturbation_bound": None,
+        "midpoint_within_ulp_budget": within_budget,
+        "maximum_midpoint_residual": float(max_res) if math.isfinite(float(max_res)) else None,
+        "ulp_budget": ulp_budget,
+    }
+
+    if det <= 0:
+        return report
+
+    gradients = ((-1, -1, -1), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+    adj = _adjugate3(a)
+    max_norm_num = Fraction(0)
+
+    for k in range(4):
+        perturbation = tuple(
+            tuple(
+                4 * sum(
+                    residuals[frozenset((k, j))][row] * gradients[j][col]
+                    for j in range(4)
+                    if j != k
+                )
+                for col in range(3)
+            )
+            for row in range(3)
+        )
+        product = tuple(
+            tuple(
+                sum(adj[row][j] * perturbation[j][col] for j in range(3))
+                for col in range(3)
+            )
+            for row in range(3)
+        )
+        max_norm_num = max(
+            max_norm_num,
+            *(sum(abs(v) for v in r) for r in product)
+        )
+
+    bound = max_norm_num / det
+    report["relative_perturbation_bound"] = float(bound) if math.isfinite(float(bound)) else None
+    report["certified_positive"] = max_norm_num < det
+    report["reason"] = None if report["certified_positive"] else "positivity_not_certified"
+    return report
+
+
 def _check_straight_tet10(
     etag: int,
     raw_nodes: list[int],
     nodes: dict[int, tuple[float, float, float]],
 ) -> None:
-    """Validate finite coordinates, positive Jacobian volume, and straight midside node placement."""
+    """Validate finite coordinates, 8-ULP midpoint residual budget, and exact Jacobian positivity certificate."""
     coords = [nodes[n] for n in raw_nodes]
+    cert = certify_straight_tet10(coords, ulp_budget=8)
 
-    # Vertices: 0: V0, 1: V1, 2: V2, 3: V3
-    v0, v1, v2, v3 = coords[0], coords[1], coords[2], coords[3]
-
-    # Scalar triple product: ((v1 - v0) x (v2 - v0)) . (v3 - v0)
-    a = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
-    b = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
-    c = (v3[0] - v0[0], v3[1] - v0[1], v3[2] - v0[2])
-    cross = (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
-    det = cross[0] * c[0] + cross[1] * c[1] + cross[2] * c[2]
-    vol = det / 6.0
-    if vol <= 1e-15:
+    if not cert["midpoint_within_ulp_budget"]:
         raise MshC3D10Error(
-            f"Tet10 element {etag} has non-positive or degenerate Jacobian volume: {vol:.6g}"
+            f"Tet10 element {etag} violates straight profile: midside node not within "
+            f"{cert['ulp_budget']} ULP budget (max_residual={cert['maximum_midpoint_residual']})"
         )
 
-    # Gmsh Tet10 midside edge bindings:
-    # 4: mid(0,1), 5: mid(1,2), 6: mid(2,0)
-    # 7: mid(0,3), 8: mid(2,3), 9: mid(1,3)
-    edges = [
-        (0, 1, 4),
-        (1, 2, 5),
-        (2, 0, 6),
-        (0, 3, 7),
-        (2, 3, 8),
-        (1, 3, 9),
-    ]
-    for v_a_idx, v_b_idx, m_idx in edges:
-        p_a = coords[v_a_idx]
-        p_b = coords[v_b_idx]
-        p_m = coords[m_idx]
-        exp_m = (
-            0.5 * (p_a[0] + p_b[0]),
-            0.5 * (p_a[1] + p_b[1]),
-            0.5 * (p_a[2] + p_b[2]),
+    if not cert["certified_positive"]:
+        raise MshC3D10Error(
+            f"Tet10 element {etag} violates straight profile: Jacobian positivity not certified "
+            f"(reason={cert['reason']}, bound={cert['relative_perturbation_bound']})"
         )
-        edge_len = math.dist(p_a, p_b)
-        dist_to_mid = math.dist(p_m, exp_m)
-        rel_dev = dist_to_mid / edge_len if edge_len > 0 else dist_to_mid
-        if dist_to_mid > 1e-5 and rel_dev > 1e-4:
-            raise MshC3D10Error(
-                f"Tet10 element {etag} violates straight profile: "
-                f"midside node {raw_nodes[m_idx]} deviates from edge ({raw_nodes[v_a_idx]}, {raw_nodes[v_b_idx]}) "
-                f"midpoint by {dist_to_mid:.6g} (rel_dev={rel_dev:.6g})"
-            )
 
 
 def read_msh41_straight_tet10(
@@ -313,7 +380,7 @@ def read_msh41_straight_tet10(
                     if nid not in nodes:
                         raise MshC3D10Error(f"Tet10 element {etag} references undefined node {nid}")
 
-                # R3: Straight Tet10 geometry & positive Jacobian volume check
+                # R3: Straight Tet10 exact 8-ULP midpoint and perturbation-norm positive certificate
                 _check_straight_tet10(etag, raw_nodes, nodes)
 
                 # Exact 1-time swap: Gmsh slot 9 and 10 (0-based indices 8 and 9)

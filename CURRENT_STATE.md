@@ -6,14 +6,14 @@
 
 ### Gmsh MSH 4.1 straight Tet10 → CalculiX C3D10 변환 (Phase 4-B 1단계)
 
-독립 어댑터 `caelab/adapters/msh_c3d10.py`와 검증 테스트 `tests/test_msh_c3d10.py`를 구현 및 독립 검토 피드백(S1/S2/R1~R5)을 전면 반영했습니다.
+독립 어댑터 `caelab/adapters/msh_c3d10.py`와 검증 테스트 `tests/test_msh_c3d10.py`를 구현 및 독립 검토 피드백(S1/S2/R1~R5)과 R3 생산자 기하 계약 일치를 완료했습니다.
 - 입력: Gmsh MSH 4.1 ASCII 파일 및 `caelab.standalone-msh` v1 sidecar JSON (`length_unit=mm`, `element_profile=straight_tet10`).
 - 헤더 및 무결성(R5, R2): `$MeshFormat`의 `4.1 0 8`(ASCII, data-size 8) 엄격 검증. 단일 메모리 버퍼(`read_bytes()`)에서 SHA256 대조와 파싱을 함께 수행해 TOCTOU 간극 배제.
 - 절점 및 요소 검증(R4): 블록 내·외 절점 중복 태그 감지, 유효 양의 정수 비연속 ID 보존, Tri6 경계 요소의 양수 ID/중복/미정의 절점 참조 및 Tet10 ↔ Tri6 요소 태그 전역 충돌 검증.
-- 직선 프로파일 형상 검증(R3): 절점 좌표 유한성(`math.isfinite`), 10개 고유 절점 참조, 에지 중간점 상대 편차 허용치($\text{rel\_dev} \le 10^{-4}$), 양의 야코비안 체적($V > 0$) 엄격 검증(비직선·반전 요소 거부).
+- 직선 프로파일 형상 검증(R3): 생산자(`caelab-prep`)의 엄격한 기하 계약과 일치하도록 임의 상대 편차/체적 하한을 배제하고, 정확한 8-ULP 중간점 잔차 예산(`math.ulp` 기반) 및 코너 사면체 섭동 행렬 놈(matrix-norm perturbation bound) 기반 전역 야코비안 양성 인증(`certify_straight_tet10`)을 직접 수행하여 비직선·음수/미인증 요소를 수학적으로 엄격 거부.
 - 노드 순서 변환: raw Gmsh type 11 `(12, 23, 31, 14, 34, 24)` midside 노드를 CalculiX C3D10 `(12, 23, 31, 14, 24, 34)`로 슬롯 9와 10을 단 1회 스왑.
 - 무손실 좌표 보존 및 원본 보호(S2, R1): MSH 원본 좌표 문자열을 무손실(lossless) 보존 출력하여 IEEE-754 재파싱 오차 0 보장. 출력 경로가 원본 MSH 또는 메타데이터 JSON과 동일하거나 별칭(alias)인 경우 쓰기 전 즉시 거부(`MshC3D10Error`)하여 원본 불변성 보장.
-- 실물 검증 및 환경 격리(S1): 외부 검증 자산은 `CAELAB_FIXED_L_ASSET_DIR` 환경변수 또는 표준 로컬 캐시를 참조하며 자산 부재 시 CI에서는 skip으로 격리. Prep 생성 고정 L 실물 자산(`045acf69...` / `52fc715c...`) 로컬 검증에서 87개 절점(39개 성분 포함 좌표 100% 무손실 일치), 36개 Tet10 요소(야코비안 최소 체적 0.06158, 중간점 편차 0.0), 28개 Tri6 경계 어노테이션 분리 판독 및 INP include 덱 재파싱 100% 일치 확인(총 16개 검사 전건 통과).
+- 실물 검증 및 환경 격리(S1): 외부 검증 자산은 `CAELAB_FIXED_L_ASSET_DIR` 환경변수 또는 표준 로컬 캐시를 참조하며 자산 부재 시 CI에서는 skip으로 격리. Prep 생성 고정 L 실물 자산(`045acf69...` / `52fc715c...`) 로컬 검증에서 87개 절점(39개 성분 포함 좌표 100% 무손실 일치), 36개 Tet10 요소(야코비안 양성 인증 36/36, 8-ULP 중간점 잔차 전건 만족), 28개 Tri6 경계 어노테이션 분리 판독 및 INP include 덱 재파싱 100% 일치 확인(총 17개 검사 전건 통과).
 - 범위 한정: 1단계는 mesh-only include 덱 변환에 한정하며 실제 CalculiX 솔버 실행 및 해석 UI 진입은 미포함.
 
 

@@ -212,11 +212,11 @@ def test_fail_closed_target_aliases_source(synthetic_msh_fixture):
 
 
 def test_fail_closed_curved_midside_deviation(synthetic_msh_fixture):
-    """R3: Fail closed when midside node deviates from straight edge midpoint."""
+    """R3: Fail closed when midside node deviates from straight edge midpoint beyond 8-ULP budget."""
     msh_file, sidecar_file = synthetic_msh_fixture
     content = msh_file.read_text(encoding="utf-8")
-    # Move node 5 from (0.5, 0.0, 0.0) to (0.5, 0.1, 0.0)
-    modified = content.replace("0.5 0.0 0.0", "0.5 0.1 0.0")
+    # Move node 5 from (0.5, 0.0, 0.0) to (0.5, 5e-5, 0.0) - exact boundary test from review
+    modified = content.replace("0.5 0.0 0.0", "0.5 5e-5 0.0")
     msh_file.write_text(modified, encoding="utf-8")
 
     # Update sidecar hash to pass SHA check and isolate R3 admission check
@@ -224,23 +224,64 @@ def test_fail_closed_curved_midside_deviation(synthetic_msh_fixture):
     sidecar_data["source"]["sha256"] = hashlib.sha256(msh_file.read_bytes()).hexdigest()
     sidecar_file.write_text(json.dumps(sidecar_data), encoding="utf-8")
 
-    with pytest.raises(MshC3D10Error, match="violates straight profile"):
+    with pytest.raises(MshC3D10Error, match="midside node not within 8 ULP budget"):
         read_msh41_straight_tet10(msh_file, sidecar_file)
 
 
-def test_fail_closed_degenerate_or_negative_jacobian(synthetic_msh_fixture):
-    """R3: Fail closed when element has non-positive Jacobian volume."""
+def test_admit_scaled_micro_geometry(synthetic_msh_fixture, tmp_path: Path):
+    """R3: Scale-invariant admission: elements with tiny coordinates (1e-5 scale) certify positive without arbitrary volume cutoff."""
     msh_file, sidecar_file = synthetic_msh_fixture
     content = msh_file.read_text(encoding="utf-8")
-    # Swap vertex 1 and 2 to invert tetrahedron orientation
-    modified = content.replace("100 1 2 3 4 5 6 7 8 9 10", "100 2 1 3 4 5 6 7 8 9 10")
+
+    # Scale all coordinates by 1e-5
+    lines = content.splitlines()
+    in_nodes = False
+    new_lines = []
+    for l in lines:
+        parts = l.strip().split()
+        if len(parts) == 3 and not l.startswith("$") and in_nodes:
+            scaled = [f"{float(c) * 1e-5:.16g}" for c in parts]
+            new_lines.append(" ".join(scaled))
+        else:
+            if l.strip() == "$Nodes":
+                in_nodes = True
+            elif l.strip() == "$EndNodes":
+                in_nodes = False
+            new_lines.append(l)
+
+    msh_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    sidecar_data = json.loads(sidecar_file.read_text(encoding="utf-8"))
+    sidecar_data["source"]["sha256"] = hashlib.sha256(msh_file.read_bytes()).hexdigest()
+    sidecar_file.write_text(json.dumps(sidecar_data), encoding="utf-8")
+
+    # Must pass admission and convert cleanly
+    mesh = read_msh41_straight_tet10(msh_file, sidecar_file)
+    assert len(mesh.nodes) == 10
+    assert len(mesh.elements) == 1
+
+
+def test_fail_closed_degenerate_or_negative_jacobian(synthetic_msh_fixture):
+    """R3: Fail closed when element has non-positive or uncertified Jacobian."""
+    msh_file, sidecar_file = synthetic_msh_fixture
+    content = msh_file.read_text(encoding="utf-8")
+    # Mirror vertex 4 and its midside nodes across z=0 so det < 0 while preserving exact straight midpoints
+    # 4: (0,0,1) -> (0,0,-1)
+    # 8: (0,0,0.5) -> (0,0,-0.5)
+    # 9: (0,0.5,0.5) -> (0,0.5,-0.5)
+    # 10: (0.5,0,0.5) -> (0.5,0,-0.5)
+    modified = (
+        content.replace("0.0 0.0 1.0", "0.0 0.0 -1.0")
+        .replace("0.0 0.0 0.5", "0.0 0.0 -0.5")
+        .replace("0.0 0.5 0.5", "0.0 0.5 -0.5")
+        .replace("0.5 0.0 0.5", "0.5 0.0 -0.5")
+    )
     msh_file.write_text(modified, encoding="utf-8")
 
     sidecar_data = json.loads(sidecar_file.read_text(encoding="utf-8"))
     sidecar_data["source"]["sha256"] = hashlib.sha256(msh_file.read_bytes()).hexdigest()
     sidecar_file.write_text(json.dumps(sidecar_data), encoding="utf-8")
 
-    with pytest.raises(MshC3D10Error, match="non-positive or degenerate Jacobian volume"):
+    with pytest.raises(MshC3D10Error, match="Jacobian positivity not certified"):
         read_msh41_straight_tet10(msh_file, sidecar_file)
 
 
