@@ -51,6 +51,8 @@ class ExpertWindow(QMainWindow):
         self.project_path, self.node_id, self.run_id = project_path, node_id, run_id
         self._operation = None
         self._mailbox = queue.Queue()
+        self._stage_mailbox = queue.Queue()
+        self._stage_token = None
         self._cancel = threading.Event()
         self._close_after = False
         self._pending_message = None
@@ -702,18 +704,23 @@ class ExpertWindow(QMainWindow):
         def cancelled():
             if self._cancel.is_set():
                 raise RuntimeError('사용자가 응답 대기를 중단했습니다.')
+        stage_token, stage_mailbox = object(), self._stage_mailbox
+        def report_stage(stage):
+            stage_mailbox.put((stage_token, stage))
         self._pending_message = dict(question=question, role=self.role.currentText(), evidence_id=evidence_id, status='pending')
         self._start('ask', lambda: self.workbench.ask_expert_discussion(
             path, question, evidence_id=evidence_id, template_id=role, provider_id=provider,
-            expected_revision=revision, check_cancelled=cancelled))
+            expected_revision=revision, check_cancelled=cancelled, on_stage=report_stage),
+            stage_token=stage_token)
 
-    def _start(self, operation, function):
+    def _start(self, operation, function, *, stage_token=None):
         if self._operation:
             return
         self._operation = operation
+        self._stage_token = stage_token
         self._cancel.clear()
         self._set_busy(True)
-        self.wait_label.setText('답변을 기다리는 중' if operation == 'ask' else '첨부 자료를 보존하는 중')
+        self.wait_label.setText('자료 준비 중…' if operation == 'ask' else '첨부 자료를 보존하는 중')
         self.render()
         if operation == 'ask':
             self.transcript.follow_tail = True
@@ -734,6 +741,15 @@ class ExpertWindow(QMainWindow):
         self.render()
 
     def _poll(self):
+        labels = {'preparation': '자료 준비 중…', 'provider': '모델 응답을 기다리는 중…'}
+        while True:
+            try:
+                token, stage = self._stage_mailbox.get_nowait()
+            except queue.Empty:
+                break
+            if (self._operation == 'ask' and token is self._stage_token
+                    and not self._cancel.is_set() and stage in labels):
+                self.wait_label.setText(labels[stage])
         if not self._operation:
             return
         try:
@@ -741,6 +757,7 @@ class ExpertWindow(QMainWindow):
         except queue.Empty:
             return
         operation, self._operation = self._operation, None
+        self._stage_token = None
         try:
             if not ok:
                 raise value
