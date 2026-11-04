@@ -1660,3 +1660,125 @@ def test_analysis_exec_metrics_card_handles_stale_and_missing_finished_at(themed
     window._selection_changed()
     assert window.exec_metrics_card.isHidden()
     assert window.exec_metrics_title.text() == window.exec_metrics_body.text() == ""
+
+
+def test_cad_connection_editor_integration_flow(window, tmp_path, monkeypatch):
+    geom_box = window.add_box("geometry")
+    node_id = geom_box.node_id
+
+    # 1. Unselected: cad_editor is hidden
+    window.scene.clearSelection()
+    assert window.cad_editor.isHidden()
+
+    # 2. Select geometry: cad_editor is visible, default freecad
+    _select(window, geom_box)
+    assert not window.cad_editor.isHidden()
+    assert window.cad_editor.program_choice.currentData() == "freecad"
+    assert window.open_button.text() == "입력 파일 지정…" or window.open_button.text() == "편집 문서 다시 지정…"
+    initial_epoch = window._cad_context_epoch
+    assert initial_epoch > 0
+
+    # Rebinding same context maintains epoch
+    window._selection_changed()
+    assert window._cad_context_epoch == initial_epoch
+
+    # 3. Change program to solidcraft via editor
+    window.cad_editor.program_choice.setCurrentIndex(
+        window.cad_editor.program_choice.findData("solidcraft")
+    )
+    assert window.project.nodes[node_id].program_id == "solidcraft"
+    assert window.cad_editor.program_choice.currentData() == "solidcraft"
+    assert window._cad_context_epoch > initial_epoch
+    assert window._dirty
+
+    # 4. Register document file
+    sc_file = tmp_path / "model.sc"
+    sc_file.write_bytes(b"solidcraft test model")
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(sc_file), ""))
+    window.cad_editor.document_button.click()
+
+    node = window.project.nodes[node_id]
+    assert "document" in node.files
+    assert node.files["document"].path == str(sc_file.resolve())
+    assert window.cad_editor.document_path.text() == str(sc_file.resolve())
+    assert window.cad_editor.document_status.text() == "등록됨"
+    assert window.open_button.text() == "SolidCraft 열기"
+    assert not window._needs_file(geom_box)
+    assert not window._needs_upstream(geom_box)
+
+    # When program is unavailable, open button is disabled
+    assert not window.open_button.isEnabled()
+
+    # 5. When program is available, open_button is enabled and click invokes open_program with use_input=False
+    from caelab.connections import PROGRAMS, ProgramStatus
+    available_statuses = [
+        ProgramStatus(spec, path="configured.exe", reason="")
+        for spec in PROGRAMS
+    ]
+    monkeypatch.setattr(window.workbench, "programs", lambda: available_statuses)
+    window._selection_changed()
+    assert window.open_button.isEnabled()
+
+    calls = []
+    record = SimpleNamespace(state="opened", error="")
+    monkeypatch.setattr(
+        window.workbench, "open_program",
+        lambda proj, nid, use_input=False: (calls.append((nid, use_input)), record)[1]
+    )
+    window.open_button.click()
+    assert calls == [(node_id, False)]
+
+    # 6. Save and reload project
+    proj_path = tmp_path / "project.json"
+    assert window.save_project(proj_path)
+
+    assert window.open_project(proj_path)
+    box_after = list(window.boxes.values())[0]
+    _select(window, box_after)
+    assert not window.cad_editor.isHidden()
+    assert window.cad_editor.program_choice.currentData() == "solidcraft"
+    assert window.cad_editor.document_path.text() == str(sc_file.resolve())
+    assert window.open_button.text() == "SolidCraft 열기"
+
+    # 7. When document file is missing
+    sc_file.unlink()
+    window.project.refresh()
+    window._selection_changed()
+    assert window._needs_file(box_after)
+    assert window.open_button.text() == "편집 문서 다시 지정…"
+    assert window.cad_editor.document_status.text() == "파일 누락"
+
+    # 8. Deselecting geometry clears editor and hides it
+    window.scene.clearSelection()
+    assert window.cad_editor.isHidden()
+    assert not window.cad_editor.isEnabled()
+    assert window.cad_editor.document_path.text() == ""
+
+
+def test_cadcraft_geometry_open_and_filter(window, tmp_path, monkeypatch):
+    geom_box = window.add_box("geometry")
+    node_id = geom_box.node_id
+    _select(window, geom_box)
+
+    # Change to cadcraft
+    window.cad_editor.program_choice.setCurrentIndex(
+        window.cad_editor.program_choice.findData("cadcraft")
+    )
+    assert window.project.nodes[node_id].program_id == "cadcraft"
+    assert "CADCraft" in window.cad_editor.hint.text()
+
+    dxf_file = tmp_path / "drawing.dxf"
+    dxf_file.write_bytes(b"cadcraft dxf content")
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(dxf_file), ""))
+    window.cad_editor.document_button.click()
+
+    assert window.open_button.text() == "CADCraft 열기"
+    calls = []
+    record = SimpleNamespace(state="opened", error="")
+    monkeypatch.setattr(
+        window.workbench, "open_program",
+        lambda proj, nid, use_input=False: (calls.append((nid, use_input)), record)[1]
+    )
+    window.open_selected()
+    assert calls == [(node_id, False)]

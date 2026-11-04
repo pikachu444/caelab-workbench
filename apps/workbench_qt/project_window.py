@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from caelab.workbench import Workbench
 
+from .cad_connection_editor import CadConnectionEditor
 from .icons import icon
 from .theme import (
     build_stylesheet, current_theme_mode, get_palette, register_theme_listener,
@@ -608,7 +609,9 @@ _DOCUMENT_FILTERS = {
     "prepomax": "PrePoMax 프로젝트 (*.pmx);;모든 파일 (*)",
     "caelab_prep": "CAELab Prep RAD 작업 문서 (*.caeprep);;모든 파일 (*)",
     "salome": "Salome 프로젝트 (*.hdf);;모든 파일 (*)",
-    "freecad": "FreeCAD FEM 문서 (*.FCStd *.fcstd);;모든 파일 (*)",
+    "freecad": "FreeCAD 편집 문서 (*.FCStd *.fcstd);;모든 파일 (*)",
+    "solidcraft": "SolidCraft 편집 문서 (*.sc *.solidcraft);;모든 파일 (*)",
+    "cadcraft": "CADCraft 도면 (*.dxf *.dwg *.dwt);;모든 파일 (*)",
 }
 _PREPROCESSOR_INPUT_FILTERS = {
     "prepomax": "CAD 형상 / CalculiX 입력 (*.step *.stp *.brep *.inp);;모든 파일 (*)",
@@ -981,6 +984,13 @@ class ProjectWindow(QMainWindow):
         self.program_choice.currentIndexChanged.connect(self.change_selected_program)
         program_row.addWidget(self.program_choice, 1)
         fields.addWidget(self.program_choice_row)
+        self._cad_context_epoch: int = 0
+        self._last_selected_cad_node: str | None = None
+        self._last_selected_cad_program: str | None = None
+        self.cad_editor = CadConnectionEditor(self.settings_body)
+        self.cad_editor.program_change_requested.connect(self._on_cad_program_change_requested)
+        self.cad_editor.document_registration_requested.connect(self._on_cad_document_registration_requested)
+        fields.addWidget(self.cad_editor)
         self.input_summary = QLabel()
         self.input_value = QLineEdit()
         self.input_value.setReadOnly(True)
@@ -1256,6 +1266,9 @@ class ProjectWindow(QMainWindow):
     def new_project(self) -> bool:
         if not self._confirm_transition():
             return False
+        self._cad_context_epoch += 1
+        self._last_selected_cad_node = None
+        self._last_selected_cad_program = None
         self.project = self.workbench.new_native_project()
         self._project_revision = None
         self._dirty = False
@@ -1272,6 +1285,9 @@ class ProjectWindow(QMainWindow):
         except Exception as error:
             self._error("프로젝트를 열지 못했습니다", error)
             return False
+        self._cad_context_epoch += 1
+        self._last_selected_cad_node = None
+        self._last_selected_cad_program = None
         self.project = project
         from caelab.project import file_revision
         self._project_revision = file_revision(project.path)
@@ -1479,6 +1495,12 @@ class ProjectWindow(QMainWindow):
         self.program_choice_row.hide()
         self.document_section.hide()
         if len(selected) != 1:
+            if self._last_selected_cad_node is not None:
+                self._cad_context_epoch += 1
+                self._last_selected_cad_node = None
+                self._last_selected_cad_program = None
+            self.cad_editor.clear_context()
+            self.cad_editor.hide()
             for value in (self.input_value, self.output_value):
                 value.clear()
                 value.setToolTip('')
@@ -1489,6 +1511,39 @@ class ProjectWindow(QMainWindow):
             return
         box = selected[0]
         node = self.project.nodes[box.node_id]
+        if node.kind == 'geometry':
+            if (node.id != self._last_selected_cad_node or node.program_id != self._last_selected_cad_program):
+                self._cad_context_epoch += 1
+                self._last_selected_cad_node = node.id
+                self._last_selected_cad_program = node.program_id
+            self.cad_editor.show()
+            document = node.files.get('document')
+            doc_state = self._file_status(document) if document else 'needs_input'
+            from caelab.connections import ProgramStatus
+            sanitized_statuses = [
+                ProgramStatus(
+                    spec=s.spec,
+                    path=getattr(s, "path", None),
+                    reason=_problem_text(getattr(s, "reason", "")) if getattr(s, "reason", "") else "",
+                    source=getattr(s, "source", ""),
+                    runtime_env=getattr(s, "runtime_env", {}),
+                    host_os=getattr(s, "host_os", ""),
+                    execution_environment=getattr(s, "execution_environment", "native"),
+                )
+                for s in self.workbench.programs()
+            ]
+            self.cad_editor.set_context(
+                node, sanitized_statuses,
+                document_state=doc_state,
+                context_epoch=self._cad_context_epoch,
+            )
+        else:
+            if self._last_selected_cad_node is not None:
+                self._cad_context_epoch += 1
+                self._last_selected_cad_node = None
+                self._last_selected_cad_program = None
+            self.cad_editor.clear_context()
+            self.cad_editor.hide()
         statuses = {status.spec.id: status for status in self.workbench.programs()}
         program = statuses.get(node.program_id)
         if node.kind in {'preprocessor', 'analysis', 'mesh', 'results'}:
@@ -1533,6 +1588,10 @@ class ProjectWindow(QMainWindow):
         direct = self._file_owner(node.id) == (node.id, 'input')
         editable = node.kind != 'expert'
         self.output_section.setVisible(editable)
+        if node.kind == 'geometry':
+            self.input_section.setVisible(reference is not None)
+        else:
+            self.input_section.setVisible(True)
         self.input_button.setText('변경…' if reference else '선택…')
         self.input_button.setVisible(editable and direct)
         self.input_more_button.setVisible(editable and not direct)
@@ -1628,7 +1687,7 @@ class ProjectWindow(QMainWindow):
         self.run_summary.setVisible(bool(self.run_summary.text()))
 
     def _needs_file(self, box):
-        if box.kind == 'preprocessor':
+        if box.kind in {'preprocessor', 'geometry'}:
             document = self.project.nodes[box.node_id].files.get('document')
             if document is not None:
                 return self._file_status(document) == 'missing'
@@ -1637,7 +1696,7 @@ class ProjectWindow(QMainWindow):
         return direct and box.kind in {'geometry', 'preprocessor', 'mesh', 'results'} and (reference is None or self._file_status(reference) == 'missing')
 
     def _needs_upstream(self, box):
-        if box.kind == 'preprocessor' and self.project.nodes[box.node_id].files.get('document') is not None:
+        if box.kind in {'preprocessor', 'geometry'} and self.project.nodes[box.node_id].files.get('document') is not None:
             return False
         reference = self.workbench.input_file(self.project, box.node_id)
         return (box.kind in {'geometry', 'preprocessor', 'mesh', 'results'}
@@ -1648,7 +1707,8 @@ class ProjectWindow(QMainWindow):
         if self._needs_upstream(box):
             return self._owner_label(box.node_id)
         if self._needs_file(box):
-            if box.kind == 'preprocessor' and self.project.nodes[box.node_id].files.get('document'):
+            if (box.kind in {'preprocessor', 'geometry'}
+                    and self.project.nodes[box.node_id].files.get('document')):
                 return '편집 문서 다시 지정…'
             return '입력 파일 지정…' if box.kind != 'results' else '결과 파일 지정…'
         if box.kind == 'preprocessor':
@@ -1656,12 +1716,50 @@ class ProjectWindow(QMainWindow):
             if self.project.nodes[box.node_id].files.get('document'):
                 return f'{name} 편집 문서 열기'
             return f'{name}로 입력 가져오기' if self.project.nodes[box.node_id].program_id == 'prepomax' else f'{name} 열기'
-        return {'geometry': 'FreeCAD 열기', 'mesh': 'Gmsh 열기', 'analysis': '해석창 열기',
+        if box.kind == 'geometry':
+            node = self.project.nodes[box.node_id]
+            title = _program_title(node.program_id, node.kind)
+            return f'{title} 열기'
+        return {'mesh': 'Gmsh 열기', 'analysis': '해석창 열기',
                 'results': f'{box.title} 열기', 'expert': '전문가 대화 열기'}.get(box.kind, '프로그램 열기')
 
     def _owner_label(self, node_id):
         owner_id, role = self._file_owner(node_id)
         return f"{self.boxes[owner_id].title} {'입력' if role == 'input' else '출력'}으로 이동"
+
+    def _on_cad_program_change_requested(self, node_id: str, requested_program_id: str) -> None:
+        selected = self._selected_boxes()
+        if len(selected) != 1 or selected[0].node_id != node_id:
+            return
+        node = self.project.nodes.get(node_id)
+        if node is None or node.kind != 'geometry' or node.program_id == requested_program_id:
+            return
+        try:
+            self.workbench.set_node_program(self.project, node_id, requested_program_id)
+            self._cad_context_epoch += 1
+            self._last_selected_cad_program = requested_program_id
+            self._mark_dirty()
+        except Exception as exc:
+            self._error('CAD 프로그램을 변경하지 못했습니다', exc)
+        finally:
+            self._reflect_programs()
+            self._selection_changed()
+
+    def _on_cad_document_registration_requested(self, node_id: str, chosen_path: str) -> None:
+        selected = self._selected_boxes()
+        if len(selected) != 1 or selected[0].node_id != node_id:
+            return
+        node = self.project.nodes.get(node_id)
+        if node is None or node.kind != 'geometry':
+            return
+        try:
+            self.workbench.set_node_file(self.project, node_id, chosen_path, role='document')
+            self._mark_dirty()
+        except Exception as exc:
+            self._error('CAD 편집 문서를 등록하지 못했습니다', exc)
+        finally:
+            self._reflect_programs()
+            self._selection_changed()
 
     def change_selected_program(self, _index=None) -> bool:
         selected = self._selected_boxes()
@@ -1734,7 +1832,8 @@ class ProjectWindow(QMainWindow):
         if role == 'output' and not self.output_button.isEnabled():
             return False
         if role == 'document':
-            title, file_filter = '전처리 편집 문서 지정', _DOCUMENT_FILTERS.get(node.program_id, '편집 문서 (*);;모든 파일 (*)')
+            title = 'CAD 편집 문서 지정' if box.kind == 'geometry' else '전처리 편집 문서 지정'
+            file_filter = _DOCUMENT_FILTERS.get(node.program_id, '편집 문서 (*);;모든 파일 (*)')
         elif role == 'output':
             title = '작성한 교환 형상 지정' if box.kind == 'geometry' else '작성한 솔버 입력 지정' if box.kind == 'preprocessor' else '작성한 출력 지정'
             file_filter = ('CAD 교환 형상 (*.step *.stp *.brep);;모든 파일 (*)' if box.kind == 'geometry' else
@@ -2173,7 +2272,8 @@ class ProjectWindow(QMainWindow):
             if self._needs_upstream(selected[0]):
                 self.select_input_owner()
             elif self._needs_file(selected[0]):
-                role = 'document' if selected[0].kind == 'preprocessor' and self.project.nodes[selected[0].node_id].files.get('document') else 'input'
+                node = self.project.nodes[selected[0].node_id]
+                role = 'document' if (selected[0].kind in {'preprocessor', 'geometry'} and node.files.get('document')) else 'input'
                 self.choose_file(role)
             else:
                 self.open_box(selected[0])
