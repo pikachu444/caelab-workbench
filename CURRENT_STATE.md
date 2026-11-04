@@ -4,15 +4,15 @@
 
 ## 구현 범위
 
-### 상용 CAE 대조 통합 GUI 상세 명세서 (6차 개정 정본)
+### 상용 CAE 대조 통합 GUI 상세 명세서 (7차 개정 정본)
 
-상용 CAE 도구(Altair HyperMesh, Dassault Abaqus/CAE, PrePoMax)의 공식 매뉴얼(PrePoMax 2.0.0 p.14/18/49, HyperMesh 2025.1 등) 및 Prep DESIGN R2 필수 8제품 벤치마크에 대조한 통합 GUI 상세 명세서 [docs/gui/commercial-cae-gui-spec.md](docs/gui/commercial-cae-gui-spec.md) 6차 개정을 완료했습니다.
+상용 CAE 도구(Altair HyperMesh, Dassault Abaqus/CAE, PrePoMax)의 공식 매뉴얼(PrePoMax 2.0.0 p.14/18/49, HyperMesh 2025.1 등) 및 Prep DESIGN R2 필수 8제품 벤치마크에 대조한 통합 GUI 상세 명세서 [docs/gui/commercial-cae-gui-spec.md](docs/gui/commercial-cae-gui-spec.md) 7차 개정을 완료했습니다.
 - 전처리기 소유권 및 호출 계약: OpenRadioss는 Prep 소유(`.caeprep` $\rightarrow$ `_0000.rad`), CalculiX는 PrePoMax/FreeCAD FEM 소유(`.pmx` $\rightarrow$ `.inp`). 호출은 `Workbench.open_program(project, node_id, use_input=False)`([workbench.py L509+](caelab/workbench.py))을 사용하며, 등록 ID(`caelab_prep`, `prepomax`), `node.files["document"]` 우선 바인딩, `_file_status` stat 캐시 및 변경 감지 시점, 명시적 새로고침(`project.refresh()`), 파일 mtime/해시 감지 기반 하류 결과 `STALE` 전파, 저장 취소 시 0 run 보존, 무실행 재열기 라이프사이클 및 저장 실패(기존 보존) vs 노드/해석 실패(`failed` 전이) 복구 계약 규정.
 - 취소 정리 계약: `activity is not None and not activity.active and activity.cleanup_error == ""`를 검증하여 비정상 종료 시 보존 상태 및 오류 안내 규정.
-- 8제품 자료 목록 및 일부 대응: Prep 8개 presentation adapter 및 native 명령 연결 코드 실체([reference_components.py L393](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/src/caelab_prep/ui/reference_components.py#L393), [reference_workspace.py L34](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/src/caelab_prep/ui/reference_workspace.py#L34))와 공개 원본 관측 한계를 분리 대조하고, 원제품 동일 과업 비교 미완료(과업 비교 예정) 상태를 명시.
+- 8제품 자료 목록 및 일부 대응: Prep 8개 presentation adapter 및 native 명령 연결 코드 실체([reference_components.py L393](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/src/caelab_prep/ui/reference_components.py#L393), [reference_workspace.py L34](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/src/caelab_prep/ui/reference_workspace.py#L34))와 공개 원본 관측 한계/locator 미확인을 분리 대조하고, 원제품 동일 과업 비교 미완료(과업 비교 예정) 상태를 명시.
 - 품질 지표 및 3D 솔리드: TRI3 skew는 대변 중점 방향 벡터와 인접 변 중점 연결선 사잇각($|90^\circ - \theta_{\min}|$, 정삼각형 $0^\circ$), QUAD4 skew는 대변 중점 연결선 사잇각($|90^\circ - \phi| \le 60^\circ$), Warpage는 CAELab 제안 정책(두 분할 중 최대 이면각 $\le 15^\circ$), Jacobian은 가우스 적분점(TRI3 1점, QUAD4 4점) 행렬식 비율($\ge 0.6$) 규정. 직선 Tet10은 8-ULP 및 실제 10절점 양의 야코비안 인증(`certify_straight_tet10`)을 명시하고, 곡면 Tet10 및 고급 스윕을 신규 제안 범위로 분리.
 - 3D 가시화 및 솔리드 자유도 엄밀화: C3D10 솔리드 병진 1~3자유도 엄밀 한정(회전 자유도 배제), Von Mises 응력의 적분점/절점 외삽 메타데이터 분리, 미확인 시 `[위치 미확인]` 경고, 선언된 단위계 기반 유도 단위(MPa/Pa) 표기, 결측치 `NaN` 회색 마스킹, 실변형 1배($S=1.0$)와 자동 맞춤 배율($S=S_{\text{auto}}$) 수식 분리, 과거 run의 메시/단위/프레임 보존 원칙 명시.
-- Windows 환경 및 IME: Qt 6 공식 High-DPI 가이드, 시스템 기본 폰트(Segoe UI/맑은 고딕), `collections.py` 계승 `QInputMethodEvent` 조합 텍스트 유실 방지 규격 및 1440x900/1024x768/High-DPI 통과 기준 명시 (검증 계획 제안, 담당/시점 미정, P7 단계 연계).
+- Windows 환경 및 IME: Qt 6 공식 High-DPI 가이드, 시스템 기본 폰트(Segoe UI/맑은 고딕), `collections.py` 계승 `QInputMethodEvent` 조합 텍스트 유실 방지 규격 및 1440x900/1024x768/High-DPI 통과 기준 명시 (검증 계획 제안, 담당/시점 미정, P7 단계 연계). Prep 기존 1920x1080/100%, 3840x2160/200%, 960x640 기준 및 Prep CURRENT_STATE 잔여(N03–N10/N12) 연계 명시.
 - WBS 및 정본 계획(P1~P7) 연계: 정본 계획 `docs/review/2026-10-23-codex-improvement-plan.md` §4 및 Muse(Kavi)의 제안 매핑을 수용하여 WBS-1(P2 문서 정합성), WBS-2(P1+P4 Phase 4-B Step 2 구현 후보, 선행 조건으로 원 지적자 재검토 통과 명시), WBS-3(P4 기존 FRD/VTU 경로 재사용+P5 가시화 표시), WBS-4(Issue #45 P5 독립 프로그램), WBS-5(Phase 3.7 제안)로 매핑하고 피어 리뷰어 간 합의 진행. DESIGN G1 대표 과업을 AC-5로 정식 편입.
 
 ### Gmsh MSH 4.1 straight Tet10 → CalculiX C3D10 변환 (Phase 4-B 1·2단계)

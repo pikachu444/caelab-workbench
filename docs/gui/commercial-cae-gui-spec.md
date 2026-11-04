@@ -1,8 +1,8 @@
 # 상용 CAE 1:1 대조 CAELab 통합 GUI 상세 명세서
 
-> **문서 상태**: 6차 개정 정본 (Revision 6 - Codex 5차 재검토 및 Muse 로드맵/채널 제안 반영)  
+> **문서 상태**: 7차 개정 정본 (Revision 7 - PREP78-R2 locator 명시 및 R6 화면 기준·Prep 잔여 링크 완결)  
 > **기준 커밋 (Base SHA)**: `09d2b56f259e57ef019ed9548b3f9a0e2e41cc92` (`main`)  
-> **직전 Head SHA**: `5fa5375b354d05b1796f64c7c19de667f592481c` (CI 4종 All Green 통과)  
+> **직전 Head SHA**: `14a6db89c374b86a7f434a1798db20591346a3b8` (CI 4종 All Green 통과)  
 > **적용 범위**: `caelab-workbench` (통합 관리자, 노드 오케스트레이션, 3D 결과 가시화) 및 `caelab-prep` (CourantPrep 전처리 연동)  
 > **작성 및 검토 역할**:  
 > - 작성/통합 책임: Gemini (메인/통합 책임자)  
@@ -165,14 +165,14 @@ stateDiagram-v2
 
 | 제품명 (약칭) | 공개 원본 관측 (버전, URL/Locator, 관측 한계) | 현재 CAELab 코드 구현 근거 | 향후 목표 및 과업 비교 상태 |
 |---|---|---|---|
-| **1. HyperMesh** (HM) | 2025.1 Help 문서, Part/Component 컬렉터, 2D BatchMesher, 3D Hexa Sweep (화면 build 미확인) | Prep HM 어댑터 연결 및 Gmsh 어댑터 (`caelab_prep/adapters/gmsh_worker.py`) | HM 스타일 2D 배치메셔 룰 세부 설정 및 고급 스윕 가이드 [과업 비교 예정] |
+| **1. HyperMesh** (HM) | 2025.1 Help 문서 (§Element Quality), Part/Component 컬렉터, 2D BatchMesher, 3D Hexa Sweep (화면 build 미확인) | Prep HM 어댑터 연결 및 Gmsh 어댑터 (`caelab_prep/adapters/gmsh_worker.py`) | HM 스타일 2D 배치메셔 룰 세부 설정 및 고급 스윕 가이드 [과업 비교 예정] |
 | **2. PrePoMax** (PP) | v2.0.0 Manual (2023-12-09, 목차 p.2), §4 형상/메시(p.14), §5 FE모델(p.18), §6 결과(p.49) | Workbench에서 `open_program`을 통한 `.pmx` 실행 및 CalculiX `.inp` 소비 (`caelab/workbench.py` L509+) | PrePoMax 결과 파일 직접 파싱 연동 및 Windows 환경 E2E 검증 [과업 비교 예정] |
-| **3. Naksha** (NA) | v0.5.07 공개 벤치마크, 선택 띠, Outline/Details 2열 배치 (상세 선택 수정 미확인) | Prep NA 어댑터 및 트리-인스펙터 구조 (`caelab_prep/ui/widgets/tree.py`) | 세부 선택 마스크 및 속성 에디터 상호작용 일치 [과업 비교 예정] |
-| **4. Abaqus/CAE** (AB) | 2025 Guide (단위 지침 참조용 문서), 모듈 바(Module Bar) 기반 상호 전환 (동일 과업 화면 build 미확인) | Prep AB 어댑터 및 Workbench 메인 윈도우 모듈 탭 전환 (`apps/workbench_qt/main_window.py`) | 모델-결과 뷰포트 완전 통합 및 스텝별 출력 요청 세부 설정 [과업 비교 예정] |
-| **5. COMSOL** (CM) | 6.3 문헌 기준, Model Builder 트리, 1열 계층 구조, 피처 기반 설정 (실제 화면 build 미확인) | Prep CM 어댑터 및 모델 트리 계층 구조 (`caelab_prep/ui/widgets/tree.py`) | 다중 물리 필드 연계 인터페이스 및 복합 경계조건 트리 매핑 [과업 비교 예정] |
-| **6. midas NFX** (MN) | 2024 교육 및 2026 release 문헌 기준, 리본 메뉴, 작업 트리, 속성 그리드 3단 레이아웃 (동일 과업 화면 build 미확인) | Prep MN 어댑터 및 독(Dock) 분할 배치 UI | NFX 스타일 고급 3D 메싱 마법사 인터페이스 [과업 비교 예정] |
-| **7. MIDAS MeshFree** (MF) | 2026 교육 파일명 기준, 3단계(CAD-조건-해석) 단순 흐름 (실제 화면 build 미표기 / 동일 과업 미확인) | Prep MF 어댑터 및 JobManager 백그라운드 비동기 제어 | 복잡 형상 자동 해석 단순화 인터페이스 구축 [과업 비교 예정] |
-| **8. BeidPrep** (BE) | v2.0 관측, 중앙 3D 뷰포트, 좌측 MODEL 트리, 우측 FORM/TEXT 탭 인스펙터 | CourantPrep 2026 레이아웃 (`caelab_prep/ui/prep_workspace.py` PR #40): FORM 선택 카드 단위 문맥(`units_note`), Elements/Nodes 콤보, 카메라 정면/평면 메뉴, 1440x900 초기값 및 유효 geometry 복원/최대화 | 대형 어셈블리 렌더링 성능 최적화 및 세부 카드 편집기 확장 [과업 비교 예정] |
+| **3. Naksha** (NA) | v0.5.07 공개 벤치마크 (docs/benchmarks/2026-10-30/), 선택 띠, Outline/Details 2열 배치 (상세 선택 수정 미확인) | Prep NA 어댑터 및 트리-인스펙터 구조 (`caelab_prep/ui/widgets/tree.py`) | 세부 선택 마스크 및 속성 에디터 상호작용 일치 [과업 비교 예정] |
+| **4. Abaqus/CAE** (AB) | 2025 Guide (단위 지침 simagsa-c-absunits.htm 참조용), 모듈 바(Module Bar) 기반 상호 전환 (동일 과업 화면 build 미확인) | Prep AB 어댑터 및 Workbench 메인 윈도우 모듈 탭 전환 (`apps/workbench_qt/main_window.py`) | 모델-결과 뷰포트 완전 통합 및 스텝별 출력 요청 세부 설정 [과업 비교 예정] |
+| **5. COMSOL** (CM) | 6.3 문헌 기준, Model Builder 트리, 1열 계층 구조, 피처 기반 설정 (실제 화면 build 미확인 / 해당 관측의 locator 미확인) | Prep CM 어댑터 및 모델 트리 계층 구조 (`caelab_prep/ui/widgets/tree.py`) | 다중 물리 필드 연계 인터페이스 및 복합 경계조건 트리 매핑 [과업 비교 예정] |
+| **6. midas NFX** (MN) | 2024 교육 및 2026 release 문헌 기준, 리본 메뉴, 작업 트리, 속성 그리드 3단 레이아웃 (동일 과업 화면 build 미확인 / 해당 관측의 locator 미확인) | Prep MN 어댑터 및 독(Dock) 분할 배치 UI | NFX 스타일 고급 3D 메싱 마법사 인터페이스 [과업 비교 예정] |
+| **7. MIDAS MeshFree** (MF) | 2026 교육 파일명 기준, 3단계(CAD-조건-해석) 단순 흐름 (실제 화면 build 미표기 / 해당 관측의 locator 미확인) | Prep MF 어댑터 및 JobManager 백그라운드 비동기 제어 | 복잡 형상 자동 해석 단순화 인터페이스 구축 [과업 비교 예정] |
+| **8. BeidPrep** (BE) | v2.0 관측 (caelab_prep PR #40), 중앙 3D 뷰포트, 좌측 MODEL 트리, 우측 FORM/TEXT 탭 인스펙터 | CourantPrep 2026 레이아웃 (`caelab_prep/ui/prep_workspace.py` PR #40): FORM 선택 카드 단위 문맥(`units_note`), Elements/Nodes 콤보, 카메라 정면/평면 메뉴, 1440x900 초기값 및 유효 geometry 복원/최대화 | 대형 어셈블리 렌더링 성능 최적화 및 세부 카드 편집기 확장 [과업 비교 예정] |
 
 *추가 비교군 (보조)*:
 - **Ansys Workbench**: 프로젝트 스키매틱(Schematic) 노드 연결 모델 $\rightarrow$ CAELab `ProjectWindow`의 파이프라인 그래프 모델에 참고.
@@ -224,7 +224,7 @@ stateDiagram-v2
 3. **한국어 IME 입력 보호 및 테스트 조건**:
    - `caelab-prep/src/caelab_prep/ui/widgets/collections.py` (커밋 `f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f`, L102–120)의 `inputMethodEvent` 처리를 계승하여, preedit(조합 중 텍스트) 상태에서 Tab, Enter, 포커스 이동, Undo/Redo 시 글자가 유실되거나 중복 입력되지 않고 UTF-16 서러게이트 페어가 보존되도록 구현.
    - **적용 대상 앱**: CourantPrep 및 Workbench 보조 창.
-   - **관측 조건 및 통과 기준**: Windows 10/11 환경에서 정상 창(1440x900) 및 좁은 창(1024x768 이하), High DPI (100%, 125%, 150%, 200%) 및 혼합 모니터 간 이동 시 글자 잘림 및 레이아웃 붕괴가 없을 것. 긴 한글 문자열 입력 시 UTF-16 서러게이트 페어 및 자모 분리 방지, 조합 중 상태에서 Enter/Tab/포커스 이동/Undo/Redo 시 조합 문자 손실이나 중복 삽입이 없을 것. 본 항목은 검증 계획 제안이며 담당·시점은 미정(P7 단계 연계)으로 둠.
+   - **관측 조건 및 통과 기준**: Windows 10/11 환경에서 정상 창(1440x900) 및 좁은 창(1024x768 이하), High DPI (100%, 125%, 150%, 200%) 및 혼합 모니터 간 이동 시 글자 잘림 및 레이아웃 붕괴가 없을 것. 긴 한글 문자열 입력 시 UTF-16 서러게이트 페어 및 자모 분리 방지, 조합 중 상태에서 Enter/Tab/포커스 이동/Undo/Redo 시 조합 문자 손실이나 중복 삽입이 없을 것. 본 항목은 검증 계획 제안이며 담당·시점은 미정(P7 단계 연계)으로 둠. 1440×900/1024×768 조건은 추가 제안이며, Prep의 기존 1920×1080/100%·3840×2160/200%·960×640 기준([DESIGN §화면 기준](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/DESIGN.md#L61))을 대체하지 않는다. Prep R2/R4·G1의 잔여는 [기존 CURRENT_STATE N03–N10/N12](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/CURRENT_STATE.md#remaining-work)를 따른다.
 
 ---
 
