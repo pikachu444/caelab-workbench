@@ -491,6 +491,32 @@ def test_reject_deck_and_model_inconsistency(tmp_path: Path, minimal_c3d10_mesh)
     with pytest.raises(MshC3D10Error, match=r"model defines loads, but deck_path lacks \*CLOAD keyword"):
         run_c3d10_simulation(tmp_path, model, deck_no_cload)
 
+    # 5. Deck with altered boundary DOFs (e.g. DOF 1 only instead of 1-3)
+    deck_bad_bnd = tmp_path / "job_bad_bnd.inp"
+    deck_bad_bnd.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 1, 0.0\n"
+        "*CLOAD\n3, 3, -50.0\n4, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"deck_path \*BOUNDARY for FIXED_NODES does not constrain all expected DOFs"):
+        run_c3d10_simulation(tmp_path, model, deck_bad_bnd)
+
+    # 6. Deck with altered load magnitude (e.g. -200 N instead of expected -100 N)
+    deck_bad_load = tmp_path / "job_bad_load.inp"
+    deck_bad_load.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\n3, 3, -100.0\n4, 3, -100.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"deck_path \*CLOAD total force for DOF 3 \(-200.0\) does not match model expected load \(-100.0\)"):
+        run_c3d10_simulation(tmp_path, model, deck_bad_load)
+
 
 def test_reject_deck_outside_workdir(tmp_path: Path, minimal_c3d10_mesh):
     """R76-4: deck_path outside workdir must be rejected to prevent cwd/stem collision."""
@@ -528,10 +554,13 @@ def test_jobs_submit_model_records_mm_units(tmp_path: Path, minimal_c3d10_mesh):
 
     store = RunStore(tmp_path / "runs")
     jm = JobManager()
-    spec = ProgramSpec(id="calculix", name="CalculiX", role="solver", env_var="CAELAB_CCX", executables=("ccx",))
-    status = ProgramStatus(spec=spec, path="/usr/bin/ccx")
+    try:
+        spec = ProgramSpec(id="calculix", name="CalculiX", role="solver", env_var="CAELAB_CCX", executables=("ccx",))
+        status = ProgramStatus(spec=spec, path="/usr/bin/ccx")
 
-    run = jm.submit_model(store, model, CalculiXConverter(), status)
-    assert run.units == {"length": "mm", "force": "N"}
-    assert run.unit_source == "StructuralModel.unit_system"
+        run = jm.submit_model(store, model, CalculiXConverter(), status)
+        assert run.units == {"length": "mm", "force": "N"}
+        assert run.unit_source == "StructuralModel.unit_system"
+    finally:
+        jm.close()
 

@@ -861,6 +861,70 @@ def parse_deck_nset_nodes(deck_text: str, nset_name: str) -> set[int] | None:
     return nodes if in_nset else None
 
 
+def parse_deck_boundary_dofs(deck_text: str, nset_name: str) -> set[int]:
+    """Parse constrained DOFs for a given node set under *BOUNDARY cards."""
+    target_set = nset_name.upper()
+    lines = deck_text.splitlines()
+    in_boundary = False
+    dofs: set[int] = set()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            upper_line = line.upper().replace(" ", "")
+            if upper_line.startswith("*BOUNDARY"):
+                in_boundary = True
+                continue
+            elif in_boundary:
+                in_boundary = False
+        elif in_boundary:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if parts and parts[0].upper() == target_set:
+                if len(parts) >= 2:
+                    try:
+                        start_dof = int(parts[1])
+                        end_dof = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else start_dof
+                        for d in range(start_dof, end_dof + 1):
+                            dofs.add(d)
+                    except ValueError:
+                        pass
+    return dofs
+
+
+def parse_deck_cload_totals(deck_text: str, nset_sizes: dict[str, int] | None = None) -> dict[int, float]:
+    """Parse total force applied in each DOF under *CLOAD cards, multiplying NSET loads by set size."""
+    sizes = {k.upper(): v for k, v in (nset_sizes or {}).items()}
+    lines = deck_text.splitlines()
+    in_cload = False
+    totals: dict[int, float] = {}
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            upper_line = line.upper().replace(" ", "")
+            if upper_line.startswith("*CLOAD"):
+                in_cload = True
+                continue
+            elif in_cload:
+                in_cload = False
+        elif in_cload:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if len(parts) >= 3:
+                try:
+                    target = parts[0].strip()
+                    dof = int(parts[1])
+                    val = float(parts[2])
+                    multiplier = 1
+                    if not target.isdigit():
+                        multiplier = sizes.get(target.upper(), 1)
+                    totals[dof] = totals.get(dof, 0.0) + (val * multiplier)
+                except ValueError:
+                    pass
+    return totals
+
+
 def run_c3d10_simulation(
     workdir: Path | str,
     model: StructuralModel,
@@ -890,8 +954,16 @@ def run_c3d10_simulation(
         if model.bcs:
             if "*BOUNDARY" not in deck_text.upper():
                 raise MshC3D10Error("model defines boundary conditions, but deck_path lacks *BOUNDARY keyword")
-            if "FIXED_NODES" not in deck_text.upper():
-                raise MshC3D10Error("deck_path lacks *BOUNDARY reference to FIXED_NODES")
+            expected_dofs = set()
+            for bc in model.bcs:
+                if bc.target_set == "FIXED_NODES":
+                    expected_dofs.update(bc.fixed_dofs)
+            deck_dofs = parse_deck_boundary_dofs(deck_text, "FIXED_NODES")
+            if not expected_dofs.issubset(deck_dofs):
+                raise MshC3D10Error(
+                    f"deck_path *BOUNDARY for FIXED_NODES does not constrain all expected DOFs. "
+                    f"Expected {sorted(expected_dofs)}, deck constrained {sorted(deck_dofs)}"
+                )
 
     if "LOAD_NODES" in model.sets:
         expected_loaded = set(model.sets["LOAD_NODES"].members)
@@ -903,9 +975,28 @@ def run_c3d10_simulation(
                 f"deck_path LOAD_NODES node IDs do not match model LOAD_NODES set. "
                 f"Model has {len(expected_loaded)} nodes, deck has {len(actual_loaded)} nodes."
             )
-        if any(load.values for load in model.loads):
+        active_loads = [ld for ld in model.loads if ld.values and ld.target_set == "LOAD_NODES"]
+        if active_loads:
             if "*CLOAD" not in deck_text.upper():
                 raise MshC3D10Error("model defines loads, but deck_path lacks *CLOAD keyword")
+            dof_map = {"fx": 1, "fy": 2, "fz": 3, "1": 1, "2": 2, "3": 3}
+            expected_totals: dict[int, float] = {}
+            for ld in active_loads:
+                for k, val in ld.values.items():
+                    dof = dof_map.get(str(k).lower())
+                    if dof is not None:
+                        try:
+                            expected_totals[dof] = expected_totals.get(dof, 0.0) + float(val)
+                        except (ValueError, TypeError):
+                            pass
+            deck_totals = parse_deck_cload_totals(deck_text, {'LOAD_NODES': len(expected_loaded)})
+            for dof, exp_val in expected_totals.items():
+                act_val = deck_totals.get(dof, 0.0)
+                if abs(exp_val - act_val) > max(1e-4, abs(exp_val) * 1e-3):
+                    raise MshC3D10Error(
+                        f"deck_path *CLOAD total force for DOF {dof} ({act_val}) does not match "
+                        f"model expected load ({exp_val})"
+                    )
 
     conv = CalculiXConverter()
     result = conv.run(model, deck_path, workdir)
