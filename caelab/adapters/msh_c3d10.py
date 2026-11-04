@@ -1091,7 +1091,7 @@ def run_c3d10_simulation(
                     if not math.isfinite(val):
                         raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines non-finite value ({val})")
                 key = (nid, dof)
-                if key in expected_bcs and not math.isclose(expected_bcs[key], val, abs_tol=1e-12):
+                if key in expected_bcs and expected_bcs[key] != val:
                     raise MshC3D10Error(
                         f"Model defines conflicting boundary conditions for node {nid}, DOF {dof}: "
                         f"{expected_bcs[key]} vs {val}"
@@ -1111,8 +1111,11 @@ def run_c3d10_simulation(
         )
     for key, exp_val in expected_bcs.items():
         act_val = deck_bcs[key]
-        bc_budget = 10 * max(math.ulp(exp_val), 1e-12)
-        if not math.isfinite(act_val) or abs(act_val - exp_val) > bc_budget:
+        if not math.isfinite(act_val) or not math.isfinite(exp_val):
+            raise MshC3D10Error(
+                f"deck_path boundary condition value for (node {key[0]}, DOF {key[1]}) ({act_val}) is non-finite"
+            )
+        if act_val != exp_val:
             raise MshC3D10Error(
                 f"deck_path boundary condition value for (node {key[0]}, DOF {key[1]}) ({act_val}) "
                 f"does not match model expected value ({exp_val})"
@@ -1147,8 +1150,13 @@ def run_c3d10_simulation(
             if dof is None:
                 continue
             per_node_val = float(comp) / n
+            if not math.isfinite(per_node_val):
+                raise MshC3D10Error(f"Model load '{ld.name}' per-node component ({per_node_val}) is non-finite")
             for nid in target_nodes:
-                expected_loads[(nid, dof)] = expected_loads.get((nid, dof), 0.0) + per_node_val
+                cur_val = expected_loads.get((nid, dof), 0.0) + per_node_val
+                if not math.isfinite(cur_val):
+                    raise MshC3D10Error(f"Model load accumulation for node {nid}, DOF {dof} is non-finite ({cur_val})")
+                expected_loads[(nid, dof)] = cur_val
 
     if expected_loads and "*CLOAD" not in deck_text.upper():
         raise MshC3D10Error("model defines loads, but deck_path lacks *CLOAD keyword")
@@ -1163,8 +1171,11 @@ def run_c3d10_simulation(
         )
     for key, exp_val in expected_loads.items():
         act_val = deck_loads[key]
-        load_budget = 10 * max(math.ulp(exp_val), 1e-12)
-        if not math.isfinite(act_val) or abs(act_val - exp_val) > load_budget:
+        if not math.isfinite(act_val) or not math.isfinite(exp_val):
+            raise MshC3D10Error(
+                f"deck_path *CLOAD force for (node {key[0]}, DOF {key[1]}) ({act_val}) is non-finite"
+            )
+        if act_val != exp_val:
             raise MshC3D10Error(
                 f"deck_path *CLOAD force for (node {key[0]}, DOF {key[1]}) ({act_val}) "
                 f"does not match model expected per-node load ({exp_val})"

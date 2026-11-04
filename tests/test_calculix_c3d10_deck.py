@@ -660,6 +660,45 @@ def test_reject_deck_model_physics_discrepancies(tmp_path: Path, minimal_c3d10_m
     with pytest.raises(MshC3D10Error, match=r"force for .* does not match model expected per-node load"):
         run_c3d10_simulation(tmp_path, model, d9)
 
+    # 10. BC small perturbation (0.0 -> 5e-12) must be strictly rejected
+    d10 = tmp_path / "d10.inp"
+    d10.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 5e-12\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"boundary condition value for .* does not match"):
+        run_c3d10_simulation(tmp_path, model, d10)
+
+    # 11. Load small perturbation (-50.0 -> -50.000000000005) must be strictly rejected
+    d11 = tmp_path / "d11.inp"
+    d11.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.000000000005\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"force for .* does not match model expected per-node load"):
+        run_c3d10_simulation(tmp_path, model, d11)
+
+    # 12. Conflicting duplicate BC (1.0 vs 1.0000000005) in model must be strictly rejected
+    from caelab.model.schema import BoundaryCondition
+    model_dup_conflict = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+    model_dup_conflict.bcs.append(BoundaryCondition(name="dup_bc_1", target_set="FIXED_NODES", fixed_dofs=[1], values={1: 1.0}))
+    model_dup_conflict.bcs.append(BoundaryCondition(name="dup_bc_2", target_set="FIXED_NODES", fixed_dofs=[1], values={1: 1.0000000005}))
+    with pytest.raises(MshC3D10Error, match=r"Model defines conflicting boundary conditions for node .* DOF 1"):
+        run_c3d10_simulation(tmp_path, model_dup_conflict, d_normal)
+
 
 def test_reject_deck_outside_workdir(tmp_path: Path, minimal_c3d10_mesh):
     """R76-4: deck_path outside workdir must be rejected to prevent cwd/stem collision."""
