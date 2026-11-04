@@ -15,7 +15,12 @@ FreeCAD는 기본 CAD 연결입니다. SolidCraft와 CADCraft는 사용자가 �
 실행 파일이 없으면 다른 설치본으로 자동 대체하지 않습니다. 프로그램 발견,
 파일 열기, export, 계산 완료는 각각 다른 상태입니다.
 
-## 3D CAD에서 계산 입력까지
+## API의 3D CAD 파일 연결 계약
+
+아래 절차는 Workbench API로 노드와 파일을 등록하는 연결 계약입니다. 현재
+프로젝트 GUI에는 geometry 프로그램을 SolidCraft/CADCraft로 선택하거나 geometry의
+document를 등록하는 연결이 구현되지 않았습니다. GUI 사용자 절차로 제공하려면
+해당 선택·등록 동작을 추가해야 합니다.
 
 1. geometry 노드의 프로그램을 FreeCAD 또는 SolidCraft로 지정하고 원본 파일을
    document로 등록합니다. 기본 열기는 이 소유 문서를 우선합니다.
@@ -36,8 +41,9 @@ CADCraft는 2D 원본과 DXF/SVG 교환 경로입니다. 직접 STEP 솔리드 �
 
 연결 검사는 한글·공백 경로의 argv/cwd/env, 원본 우선 열기, 명시 input 열기,
 프로젝트 저장·재열기의 파일 역할 보존을 모의 launcher로 확인합니다. 실제
-CAD export 내용, PrePoMax의 Windows import, GUI 파일 선택 경로와 설치된 binary의
-동작은 별도 검증 대상입니다. 이 연결만으로 전체 CAD→해석 흐름을 인도 완료로
+CAD export 내용, PrePoMax의 Windows import와 설치된 binary의 동작은 별도 검증
+대상입니다. geometry의 GUI 프로그램 선택·document 등록은 미구현이며, 현재 검사는
+API 연결 검사입니다. 이 연결만으로 전체 CAD→해석 흐름을 인도 완료로
 처리하지 않습니다. 프로그램이나 라이선스 자산을 자동 다운로드하지 않습니다.
 
 조사 소스는 [SolidCraft 72df682](https://github.com/tangency-labs/solidcraft/tree/72df682af7b6867323d6976ac59b4d7799bb0e01)과
