@@ -277,20 +277,24 @@ class ExpertWindow(QMainWindow):
         target_path = Path(self.path).resolve()
         target_document = copy.deepcopy(self.document)
         target_revision = target_document.get('revision')
+        target_assets = (copy.deepcopy(self.document.get('evidences')), copy.deepcopy(self.document.get('proposals')))
         workbench = self.workbench
 
         def worker():
             try:
                 issues = workbench.expert_discussion_issues(target_path, target_document)
-                self._asset_mailbox.put((token, target_path, target_revision, True, issues))
+                self._asset_mailbox.put((token, target_path, target_revision, target_assets, True, issues))
             except Exception as exc:
-                self._asset_mailbox.put((token, target_path, target_revision, False, [f'무결성 검증 실패: {exc}']))
+                self._asset_mailbox.put((token, target_path, target_revision, target_assets, False, [f'무결성 검증 실패: {exc}']))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def wait_for_asset_verification(self, timeout=5.0):
         start = time.monotonic()
         while getattr(self, '_asset_verifying', False):
+            self._poll()
+            if not getattr(self, '_asset_verifying', False):
+                break
             if time.monotonic() - start > timeout:
                 break
             QApplication.processEvents()
@@ -790,11 +794,12 @@ class ExpertWindow(QMainWindow):
                 self.wait_label.setText(labels[stage])
         while True:
             try:
-                token, path, rev, ok, issues = self._asset_mailbox.get_nowait()
+                token, path, rev, target_assets, ok, issues = self._asset_mailbox.get_nowait()
             except queue.Empty:
                 break
             if token is self._asset_token and self.path and path == Path(self.path).resolve():
-                if rev is None or self.document.get('revision') == rev:
+                current_assets = (self.document.get('evidences'), self.document.get('proposals'))
+                if rev is None or self.document.get('revision') == rev or current_assets == target_assets:
                     self._asset_verifying = False
                     self._asset_issues = issues
                     problems = self._asset_issues
@@ -810,6 +815,8 @@ class ExpertWindow(QMainWindow):
                         self.asset_warning.setText('')
                         self.asset_warning.setVisible(False)
                         self._set_busy(bool(self._operation))
+                else:
+                    self._start_asset_verification()
         if not self._operation:
             return
         try:

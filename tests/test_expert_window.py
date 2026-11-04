@@ -915,3 +915,42 @@ def test_background_asset_verification_lifecycle_and_stale_token_isolation(windo
     assert ui.path == other_path.resolve()
     assert ui._asset_token is new_token
     assert ui._asset_issues == []
+
+
+def test_background_asset_verification_completes_when_draft_saved_during_verification(
+        window, app, tmp_path, monkeypatch):
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** background test input')
+    assert ui.document.get('selected_evidence_id')
+
+    started = threading.Event()
+    release = threading.Event()
+    original_issues = ui.workbench.expert_discussion_issues
+
+    def slow_issues(path, document):
+        started.set()
+        release.wait(5.0)
+        return original_issues(path, document)
+
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', slow_issues)
+
+    ui.reload_document()
+    assert started.wait(2.0)
+    assert ui._asset_verifying
+    initial_rev = ui.document.get('revision')
+
+    # While worker is delayed, user types draft question and saves
+    ui.question.setPlainText('수정된 질문 초안')
+    assert ui.save_document()
+    assert ui.document.get('revision') > initial_rev
+
+    # Now release worker and wait for verification to complete
+    release.set()
+    ui.wait_for_asset_verification(timeout=3.0)
+
+    assert not ui._asset_verifying
+    assert ui.ask_button.isEnabled()
+    assert ui._asset_mailbox.empty()
+    assert ui._asset_issues == []
+    assert not ui.asset_warning.isVisible()
+
