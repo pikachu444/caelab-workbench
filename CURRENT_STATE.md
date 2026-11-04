@@ -1,6 +1,6 @@
 # 현재 상태
 
-문서 기준은 main `32e9d7c9fecdec24800dbbb5a4dfb08e37e008ba`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
+문서 기준은 main `c261c91fda05d47a9bb94e8147fdb030850d6029`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## 구현 범위
 
@@ -27,9 +27,16 @@
 - Tri6 경계 절점 추출(`extract_boundary_nodes`): `mesh.tri6_boundary`에 등록된 2차 삼각형 경계 어노테이션에서 고유 절점 추출 및 기하 조건자(`predicate(x, y, z)`) 필터링 지원.
 - 마스터 덱 조립(`assemble_c3d10_master_deck`): C3D10 include 덱(`*INCLUDE, INPUT=<path>`)을 참조하는 완성형 CalculiX `.inp` 마스터 덱 문자열 생성. `*HEADING`, `*NSET`(한 줄당 최대 16개 ID 줄바꿈 규격 준수), `*MATERIAL`, `*ELASTIC`, `*DENSITY`, `*SOLID SECTION`(ELSET=EL_C3D10), `*STEP`, `*STATIC`, `*BOUNDARY`(구속 절점 DOFs 1~3), `*CLOAD`(하중 절점 총 하중 분배), `*NODE FILE`(U, RF), `*EL FILE`(S), `*NODE PRINT`(선택적 NSET RF 반력합 출력) 카드를 표준 Abaqus/CalculiX 문법으로 완결.
 - 구속·하중 절점 배타성 검증: 구속 절점 집합과 하중 절점 집합의 교집합(충돌) 발생 시 하중-반력 왜곡 방지를 위해 즉시 거부(`MshC3D10Error`)하는 fail-closed 보호.
-- StructuralModel 변환(`build_c3d10_structural_model`): `ConvertedMesh`를 Workbench 표준 스키마 문서(`caelab.model.schema.StructuralModel`)로 직접 변환하여 `validate_model` 및 `CalculiXConverter().validate` 적합성 100% 충족.
+- StructuralModel 변환(`build_c3d10_structural_model`): `ConvertedMesh`를 Workbench 표준 스키마 문서(`caelab.model.schema.StructuralModel`)로 직접 변환하여 `validate_model` 및 `CalculiXConverter().validate` 적합성 검증 통과.
 - 단위계 보존: `unit_system`에 `mm` 및 `mm-t-s` 지정 시 `CalculiXConverter` 및 `ResultSet.units`에 `{"length": "mm", "force": "N"}` 보존 및 `summarize_result`에서 `max_displacement_mm` / `max_displacement_m` 자동 산출.
-- 실물 검증 및 환경 격리: 외부 검증 자산은 `CAELAB_FIXED_L_ASSET_DIR` 환경변수 또는 표준 로컬 캐시를 참조하며 자산 부재 시 CI에서는 skip으로 격리. Prep 생성 고정 L 실물 자산(`045acf69...` / `52fc715c...`, 87개 절점, 36개 Tet10 요소, 28개 Tri6 경계) 로컬 검증에서 include 덱 생성, 바닥면(z=0) 구속 21절점, 상단면(z=1.0) 하중 21절점을 분리 추출하여 실제 CalculiX 2.21 솔버 계산(반력합 $F_z=100.0\text{ N}$ 하중 평형 100% 보존), 결과 요약(`summarize_result`), 어댑터 검사 17건 및 덱/실행 검사 9건(총 26건) 전건 통과 확인. 솔버 부재 환경에서는 예외 없이 안전한 진단 메시지와 함께 실패(`success=False`)로 격리.
+- 실물 검증 및 환경 격리: 외부 검증 자산은 `CAELAB_FIXED_L_ASSET_DIR` 환경변수 또는 표준 로컬 캐시를 참조하며 자산 부재 시 CI에서는 skip으로 격리. Prep 생성 고정 L 실물 자산(`045acf69...` / `52fc715c...`, 87개 절점, 36개 Tet10 요소, 28개 Tri6 경계) 로컬 검증에서 include 덱 생성, 바닥면(z=0) 구속 21절점, 상단면(z=1.0) 하중 21절점을 분리 추출하여 실제 CalculiX 2.21 솔버 계산(DAT 반력합 $F_z=100.0\text{ N}$ 및 FRD $99.999918\text{ N}$ 대조), 결과 요약(`summarize_result`), 어댑터 검사 17건 및 덱/실행 검사 9건(총 26건) 전건 통과 확인. 솔버 부재 환경에서는 예외 없이 안전한 진단 메시지와 함께 실패(`success=False`)로 격리.
+- 계약 강화 및 검토 의견 반영(P2 6건 R76-1~R76-6):
+  1. R76-1 (단위계 오표기 방지): `length_unit='mm'`인 MSH에 대해 좌표 환산 없이 `unit_system='si'`로 라벨링하는 요청을 엄격 차단(`MshC3D10Error`).
+  2. R76-2 (하중·물성·노드 무결성): `load_vector` 성분 개수(정확히 3개: fx, fy, fz) 엄격 검증. 비영 하중 벡터 지정 시 `loaded_nodes`가 비어있으면 하중 유실 방지를 위해 즉시 거부. 유한 수치($E > 0$, $-1 < \nu < 0.5$, $\rho > 0$) 및 메시에 존재하지 않는 노드 참조 거부.
+  3. R76-3 (모델-덱 물리조건 전체 대응 및 엄격한 부동소수점 일치): 지원하는 단일 정적 조립 범위에서 솔버 실행 전 덱의 `FIXED_NODES` 및 `LOAD_NODES` 절점 집합 일치뿐 아니라, 모델 내 모든 BC/하중 성분의 유한성 사전 검증 및 상충 중복 정의 엄격 차단(동일 유한값만 수용), 그리고 `(절점, DOF) -> 구속값` 및 `(절점, DOF) -> 하중값`의 전단사 대응을 임의의 공학 허용오차 없이 엄격한 부동소수점 일치(float equality)로 대조 검증. 절점별 하중 재분배, 대상 절점 오류, 추가 하중 성분/방향, 미세한 지정변위 변경($5\times 10^{-12}$, $10^{-8}$ 포함), 미세한 하중 변경($-50.000000000005$ 포함), 중복 BC 상충 정의($1.0$ vs $1.0000000005$), 미정의 추가 구속, 모델/덱 내 비유한 수치(NaN/Inf) 및 집계 오버플로를 fail-closed 거부(`MshC3D10Error`).
+  4. R76-4 (작업 디렉토리 격리): `CalculiXConverter.run` 및 `run_c3d10_simulation`에서 `deck` 파일이 `workdir` 직하에 위치하도록 강제하여 cwd/basename 충돌 및 임의 파일 덮어쓰기 방지.
+  5. R76-5 (실행 이력 단위 일관성): `JobManager.submit_model`에서 `mm` 및 `mm-t-s` 모델 제출 시 `NativeRun.units={"length": "mm", "force": "N"}` 및 `unit_source="StructuralModel.unit_system"` 기록.
+  6. R76-6 (검사 격리 및 자원 정리 검증): `tests/test_calculix_c3d10_deck.py`의 솔버 실행 검사에서 `monkeypatch.setenv`로 `CAELAB_CCX` 환경변수 누출을 차단하고, 순수 메타데이터 검사는 워커 실행을 격리한 후 `JobManager.close() is True`로 스레드 종료 및 lease 해제를 확인. 전용 회귀 검사 7건 추가 (어댑터 17건 + 덱/솔버/단위 17건 = 총 34건 통과).
 - 범위 한정: Phase 4-B는 단일 컴포넌트 C3D10 선형 정해석 조립·계산·요약에 한정하며 다중 컴포넌트 어셈블리/접촉 해석은 미포함.
 
 

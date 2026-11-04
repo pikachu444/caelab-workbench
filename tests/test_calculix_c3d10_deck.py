@@ -225,7 +225,7 @@ def test_mock_solver_run_and_result_summary(tmp_path: Path, monkeypatch, minimal
     )
 
     deck_path = tmp_path / "job.inp"
-    deck_path.write_text("*NODE FILE\nU, RF\n*EL FILE\nS\n*END STEP\n")
+    deck_path.write_text("*NODE FILE\nU, RF\n*EL FILE\nS\n*NSET, NSET=FIXED_NODES\n1, 2, 3\n*NSET, NSET=LOAD_NODES\n4\n*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n*CLOAD\n4, 3, -100.0\n*END STEP\n", encoding="utf-8")
 
     # 10 nodes for DISP and FORC
     disp_values = {nid: [0.0, 0.0, 0.0] for nid in range(1, 11)}
@@ -274,7 +274,7 @@ def test_mock_solver_run_and_result_summary(tmp_path: Path, monkeypatch, minimal
     assert "반력 합 Fy" in ko_text or "최대 변위" in ko_text
 
 
-def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path):
+def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """End-to-end integration test with the physical Fixed L fixture asset."""
     asset_dir = get_fixed_l_dir()
     if asset_dir is None:
@@ -344,7 +344,7 @@ def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path):
             # Create temporary bridge script
             bridge = tmp_path / "wsl_ccx.bat"
             bridge.write_text("@echo off\nwsl ccx %*\n", encoding="utf-8")
-            os.environ["CAELAB_CCX"] = str(bridge)
+            monkeypatch.setenv("CAELAB_CCX", str(bridge))
             ccx = str(bridge)
             wsl_available = True
 
@@ -364,3 +364,395 @@ def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path):
         assert result.success is False
         assert "ccx 실행 파일을 찾지 못했습니다" in result.log_tail
         assert summary["success"] is False
+
+def test_reject_mm_mesh_with_si_unit_system(minimal_c3d10_mesh):
+    """R76-1: Prevent mm mesh from being labeled as SI without coordinate conversion."""
+    with pytest.raises(MshC3D10Error, match="MSH input has length_unit 'mm'; labeling as 'si' without coordinate conversion is prohibited"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            unit_system="si",
+            fixed_nodes=[1, 2, 3],
+        )
+
+
+def test_reject_nonzero_load_with_empty_target(minimal_c3d10_mesh):
+    """R76-2: Non-zero load vector with empty loaded_nodes must fail closed."""
+    with pytest.raises(MshC3D10Error, match="Non-zero load_vector specified but loaded_nodes is empty"):
+        assemble_c3d10_master_deck(
+            "inc.inp",
+            fixed_nodes=[1, 2],
+            loaded_nodes=[],
+            load_vector=(0.0, 0.0, -100.0),
+        )
+
+    with pytest.raises(MshC3D10Error, match="Non-zero load_vector specified but loaded_nodes is empty"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1, 2],
+            loaded_nodes=[],
+            load_vector=(0.0, 0.0, -100.0),
+        )
+
+
+def test_reject_invalid_parameters_and_missing_nodes(minimal_c3d10_mesh):
+    """R76-2: Validate finite numeric properties and mesh node presence."""
+    # Invalid Poisson's ratio
+    with pytest.raises(MshC3D10Error, match="poissons_ratio must be strictly between -1.0 and 0.5"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1, 2],
+            poissons_ratio=0.5,
+        )
+
+    # Missing node in mesh
+    with pytest.raises(MshC3D10Error, match="fixed_nodes contains node IDs not present in mesh"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[9999],
+        )
+
+    with pytest.raises(MshC3D10Error, match="loaded_nodes contains node IDs not present in mesh"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1],
+            loaded_nodes=[9999],
+            load_vector=(0.0, 0.0, -10.0),
+        )
+
+
+def test_reject_load_vector_not_3_components(minimal_c3d10_mesh):
+    """R76-2: load_vector must have exactly 3 components (fx, fy, fz)."""
+    with pytest.raises(MshC3D10Error, match="must be a sequence of exactly 3 components"):
+        assemble_c3d10_master_deck(
+            "inc.inp",
+            fixed_nodes=[1, 2],
+            loaded_nodes=[3],
+            load_vector=(0.0, 0.0, -100.0, 25.0),
+        )
+
+    with pytest.raises(MshC3D10Error, match="must be a sequence of exactly 3 components"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1, 2],
+            loaded_nodes=[3],
+            load_vector=(0.0, 0.0),
+        )
+
+
+def test_reject_deck_and_model_inconsistency(tmp_path: Path, minimal_c3d10_mesh):
+    """R76-3: Inconsistent deck content and model node sets must be rejected before solve."""
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+    # 1. Deck missing *NSET, NSET=LOAD_NODES
+    deck_path = tmp_path / "job.inp"
+    deck_path.write_text("*HEADING\n*INCLUDE, INPUT=inc.inp\n*NSET, NSET=FIXED_NODES\n1, 2\n*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n*END STEP\n", encoding="utf-8")
+
+    with pytest.raises(MshC3D10Error, match=r"deck_path is missing \*NSET, NSET=LOAD_NODES"):
+        run_c3d10_simulation(tmp_path, model, deck_path)
+
+    # 2. Deck with swapped node IDs under identical NSET names
+    deck_swapped = tmp_path / "job_swapped.inp"
+    deck_swapped.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n3, 4\n"
+        "*NSET, NSET=LOAD_NODES\n1, 2\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\n1, 3, -50.0\n2, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match="deck_path FIXED_NODES node IDs do not match model FIXED_NODES set"):
+        run_c3d10_simulation(tmp_path, model, deck_swapped)
+
+    # 3. Deck missing *BOUNDARY condition for model with boundary conditions
+    deck_no_bnd = tmp_path / "job_no_bnd.inp"
+    deck_no_bnd.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*CLOAD\n3, 3, -50.0\n4, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"model defines boundary conditions, but deck_path lacks \*BOUNDARY keyword"):
+        run_c3d10_simulation(tmp_path, model, deck_no_bnd)
+
+    # 4. Deck missing *CLOAD condition for model with active loads
+    deck_no_cload = tmp_path / "job_no_cload.inp"
+    deck_no_cload.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"model defines loads, but deck_path lacks \*CLOAD keyword"):
+        run_c3d10_simulation(tmp_path, model, deck_no_cload)
+
+    # 5. Deck with altered boundary DOFs (e.g. DOF 1 only instead of 1-3)
+    deck_bad_bnd = tmp_path / "job_bad_bnd.inp"
+    deck_bad_bnd.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 1, 0.0\n"
+        "*CLOAD\n3, 3, -50.0\n4, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"deck_path boundary conditions do not match model expected boundary conditions"):
+        run_c3d10_simulation(tmp_path, model, deck_bad_bnd)
+
+    # 6. Deck with altered load magnitude (e.g. -200 N instead of expected -100 N)
+    deck_bad_load = tmp_path / "job_bad_load.inp"
+    deck_bad_load.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\n3, 3, -100.0\n4, 3, -100.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"deck_path \*CLOAD force for .* does not match model expected per-node load"):
+        run_c3d10_simulation(tmp_path, model, deck_bad_load)
+
+
+def test_reject_deck_model_physics_discrepancies(tmp_path: Path, minimal_c3d10_mesh):
+    """
+    R76-3 / Codex P2: Verify all 5 counterexamples and NaN validation on boundary conditions and loads:
+    1. per-node load distribution altered (-50/-50 -> -100/0) with identical total sum
+    2. load applied to wrong target (fixed node 1 instead of loaded nodes) with identical total sum
+    3. extra load component / direction added (Fx=25 added to expected Fz)
+    4. prescribed boundary value altered (0.0 -> 1.0)
+    5. extra constraint added to loaded node 3
+    6. non-finite (NaN / Inf) load or boundary values in deck
+    """
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+
+    # 1. Per-node load distribution altered: -100 on node 3, 0 on node 4 (total sum is still -100)
+    d1 = tmp_path / "d1.inp"
+    d1.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\n3, 3, -100.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"Missing \(node, DOF\): \[\(4, 3\)\]|force for \(node 3, DOF 3\)"):
+        run_c3d10_simulation(tmp_path, model, d1)
+
+    # 2. Load applied to fixed node 1 instead of loaded nodes (total sum is still -100)
+    d2 = tmp_path / "d2.inp"
+    d2.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\n1, 3, -100.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"Extra \(node, DOF\): \[\(1, 3\)\]"):
+        run_c3d10_simulation(tmp_path, model, d2)
+
+    # 3. Extra load component added: Fz=-100 preserved, but Fx=25 added
+    d3 = tmp_path / "d3.inp"
+    d3.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n3, 1, 25.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"Extra \(node, DOF\): \[\(3, 1\)\]"):
+        run_c3d10_simulation(tmp_path, model, d3)
+
+    # 4. Boundary prescribed value altered: 0.0 -> 1.0
+    d4 = tmp_path / "d4.inp"
+    d4.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 1.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"boundary condition value for \(node \d+, DOF \d+\) \(1.0\) does not match"):
+        run_c3d10_simulation(tmp_path, model, d4)
+
+    # 5. Extra boundary constraint added on loaded node 3
+    d5 = tmp_path / "d5.inp"
+    d5.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n3, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"Extra \(node, DOF\):.*\(3, 1\)"):
+        run_c3d10_simulation(tmp_path, model, d5)
+
+    # 6. Non-finite (NaN / Inf) in *CLOAD
+    d6 = tmp_path / "d6.inp"
+    d6.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, nan\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"Non-finite load value \(nan\)"):
+        run_c3d10_simulation(tmp_path, model, d6)
+
+    # 7. Model with non-finite BC (NaN) followed by duplicate 0.0 BC (must not be masked)
+    from caelab.model.schema import BoundaryCondition
+    model_nan_bc = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+    model_nan_bc.bcs.insert(0, BoundaryCondition(name="nan_bc", target_set="FIXED_NODES", fixed_dofs=[1], values={1: float("nan")}))
+    d_normal = tmp_path / "d_normal.inp"
+    d_normal.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"defines non-finite value \(nan\)"):
+        run_c3d10_simulation(tmp_path, model_nan_bc, d_normal)
+
+    # 8. Boundary condition difference exceeding ULP budget (e.g. 0.0 -> 1e-8)
+    d8 = tmp_path / "d8.inp"
+    d8.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 1e-8\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"boundary condition value for .* does not match"):
+        run_c3d10_simulation(tmp_path, model, d8)
+
+    # 9. Load difference exceeding ULP budget (e.g. -50.0 -> -50.0004)
+    d9 = tmp_path / "d9.inp"
+    d9.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0004\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"force for .* does not match model expected per-node load"):
+        run_c3d10_simulation(tmp_path, model, d9)
+
+    # 10. BC small perturbation (0.0 -> 5e-12) must be strictly rejected
+    d10 = tmp_path / "d10.inp"
+    d10.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 5e-12\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"boundary condition value for .* does not match"):
+        run_c3d10_simulation(tmp_path, model, d10)
+
+    # 11. Load small perturbation (-50.0 -> -50.000000000005) must be strictly rejected
+    d11 = tmp_path / "d11.inp"
+    d11.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.000000000005\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"force for .* does not match model expected per-node load"):
+        run_c3d10_simulation(tmp_path, model, d11)
+
+    # 12. Conflicting duplicate BC (1.0 vs 1.0000000005) in model must be strictly rejected
+    from caelab.model.schema import BoundaryCondition
+    model_dup_conflict = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+    # Set the existing base BC's DOF 1 value to 1.0
+    model_dup_conflict.bcs[0].values = {1: 1.0, 2: 0.0, 3: 0.0}
+    # Append the duplicate BC with value 1.0000000005 on DOF 1
+    model_dup_conflict.bcs.append(BoundaryCondition(name="dup_bc_2", target_set="FIXED_NODES", fixed_dofs=[1], values={1: 1.0000000005}))
+    with pytest.raises(MshC3D10Error, match=r"Model defines conflicting boundary conditions for node .* DOF 1: 1.0 vs 1.0000000005"):
+        run_c3d10_simulation(tmp_path, model_dup_conflict, d_normal)
+
+
+def test_reject_deck_outside_workdir(tmp_path: Path, minimal_c3d10_mesh):
+    """R76-4: deck_path outside workdir must be rejected to prevent cwd/stem collision."""
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+    )
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    deck_path = other_dir / "job.inp"
+    deck_path.write_text("*HEADING\n", encoding="utf-8")
+
+    workdir = tmp_path / "run_dir"
+    workdir.mkdir()
+
+    with pytest.raises(MshC3D10Error, match="deck_path must be located directly within workdir"):
+        run_c3d10_simulation(workdir, model, deck_path)
+
+    converter = CalculiXConverter()
+    with pytest.raises(ValueError, match="deck 파일은 workdir 직하에 위치해야 합니다"):
+        converter.run(model, deck_path, workdir)
+
+
+def test_jobs_submit_model_records_mm_units(tmp_path: Path, minimal_c3d10_mesh, monkeypatch):
+    """R76-5 / Codex P2: JobManager.submit_model records units, isolated from worker execution, verifying clean shutdown."""
+    from caelab.jobs import JobManager, RunStore, ProgramStatus
+    from caelab.connections import ProgramSpec
+    from caelab.solvers.calculix import CalculiXConverter
+
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        unit_system="mm-t-s",
+        fixed_nodes=[1, 2],
+    )
+
+    store = RunStore(tmp_path / "runs")
+    jm = JobManager()
+    # Isolate from real worker thread execution and cleanly release lease
+    def fake_run(run_id, status, timeout):
+        with jm._native_lock:
+            run, control = jm._native[run_id], jm._controls[run_id]
+        jm._release_native_lease(run, control)
+    monkeypatch.setattr(jm, "_run_native", fake_run)
+    try:
+        spec = ProgramSpec(id="calculix", name="CalculiX", role="solver", env_var="CAELAB_CCX", executables=("ccx",))
+        status = ProgramStatus(spec=spec, path="/usr/bin/ccx")
+
+        run = jm.submit_model(store, model, CalculiXConverter(), status)
+        assert run.units == {"length": "mm", "force": "N"}
+        assert run.unit_source == "StructuralModel.unit_system"
+    finally:
+        closed_ok = jm.close(timeout=5.0)
+        assert closed_ok is True, "JobManager.close() must return True (all threads dead, leases released)"
+
+

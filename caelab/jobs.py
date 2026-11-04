@@ -289,7 +289,12 @@ class JobManager:
                      status: ProgramStatus, timeout=3600) -> NativeRun:
         from .model_execution import MODEL_NODE_ID, ModelRunAdapter
         adapter = ModelRunAdapter(model, converter)
-        units = {"length": "m", "force": "N"} if model.unit_system == "si" else {}
+        if model.unit_system == "si":
+            units = {"length": "m", "force": "N"}
+        elif model.unit_system in ("mm", "mm-t-s"):
+            units = {"length": "mm", "force": "N"}
+        else:
+            units = {}
         reference = FileReference(str(store.root.parent / 'model.json'), units=units,
                                   unit_source='StructuralModel.unit_system')
         return self._submit_owned(store, MODEL_NODE_ID, reference, status, timeout, adapter=adapter)

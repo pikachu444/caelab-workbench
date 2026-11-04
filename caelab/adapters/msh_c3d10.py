@@ -625,6 +625,35 @@ def assemble_c3d10_master_deck(
 
     loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
 
+    # R76-2: Strict 3-component load vector check
+    if not isinstance(load_vector, (tuple, list)) or len(load_vector) != 3:
+        raise MshC3D10Error(
+            f"load_vector must be a sequence of exactly 3 components (fx, fy, fz), got length {len(load_vector) if isinstance(load_vector, (tuple, list)) else type(load_vector)}"
+        )
+
+    # R76-2: Strict 3-component load vector check
+    if not isinstance(load_vector, (tuple, list)) or len(load_vector) != 3:
+        raise MshC3D10Error(
+            f"load_vector must be a sequence of exactly 3 components (fx, fy, fz), got length {len(load_vector) if isinstance(load_vector, (tuple, list)) else type(load_vector)}"
+        )
+
+    # R76-2: Non-zero load with empty target check
+    if any(load_vector) and not loaded_list:
+        raise MshC3D10Error("Non-zero load_vector specified but loaded_nodes is empty")
+
+    # R76-2: Numeric parameter checks
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in load_vector):
+        raise MshC3D10Error("load_vector components must be finite numbers")
+
+    if not isinstance(youngs_modulus, (int, float)) or not math.isfinite(youngs_modulus) or youngs_modulus <= 0:
+        raise MshC3D10Error("youngs_modulus must be a positive finite number")
+
+    if not isinstance(poissons_ratio, (int, float)) or not math.isfinite(poissons_ratio) or not (-1.0 < poissons_ratio < 0.5):
+        raise MshC3D10Error("poissons_ratio must be strictly between -1.0 and 0.5")
+
+    if density is not None and (not isinstance(density, (int, float)) or not math.isfinite(density) or density <= 0):
+        raise MshC3D10Error("density must be a positive finite number")
+
     collision = set(fixed_list).intersection(set(loaded_list))
     if collision:
         raise MshC3D10Error(
@@ -701,8 +730,48 @@ def build_c3d10_structural_model(
     density: float | None = None,
 ) -> StructuralModel:
     """Construct a caelab.model.schema.StructuralModel from ConvertedMesh for CalculiX."""
+    # R76-1: Prevent mm mesh from being labeled as SI without coordinate conversion
+    mesh_unit = mesh.metadata.get("length_unit") if mesh.metadata else None
+    if mesh_unit == "mm" and unit_system == "si":
+        raise MshC3D10Error(
+            "MSH input has length_unit 'mm'; labeling as 'si' without coordinate conversion is prohibited. "
+            "Use unit_system='mm-t-s' or 'mm'."
+        )
+
     fixed_list = sorted(set(fixed_nodes)) if fixed_nodes else []
     loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
+
+    # R76-2: Strict 3-component load vector check
+    if not isinstance(load_vector, (tuple, list)) or len(load_vector) != 3:
+        raise MshC3D10Error(
+            f"load_vector must be a sequence of exactly 3 components (fx, fy, fz), got length {len(load_vector) if isinstance(load_vector, (tuple, list)) else type(load_vector)}"
+        )
+
+    # R76-2: Non-zero load with empty target check
+    if any(load_vector) and not loaded_list:
+        raise MshC3D10Error("Non-zero load_vector specified but loaded_nodes is empty")
+
+    # R76-2: Numeric parameter checks
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in load_vector):
+        raise MshC3D10Error("load_vector components must be finite numbers")
+
+    if not isinstance(youngs_modulus, (int, float)) or not math.isfinite(youngs_modulus) or youngs_modulus <= 0:
+        raise MshC3D10Error("youngs_modulus must be a positive finite number")
+
+    if not isinstance(poissons_ratio, (int, float)) or not math.isfinite(poissons_ratio) or not (-1.0 < poissons_ratio < 0.5):
+        raise MshC3D10Error("poissons_ratio must be strictly between -1.0 and 0.5")
+
+    if density is not None and (not isinstance(density, (int, float)) or not math.isfinite(density) or density <= 0):
+        raise MshC3D10Error("density must be a positive finite number")
+
+    # Validate that nodes exist in mesh
+    missing_fixed = [nid for nid in fixed_list if nid not in mesh.nodes]
+    if missing_fixed:
+        raise MshC3D10Error(f"fixed_nodes contains node IDs not present in mesh: {missing_fixed}")
+
+    missing_loaded = [nid for nid in loaded_list if nid not in mesh.nodes]
+    if missing_loaded:
+        raise MshC3D10Error(f"loaded_nodes contains node IDs not present in mesh: {missing_loaded}")
 
     collision = set(fixed_list).intersection(set(loaded_list))
     if collision:
@@ -765,6 +834,202 @@ def build_c3d10_structural_model(
     )
 
 
+def parse_deck_all_nsets(deck_text: str) -> dict[str, set[int]]:
+    """Parse all *NSET definitions in the deck, returning dict of nset_name -> set of node IDs."""
+    nsets: dict[str, set[int]] = {}
+    current_set: str | None = None
+    is_generate = False
+    for raw_line in deck_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            upper_line = line.upper().replace(" ", "")
+            if upper_line.startswith("*NSET"):
+                current_set = None
+                is_generate = "GENERATE" in upper_line
+                for part in line.split(",")[1:]:
+                    part_strip = part.strip()
+                    if part_strip.upper().startswith("NSET="):
+                        current_set = part_strip[5:].strip().upper()
+                        if current_set not in nsets:
+                            nsets[current_set] = set()
+                        break
+            else:
+                current_set = None
+        elif current_set:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if is_generate and len(parts) >= 2:
+                try:
+                    start_node = int(parts[0])
+                    end_node = int(parts[1])
+                    step = int(parts[2]) if len(parts) >= 3 else 1
+                    nsets[current_set].update(range(start_node, end_node + 1, step))
+                except ValueError:
+                    pass
+            else:
+                for p in parts:
+                    try:
+                        nsets[current_set].add(int(p))
+                    except ValueError:
+                        pass
+    return nsets
+
+
+def parse_deck_nset_nodes(deck_text: str, nset_name: str) -> set[int] | None:
+    """Parse node IDs defined under an *NSET card with the given set name."""
+    nsets = parse_deck_all_nsets(deck_text)
+    return nsets.get(nset_name.upper())
+
+
+def parse_deck_boundary_conditions(
+    deck_text: str,
+    nsets: dict[str, set[int]] | None = None,
+) -> dict[tuple[int, int], float]:
+    """
+    Parse all boundary conditions in the deck under *BOUNDARY cards.
+    Returns mapping of (node_id, dof) -> prescribed_value.
+    Raises MshC3D10Error if non-finite or invalid values are encountered.
+    """
+    if nsets is None:
+        nsets = parse_deck_all_nsets(deck_text)
+    nsets_upper = {k.upper(): v for k, v in nsets.items()}
+
+    bcs: dict[tuple[int, int], float] = {}
+    in_boundary = False
+
+    for raw_line in deck_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            upper_line = line.upper().replace(" ", "")
+            if upper_line.startswith("*BOUNDARY"):
+                in_boundary = True
+                continue
+            elif in_boundary:
+                in_boundary = False
+        elif in_boundary:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if not parts:
+                continue
+            target = parts[0].strip()
+            if len(parts) < 2:
+                continue
+            try:
+                start_dof = int(parts[1])
+            except ValueError:
+                continue
+
+            end_dof = start_dof
+            val = 0.0
+            if len(parts) >= 3 and parts[2].isdigit():
+                end_dof = int(parts[2])
+                if len(parts) >= 4:
+                    try:
+                        val = float(parts[3])
+                    except ValueError:
+                        raise MshC3D10Error(f"Invalid prescribed boundary value in card: {line}")
+            elif len(parts) >= 3:
+                try:
+                    val = float(parts[2])
+                except ValueError:
+                    raise MshC3D10Error(f"Invalid prescribed boundary value in card: {line}")
+
+            if not math.isfinite(val):
+                raise MshC3D10Error(f"Non-finite prescribed boundary value ({val}) in card: {line}")
+
+            if target.isdigit():
+                target_nodes = {int(target)}
+            elif target.upper() in nsets_upper:
+                target_nodes = nsets_upper[target.upper()]
+            else:
+                raise MshC3D10Error(f"*BOUNDARY references unknown node or NSET '{target}' in deck")
+
+            for nid in target_nodes:
+                for dof in range(start_dof, end_dof + 1):
+                    key = (nid, dof)
+                    if key in bcs and not math.isclose(bcs[key], val, abs_tol=1e-7):
+                        raise MshC3D10Error(
+                            f"Conflicting boundary conditions for node {nid}, DOF {dof}: "
+                            f"{bcs[key]} vs {val}"
+                        )
+                    bcs[key] = val
+
+    return bcs
+
+
+def parse_deck_boundary_dofs(deck_text: str, nset_name: str) -> set[int]:
+    """Parse constrained DOFs for a given node set under *BOUNDARY cards."""
+    nsets = parse_deck_all_nsets(deck_text)
+    target_nodes = nsets.get(nset_name.upper(), set())
+    bcs = parse_deck_boundary_conditions(deck_text, nsets)
+    return {dof for (nid, dof) in bcs if nid in target_nodes}
+
+
+def parse_deck_cloads(
+    deck_text: str,
+    nsets: dict[str, set[int]] | None = None,
+) -> dict[tuple[int, int], float]:
+    """
+    Parse all concentrated nodal loads in the deck under *CLOAD cards.
+    Returns mapping of (node_id, dof) -> force_value.
+    Raises MshC3D10Error if non-finite or invalid values are encountered.
+    """
+    if nsets is None:
+        nsets = parse_deck_all_nsets(deck_text)
+    nsets_upper = {k.upper(): v for k, v in nsets.items()}
+
+    loads: dict[tuple[int, int], float] = {}
+    in_cload = False
+
+    for raw_line in deck_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            upper_line = line.upper().replace(" ", "")
+            if upper_line.startswith("*CLOAD"):
+                in_cload = True
+                continue
+            elif in_cload:
+                in_cload = False
+        elif in_cload:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if len(parts) >= 3:
+                target = parts[0].strip()
+                try:
+                    dof = int(parts[1])
+                    val = float(parts[2])
+                except ValueError:
+                    raise MshC3D10Error(f"Invalid numeric values in *CLOAD card: {line}")
+
+                if not math.isfinite(val):
+                    raise MshC3D10Error(f"Non-finite load value ({val}) in *CLOAD card: {line}")
+
+                if target.isdigit():
+                    target_nodes = {int(target)}
+                elif target.upper() in nsets_upper:
+                    target_nodes = nsets_upper[target.upper()]
+                else:
+                    raise MshC3D10Error(f"*CLOAD references unknown node or NSET '{target}' in deck")
+
+                for nid in target_nodes:
+                    key = (nid, dof)
+                    loads[key] = loads.get(key, 0.0) + val
+
+    return loads
+
+
+def parse_deck_cload_totals(deck_text: str, nset_sizes: dict[str, int] | None = None) -> dict[int, float]:
+    """Parse total force applied in each DOF under *CLOAD cards."""
+    loads = parse_deck_cloads(deck_text)
+    totals: dict[int, float] = {}
+    for (nid, dof), val in loads.items():
+        totals[dof] = totals.get(dof, 0.0) + val
+    return totals
+
+
 def run_c3d10_simulation(
     workdir: Path | str,
     model: StructuralModel,
@@ -773,6 +1038,149 @@ def run_c3d10_simulation(
     """Execute CalculiX simulation using CalculiXConverter and summarize results."""
     workdir = Path(workdir).resolve()
     deck_path = Path(deck_path).resolve()
+
+    # R76-4: Ensure deck_path resides inside workdir
+    if deck_path.parent != workdir:
+        raise MshC3D10Error(f"deck_path must be located directly within workdir: {deck_path} vs {workdir}")
+
+    # R76-3: Verify model and deck consistency before solver invocation
+    deck_text = deck_path.read_text(encoding="utf-8", errors="replace")
+    deck_nsets = parse_deck_all_nsets(deck_text)
+
+    # 1. Verify Node Sets
+    for set_name in ("FIXED_NODES", "LOAD_NODES"):
+        if set_name in model.sets and model.sets[set_name].kind == "node":
+            expected_nodes = set(model.sets[set_name].members)
+            actual_nodes = deck_nsets.get(set_name.upper())
+            if actual_nodes is None:
+                raise MshC3D10Error(f"deck_path is missing *NSET, NSET={set_name} defined in model")
+            if actual_nodes != expected_nodes:
+                raise MshC3D10Error(
+                    f"deck_path {set_name} node IDs do not match model {set_name} set. "
+                    f"Model has {len(expected_nodes)} nodes, deck has {len(actual_nodes)} nodes."
+                )
+
+    # 2. Verify Boundary Conditions (Exact (node, DOF) -> value mapping)
+    expected_bcs: dict[tuple[int, int], float] = {}
+    for bc in model.bcs:
+        target_nodes: set[int] = set()
+        if bc.target_set and bc.target_set in model.sets:
+            target_nodes = set(model.sets[bc.target_set].members)
+        elif bc.target_set and bc.target_set.isdigit():
+            target_nodes = {int(bc.target_set)}
+
+        # Validate finiteness of all defined values in bc.values upfront
+        if bc.values:
+            for v_dof, v_val in bc.values.items():
+                try:
+                    f_val = float(v_val)
+                except (ValueError, TypeError):
+                    raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines invalid value ({v_val})")
+                if not math.isfinite(f_val):
+                    raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines non-finite value ({v_val})")
+
+        for nid in target_nodes:
+            for dof in bc.fixed_dofs:
+                val = 0.0
+                if bc.values:
+                    raw_val = bc.values.get(dof, bc.values.get(str(dof), 0.0))
+                    try:
+                        val = float(raw_val)
+                    except (ValueError, TypeError):
+                        raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines invalid value ({raw_val})")
+                    if not math.isfinite(val):
+                        raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines non-finite value ({val})")
+                key = (nid, dof)
+                if key in expected_bcs and expected_bcs[key] != val:
+                    raise MshC3D10Error(
+                        f"Model defines conflicting boundary conditions for node {nid}, DOF {dof}: "
+                        f"{expected_bcs[key]} vs {val}"
+                    )
+                expected_bcs[key] = val
+
+    if expected_bcs and "*BOUNDARY" not in deck_text.upper():
+        raise MshC3D10Error("model defines boundary conditions, but deck_path lacks *BOUNDARY keyword")
+
+    deck_bcs = parse_deck_boundary_conditions(deck_text, deck_nsets)
+    if set(deck_bcs.keys()) != set(expected_bcs.keys()):
+        extra = set(deck_bcs.keys()) - set(expected_bcs.keys())
+        missing = set(expected_bcs.keys()) - set(deck_bcs.keys())
+        raise MshC3D10Error(
+            f"deck_path boundary conditions do not match model expected boundary conditions. "
+            f"Missing (node, DOF): {sorted(missing)}, Extra (node, DOF): {sorted(extra)}"
+        )
+    for key, exp_val in expected_bcs.items():
+        act_val = deck_bcs[key]
+        if not math.isfinite(act_val) or not math.isfinite(exp_val):
+            raise MshC3D10Error(
+                f"deck_path boundary condition value for (node {key[0]}, DOF {key[1]}) ({act_val}) is non-finite"
+            )
+        if act_val != exp_val:
+            raise MshC3D10Error(
+                f"deck_path boundary condition value for (node {key[0]}, DOF {key[1]}) ({act_val}) "
+                f"does not match model expected value ({exp_val})"
+            )
+
+    # 3. Verify Concentrated Loads (Exact (node, DOF) -> value mapping)
+    expected_loads: dict[tuple[int, int], float] = {}
+    dof_map = {"fx": 1, "fy": 2, "fz": 3, "1": 1, "2": 2, "3": 3, 1: 1, 2: 2, 3: 3}
+    for ld in model.loads:
+        if ld.kind not in ("force", "cload"):
+            continue
+        target_nodes = set()
+        if ld.target_set and ld.target_set in model.sets:
+            target_nodes = set(model.sets[ld.target_set].members)
+        elif ld.target_set and ld.target_set.isdigit():
+            target_nodes = {int(ld.target_set)}
+        if not target_nodes or not ld.values:
+            continue
+
+        # Validate finiteness of all defined load components upfront
+        for k, comp in ld.values.items():
+            try:
+                f_comp = float(comp)
+            except (ValueError, TypeError):
+                raise MshC3D10Error(f"Model load '{ld.name}' defines invalid value ({comp})")
+            if not math.isfinite(f_comp):
+                raise MshC3D10Error(f"Model load '{ld.name}' defines non-finite value ({comp})")
+
+        n = len(target_nodes)
+        for k, comp in ld.values.items():
+            dof = dof_map.get(str(k).lower(), dof_map.get(k))
+            if dof is None:
+                continue
+            per_node_val = float(comp) / n
+            if not math.isfinite(per_node_val):
+                raise MshC3D10Error(f"Model load '{ld.name}' per-node component ({per_node_val}) is non-finite")
+            for nid in target_nodes:
+                cur_val = expected_loads.get((nid, dof), 0.0) + per_node_val
+                if not math.isfinite(cur_val):
+                    raise MshC3D10Error(f"Model load accumulation for node {nid}, DOF {dof} is non-finite ({cur_val})")
+                expected_loads[(nid, dof)] = cur_val
+
+    if expected_loads and "*CLOAD" not in deck_text.upper():
+        raise MshC3D10Error("model defines loads, but deck_path lacks *CLOAD keyword")
+
+    deck_loads = parse_deck_cloads(deck_text, deck_nsets)
+    if set(deck_loads.keys()) != set(expected_loads.keys()):
+        extra = set(deck_loads.keys()) - set(expected_loads.keys())
+        missing = set(expected_loads.keys()) - set(deck_loads.keys())
+        raise MshC3D10Error(
+            f"deck_path *CLOAD loads do not match model expected loads. "
+            f"Missing (node, DOF): {sorted(missing)}, Extra (node, DOF): {sorted(extra)}"
+        )
+    for key, exp_val in expected_loads.items():
+        act_val = deck_loads[key]
+        if not math.isfinite(act_val) or not math.isfinite(exp_val):
+            raise MshC3D10Error(
+                f"deck_path *CLOAD force for (node {key[0]}, DOF {key[1]}) ({act_val}) is non-finite"
+            )
+        if act_val != exp_val:
+            raise MshC3D10Error(
+                f"deck_path *CLOAD force for (node {key[0]}, DOF {key[1]}) ({act_val}) "
+                f"does not match model expected per-node load ({exp_val})"
+            )
+
     conv = CalculiXConverter()
     result = conv.run(model, deck_path, workdir)
     summary = summarize_result(result)

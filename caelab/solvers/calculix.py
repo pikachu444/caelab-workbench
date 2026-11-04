@@ -272,6 +272,11 @@ class CalculiXConverter:
     # -- execution --------------------------------------------------------
     def run(self, model: StructuralModel, deck: Path, workdir: Path) -> ResultSet:
         workdir = Path(workdir).resolve()
+        deck_path = Path(deck).resolve()
+        if deck_path.parent != workdir:
+            raise ValueError(
+                f"deck 파일은 workdir 직하에 위치해야 합니다 (cwd 격리 보장): {deck_path} vs {workdir}"
+            )
         log_path = workdir / "job.log"
         if model.unit_system == "si":
             units = {"length": "m", "force": "N"}
