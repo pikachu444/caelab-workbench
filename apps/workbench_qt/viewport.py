@@ -240,9 +240,14 @@ class Viewport(QWidget):
             return
 
         disp = np.array([result.displacements[n] for n in self._node_ids], dtype=float)
-        # AC-4: Coordinates in grid are in length_unit (mm). If displacements are in meters, convert to mm.
-        if result.units.get("length") == "m":
+        # AC-4: Keep displacements in the same length unit as mesh coordinates
+        model_unit = getattr(model, "unit_system", "si")
+        model_len = "mm" if model_unit in ("mm", "mm-t-s") else "m"
+        result_len = result.units.get("length", model_len)
+        if model_len == "mm" and result_len == "m":
             disp = disp * 1000.0
+        elif model_len == "m" and result_len == "mm":
+            disp = disp / 1000.0
         magnitude = np.linalg.norm(disp, axis=1)
 
         grid = vtk.vtkUnstructuredGrid()
@@ -250,6 +255,7 @@ class Viewport(QWidget):
         vec = numpy_to_vtk(disp, deep=True)
         vec.SetName("U")
         grid.GetPointData().AddArray(vec)
+        grid.GetPointData().SetActiveVectors("U")
         mag = numpy_to_vtk(magnitude, deep=True)
         mag.SetName("displacement_magnitude")
         grid.GetPointData().AddArray(mag)
@@ -281,7 +287,9 @@ class Viewport(QWidget):
 
         warp = vtk.vtkWarpVector()
         warp.SetInputData(grid)
+        warp.SetInputArrayToProcess(0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, "U")
         warp.SetScaleFactor(actual_scale)
+        self._last_warp = warp
         surface = vtk.vtkDataSetSurfaceFilter()
         surface.SetInputConnection(warp.GetOutputPort())
 
