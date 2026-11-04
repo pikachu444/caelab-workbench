@@ -10,6 +10,7 @@ from caelab.solvers.base import ResultSet
 from apps.workbench_qt.viewport import (
     compute_von_mises,
     deduce_stress_unit,
+    deduce_length_unit,
     build_grid,
     Viewport,
 )
@@ -320,3 +321,166 @@ def test_model_execution_stresses_restoration_roundtrip(tmp_path, monkeypatch):
     vm = compute_von_mises(loaded.result.stresses, [1])
     assert math.isfinite(vm[0])
     assert not np.isnan(vm[0])
+
+
+def test_deduce_length_unit_contract():
+    """PR80-WB3: Test deduce_length_unit for mm, SI, cross units, and undeclared units."""
+    m_mm = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="mm")
+    m_si = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="si")
+    m_none = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system=None)
+    m_unknown = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="custom_inch")
+
+    r_mm = ResultSet(solver_id="ccx", success=True, units={"length": "mm", "force": "N"})
+    r_m = ResultSet(solver_id="ccx", success=True, units={"length": "m", "force": "N"})
+    r_empty = ResultSet(solver_id="ccx", success=True, units={})
+    r_unknown = ResultSet(solver_id="ccx", success=True, units={"length": "inch"})
+
+    # Both declared
+    assert deduce_length_unit(m_mm, r_mm) == ("mm", "mm", True)
+    assert deduce_length_unit(m_si, r_m) == ("m", "m", True)
+    assert deduce_length_unit(m_mm, r_m) == ("mm", "m", True)
+    assert deduce_length_unit(m_si, r_mm) == ("m", "mm", True)
+
+    # Undeclared or unverified
+    assert deduce_length_unit(m_none, r_m) == (None, "m", False)
+    assert deduce_length_unit(m_unknown, r_m) == (None, "m", False)
+    assert deduce_length_unit(m_mm, r_empty) == ("mm", None, False)
+    assert deduce_length_unit(m_mm, r_unknown) == ("mm", None, False)
+    assert deduce_length_unit(m_none, r_empty) == (None, None, False)
+
+
+def test_unit_consistency_scalars_and_legends_si():
+    """PR80-WB3: In SI model (0.01m + 0.001m), scalars and both legends must be [m], not [mm]."""
+    from PySide6.QtWidgets import QApplication
+    from apps.workbench_qt.main_window import MainWindow
+    import vtk
+
+    app = QApplication.instance() or QApplication([])
+
+    mesh_si = MeshData(
+        nodes={1: (0.01, 0.0, 0.0), 2: (0.02, 0.0, 0.0), 3: (0.01, 0.01, 0.0), 4: (0.01, 0.0, 0.01)},
+        elements={1: {"type": "C3D4", "nodes": [1, 2, 3, 4]}},
+    )
+    model_si = StructuralModel(name="si_model", mesh=mesh_si, unit_system="si")
+    result_si = ResultSet(
+        solver_id="calculix",
+        success=True,
+        displacements={1: [0.001, 0.0, 0.0], 2: [0.001, 0.0, 0.0], 3: [0.001, 0.0, 0.0], 4: [0.001, 0.0, 0.0]},
+        units={"length": "m", "force": "N"},
+    )
+
+    vp = Viewport()
+    vp.available = True
+    vp._renderer = vtk.vtkRenderer()
+    vp._grid, vp._node_ids = build_grid(model_si)
+    vp.show_results(model_si, result_si, field_name="U_mag", scale_mode="real", scale_factor=1.0)
+
+    # 1. Scalar array in grid must be in meters (0.001)
+    mag_arr = vp._last_warp.GetInput().GetPointData().GetArray("displacement_magnitude")
+    assert math.isclose(mag_arr.GetValue(0), 0.001, rel_tol=1e-6)
+
+    # 2. VTK ScalarBar title must indicate [m], NOT [mm]
+    assert vp._scalar_bar is not None
+    assert "Displacement [m]" in vp._scalar_bar.GetTitle()
+
+    # 3. MainWindow Qt legend label must indicate (m), NOT (mm)
+    win = MainWindow()
+    win.model = model_si
+    win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("real"))
+    win._update_legend_label(model_si, result_si)
+    assert "변위 크기 (m) [절점]" in win.legend_label.text()
+    assert "mm" not in win.legend_label.text()
+
+
+def test_unit_consistency_scalars_and_legends_cross_mm_and_m():
+    """PR80-WB3: Cross mm-mesh and m-displacement must convert scalars and legends to mm consistently."""
+    from PySide6.QtWidgets import QApplication
+    from apps.workbench_qt.main_window import MainWindow
+    import vtk
+
+    app = QApplication.instance() or QApplication([])
+
+    mesh_mm = MeshData(
+        nodes={1: (10.0, 0.0, 0.0), 2: (20.0, 0.0, 0.0), 3: (10.0, 10.0, 0.0), 4: (10.0, 0.0, 10.0)},
+        elements={1: {"type": "C3D4", "nodes": [1, 2, 3, 4]}},
+    )
+    model_mm = StructuralModel(name="mm_model", mesh=mesh_mm, unit_system="mm")
+    result_m = ResultSet(
+        solver_id="calculix",
+        success=True,
+        displacements={1: [0.001, 0.0, 0.0], 2: [0.001, 0.0, 0.0], 3: [0.001, 0.0, 0.0], 4: [0.001, 0.0, 0.0]},
+        units={"length": "m", "force": "N"},
+    )
+
+    vp = Viewport()
+    vp.available = True
+    vp._renderer = vtk.vtkRenderer()
+    vp._grid, vp._node_ids = build_grid(model_mm)
+    vp.show_results(model_mm, result_m, field_name="U_mag", scale_mode="real", scale_factor=1.0)
+
+    # 1. Displacements converted to mm (0.001 m -> 1.0 mm)
+    mag_arr = vp._last_warp.GetInput().GetPointData().GetArray("displacement_magnitude")
+    assert math.isclose(mag_arr.GetValue(0), 1.0, rel_tol=1e-6)
+
+    # 2. Warp coordinate is 10.0 + 1.0 = 11.0 mm
+    vp._last_warp.Update()
+    out = vp._last_warp.GetOutput()
+    assert math.isclose(out.GetPoint(0)[0], 11.0, rel_tol=1e-6)
+
+    # 3. VTK ScalarBar title is [mm]
+    assert "Displacement [mm]" in vp._scalar_bar.GetTitle()
+
+    # 4. MainWindow Qt legend is (mm)
+    win = MainWindow()
+    win.model = model_mm
+    win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("real"))
+    win._update_legend_label(model_mm, result_m)
+    assert "변위 크기 (mm) [절점]" in win.legend_label.text()
+
+
+def test_undeclared_units_suppresses_real_scale_and_indicates_status():
+    """PR80-WB3: Undeclared/unverified units must suppress real deformation (S=0) and display unverified notice."""
+    from PySide6.QtWidgets import QApplication
+    from apps.workbench_qt.main_window import MainWindow
+    import vtk
+
+    app = QApplication.instance() or QApplication([])
+
+    mesh = MeshData(
+        nodes={1: (10.0, 0.0, 0.0), 2: (20.0, 0.0, 0.0), 3: (10.0, 10.0, 0.0), 4: (10.0, 0.0, 10.0)},
+        elements={1: {"type": "C3D4", "nodes": [1, 2, 3, 4]}},
+    )
+    # Model has no unit_system declared
+    model_undeclared = StructuralModel(name="no_unit_model", mesh=mesh, unit_system=None)
+    # Result has no units declared
+    result_undeclared = ResultSet(
+        solver_id="calculix",
+        success=True,
+        displacements={1: [0.1, 0.0, 0.0], 2: [0.1, 0.0, 0.0], 3: [0.1, 0.0, 0.0], 4: [0.1, 0.0, 0.0]},
+        units={},
+    )
+
+    vp = Viewport()
+    vp.available = True
+    vp._renderer = vtk.vtkRenderer()
+    vp._grid, vp._node_ids = build_grid(model_undeclared)
+
+    # 1. Real scale mode: deformation must be suppressed (S=0.0)
+    vp.show_results(model_undeclared, result_undeclared, field_name="U_mag", scale_mode="real", scale_factor=1.0)
+    assert vp._base_scale == 0.0
+    assert "[단위 미선언: 실제 변형 억제]" in vp._scalar_bar.GetTitle()
+
+    win = MainWindow()
+    win.model = model_undeclared
+    win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("real"))
+    win._update_legend_label(model_undeclared, result_undeclared)
+    assert "[단위 미선언: 실제 변형 억제]" in win.legend_label.text()
+
+    # 2. Auto scale mode: visual auto scaling allowed, but legend must note [단위 미선언: 절점]
+    vp.show_results(model_undeclared, result_undeclared, field_name="U_mag", scale_mode="auto", scale_factor=1.0)
+    assert vp._base_scale > 0.0
+    assert "[단위 미선언: 절점]" in vp._scalar_bar.GetTitle()
+
+    win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("auto"))
+    win._update_legend_label(model_undeclared, result_undeclared)
+    assert "[단위 미선언: 절점]" in win.legend_label.text()

@@ -793,10 +793,7 @@ class MainWindow(QMainWindow):
             field = self.field_combo.currentData() or "U_mag"
             scale_mode = self.scale_mode_combo.currentData() or "auto"
             factor = self.scale_spin.value()
-            try:
-                self.viewport.show_results(model, result, field_name=field, scale_mode=scale_mode, scale_factor=factor)
-            except TypeError:
-                self.viewport.show_results(model, result)
+            self.viewport.show_results(model, result, field_name=field, scale_mode=scale_mode, scale_factor=factor)
             self._update_legend_label(model, result)
             self._set_flow(3)
         else:
@@ -892,24 +889,26 @@ class MainWindow(QMainWindow):
         if not model.mesh.nodes or not model.mesh.nodes.keys() <= result.displacements.keys():
             self.legend_label.setText("변위 필드 누락 — 변형 미표시")
             return
-        unit = result.units.get("length")
-        length_unit = "mm" if unit == "m" else (unit or "mm")
+        from apps.workbench_qt.viewport import deduce_length_unit, deduce_stress_unit
+
+        model_len, result_len, units_declared = deduce_length_unit(model, result)
+        mode = self.scale_mode_combo.currentData() or "auto"
 
         if field == "von_mises":
-            from apps.workbench_qt.viewport import deduce_stress_unit
             s_unit = deduce_stress_unit(result.units)
             if s_unit is None:
                 self.legend_label.setText("색상 범례: Von Mises 응력 — [단위 미선언: 파생 응력 보류]")
             else:
                 self.legend_label.setText(f"색상 범례: Von Mises 응력 ({s_unit}) [절점 외삽]")
-        elif field == "U_x":
-            self.legend_label.setText(f"색상 범례: 변위 X ({length_unit}) [절점]")
-        elif field == "U_y":
-            self.legend_label.setText(f"색상 범례: 변위 Y ({length_unit}) [절점]")
-        elif field == "U_z":
-            self.legend_label.setText(f"색상 범례: 변위 Z ({length_unit}) [절점]")
         else:
-            self.legend_label.setText(f"색상 범례: 변위 크기 ({length_unit}) [절점]")
+            coord_name = {"U_mag": "변위 크기", "U_x": "변위 X", "U_y": "변위 Y", "U_z": "변위 Z"}.get(field, "변위")
+            if not units_declared:
+                if mode == "real":
+                    self.legend_label.setText(f"색상 범례: {coord_name} — [단위 미선언: 실제 변형 억제]")
+                else:
+                    self.legend_label.setText(f"색상 범례: {coord_name} — [단위 미선언: 절점]")
+            else:
+                self.legend_label.setText(f"색상 범례: {coord_name} ({model_len}) [절점]")
 
     def show_diagnostics(self) -> None:
         dlg = QDialog(self)

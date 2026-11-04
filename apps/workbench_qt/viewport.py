@@ -72,6 +72,8 @@ def deduce_stress_unit(units: dict) -> str | None:
     m + N -> Pa
     Otherwise -> None (undeclared / [단위 미선언])
     """
+    if not isinstance(units, dict):
+        return None
     length = str(units.get("length", "")).lower()
     force = str(units.get("force", "")).lower()
     if length == "mm" and force == "n":
@@ -79,6 +81,36 @@ def deduce_stress_unit(units: dict) -> str | None:
     elif length == "m" and force == "n":
         return "Pa"
     return None
+
+
+def deduce_length_unit(model: Any, result: Any) -> tuple[str | None, str | None, bool]:
+    """Deduce model coordinate length unit, result displacement length unit, and validity.
+
+    Returns:
+        (model_len, result_len, units_declared)
+        model_len: 'mm' or 'm' if recognized, else None
+        result_len: 'mm' or 'm' if recognized, else None
+        units_declared: True if both model_len and result_len are recognized, else False
+    """
+    model_unit = getattr(model, "unit_system", None) if model is not None else None
+    model_len = None
+    if model_unit:
+        m_str = str(model_unit).lower().strip()
+        if m_str in ("mm", "mm-t-s", "mm-tonne-s", "mm_tonne_s"):
+            model_len = "mm"
+        elif m_str in ("si", "m", "m-kg-s"):
+            model_len = "m"
+
+    result_len = None
+    if result is not None and hasattr(result, "units") and isinstance(result.units, dict):
+        r_length = result.units.get("length")
+        if r_length:
+            r_str = str(r_length).lower().strip()
+            if r_str in ("mm", "m"):
+                result_len = r_str
+
+    units_declared = (model_len is not None and result_len is not None)
+    return model_len, result_len, units_declared
 
 _FONT_CANDIDATES = (
     "C:/Windows/Fonts/malgun.ttf",
@@ -240,20 +272,28 @@ class Viewport(QWidget):
             self.show_model(model)
             return
 
-        disp = np.array([result.displacements[n] for n in self._node_ids], dtype=float)
-        # AC-4: Keep displacements in the same length unit as mesh coordinates
-        model_unit = getattr(model, "unit_system", "si")
-        model_len = "mm" if model_unit in ("mm", "mm-t-s") else "m"
-        result_len = result.units.get("length", model_len)
-        if model_len == "mm" and result_len == "m":
-            disp = disp * 1000.0
-        elif model_len == "m" and result_len == "mm":
-            disp = disp / 1000.0
-        magnitude = np.linalg.norm(disp, axis=1)
+        disp_raw = np.array([result.displacements[n] for n in self._node_ids], dtype=float)
+        # AC-4 / PR80-WB3: Deduce declared length units and ensure warp/scalar consistency
+        model_len, result_len, units_declared = deduce_length_unit(model, result)
+        if units_declared:
+            if model_len == "mm" and result_len == "m":
+                disp_warp = disp_raw * 1000.0
+            elif model_len == "m" and result_len == "mm":
+                disp_warp = disp_raw / 1000.0
+            else:
+                disp_warp = disp_raw.copy()
+            disp_display = disp_warp
+            length_unit_str = model_len
+        else:
+            disp_warp = disp_raw.copy()
+            disp_display = disp_raw.copy()
+            length_unit_str = None
+
+        magnitude = np.linalg.norm(disp_display, axis=1)
 
         grid = vtk.vtkUnstructuredGrid()
         grid.DeepCopy(self._grid)
-        vec = numpy_to_vtk(disp, deep=True)
+        vec = numpy_to_vtk(disp_warp, deep=True)
         vec.SetName("U")
         grid.GetPointData().AddArray(vec)
         grid.GetPointData().SetActiveVectors("U")
@@ -261,13 +301,13 @@ class Viewport(QWidget):
         mag.SetName("displacement_magnitude")
         grid.GetPointData().AddArray(mag)
 
-        ux = numpy_to_vtk(disp[:, 0], deep=True)
+        ux = numpy_to_vtk(disp_display[:, 0], deep=True)
         ux.SetName("U_x")
         grid.GetPointData().AddArray(ux)
-        uy = numpy_to_vtk(disp[:, 1], deep=True)
+        uy = numpy_to_vtk(disp_display[:, 1], deep=True)
         uy.SetName("U_y")
         grid.GetPointData().AddArray(uy)
-        uz = numpy_to_vtk(disp[:, 2], deep=True)
+        uz = numpy_to_vtk(disp_display[:, 2], deep=True)
         uz.SetName("U_z")
         grid.GetPointData().AddArray(uz)
 
@@ -281,7 +321,11 @@ class Viewport(QWidget):
         if scale is not None:
             actual_scale = scale
         elif scale_mode == "real":
-            actual_scale = 1.0 * scale_factor
+            if not units_declared:
+                # PR80-WB3: Unverified/undeclared units suppress real 1:1 deformation
+                actual_scale = 0.0
+            else:
+                actual_scale = 1.0 * scale_factor
         else:  # auto
             actual_scale = auto_scale * scale_factor
         self._base_scale = actual_scale
@@ -299,8 +343,6 @@ class Viewport(QWidget):
         legend_title = ""
         lut = vtk.vtkColorTransferFunction()
         lut.SetNanColor(0.55, 0.55, 0.55)  # AC-3: NaN masked rendered neutral gray
-
-        length_unit = "mm" if result.units.get("length") == "m" else (result.units.get("length") or "mm")
 
         if field_name == "von_mises":
             stress_unit = deduce_stress_unit(result.units)
@@ -323,25 +365,37 @@ class Viewport(QWidget):
                     hi = lo + 1.0
         elif field_name == "U_x":
             active_scalar_name = "U_x"
-            legend_title = f"Displacement X [{length_unit}]\n[절점]"
-            lo, hi = float(disp[:, 0].min()), float(disp[:, 0].max())
+            if not units_declared:
+                legend_title = "Displacement X\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement X\n[단위 미선언: 절점]"
+            else:
+                legend_title = f"Displacement X [{length_unit_str}]\n[절점]"
+            lo, hi = float(disp_display[:, 0].min()), float(disp_display[:, 0].max())
             if lo == hi:
                 hi = lo + 1e-6
         elif field_name == "U_y":
             active_scalar_name = "U_y"
-            legend_title = f"Displacement Y [{length_unit}]\n[절점]"
-            lo, hi = float(disp[:, 1].min()), float(disp[:, 1].max())
+            if not units_declared:
+                legend_title = "Displacement Y\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement Y\n[단위 미선언: 절점]"
+            else:
+                legend_title = f"Displacement Y [{length_unit_str}]\n[절점]"
+            lo, hi = float(disp_display[:, 1].min()), float(disp_display[:, 1].max())
             if lo == hi:
                 hi = lo + 1e-6
         elif field_name == "U_z":
             active_scalar_name = "U_z"
-            legend_title = f"Displacement Z [{length_unit}]\n[절점]"
-            lo, hi = float(disp[:, 2].min()), float(disp[:, 2].max())
+            if not units_declared:
+                legend_title = "Displacement Z\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement Z\n[단위 미선언: 절점]"
+            else:
+                legend_title = f"Displacement Z [{length_unit_str}]\n[절점]"
+            lo, hi = float(disp_display[:, 2].min()), float(disp_display[:, 2].max())
             if lo == hi:
                 hi = lo + 1e-6
         else:  # U_mag
             active_scalar_name = "displacement_magnitude"
-            legend_title = f"Displacement [{length_unit}]\n[절점]"
+            if not units_declared:
+                legend_title = "Displacement\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement\n[단위 미선언: 절점]"
+            else:
+                legend_title = f"Displacement [{length_unit_str}]\n[절점]"
             lo, hi = float(magnitude.min()), float(magnitude.max()) or 1.0
             if lo == hi:
                 hi = lo + 1e-6

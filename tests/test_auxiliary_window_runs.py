@@ -159,7 +159,7 @@ def test_past_selection_rebuilds_its_model_and_late_completion_keeps_that_select
     current = wb.active_id
     calls = []
     monkeypatch.setattr(widget.viewport, 'show_model', lambda model: calls.append(('model', model.name)))
-    monkeypatch.setattr(widget.viewport, 'show_results', lambda model, result: calls.append(('result', model.name)))
+    monkeypatch.setattr(widget.viewport, 'show_results', lambda model, result, **kwargs: calls.append(('result', model.name)))
     assert widget.select_path(f'runs.{past.id}')
     assert calls[-2:] == [('model', 'past model'), ('result', 'past model')]
     assert widget.model.name != 'past model'
