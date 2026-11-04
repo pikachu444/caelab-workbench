@@ -1,8 +1,8 @@
 # 상용 CAE 1:1 대조 CAELab 통합 GUI 상세 명세서
 
-> **문서 상태**: 7차 개정 정본 (Revision 7 - PREP78-R2 locator 명시 및 R6 화면 기준·Prep 잔여 링크 완결)  
+> **문서 상태**: 8차 개정 정본 (Revision 8 - WB1 BeidPrep 관측 locator 분리 및 WB6 담당·P5 한정 문구 완결 반영)  
 > **기준 커밋 (Base SHA)**: `09d2b56f259e57ef019ed9548b3f9a0e2e41cc92` (`main`)  
-> **직전 Head SHA**: `14a6db89c374b86a7f434a1798db20591346a3b8` (CI 4종 All Green 통과)  
+> **직전 Head SHA**: `7029dad20342ecd3c53cc0c5d7e8b0593dbadf8b` (CI 4종 All Green 통과)  
 > **적용 범위**: `caelab-workbench` (통합 관리자, 노드 오케스트레이션, 3D 결과 가시화) 및 `caelab-prep` (CourantPrep 전처리 연동)  
 > **작성 및 검토 역할**:  
 > - 작성/통합 책임: Gemini (메인/통합 책임자)  
@@ -172,7 +172,7 @@ stateDiagram-v2
 | **5. COMSOL** (CM) | 6.3 문헌 기준, Model Builder 트리, 1열 계층 구조, 피처 기반 설정 (실제 화면 build 미확인 / 해당 관측의 locator 미확인) | Prep CM 어댑터 및 모델 트리 계층 구조 (`caelab_prep/ui/widgets/tree.py`) | 다중 물리 필드 연계 인터페이스 및 복합 경계조건 트리 매핑 [과업 비교 예정] |
 | **6. midas NFX** (MN) | 2024 교육 및 2026 release 문헌 기준, 리본 메뉴, 작업 트리, 속성 그리드 3단 레이아웃 (동일 과업 화면 build 미확인 / 해당 관측의 locator 미확인) | Prep MN 어댑터 및 독(Dock) 분할 배치 UI | NFX 스타일 고급 3D 메싱 마법사 인터페이스 [과업 비교 예정] |
 | **7. MIDAS MeshFree** (MF) | 2026 교육 파일명 기준, 3단계(CAD-조건-해석) 단순 흐름 (실제 화면 build 미표기 / 해당 관측의 locator 미확인) | Prep MF 어댑터 및 JobManager 백그라운드 비동기 제어 | 복잡 형상 자동 해석 단순화 인터페이스 구축 [과업 비교 예정] |
-| **8. BeidPrep** (BE) | v2.0 관측 (caelab_prep PR #40), 중앙 3D 뷰포트, 좌측 MODEL 트리, 우측 FORM/TEXT 탭 인스펙터 | CourantPrep 2026 레이아웃 (`caelab_prep/ui/prep_workspace.py` PR #40): FORM 선택 카드 단위 문맥(`units_note`), Elements/Nodes 콤보, 카메라 정면/평면 메뉴, 1440x900 초기값 및 유효 geometry 복원/최대화 | 대형 어셈블리 렌더링 성능 최적화 및 세부 카드 편집기 확장 [과업 비교 예정] |
+| **8. BeidPrep** (BE) | v2.0 관측 (해당 관측의 locator 미확인, 우리 구현 PR40과 별개), 중앙 3D 뷰포트, 좌측 MODEL 트리, 우측 FORM/TEXT 탭 인스펙터 | CourantPrep 2026 레이아웃 (`caelab_prep/ui/prep_workspace.py` PR #40): FORM 선택 카드 단위 문맥(`units_note`), Elements/Nodes 콤보, 카메라 정면/평면 메뉴, 1440x900 초기값 및 유효 geometry 복원/최대화 | 대형 어셈블리 렌더링 성능 최적화 및 세부 카드 편집기 확장 [과업 비교 예정] |
 
 *추가 비교군 (보조)*:
 - **Ansys Workbench**: 프로젝트 스키매틱(Schematic) 노드 연결 모델 $\rightarrow$ CAELab `ProjectWindow`의 파이프라인 그래프 모델에 참고.
@@ -258,11 +258,13 @@ stateDiagram-v2
 
 | WBS ID | 세부 과업 내용 | 정본 계획 대응 (P1~P7) | 담당 세션 | 선행 조건 | 완료 산출물 및 수용 조건 |
 |---|---|---|---|---|---|
-| **WBS-1** | **PR #78 정본 명세 6차 개정 반영** | **P2** (문서 정합성·기준 정본화) | Gemini | PR78-WB1~6 / PREP78-R1~7 피드백 | 본 문서 PR 승인 및 main 병합 |
-| **WBS-2** | **PR #77 C3D10 계약 보강 최종 검증** | **P1 + P4** (Phase 4-B Step 2) | Codex / Gemini | 커밋 `042e077` CI 통과 및 **잔여 P2 수정·원 지적자 재검토 통과** | PR #77 Squash Merge 및 main 동기화 |
+| **WBS-1** | **PR #78 정본 명세 8차 개정 반영** | **P2** (문서 정합성·기준 정본화) | Gemini | PR78-WB1~6 / PREP78-R1~7 피드백 | 본 문서 PR 승인 및 main 병합 |
+| **WBS-2** | **PR #77 C3D10 계약 보강 최종 검증** | **P1 + P4** (Phase 4-B Step 2) | Codex / Gemini | 커밋 `042e0772` CI 통과 및 **잔여 P2 수정·원 지적자 재검토 통과** | PR #77 Squash Merge 및 main 동기화 |
 | **WBS-3** | **Workbench 3D 응력 컨투어 내장 가시화** | **P4 + P5** (결과 판독 + 가시화 표시) | Gemini | WBS-1, WBS-2 | CalculiX 결과 뷰포트 렌더링, AC-3, AC-4 충족 (단, ParaView 열기 및 독립 전문가 전달은 별도 추적) |
 | **WBS-4** | **전문가 대화창 비동기 이벤트 격리 (Issue #45)** | **P5** (독립 프로그램 비동기 이벤트 격리) | 젠클스 | 기준 SHA `09d2b56` | 첨부 파일 검증 백그라운드 Worker 분리 및 PR 개설 |
 | **WBS-5** | **Prep 고급 스윕 파라미터 확장 (협의 제안)** | **Phase 3.7** (DESIGN G3 확장, P1~P7 범위 외) | Codex (제안) | 기존 PR34/62/63 | 양단 바이어스 및 다중 패치 스윕 백엔드/UI 확장 (별도 승인 후 착수) |
+
+*(별도 확정 근거가 없는 회신·검수 담당 및 시점은 미정이며, 제안 담당은 배정 확정을 뜻하지 않는다.)*
 
 ### 6.1 정본 계획 단계(P1~P7)별 상세 대응 및 범위 한정
 
@@ -275,7 +277,7 @@ stateDiagram-v2
 4. **P4 (네이티브 계산·실행 관리)**:
    - 본 명세의 §2.2 단계 3(취소·프로세스 격리), Module 7, WBS-2가 P4의 실행 및 검증에 대응함. 2026-10-23 계획 시점에는 FRD $\rightarrow$ VTU를 신규 구축으로 보았으나, 현재 main(`09d2b56`)에는 VTU writer(`caelab/native/results.py` L368) 및 프레임별 VTU/PVD 생성(L528)이 존재하므로, 기존 교환 경로 재사용 + 내부 뷰포트·필드·범례 연결 신규 구현으로 일정 및 범위를 구분함.
 5. **P5 (같은 결과를 ParaView와 전문가에게 전달)**:
-   - 본 명세의 Module 8 및 WBS-3은 결과 '전달' 중 화면 표시 부분에 해당함. ParaView로 같은 run 결과 열기 및 독립 전문가 전달(WBS-4, Issue #45)은 완료 조건이 다르므로 WBS-3을 P5 전체로 보지 않고 한정함.
+   - 본 명세의 Module 8 및 WBS-3은 결과 '전달' 중 화면 표시 부분에 해당함. ParaView로 같은 run 결과 열기 및 독립 전문가 전달(WBS-4, Issue #45)은 완료 조건이 다르므로 WBS-3을 P5 전체로 보지 않고 한정함. #45는 첨부 무결성 비동기 격리를 통한 P5 기여이며, 동일 run의 ParaView·독립 전문가 전달 완료 조건과 별개다 (젠클스 동의 완료).
 6. **P6 (제안·재실행·저장·재개)**:
    - 본 명세의 AC-1 뒷부분(저장 후 재열기 보존, STALE 후 자동 실행 없이 명시 재실행 대기)이 저장/재개/재실행 계약에 대응함. 제안 객체(대상·이전값·변경값) 명세는 후속 과제로 분리함.
 7. **P7 (1단계 입력 범위 확인·인도)**:
