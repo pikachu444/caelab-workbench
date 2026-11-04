@@ -475,7 +475,9 @@ class JobManager:
                         raise ValueError(f"{status.spec.name} {name} 종료 코드: {returncode}")
                     validator = getattr(adapter, "validate_stage", None)
                     if validator:
-                        validator(name, run.workdir, snapshot)
+                        diagnostics = validator(name, run.workdir, snapshot)
+                        if diagnostics:
+                            current_stage["diagnostics"] = diagnostics
                     current_stage.update(state="completed", finished_at=utc_now())
                     update(snapshot=snapshot)
                 with Path(run.log_path).open("rb") as source, (run.workdir / current_stage["log_path"]).open("wb") as target:
@@ -489,9 +491,13 @@ class JobManager:
             update(state="completed", error="")
             if run.state == "completed":
                 update(parse_state="reading")
+                stage_messages = [message for stage in snapshot.get("stages", [])
+                                  for message in stage.get("diagnostics", {}).get("messages", [])]
                 try:
                     result = adapter.collect_results(run.workdir, check_cancelled=check)
                     check()
+                    if stage_messages:
+                        result["warnings"] = list(dict.fromkeys([*result.get("warnings", []), *stage_messages]))
                     artifact_paths = getattr(adapter, "artifact_paths", None)
                     paths = artifact_paths(run.workdir, snapshot) if artifact_paths else [run.workdir / name for name in adapter.expected_output_names()]
                     snapshot["outputs"] = {path.relative_to(run.workdir).as_posix(): file_revision(path) for path in paths if path.is_file()}
@@ -502,7 +508,7 @@ class JobManager:
                     raise
                 except Exception as exc:
                     update(parse_state="failed", result={"status": "failed", "frames": [], "exchange_files": [],
-                                                          "warnings": [str(exc)], "summary": {}},
+                                                          "warnings": [*stage_messages, str(exc)], "summary": {}},
                            error=f"결과 판독 실패: {type(exc).__name__}: {exc}")
         except Exception as exc:
             cleanup_error = ""

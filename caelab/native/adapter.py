@@ -78,6 +78,11 @@ class OpenRadiossAdapter:
 
     def build_run_stages(self, status, workdir, snapshot):
         from ..connections import radioss_run_requests
+        prefix = snapshot["run_name"]
+        for name in (f"{prefix}_0000.out", f"{prefix}_0001.out", f"{prefix}_0000_0001.rst"):
+            path = workdir / name
+            if path.exists() or path.is_symlink():
+                raise ValueError(f"기존 솔버 출력과 입력이 충돌합니다: {name}")
         return radioss_run_requests(status, workdir, Path(snapshot["execution_input"]))
 
     def validate_stage(self, stage, workdir, snapshot):
@@ -86,12 +91,28 @@ class OpenRadiossAdapter:
         if not listing.is_file():
             raise ValueError(f"{stage}: 솔버 종료 listing이 없습니다: {listing.name}")
         text = listing.read_text(encoding="utf-8", errors="replace")
-        if "NORMAL TERMINATION" not in text.upper() or re.search(r"\b[1-9]\d*\s+ERROR\(S\)", text, re.I):
+        errors = [int(value) for value in re.findall(r"^[ \t]*(\d+)[ \t]+ERROR\(S\)[ \t]*$", text, re.I | re.M)]
+        warnings = [int(value) for value in re.findall(r"^[ \t]*(\d+)[ \t]+WARNING\(S\)[ \t]*$", text, re.I | re.M)]
+        error_count = errors[-1] if errors else None
+        warning_count = warnings[-1] if warnings else None
+        normal = re.search(r"^[ \t]*NORMAL TERMINATION[ \t]*$", text, re.I | re.M)
+        warning = re.search(r"^[ \t]*TERMINATION WITH WARNING[ \t]*$", text, re.I | re.M)
+        fatal = re.search(r"^[ \t]*(?:ERROR TERMINATION|TERMINATION WITH ERROR|ABNORMAL TERMINATION|FATAL ERROR)\b", text, re.I | re.M)
+        valid = bool(normal)
+        if warning:
+            valid = stage == "starter" and error_count == 0 and warning_count is not None and warning_count > 0
+        # Keep the existing rejection of positive error counts outside the footer.
+        reported_errors = re.search(r"\b[1-9]\d*\s+ERROR\(S\)", text, re.I)
+        if fatal or reported_errors or not valid:
             raise ValueError(f"{stage}: 정상 종료를 확인하지 못했습니다. {listing.name}을 확인하세요.")
         if stage == "starter":
             restart = workdir / f"{snapshot['run_name']}_0000_0001.rst"
             if not restart.is_file() or not restart.stat().st_size:
                 raise ValueError(f"Starter restart가 없습니다. Engine을 실행하지 않습니다: {restart.name}")
+        messages = ([f"Starter 경고 {warning_count}건 ({listing.name}): 모델 검토 필요"]
+                    if stage == "starter" and warning_count else [])
+        return {"termination": "warning" if warning else "normal", "error_count": error_count,
+                "warning_count": warning_count, "listing": listing.name, "messages": messages}
 
     def artifact_paths(self, workdir, snapshot):
         inputs = {item["execution_path"] for item in snapshot.get("files", [])}
