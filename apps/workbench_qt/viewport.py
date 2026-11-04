@@ -86,6 +86,10 @@ def deduce_stress_unit(units: dict) -> str | None:
 def deduce_length_unit(model: Any, result: Any) -> tuple[str | None, str | None, bool]:
     """Deduce model coordinate length unit, result displacement length unit, and validity.
 
+    Exact matching only: model.unit_system must be exactly 'mm', 'mm-t-s', or 'si'.
+    Result units length must be exactly 'mm' or 'm'.
+    No loose lower/strip promotions or arbitrary alias expansions.
+
     Returns:
         (model_len, result_len, units_declared)
         model_len: 'mm' or 'm' if recognized, else None
@@ -94,20 +98,16 @@ def deduce_length_unit(model: Any, result: Any) -> tuple[str | None, str | None,
     """
     model_unit = getattr(model, "unit_system", None) if model is not None else None
     model_len = None
-    if model_unit:
-        m_str = str(model_unit).lower().strip()
-        if m_str in ("mm", "mm-t-s", "mm-tonne-s", "mm_tonne_s"):
-            model_len = "mm"
-        elif m_str in ("si", "m", "m-kg-s"):
-            model_len = "m"
+    if model_unit in ("mm", "mm-t-s"):
+        model_len = "mm"
+    elif model_unit == "si":
+        model_len = "m"
 
     result_len = None
     if result is not None and hasattr(result, "units") and isinstance(result.units, dict):
         r_length = result.units.get("length")
-        if r_length:
-            r_str = str(r_length).lower().strip()
-            if r_str in ("mm", "m"):
-                result_len = r_str
+        if r_length in ("mm", "m"):
+            result_len = r_length
 
     units_declared = (model_len is not None and result_len is not None)
     return model_len, result_len, units_declared
@@ -318,14 +318,13 @@ class Viewport(QWidget):
         auto_scale = 0.25 * size / peak
         self._auto_scale = auto_scale
 
-        if scale is not None:
+        if not units_declared and scale_mode == "real":
+            # PR80-WB3: Unverified/undeclared units strictly suppress real 1:1 deformation (even if scale is explicitly passed)
+            actual_scale = 0.0
+        elif scale is not None:
             actual_scale = scale
         elif scale_mode == "real":
-            if not units_declared:
-                # PR80-WB3: Unverified/undeclared units suppress real 1:1 deformation
-                actual_scale = 0.0
-            else:
-                actual_scale = 1.0 * scale_factor
+            actual_scale = 1.0 * scale_factor
         else:  # auto
             actual_scale = auto_scale * scale_factor
         self._base_scale = actual_scale
@@ -349,7 +348,10 @@ class Viewport(QWidget):
             if stress_unit is None:
                 # AC-3: [단위 미선언] 경고 출력 및 파생 응력 표시 보류
                 active_scalar_name = None
-                legend_title = "[단위 미선언]\n파생 응력 표시 보류"
+                if not units_declared and scale_mode == "real":
+                    legend_title = "[단위 미선언]\n파생 응력 표시 보류 · 실제 변형 억제"
+                else:
+                    legend_title = "[단위 미선언]\n파생 응력 표시 보류"
                 lo, hi = 0.0, 1.0
             else:
                 vm_values = compute_von_mises(getattr(result, "stresses", {}), self._node_ids)
@@ -357,7 +359,13 @@ class Viewport(QWidget):
                 vm_arr.SetName("von_mises")
                 grid.GetPointData().AddArray(vm_arr)
                 active_scalar_name = "von_mises"
-                legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽]"
+                if not units_declared:
+                    if scale_mode == "real":
+                        legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽 · 변형 단위 미선언: 실제 변형 억제]"
+                    else:
+                        legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽 · 변형 단위 미선언]"
+                else:
+                    legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽]"
                 valid = vm_values[np.isfinite(vm_values)]
                 lo = float(np.min(valid)) if len(valid) else 0.0
                 hi = float(np.max(valid)) if len(valid) else 1.0

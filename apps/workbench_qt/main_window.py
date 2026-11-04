@@ -897,9 +897,18 @@ class MainWindow(QMainWindow):
         if field == "von_mises":
             s_unit = deduce_stress_unit(result.units)
             if s_unit is None:
-                self.legend_label.setText("색상 범례: Von Mises 응력 — [단위 미선언: 파생 응력 보류]")
+                if not units_declared and mode == "real":
+                    self.legend_label.setText("색상 범례: Von Mises 응력 — [단위 미선언: 파생 응력 보류 · 실제 변형 억제]")
+                else:
+                    self.legend_label.setText("색상 범례: Von Mises 응력 — [단위 미선언: 파생 응력 보류]")
             else:
-                self.legend_label.setText(f"색상 범례: Von Mises 응력 ({s_unit}) [절점 외삽]")
+                if not units_declared:
+                    if mode == "real":
+                        self.legend_label.setText(f"색상 범례: Von Mises 응력 ({s_unit}) [절점 외삽 · 변형 단위 미선언: 실제 변형 억제]")
+                    else:
+                        self.legend_label.setText(f"색상 범례: Von Mises 응력 ({s_unit}) [절점 외삽 · 변형 단위 미선언]")
+                else:
+                    self.legend_label.setText(f"색상 범례: Von Mises 응력 ({s_unit}) [절점 외삽]")
         else:
             coord_name = {"U_mag": "변위 크기", "U_x": "변위 X", "U_y": "변위 Y", "U_z": "변위 Z"}.get(field, "변위")
             if not units_declared:

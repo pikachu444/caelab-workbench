@@ -324,24 +324,30 @@ def test_model_execution_stresses_restoration_roundtrip(tmp_path, monkeypatch):
 
 
 def test_deduce_length_unit_contract():
-    """PR80-WB3: Test deduce_length_unit for mm, SI, cross units, and undeclared units."""
+    """PR80-WB3: Test deduce_length_unit exact matching for mm, SI, cross units, and undeclared units."""
     m_mm = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="mm")
+    m_mm_t_s = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="mm-t-s")
     m_si = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="si")
     m_none = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system=None)
+    m_upper_si = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="SI")
     m_unknown = StructuralModel(name="m", mesh=MeshData(nodes={}, elements={}), unit_system="custom_inch")
 
     r_mm = ResultSet(solver_id="ccx", success=True, units={"length": "mm", "force": "N"})
     r_m = ResultSet(solver_id="ccx", success=True, units={"length": "m", "force": "N"})
+    r_upper_m = ResultSet(solver_id="ccx", success=True, units={"length": "M", "force": "N"})
     r_empty = ResultSet(solver_id="ccx", success=True, units={})
     r_unknown = ResultSet(solver_id="ccx", success=True, units={"length": "inch"})
 
-    # Both declared
+    # Exact declared systems only
     assert deduce_length_unit(m_mm, r_mm) == ("mm", "mm", True)
+    assert deduce_length_unit(m_mm_t_s, r_mm) == ("mm", "mm", True)
     assert deduce_length_unit(m_si, r_m) == ("m", "m", True)
     assert deduce_length_unit(m_mm, r_m) == ("mm", "m", True)
     assert deduce_length_unit(m_si, r_mm) == ("m", "mm", True)
 
-    # Undeclared or unverified
+    # Exact contract rejection (no loose promotion from 'SI', 'M', or arbitrary strings)
+    assert deduce_length_unit(m_upper_si, r_m) == (None, "m", False)
+    assert deduce_length_unit(m_si, r_upper_m) == ("m", None, False)
     assert deduce_length_unit(m_none, r_m) == (None, "m", False)
     assert deduce_length_unit(m_unknown, r_m) == (None, "m", False)
     assert deduce_length_unit(m_mm, r_empty) == ("mm", None, False)
@@ -439,7 +445,7 @@ def test_unit_consistency_scalars_and_legends_cross_mm_and_m():
 
 
 def test_undeclared_units_suppresses_real_scale_and_indicates_status():
-    """PR80-WB3: Undeclared/unverified units must suppress real deformation (S=0) and display unverified notice."""
+    """PR80-WB3: Undeclared/unverified units must strictly suppress real deformation (S=0) even if scale is passed, and preserve deformation status in Von Mises."""
     from PySide6.QtWidgets import QApplication
     from apps.workbench_qt.main_window import MainWindow
     import vtk
@@ -457,7 +463,16 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
         solver_id="calculix",
         success=True,
         displacements={1: [0.1, 0.0, 0.0], 2: [0.1, 0.0, 0.0], 3: [0.1, 0.0, 0.0], 4: [0.1, 0.0, 0.0]},
+        stresses={1: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0], 2: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0], 3: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0], 4: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
         units={},
+    )
+    # Result has valid stress units (m, N -> Pa), but model has NO unit_system declared
+    result_m_stress = ResultSet(
+        solver_id="calculix",
+        success=True,
+        displacements={1: [0.1, 0.0, 0.0], 2: [0.1, 0.0, 0.0], 3: [0.1, 0.0, 0.0], 4: [0.1, 0.0, 0.0]},
+        stresses={1: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0], 2: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0], 3: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0], 4: [100.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        units={"length": "m", "force": "N"},
     )
 
     vp = Viewport()
@@ -476,7 +491,15 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
     win._update_legend_label(model_undeclared, result_undeclared)
     assert "[단위 미선언: 실제 변형 억제]" in win.legend_label.text()
 
-    # 2. Auto scale mode: visual auto scaling allowed, but legend must note [단위 미선언: 절점]
+    # 2. Explicit scale=1.0 MUST NOT bypass real deformation suppression when units undeclared!
+    vp.show_results(model_undeclared, result_undeclared, field_name="U_mag", scale=1.0, scale_mode="real")
+    assert vp._base_scale == 0.0
+    vp._last_warp.Update()
+    out = vp._last_warp.GetOutput()
+    # Output point must remain 10.0 + 0 = 10.0, NOT 10.1!
+    assert math.isclose(out.GetPoint(0)[0], 10.0, rel_tol=1e-6)
+
+    # 3. Auto scale mode: visual auto scaling allowed, but legend must note [단위 미선언: 절점]
     vp.show_results(model_undeclared, result_undeclared, field_name="U_mag", scale_mode="auto", scale_factor=1.0)
     assert vp._base_scale > 0.0
     assert "[단위 미선언: 절점]" in vp._scalar_bar.GetTitle()
@@ -484,3 +507,24 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
     win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("auto"))
     win._update_legend_label(model_undeclared, result_undeclared)
     assert "[단위 미선언: 절점]" in win.legend_label.text()
+
+    # 4. Von Mises with undeclared model unit: MUST preserve deformation unit status in legend
+    # In real mode: deformation is suppressed (S=0), legend indicates [변형 단위 미선언: 실제 변형 억제]
+    vp.show_results(model_undeclared, result_m_stress, field_name="von_mises", scale_mode="real", scale_factor=1.0)
+    assert vp._base_scale == 0.0
+    assert "Von Mises [Pa]" in vp._scalar_bar.GetTitle()
+    assert "[절점 외삽 · 변형 단위 미선언: 실제 변형 억제]" in vp._scalar_bar.GetTitle()
+
+    win.field_combo.setCurrentIndex(win.field_combo.findData("von_mises"))
+    win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("real"))
+    win._update_legend_label(model_undeclared, result_m_stress)
+    assert "Von Mises 응력 (Pa) [절점 외삽 · 변형 단위 미선언: 실제 변형 억제]" in win.legend_label.text()
+
+    # In auto mode: visual auto deformation, legend indicates [변형 단위 미선언]
+    vp.show_results(model_undeclared, result_m_stress, field_name="von_mises", scale_mode="auto", scale_factor=1.0)
+    assert vp._base_scale > 0.0
+    assert "[절점 외삽 · 변형 단위 미선언]" in vp._scalar_bar.GetTitle()
+
+    win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("auto"))
+    win._update_legend_label(model_undeclared, result_m_stress)
+    assert "Von Mises 응력 (Pa) [절점 외삽 · 변형 단위 미선언]" in win.legend_label.text()
