@@ -1,6 +1,6 @@
 # 현재 상태
 
-문서 기준은 main `c261c91fda05d47a9bb94e8147fdb030850d6029`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
+문서 기준은 main `781c8bc6bf880114ec52fbdc3d1e8ed81210d338`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## 구현 범위
 
@@ -102,10 +102,10 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 | 전문가 대화 첨부 무결성 백그라운드 검증 | [PR82](https://github.com/pikachu444/caelab-workbench/pull/82)에서 `ExpertWindow._load` 및 `attach` 단계의 동기 해시 검증을 전용 백그라운드 데몬 워커와 `_asset_mailbox` 큐로 분리하여 대화창 오픈 및 UI 이벤트 루프 응답성을 확보했습니다 (#45). 검증 중 `ask_button` 비활성화 및 조기 반환으로 미검증 자료의 질문 근거 확정을 차단하며, 세대 토큰(`_asset_token`) 및 문서/리비전 대조로 stale 검증 결과 오염을 방지합니다. 누락/변조 파일 검출 계약과 레이아웃 보존을 유지하며, 관련 Qt offscreen 33검사가 통과했습니다. 실제 공급자·OS 실화면 검증과 전체 P5 완료로 확대하지 않습니다. |
 | RAD 요약의 에너지 출처·시간·손상 행 | [PR61](https://github.com/pikachu444/caelab-workbench/pull/61)에서 에너지 번들 분리·동적 헤더·손상 행 처리와 footer 부재 시간 표기를 교정했습니다. 실제 `NativeAnalysisWindow.show_result()`의 footer 부재·사이클 불일치·일치 3사례가 통과했고 원 비판자가 수용했습니다. main 반영 여부는 PR61의 병합 상태로 확인합니다. |
 | MDO 민감도 캐시 무결성 | [PR62](https://github.com/pikachu444/caelab-workbench/pull/62)에서 원본 INP/INCLUDE 변경·삭제와 대형 산출물 동일 크기/mtime 변조 시 캐시를 무효화하고 원본·증거를 재검증하도록 교정했습니다. 실제 캐시 경로의 원본 4사례 통과와 기대 메시지 정정 후 대형 출력 1사례 통과를 구분하며 원 비판자가 수용했습니다. main 반영 여부는 PR62의 병합 상태로 확인합니다. |
-| Starter 경고 종료 | 오류 0·경고 존재·유효 restart를 보존하며 이어 실행하는 교정은 별도 미게시 후보. 현재 main의 완료 기능으로 세지 않음 |
+| Starter 경고 종료 | [PR83](https://github.com/pikachu444/caelab-workbench/pull/83)에서 OpenCourant/OpenRadioss Starter 실행 시 오류 0·경고 양수 종료 및 유효 restart 생성을 정상 수용하고, 기존 출력 충돌 방지 및 Engine 진입 전 진단 보존을 구현했습니다. 가이드 문서(`docs/tutorials/radioss-warning-diagnostics.md`) 동기화 및 11개 회귀 검사 통과를 확인하였으며 main에 병합 완료되었습니다. |
 | Windows 전체 사용 흐름 | 저장·전체 재개, 부모 전체 조작·복구, 실제 IME·창 크기·DPI의 각 증거를 DESIGN 종료 조건과 대조해야 함. 일부 화면·Qt offscreen 통과로 전체 승인하지 않음 |
 | 독립 입력과 검색 평가 | 과거 현황의 PASS 표와 잔여·독립성 판정이 상충함. [종료 표](docs/history/implementation-history.md#1단계-종료-조건별-판정)와 [입력 적격성](docs/history/implementation-history.md#독립-입력-적격성)의 원자료·시점·서명 범위를 대조하기 전 전체 완료를 확정하지 않음 |
-| Windows 배포 | 소스/venv 설치와 standalone EXE/DLL 배포 검증은 별개. 패키징 후보의 실제 사용자 진입점·리소스·독립 프로세스·설정 보존 검증이 남음 |
+| Windows 포터블 배포 (1단계 완료) | [PR84](https://github.com/pikachu444/caelab-workbench/pull/84)에서 Prep PR66 규격 호환 포터블 아카이브 CLI(`scripts/archive_windows_bundle.py`)를 구현·통합했습니다. 2026-11-04 실물 로컬 패키징을 통해 13개 핵심 의존성 정적 검사 통과(`build_windows_bundle.py`), 6,945개 전체 멤버 파일 CRC 및 SHA-256 검증, `CAELabWorkbench-portable.zip` (381,564,788 bytes) 및 `.sha256` 체크섬 발행 완료, `CAELabWorkbench.exe --caelab-module` 단독 실행 스모크 테스트(ExitCode 2)를 확인했습니다. 2단계 Windows Installer(`caelab-workbench-setup.exe`) 작업이 남아 있습니다. |
 | 보조 StructuralModel 창 | [PR67](https://github.com/pikachu444/caelab-workbench/pull/67)의 #44 단위 표시 교정은 main에 통합됐습니다. 정확한 `si`만 SI 환산·기호를 적용하고 다른 선언·미선언은 원값과 단위 미확인 안내를 유지합니다. 계산 비동기화·소유 취소와 영구 실행 이력은 [PR71](https://github.com/pikachu444/caelab-workbench/pull/71)의 범위이며 위 설명과 해당 PR의 상태를 따릅니다. Windows 실화면·본선 실행의 완료로 확대하지 않습니다. |
 | 미구현 실행 환경 | Windows installer, WSL 파일/작업 연결, 일부 솔버별 전처리·결과 판독은 [플랫폼 계약](ARCHITECTURE.md#플랫폼별-실행-전제)에 명시 |
 
