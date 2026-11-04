@@ -273,7 +273,12 @@ class CalculiXConverter:
     def run(self, model: StructuralModel, deck: Path, workdir: Path) -> ResultSet:
         workdir = Path(workdir).resolve()
         log_path = workdir / "job.log"
-        units = {"length": "m", "force": "N"} if model.unit_system == "si" else {}
+        if model.unit_system == "si":
+            units = {"length": "m", "force": "N"}
+        elif model.unit_system in ("mm", "mm-t-s"):
+            units = {"length": "mm", "force": "N"}
+        else:
+            units = {}
 
         def finish(result, message=""):
             if message:
@@ -427,7 +432,12 @@ class CalculiXConverter:
                     }
         result.validation_issues = errors
         result.success = not errors
-        result.units = {"length": "m", "force": "N"} if model.unit_system == "si" else {}
+        if model.unit_system == "si":
+            result.units = {"length": "m", "force": "N"}
+        elif model.unit_system in ("mm", "mm-t-s"):
+            result.units = {"length": "mm", "force": "N"}
+        else:
+            result.units = {}
         result.log_path = str(log_path)
         log = log_path.read_text(encoding='utf-8', errors='replace') if log_path.exists() else ''
         result.log_tail = (log + ('\n' + '\n'.join(errors) if errors else ''))[-4000:]
