@@ -83,6 +83,8 @@ def finish(window, app):
     while window._operation and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(.01)
+    if hasattr(window, 'wait_for_asset_verification'):
+        window.wait_for_asset_verification(timeout=2.0)
     assert window._operation is None
 
 
@@ -309,6 +311,7 @@ def test_missing_asset_warning_is_visible_on_reopen_without_model(window, tmp_pa
     asset = ui.assets / evidence['files'][0]['stored_path']
     asset.unlink()
     ui.reload_document()
+    ui.wait_for_asset_verification()
     assert not ui.asset_warning.isHidden()
     assert '누락' in ui.asset_warning.text()
     assert '누락' in ui.attachment_preview.toPlainText()
@@ -324,6 +327,7 @@ def test_malformed_legacy_proposal_warns_without_hiding_the_discussion(window):
     document['proposals'] = [None, {'id': 'legacy', 'status': [], 'review_history': [1]}]
     atomic_json(ui.path, document)
     ui.reload_document()
+    ui.wait_for_asset_verification()
     assert ui.proposal_choice.count() == 1
     assert '불완전' in ui.proposals.toPlainText()
     assert '출처' in ui.asset_warning.text()
@@ -867,3 +871,47 @@ def test_cancelled_and_previous_request_stage_cannot_replace_active_label(window
         if ui._operation:
             ui.cancel_request()
             finish(ui, app)
+
+
+def test_background_asset_verification_lifecycle_and_stale_token_isolation(window, app, tmp_path, monkeypatch):
+    ui, provider = window
+    evidence = attach(ui, tmp_path, '** background test input')
+
+    started = threading.Event()
+    release = threading.Event()
+    original_issues = ui.workbench.expert_discussion_issues
+
+    def slow_issues(path, document):
+        started.set()
+        release.wait(5.0)
+        return original_issues(path, document)
+
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', slow_issues)
+
+    ui.reload_document()
+    assert started.wait(2.0)
+    assert ui._asset_verifying
+    assert not ui.ask_button.isEnabled()
+
+    ui.question.setPlainText('검증 중에는 질문이 확정되지 않아야 합니다.')
+    ui.ask()
+    assert ui._operation is None
+    assert provider.prompts == []
+
+    other_path = tmp_path / 'other_discussion.json'
+    ui.workbench.open_expert_discussion(other_path, create=True)
+    old_token = ui._asset_token
+
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', original_issues)
+    ui._load(other_path)
+    new_token = ui._asset_token
+    assert new_token is not old_token
+    assert not ui._asset_verifying
+
+    release.set()
+    time.sleep(0.05)
+    ui._poll()
+
+    assert ui.path == other_path.resolve()
+    assert ui._asset_token is new_token
+    assert ui._asset_issues == []

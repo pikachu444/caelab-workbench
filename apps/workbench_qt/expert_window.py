@@ -9,6 +9,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -57,6 +58,9 @@ class ExpertWindow(QMainWindow):
         self._close_after = False
         self._pending_message = None
         self._asset_issues = []
+        self._asset_mailbox = queue.Queue()
+        self._asset_token = None
+        self._asset_verifying = False
         self.setWindowTitle('전문가 논의')
         self.resize(1100, 850)
         self.setMinimumSize(680, 580)
@@ -257,20 +261,51 @@ class ExpertWindow(QMainWindow):
     def show_proposals(self):
         self.proposals_dialog.show()
 
+    def _start_asset_verification(self):
+        token = object()
+        self._asset_token = token
+        self._asset_issues = []
+        has_assets = bool(self.document.get('evidences') or self.document.get('proposals'))
+        if not has_assets or not self.path:
+            self._asset_verifying = False
+            self.asset_warning.setText('')
+            self.asset_warning.setVisible(False)
+            return
+
+        self._asset_verifying = True
+
+        target_path = Path(self.path).resolve()
+        target_document = copy.deepcopy(self.document)
+        target_revision = target_document.get('revision')
+        workbench = self.workbench
+
+        def worker():
+            try:
+                issues = workbench.expert_discussion_issues(target_path, target_document)
+                self._asset_mailbox.put((token, target_path, target_revision, True, issues))
+            except Exception as exc:
+                self._asset_mailbox.put((token, target_path, target_revision, False, [f'무결성 검증 실패: {exc}']))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def wait_for_asset_verification(self, timeout=5.0):
+        start = time.monotonic()
+        while getattr(self, '_asset_verifying', False):
+            if time.monotonic() - start > timeout:
+                break
+            QApplication.processEvents()
+            time.sleep(0.01)
+        self._poll()
+
     def _load(self, path, *, create=False):
         self._save_view_state()
         document = self.workbench.open_expert_discussion(path, create=create)
         self.path, self.document = Path(path).resolve(), document
         self._pending_message = None
         self.question.setPlainText(document.get('draft_question', ''))
-        self._asset_issues = self.workbench.expert_discussion_issues(self.path, document)
+        self._start_asset_verification()
         self.render()
         self._notice('')
-        problems = self._asset_issues
-        self.asset_warning.setText(('보존된 제안의 내용이나 출처를 확인할 수 없습니다. 대화는 읽을 수 있지만 제안은 다시 확인해 주세요.'
-                                   if any('제안' in problem for problem in problems) else
-                                   '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.') if problems else '')
-        self.asset_warning.setVisible(bool(problems))
         self._read_view_state()
 
     def _ensure_document(self):
@@ -514,7 +549,8 @@ class ExpertWindow(QMainWindow):
             widget.setEnabled(not busy and not live and bool(self.proposal_choice.currentData()))
         self.question.setReadOnly(busy or live)
         self.ask_button.setEnabled(not busy and not live and bool(self.document.get('selected_evidence_id'))
-                                   and getattr(self, '_provider_available', False))
+                                   and getattr(self, '_provider_available', False)
+                                   and not getattr(self, '_asset_verifying', False))
         self.stop.setEnabled(self._operation == 'ask' and not self._cancel.is_set())
 
     def refresh_provider(self):
@@ -694,7 +730,9 @@ class ExpertWindow(QMainWindow):
 
     def ask(self):
         question = self.question.toPlainText().strip()
-        if self._operation or not question or not self.document.get('selected_evidence_id') or not getattr(self, '_provider_available', False):
+        if (self._operation or not question or not self.document.get('selected_evidence_id')
+                or not getattr(self, '_provider_available', False)
+                or getattr(self, '_asset_verifying', False)):
             return
         if not self.save_document():
             return
@@ -750,6 +788,28 @@ class ExpertWindow(QMainWindow):
             if (self._operation == 'ask' and token is self._stage_token
                     and not self._cancel.is_set() and stage in labels):
                 self.wait_label.setText(labels[stage])
+        while True:
+            try:
+                token, path, rev, ok, issues = self._asset_mailbox.get_nowait()
+            except queue.Empty:
+                break
+            if token is self._asset_token and self.path and path == Path(self.path).resolve():
+                if rev is None or self.document.get('revision') == rev:
+                    self._asset_verifying = False
+                    self._asset_issues = issues
+                    problems = self._asset_issues
+                    if problems:
+                        self.asset_warning.setText(
+                            '보존된 제안의 내용이나 출처를 확인할 수 없습니다. 대화는 읽을 수 있지만 제안은 다시 확인해 주세요.'
+                            if any('제안' in problem for problem in problems) else
+                            '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.'
+                        )
+                        self.asset_warning.setVisible(True)
+                        self.render()
+                    else:
+                        self.asset_warning.setText('')
+                        self.asset_warning.setVisible(False)
+                        self._set_busy(bool(self._operation))
         if not self._operation:
             return
         try:
@@ -764,8 +824,8 @@ class ExpertWindow(QMainWindow):
             if operation == 'attach':
                 self.document = self.workbench.attach_expert_evidence(
                     self.path, value, expected_revision=self.document['revision'])
-                self._asset_issues = self.workbench.expert_discussion_issues(self.path, self.document)
                 self._notice('자료를 첨부했습니다.')
+                self._start_asset_verification()
             else:
                 self.document = value
                 self._pending_message = None
@@ -824,6 +884,8 @@ class ExpertWindow(QMainWindow):
         QTimer.singleShot(0, self._restore_view_state)
 
     def closeEvent(self, event):  # noqa: N802
+        self._asset_token = None
+        self._asset_verifying = False
         if self._operation:
             self._close_after = True
             self.cancel_request()
