@@ -4,6 +4,14 @@
 
 ## 구현 범위
 
+### 상용 CAE 대조 통합 GUI 상세 명세서 (초안)
+
+상용 CAE 도구(Altair HyperWorks, Dassault Abaqus/CAE, PrePoMax)의 표준 매뉴얼 구조 및 Prep의 8제품 벤치마크에 대조한 통합 GUI 상세 명세서 [docs/gui/commercial-cae-gui-spec.md](docs/gui/commercial-cae-gui-spec.md) 초안을 작성했습니다.
+- 과업 전이: Workbench 속성 창의 [전용 프로그램에서 편집] 버튼을 통한 `Workbench.open_program(doc_path)` 비동기 실행, 실행기 미등록/문서 부재 예외 복구, 파일 mtime 기반 하류 결과 `STALE` 전파 및 명시적 재실행 라이프사이클 정의.
+- 8대 기능 $\times$ 8제품 상호작용 2차원 매트릭스: CAD/형상, 2D 쉘, 3D 솔리드(PR34/62/63 기구현과 신규 바이어스/다중패치 분리), 엔티티, 하중/구속(C3D10 병진 1~3자유도 엄밀 한정), 솔버 덱 조립, 작업 모니터링, 3D 결과 가시화의 8대 공학 기능과 8개 상용 제품 상호작용 모델 매핑.
+- 3D 가시화 데이터 계약: Von Mises 응력 및 주응력/변위의 데이터 위치(적분점 vs 절점 외삽) 메타데이터 분리, 선언된 단위계 기반 유도 단위(MPa/Pa) 표기 원칙, 미계산 요소 `NaN` 마스킹(회색 처리), 실변형 1배($S=1.0$)와 자동 맞춤 배율($S=S_{\text{auto}}$) 수식 분리.
+- Windows 환경: High-DPI 스케일링 정책, 시스템 기본 폰트(Segoe UI/맑은 고딕), 한국어 IME 입력 보호 규격 명시.
+
 ### Gmsh MSH 4.1 straight Tet10 → CalculiX C3D10 변환 (Phase 4-B 1·2단계)
 
 독립 어댑터 `caelab/adapters/msh_c3d10.py`와 검증 테스트 `tests/test_msh_c3d10.py`, `tests/test_calculix_c3d10_deck.py`를 구현 및 독립 검토 피드백(S1/S2/R1~R5)과 R3 생산자 기하 계약 일치, CalculiX 마스터 덱 조립·솔버 연동을 완료했습니다.
