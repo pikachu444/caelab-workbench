@@ -33,6 +33,11 @@ python scripts/archive_windows_bundle.py --manifest C:/candidates/wb/build-manif
 선언된 optional 패키지의 metadata·고지 파일도 현재 bytes와 대조합니다.
 metadata가 없는 기존 후보를 단순 재압축하여 통과시키지 않습니다.
 
+아이콘은 현재 검사 checkout의 목록이 아니라 후보의 `source_files`에 기록된
+아이콘 경로·크기·해시와 payload를 대조합니다. source inventory 또는 아이콘 기록이
+없으면 거부합니다. Python 3.11의 Windows에서도 `lstat` reparse 속성으로 junction을
+검사하며, 필요한 감지 정보를 얻을 수 없으면 성공으로 처리하지 않습니다.
+
 임시 디렉터리에서 압축한 뒤 CRC와 모든 ZIP payload의 SHA-256을 확인하고,
 원 manifest와 실제 후보 전체가 바뀌지 않았는지 다시 검사합니다. ZIP과 체크섬이
 모두 준비되면 출력 디렉터리를 원자적으로 게시합니다. 기존 출력은 교체하지

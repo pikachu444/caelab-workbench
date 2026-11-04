@@ -3,6 +3,8 @@
 import hashlib
 import json
 from pathlib import Path
+import stat
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -39,13 +41,20 @@ def candidate(tmp_path):
         path = bundle / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(('fixture, never loaded: ' + relative).encode('utf-8'))
+    source_files = [{'path': name, 'bytes': 1, 'sha256': 'c' * 64} for name in (
+        'pyproject.toml', 'scripts/build_windows_bundle.py', 'scripts/workbench_bundle.spec',
+        'scripts/pyi_runtime_hook.py', 'scripts/bundled_optional_metadata.py',
+        'caelab/solvers/installer/manifest.json')]
+    source_files += [{'path': p.relative_to(bundle / '_internal').as_posix(),
+                      'bytes': p.stat().st_size, 'sha256': digest(p.read_bytes())}
+                     for p in sorted((bundle / '_internal/apps/workbench_qt/icons').glob('*.svg'))]
     manifest = {
         'schema_version': 1, 'status': 'built_static_only', 'build_exit_code': 0,
         'source_root': 'C:/Users/private-person/source',
         'bundle_root': 'C:/Users/private-person/old-location/dist/CAELabWorkbench',
         'command': ['C:/Users/private-person/python.exe', 'private command'],
         'source_revision': 'a' * 40, 'base_revision': 'b' * 40,
-        'source_files': [{'path': 'scripts/build_windows_bundle.py', 'bytes': 1, 'sha256': 'c' * 64}],
+        'source_files': source_files,
         'project': {'name': 'caelab-workbench', 'version': '0.1.0'},
         'builder': {'executable': 'C:/Users/private-person/python.exe',
                     'distributions': {name: '1.0' for name in builder.DISTRIBUTIONS},
@@ -276,6 +285,70 @@ def test_junction_payload_is_rejected_before_descent(candidate, tmp_path, monkey
     junction.mkdir()
     monkeypatch.setattr(Path, 'is_junction', lambda p: p == junction, raising=False)
     with pytest.raises(ValueError, match='Links'):
+        archiver.archive_candidate(path, tmp_path / 'delivery')
+    assert_no_publication(tmp_path)
+
+
+def test_junction_is_rejected_when_python311_has_no_is_junction(candidate, tmp_path, monkeypatch):
+    path, bundle, _, _ = candidate
+    junction = bundle / 'legacy-junction-fixture'
+    junction.mkdir()
+    original_lstat = Path.lstat
+    def legacy_lstat(current, *args, **kwargs):
+        value = original_lstat(current, *args, **kwargs)
+        if current == junction:
+            return SimpleNamespace(st_mode=value.st_mode,
+                                   st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        return value
+    monkeypatch.setattr(Path, 'is_junction', None, raising=False)
+    monkeypatch.setattr(Path, 'lstat', legacy_lstat)
+    with pytest.raises(ValueError, match='Links'):
+        archiver.archive_candidate(path, tmp_path / 'delivery')
+    assert_no_publication(tmp_path)
+
+
+def test_missing_windows_reparse_detection_is_not_silently_accepted(candidate, tmp_path, monkeypatch):
+    if archiver.os.name != 'nt':
+        pytest.skip('Windows-only missing lstat attribute boundary')
+    path, bundle, _, _ = candidate
+    unknown = bundle / 'unknown-reparse-fixture'
+    unknown.mkdir()
+    original_lstat = Path.lstat
+    def no_attributes(current, *args, **kwargs):
+        value = original_lstat(current, *args, **kwargs)
+        return SimpleNamespace(st_mode=value.st_mode) if current == unknown else value
+    monkeypatch.setattr(Path, 'is_junction', None, raising=False)
+    monkeypatch.setattr(Path, 'lstat', no_attributes)
+    with pytest.raises(ValueError, match='inspection is unavailable'):
+        archiver.archive_candidate(path, tmp_path / 'delivery')
+    assert_no_publication(tmp_path)
+
+
+def test_same_candidate_is_independent_of_archive_checkout_icons(candidate, tmp_path, monkeypatch):
+    path, _, _, _ = candidate
+    first = archiver.archive_candidate(path, tmp_path / 'first-delivery')
+    other_checkout = tmp_path / 'another-checkout'
+    icons = other_checkout / 'apps/workbench_qt/icons'
+    icons.mkdir(parents=True)
+    (icons / 'new-icon-not-in-the-candidate.svg').write_bytes(b'<svg/>')
+    monkeypatch.setattr(builder, 'SOURCE', other_checkout)
+    second = archiver.archive_candidate(path, tmp_path / 'second-delivery')
+    with zipfile.ZipFile(first) as left, zipfile.ZipFile(second) as right:
+        assert {name: left.read(name) for name in left.namelist()} == {name: right.read(name) for name in right.namelist()}
+
+
+@pytest.mark.parametrize('failure', ['missing_inventory', 'missing_icons', 'different_icon'])
+def test_captured_source_icon_inventory_is_required_and_matches_payload(candidate, tmp_path, failure):
+    path, _, manifest, _ = candidate
+    if failure == 'missing_inventory':
+        del manifest['source_files']
+    elif failure == 'missing_icons':
+        manifest['source_files'] = [r for r in manifest['source_files'] if not r['path'].endswith('.svg')]
+    else:
+        icon = next(r for r in manifest['source_files'] if r['path'].endswith('.svg'))
+        icon['sha256'] = 'e' * 64
+    path.write_text(json.dumps(manifest), encoding='utf-8')
+    with pytest.raises(ValueError):
         archiver.archive_candidate(path, tmp_path / 'delivery')
     assert_no_publication(tmp_path)
 

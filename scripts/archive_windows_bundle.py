@@ -10,15 +10,16 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import zipfile
 
 if __package__:
-    from .build_windows_bundle import APP_NAME, DISTRIBUTIONS, SOURCE, _static_checks
+    from .build_windows_bundle import APP_NAME, DISTRIBUTIONS, SOURCE
     from .bundled_optional_metadata import PACKAGES, SCOPE, verify_optional_metadata
 else:
-    from build_windows_bundle import APP_NAME, DISTRIBUTIONS, SOURCE, _static_checks
+    from build_windows_bundle import APP_NAME, DISTRIBUTIONS, SOURCE
     from bundled_optional_metadata import PACKAGES, SCOPE, verify_optional_metadata
 
 
@@ -42,8 +43,17 @@ def _relative(value):
 
 
 def _no_link(path):
-    if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+    junction = getattr(path, 'is_junction', None)
+    if path.is_symlink() or (callable(junction) and junction()):
         raise ValueError(f'Links/junctions are not archived: {path.name}')
+    try:
+        attributes = getattr(path.lstat(), 'st_file_attributes', None)
+    except FileNotFoundError:
+        return
+    if attributes is not None and attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        raise ValueError(f'Links/junctions are not archived: {path.name}')
+    if os.name == 'nt' and not callable(junction) and attributes is None:
+        raise ValueError(f'Windows reparse-point inspection is unavailable: {path.name}')
 
 
 def _no_link_parents(path):
@@ -114,6 +124,38 @@ def _check_files(bundle, inventory):
         if path.stat().st_size != inventory[name]['bytes'] or _sha(path) != inventory[name]['sha256']:
             raise ValueError(f'Candidate bytes changed: {name}')
     return paths
+
+
+def _candidate_checks(inventory, source_files):
+    required_sources = {'pyproject.toml', 'scripts/build_windows_bundle.py',
+                        'scripts/workbench_bundle.spec', 'scripts/pyi_runtime_hook.py',
+                        'scripts/bundled_optional_metadata.py', 'caelab/solvers/installer/manifest.json'}
+    if not required_sources <= source_files.keys():
+        raise ValueError('Source inventory is missing required build inputs')
+    icons = {path: record for path, record in source_files.items()
+             if PurePosixPath(path).parent.as_posix() == 'apps/workbench_qt/icons'
+             and path.endswith('.svg')}
+    if not icons:
+        raise ValueError('Source icon inventory is missing')
+    dlls = [PurePosixPath(path).name.lower() for path in inventory if path.lower().endswith('.dll')]
+    vtk = [PurePosixPath(path).name for path in inventory
+           if PurePosixPath(path).parent.as_posix() == '_internal/vtkmodules' and path.endswith('.pyd')]
+    return {
+        'executable': f'{APP_NAME}.exe' in inventory,
+        'native_dlls': bool(dlls),
+        'python_runtime': any(name.startswith('python3') for name in dlls),
+        'qt_core': 'qt6core.dll' in dlls,
+        'qt_windows_platform': '_internal/PySide6/plugins/platforms/qwindows.dll' in inventory,
+        'qt_svg_library': '_internal/PySide6/Qt6Svg.dll' in inventory,
+        'qt_svg_icon_plugin': '_internal/PySide6/plugins/iconengines/qsvgicon.dll' in inventory,
+        'qt_svg_image_plugin': '_internal/PySide6/plugins/imageformats/qsvg.dll' in inventory,
+        'vtk_core_extension': any(name.startswith('vtkCommonCore') for name in vtk),
+        'vtk_opengl_extension': any(name.startswith('vtkRenderingOpenGL2') for name in vtk),
+        'solver_manifest': '_internal/caelab/solvers/installer/manifest.json' in inventory,
+        'svg_icons': all(inventory.get('_internal/' + path, {}).get('sha256') == record['sha256']
+                         and inventory.get('_internal/' + path, {}).get('bytes') == record['bytes']
+                         for path, record in icons.items()),
+    }
 
 
 def _text(value):
@@ -214,11 +256,12 @@ def archive_candidate(manifest_path: Path, output: Path) -> Path:
             raise ValueError(f'A full {key} is required')
         revisions[key] = value.lower()
     inventory = _records(manifest.get('inventory'))
+    source_files = _records(manifest.get('source_files'))
     if type(manifest.get('bundle_file_count')) is not int or manifest['bundle_file_count'] != len(inventory) or type(manifest.get('bundle_bytes')) is not int or manifest['bundle_bytes'] != sum(r['bytes'] for r in inventory.values()):
         raise ValueError('Candidate inventory totals differ')
     bundle = build_root / 'dist' / APP_NAME
     paths = _check_files(bundle, inventory)
-    actual_checks = _static_checks(bundle)
+    actual_checks = _candidate_checks(inventory, source_files)
     declared_checks = manifest.get('static_checks')
     if not isinstance(declared_checks, dict) or any(value is not True for value in declared_checks.values()) or any(declared_checks.get(name) is not True or passed is not True for name, passed in actual_checks.items()) or declared_checks.get('optional_package_metadata') is not True:
         raise ValueError('Required static checks are missing or failed')
@@ -233,7 +276,7 @@ def archive_candidate(manifest_path: Path, output: Path) -> Path:
     public = {'schema_version': 1, 'source_revision': revisions['source_revision'],
               'base_revision': revisions['base_revision'], 'base_revision_role': 'caller_supplied_baseline',
               'original_build_manifest_sha256': hashlib.sha256(raw).hexdigest(),
-              'source_files': list(_records(manifest.get('source_files')).values()),
+              'source_files': list(source_files.values()),
               'project': {name: _text(project.get(name)) for name in ('name', 'version')},
               'build_distributions': versions, 'bundled_optional_packages': optional,
               'optional_build_inputs': {name: builder['optional_build_inputs'][name] for name in PACKAGES},
