@@ -4,13 +4,15 @@
 
 ## 구현 범위
 
-### 상용 CAE 대조 통합 GUI 상세 명세서 (2차 개정 초안)
+### 상용 CAE 대조 통합 GUI 상세 명세서 (3차 개정 정본)
 
-상용 CAE 도구(Altair HyperMesh, Dassault Abaqus/CAE, PrePoMax)의 공식 매뉴얼(PrePoMax 2.0.0 p.14/18/49, HyperMesh 2025.1 등) 및 Prep DESIGN R2 필수 8제품 벤치마크에 대조한 통합 GUI 상세 명세서 [docs/gui/commercial-cae-gui-spec.md](docs/gui/commercial-cae-gui-spec.md) 2차 개정을 작성했습니다.
-- 전처리기 소유권 및 호출 계약: OpenRadioss는 Prep 소유(`.caeprep` $\rightarrow$ `_0000.rad`), CalculiX는 PrePoMax/FreeCAD FEM 소유(`.pmx` $\rightarrow$ `.inp`). 호출은 `Workbench.open_program(project, node_id, use_input=False)`을 사용하며, 파일 mtime/해시 감지 기반 하류 결과 `STALE` 전파 및 명시적 사용자 재실행 라이프사이클을 규정.
+상용 CAE 도구(Altair HyperMesh, Dassault Abaqus/CAE, PrePoMax)의 공식 매뉴얼(PrePoMax 2.0.0 p.14/18/49, HyperMesh 2025.1 등) 및 Prep DESIGN R2 필수 8제품 벤치마크에 대조한 통합 GUI 상세 명세서 [docs/gui/commercial-cae-gui-spec.md](docs/gui/commercial-cae-gui-spec.md) 3차 개정을 완료했습니다.
+- 전처리기 소유권 및 호출 계약: OpenRadioss는 Prep 소유(`.caeprep` $\rightarrow$ `_0000.rad`), CalculiX는 PrePoMax/FreeCAD FEM 소유(`.pmx` $\rightarrow$ `.inp`). 호출은 `Workbench.open_program(project, node_id, use_input=False)`을 사용하며, 파일 mtime/해시 감지 기반 하류 결과 `STALE` 전파 및 무실행 재열기 라이프사이클을 규정.
 - 필수 8제품 2차원 매트릭스: Prep DESIGN R2의 필수 8제품(HyperMesh, PrePoMax, Naksha, Abaqus/CAE, COMSOL, midas NFX, MIDAS MeshFree, BeidPrep)과 8대 공학 기능(CAD, 2D쉘, 3D솔리드, 엔티티, 하중/구속, 솔버덱, 모니터링, 3D가시화)을 2차원 매트릭스로 매핑하고, 공개 원본 관측 / 현재 CAELab 코드 / 향후 목표 및 미확인 과제를 엄격히 열 단위로 분리.
+- Altair 공식 2D 품질 정의 및 3D 솔리드: QUAD4 skew는 대변 중점 연결선 공식 준수, Jacobian은 최소/최대 행렬식 비율 정의. 직선 Tet10은 8-ULP 및 실제 10절점 양의 야코비안 인증(`certify_straight_tet10`)을 명시하고, 곡면 Tet10 및 고급 스윕을 신규 제안 범위로 분리.
 - 3D 가시화 및 솔리드 자유도 엄밀화: C3D10 솔리드 병진 1~3자유도 엄밀 한정(회전 자유도 배제), Von Mises 응력의 적분점/절점 외삽 메타데이터 분리, 선언된 단위계 기반 유도 단위(MPa/Pa) 표기, 결측치 `NaN` 회색 마스킹, 실변형 1배($S=1.0$)와 자동 맞춤 배율($S=S_{\text{auto}}$) 수식 분리.
-- Windows 환경 및 IME: Qt 6.8 High-DPI 정책(`PassThrough`), 시스템 기본 폰트(Segoe UI/맑은 고딕), `QInputMethodEvent` 조합 텍스트 유실 방지 규격 명시.
+- Windows 환경 및 IME: Qt 6 공식 High-DPI 가이드, 시스템 기본 폰트(Segoe UI/맑은 고딕), `QInputMethodEvent` 조합 텍스트 유실 방지 규격 명시.
+- WBS 연계: P1~P7 및 DESIGN G1 대표 과업(재료/단면 각 2개 생성, 파트 할당, 다른 파트 불변, Escape 취소, 재열기 무손실)을 AC-5로 정식 편입.
 
 ### Gmsh MSH 4.1 straight Tet10 → CalculiX C3D10 변환 (Phase 4-B 1·2단계)
 
