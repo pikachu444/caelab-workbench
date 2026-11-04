@@ -39,6 +39,21 @@
   6. R76-6 (검사 격리 및 자원 정리 검증): `tests/test_calculix_c3d10_deck.py`의 솔버 실행 검사에서 `monkeypatch.setenv`로 `CAELAB_CCX` 환경변수 누출을 차단하고, 순수 메타데이터 검사는 워커 실행을 격리한 후 `JobManager.close() is True`로 스레드 종료 및 lease 해제를 확인. 전용 회귀 검사 7건 추가 (어댑터 17건 + 덱/솔버/단위 17건 = 총 34건 통과).
 - 범위 한정: Phase 4-B는 단일 컴포넌트 C3D10 선형 정해석 조립·계산·요약에 한정하며 다중 컴포넌트 어셈블리/접촉 해석은 미포함.
 
+### Workbench 3D 응력 컨투어 뷰어 및 변형 배율 제어 (Phase 2 WBS-3, AC-3, AC-4)
+
+통합 GUI 상세 명세서 [docs/gui/commercial-cae-gui-spec.md](docs/gui/commercial-cae-gui-spec.md) §8, AC-3, AC-4에 따라 `apps/workbench_qt/viewport.py`, `apps/workbench_qt/main_window.py`, `caelab/solvers/base.py`, `caelab/solvers/calculix.py`, `caelab/model_execution.py`에 3D 응력 컨투어 가시화 및 변형 배율 제어 기능을 구현하고 검증 테스트 `tests/test_viewport_contour.py` (10건)를 추가했습니다.
+- Von Mises 등가 응력 계산 (`compute_von_mises`): 6성분 응력($S_{xx}, S_{yy}, S_{zz}, S_{xy}, S_{yz}, S_{zx}$)으로부터 불변량 등가 응력 수식을 엄밀 계산. 일축 인장, 순수 전단, 정수압 응력 검증 통과.
+- 결측치 및 비유한치 마스킹 (AC-3): 계산 대상 노드의 응력 데이터 누락 또는 `NaN`/`Inf` 포함 시 `np.nan`으로 마스킹하고, VTK `lut.SetNanColor(0.55, 0.55, 0.55)`를 적용하여 회색 중립색으로 렌더링.
+- 단위계 기반 유도 단위 계약 (`deduce_stress_unit`, AC-3): 결과 단위계가 `length: mm`, `force: N`인 경우 `MPa`, `length: m`, `force: N`인 경우 `Pa`로 유도 표기. 단위 미선언 또는 부분 선언 시 응력 표시를 보류하고 `[단위 미선언: 파생 응력 보류]` 경고를 범례에 표시.
+- 외삽 출처 및 신뢰도 고지 (AC-3): CalculiX FRD `STRESS` 판독 결과를 절점 외삽값으로 명시하고 범례/스칼라바에 `[절점 외삽]` 라벨 표시 (CalculiX 2.21 공식 매뉴얼 §6.13, §7.51 부합).
+- 실변형 1배 및 자동 맞춤 배율 분리 (AC-4): $\mathbf{x}_{\text{display}} = \mathbf{x}_{\text{orig}} + S \cdot \mathbf{u}$ 수식에서 `real` 모드($S=1.0 \times \text{factor}$)와 `auto` 모드($S=S_{\text{auto}} \times \text{factor}$, 모델 바운딩 박스 최장축의 25% 기준 맞춤)를 분리하고 뷰포트 툴바 콤보박스 연동.
+- 필드 전환 콤보박스: `변위 (크기)`, `변위 X`, `변위 Y`, `변위 Z`, `Von Mises 응력` 간 실시간 전환 및 스칼라바/범례 텍스트 동기화.
+- 피어 리뷰(Codex) 지적 반영 및 결함 보완 (PR80-WB1~WB4):
+  1. PR80-WB1 (저장 결과 응력 키 정수 복원): `caelab/model_execution.py` 역직렬화 시 `stresses` 딕셔너리의 절점 ID를 정수(`int`)로 복원하도록 보완하여, 과거 실행 재열기 및 저장 후 표시 시 문자열 키로 인한 `NaN` 결측 방지 (`test_model_execution_stresses_restoration_roundtrip`).
+  2. PR80-WB2 (변형 벡터 명시 선택): `viewport.py`에서 `grid.GetPointData().SetActiveVectors("U")` 및 `warp.SetInputArrayToProcess(...)`를 명시하여 `vtkWarpVector`가 변위 벡터 `U`를 입력으로 정확히 참조함을 보장하고, 실제 warp 출력 좌표 $\mathbf{x}_{\text{orig}} + S \cdot \mathbf{u}$ 일치 검증 (`test_warp_vector_active_vectors_and_actual_coordinates`).
+  3. PR80-WB3 (SI/mm 길이 단위 일관성, 스칼라-범례 정합 및 미확인 단위 경계 방어): `deduce_length_unit`을 도입하여 모델 메시 좌표계(`model.unit_system`: exact `si`, `mm`, `mm-t-s`)와 결과 변위 길이 단위(`result.units["length"]`: exact `m`, `mm`)를 엄밀 대조(임의 대소문자/별칭 승격 차단). SI($\text{m}$)와 $\text{mm}$ 간 warp 좌표계 일관성뿐 아니라 VTK 스칼라 배열값, 스칼라바 제목, MainWindow Qt 범례 라벨 간 1000배 불일치를 완전 해소. 미선언/임의 단위 입력 시 명시 scale 전달 여부와 무관하게 실제 배율 변형을 억제($S=0.0$)하고, Von Mises 응력 필드 선택 시에도 `[절점 외삽 · 변형 단위 미선언: 실제 변형 억제]` 상태를 두 범례에 보존 (`test_deduce_length_unit_contract`, `test_unit_consistency_scalars_and_legends_si`, `test_unit_consistency_scalars_and_legends_cross_mm_and_m`, `test_undeclared_units_suppresses_real_scale_and_indicates_status`).
+  4. PR80-WB4 (본선 연결 범위 구분): 보조 `MainWindow`의 3D 컨투어/배율 제어 구현과 기본 `ProjectWindow` $\rightarrow$ `NativeAnalysisWindow`의 native 선택 run(표/로그 및 ParaView VTU 연동) 경로를 명확히 분리 기록.
+  5. PR80-P2 (TypeError 은폐 제거 및 런타임 호환): `MainWindow._load_run_result`에서 `show_results` 내부 TypeError를 기본 표시로 fallback 은폐하던 경로를 제거하여 실제 예외를 드러내도록 교정하고, 테스트 픽스처 인자 계약 일치. 아울러 리눅스/CI 환경에서 `vtkOpenGLRenderer`의 `AddActor2D` 부재 결함을 `AddActor` 표준 호출로 교정하고, 부분 변위 시 `_last_result=None` 초기화를 보완하여 전체 회귀 검사 113 passed, 1 skipped 통과.
 
 N13 Windows 패키징 [PR69](https://github.com/pikachu444/caelab-workbench/pull/69)는 별도 진입점, 외부 프로세스 DLL/Qt 환경 격리, 독립 창의 상대 INI 경로 보존과 소스·의존 버전 기록을 구현합니다. 실행 진입점·manifest·설정 경계 53검사와 worker 후속 영향 24검사가 각각 통과했으며 실제 솔버 사례는 재실행하지 않았습니다. source gate의 변경 cwd 실패와 외부 프로그램 시작 실패의 `opened` 오표시를 고쳤습니다. 생성 확인은 최대 10초의 동기 대기이고 UI 무차단 보증은 아닙니다.
 

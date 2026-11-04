@@ -538,8 +538,10 @@ def _read_frd(path: Path, *, check_cancelled: Callable[[], None] | None = None) 
     selected = next(reversed(frames), None)
     fields = frames.get(selected, {})
     disp, forc = fields.get("DISP", {}), fields.get("FORC", {})
+    stress = fields.get("STRESS", {})
     result = ResultSet(
         "calculix", bool(fields) and not errors, displacements=disp, nodal_forces=forc,
+        stresses=stress,
         max_displacement=max((math.hypot(*value) for value in disp.values()), default=None),
         validation_issues=errors,
     )

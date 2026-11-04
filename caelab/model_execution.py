@@ -172,7 +172,7 @@ def read_model_result(run: NativeRun) -> ModelRunResult:
             raise ValueError('판독된 보조 모델 결과 JSON이 없습니다.')
         return ModelRunResult(run, model, None)
     payload = _read_owned_json(run, result_metadata)
-    for field in ('displacements', 'reactions', 'nodal_forces'):
+    for field in ('displacements', 'reactions', 'nodal_forces', 'stresses'):
         values = payload.get(field, {})
         if not isinstance(values, dict):
             raise ValueError(f'{field}: 절점 결과 객체가 필요합니다.')

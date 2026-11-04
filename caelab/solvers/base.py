@@ -63,6 +63,7 @@ class ResultSet:
     displacements: dict = field(default_factory=dict)   # node id -> [ux, uy, uz]
     reactions: dict = field(default_factory=dict)       # constrained node id -> [fx, fy, fz]
     nodal_forces: dict = field(default_factory=dict)    # every node id -> [fx, fy, fz]
+    stresses: dict = field(default_factory=dict)        # node id -> [sxx, syy, szz, sxy, syz, szx]
     max_displacement: float | None = None
     reaction_totals: dict = field(default_factory=dict)  # {"fx":.., "fy":.., "fz":..}
     log_tail: str = ""
