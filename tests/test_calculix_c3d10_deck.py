@@ -225,7 +225,7 @@ def test_mock_solver_run_and_result_summary(tmp_path: Path, monkeypatch, minimal
     )
 
     deck_path = tmp_path / "job.inp"
-    deck_path.write_text("*NODE FILE\nU, RF\n*EL FILE\nS\n*END STEP\n")
+    deck_path.write_text("*NODE FILE\nU, RF\n*EL FILE\nS\n*NSET, NSET=FIXED_NODES\n1, 2, 3\n*NSET, NSET=LOAD_NODES\n4\n*END STEP\n", encoding="utf-8")
 
     # 10 nodes for DISP and FORC
     disp_values = {nid: [0.0, 0.0, 0.0] for nid in range(1, 11)}
@@ -274,7 +274,7 @@ def test_mock_solver_run_and_result_summary(tmp_path: Path, monkeypatch, minimal
     assert "반력 합 Fy" in ko_text or "최대 변위" in ko_text
 
 
-def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path):
+def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """End-to-end integration test with the physical Fixed L fixture asset."""
     asset_dir = get_fixed_l_dir()
     if asset_dir is None:
@@ -344,7 +344,7 @@ def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path):
             # Create temporary bridge script
             bridge = tmp_path / "wsl_ccx.bat"
             bridge.write_text("@echo off\nwsl ccx %*\n", encoding="utf-8")
-            os.environ["CAELAB_CCX"] = str(bridge)
+            monkeypatch.setenv("CAELAB_CCX", str(bridge))
             ccx = str(bridge)
             wsl_available = True
 
@@ -364,3 +364,118 @@ def test_physical_fixed_l_asset_full_simulation_flow(tmp_path: Path):
         assert result.success is False
         assert "ccx 실행 파일을 찾지 못했습니다" in result.log_tail
         assert summary["success"] is False
+
+def test_reject_mm_mesh_with_si_unit_system(minimal_c3d10_mesh):
+    """R76-1: Prevent mm mesh from being labeled as SI without coordinate conversion."""
+    with pytest.raises(MshC3D10Error, match="MSH input has length_unit 'mm'; labeling as 'si' without coordinate conversion is prohibited"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            unit_system="si",
+            fixed_nodes=[1, 2, 3],
+        )
+
+
+def test_reject_nonzero_load_with_empty_target(minimal_c3d10_mesh):
+    """R76-2: Non-zero load vector with empty loaded_nodes must fail closed."""
+    with pytest.raises(MshC3D10Error, match="Non-zero load_vector specified but loaded_nodes is empty"):
+        assemble_c3d10_master_deck(
+            "inc.inp",
+            fixed_nodes=[1, 2],
+            loaded_nodes=[],
+            load_vector=(0.0, 0.0, -100.0),
+        )
+
+    with pytest.raises(MshC3D10Error, match="Non-zero load_vector specified but loaded_nodes is empty"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1, 2],
+            loaded_nodes=[],
+            load_vector=(0.0, 0.0, -100.0),
+        )
+
+
+def test_reject_invalid_parameters_and_missing_nodes(minimal_c3d10_mesh):
+    """R76-2: Validate finite numeric properties and mesh node presence."""
+    # Invalid Poisson's ratio
+    with pytest.raises(MshC3D10Error, match="poissons_ratio must be strictly between -1.0 and 0.5"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1, 2],
+            poissons_ratio=0.5,
+        )
+
+    # Missing node in mesh
+    with pytest.raises(MshC3D10Error, match="fixed_nodes contains node IDs not present in mesh"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[9999],
+        )
+
+    with pytest.raises(MshC3D10Error, match="loaded_nodes contains node IDs not present in mesh"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1],
+            loaded_nodes=[9999],
+            load_vector=(0.0, 0.0, -10.0),
+        )
+
+
+def test_reject_deck_and_model_inconsistency(tmp_path: Path, minimal_c3d10_mesh):
+    """R76-3: Inconsistent deck content and model node sets must be rejected before solve."""
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+    # Write a deck that lacks *NSET, NSET=LOAD_NODES
+    deck_path = tmp_path / "job.inp"
+    deck_path.write_text("*HEADING\n*INCLUDE, INPUT=inc.inp\n*NSET, NSET=FIXED_NODES\n1, 2\n*END STEP\n", encoding="utf-8")
+
+    with pytest.raises(MshC3D10Error, match=r"deck_path is missing \*NSET, NSET=LOAD_NODES"):
+        run_c3d10_simulation(tmp_path, model, deck_path)
+
+
+def test_reject_deck_outside_workdir(tmp_path: Path, minimal_c3d10_mesh):
+    """R76-4: deck_path outside workdir must be rejected to prevent cwd/stem collision."""
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+    )
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    deck_path = other_dir / "job.inp"
+    deck_path.write_text("*HEADING\n", encoding="utf-8")
+
+    workdir = tmp_path / "run_dir"
+    workdir.mkdir()
+
+    with pytest.raises(MshC3D10Error, match="deck_path must be located directly within workdir"):
+        run_c3d10_simulation(workdir, model, deck_path)
+
+    converter = CalculiXConverter()
+    with pytest.raises(ValueError, match="deck 파일은 workdir 직하에 위치해야 합니다"):
+        converter.run(model, deck_path, workdir)
+
+
+def test_jobs_submit_model_records_mm_units(tmp_path: Path, minimal_c3d10_mesh):
+    """R76-5: JobManager.submit_model must record {'length': 'mm', 'force': 'N'} for mm-t-s models."""
+    from caelab.jobs import JobManager, RunStore, ProgramStatus
+    from caelab.connections import ProgramSpec
+    from caelab.solvers.calculix import CalculiXConverter
+
+    model = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        unit_system="mm-t-s",
+        fixed_nodes=[1, 2],
+    )
+
+    store = RunStore(tmp_path / "runs")
+    jm = JobManager()
+    spec = ProgramSpec(id="calculix", name="CalculiX", role="solver", env_var="CAELAB_CCX", executables=("ccx",))
+    status = ProgramStatus(spec=spec, path="/usr/bin/ccx")
+
+    run = jm.submit_model(store, model, CalculiXConverter(), status)
+    assert run.units == {"length": "mm", "force": "N"}
+    assert run.unit_source == "StructuralModel.unit_system"
+

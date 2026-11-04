@@ -30,6 +30,14 @@
 - StructuralModel 변환(`build_c3d10_structural_model`): `ConvertedMesh`를 Workbench 표준 스키마 문서(`caelab.model.schema.StructuralModel`)로 직접 변환하여 `validate_model` 및 `CalculiXConverter().validate` 적합성 100% 충족.
 - 단위계 보존: `unit_system`에 `mm` 및 `mm-t-s` 지정 시 `CalculiXConverter` 및 `ResultSet.units`에 `{"length": "mm", "force": "N"}` 보존 및 `summarize_result`에서 `max_displacement_mm` / `max_displacement_m` 자동 산출.
 - 실물 검증 및 환경 격리: 외부 검증 자산은 `CAELAB_FIXED_L_ASSET_DIR` 환경변수 또는 표준 로컬 캐시를 참조하며 자산 부재 시 CI에서는 skip으로 격리. Prep 생성 고정 L 실물 자산(`045acf69...` / `52fc715c...`, 87개 절점, 36개 Tet10 요소, 28개 Tri6 경계) 로컬 검증에서 include 덱 생성, 바닥면(z=0) 구속 21절점, 상단면(z=1.0) 하중 21절점을 분리 추출하여 실제 CalculiX 2.21 솔버 계산(반력합 $F_z=100.0\text{ N}$ 하중 평형 100% 보존), 결과 요약(`summarize_result`), 어댑터 검사 17건 및 덱/실행 검사 9건(총 26건) 전건 통과 확인. 솔버 부재 환경에서는 예외 없이 안전한 진단 메시지와 함께 실패(`success=False`)로 격리.
+- 계약 강화 및 검토 의견 반영(P2 6건 R76-1~R76-6):
+  1. R76-1 (단위계 오표기 방지): `length_unit='mm'`인 MSH에 대해 좌표 환산 없이 `unit_system='si'`로 라벨링하는 요청을 엄격 차단(`MshC3D10Error`).
+  2. R76-2 (하중·물성·노드 무결성): 비영 하중 벡터 지정 시 `loaded_nodes`가 비어있으면 하중 유실 방지를 위해 즉시 거부. 유한 수치($E > 0$, $-1 < 
+u < 0.5$, $\rho > 0$) 및 메시에 존재하지 않는 노드 참조 거부.
+  3. R76-3 (모델-덱 정합성 결속): 솔버 실행 전 모델의 `FIXED_NODES` 및 `LOAD_NODES`가 덱의 `*NSET` 카드에 존재하는지 사전 검증하여 하중/반력 귀속 왜곡 원천 차단.
+  4. R76-4 (작업 디렉토리 격리): `CalculiXConverter.run` 및 `run_c3d10_simulation`에서 `deck` 파일이 `workdir` 직하에 위치하도록 강제하여 cwd/basename 충돌 및 임의 파일 덮어쓰기 방지.
+  5. R76-5 (실행 이력 단위 일관성): `JobManager.submit_model`에서 `mm` 및 `mm-t-s` 모델 제출 시 `NativeRun.units={"length": "mm", "force": "N"}` 및 `unit_source="StructuralModel.unit_system"` 기록.
+  6. R76-6 (검사 격리 보장): `tests/test_calculix_c3d10_deck.py`의 솔버 실행 검사에서 `monkeypatch.setenv`를 적용하여 `CAELAB_CCX` 환경변수 누출 차단. 전용 회귀 검사 6건 추가 (어댑터 17건 + 덱/솔버/단위 15건 = 총 32건 전원 통과).
 - 범위 한정: Phase 4-B는 단일 컴포넌트 C3D10 선형 정해석 조립·계산·요약에 한정하며 다중 컴포넌트 어셈블리/접촉 해석은 미포함.
 
 

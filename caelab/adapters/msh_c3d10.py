@@ -625,6 +625,23 @@ def assemble_c3d10_master_deck(
 
     loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
 
+    # R76-2: Non-zero load with empty target check
+    if any(load_vector) and not loaded_list:
+        raise MshC3D10Error("Non-zero load_vector specified but loaded_nodes is empty")
+
+    # R76-2: Numeric parameter checks
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in load_vector):
+        raise MshC3D10Error("load_vector components must be finite numbers")
+
+    if not isinstance(youngs_modulus, (int, float)) or not math.isfinite(youngs_modulus) or youngs_modulus <= 0:
+        raise MshC3D10Error("youngs_modulus must be a positive finite number")
+
+    if not isinstance(poissons_ratio, (int, float)) or not math.isfinite(poissons_ratio) or not (-1.0 < poissons_ratio < 0.5):
+        raise MshC3D10Error("poissons_ratio must be strictly between -1.0 and 0.5")
+
+    if density is not None and (not isinstance(density, (int, float)) or not math.isfinite(density) or density <= 0):
+        raise MshC3D10Error("density must be a positive finite number")
+
     collision = set(fixed_list).intersection(set(loaded_list))
     if collision:
         raise MshC3D10Error(
@@ -701,8 +718,42 @@ def build_c3d10_structural_model(
     density: float | None = None,
 ) -> StructuralModel:
     """Construct a caelab.model.schema.StructuralModel from ConvertedMesh for CalculiX."""
+    # R76-1: Prevent mm mesh from being labeled as SI without coordinate conversion
+    mesh_unit = mesh.metadata.get("length_unit") if mesh.metadata else None
+    if mesh_unit == "mm" and unit_system == "si":
+        raise MshC3D10Error(
+            "MSH input has length_unit 'mm'; labeling as 'si' without coordinate conversion is prohibited. "
+            "Use unit_system='mm-t-s' or 'mm'."
+        )
+
     fixed_list = sorted(set(fixed_nodes)) if fixed_nodes else []
     loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
+
+    # R76-2: Non-zero load with empty target check
+    if any(load_vector) and not loaded_list:
+        raise MshC3D10Error("Non-zero load_vector specified but loaded_nodes is empty")
+
+    # R76-2: Numeric parameter checks
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in load_vector):
+        raise MshC3D10Error("load_vector components must be finite numbers")
+
+    if not isinstance(youngs_modulus, (int, float)) or not math.isfinite(youngs_modulus) or youngs_modulus <= 0:
+        raise MshC3D10Error("youngs_modulus must be a positive finite number")
+
+    if not isinstance(poissons_ratio, (int, float)) or not math.isfinite(poissons_ratio) or not (-1.0 < poissons_ratio < 0.5):
+        raise MshC3D10Error("poissons_ratio must be strictly between -1.0 and 0.5")
+
+    if density is not None and (not isinstance(density, (int, float)) or not math.isfinite(density) or density <= 0):
+        raise MshC3D10Error("density must be a positive finite number")
+
+    # Validate that nodes exist in mesh
+    missing_fixed = [nid for nid in fixed_list if nid not in mesh.nodes]
+    if missing_fixed:
+        raise MshC3D10Error(f"fixed_nodes contains node IDs not present in mesh: {missing_fixed}")
+
+    missing_loaded = [nid for nid in loaded_list if nid not in mesh.nodes]
+    if missing_loaded:
+        raise MshC3D10Error(f"loaded_nodes contains node IDs not present in mesh: {missing_loaded}")
 
     collision = set(fixed_list).intersection(set(loaded_list))
     if collision:
@@ -773,6 +824,22 @@ def run_c3d10_simulation(
     """Execute CalculiX simulation using CalculiXConverter and summarize results."""
     workdir = Path(workdir).resolve()
     deck_path = Path(deck_path).resolve()
+
+    # R76-4: Ensure deck_path resides inside workdir
+    if deck_path.parent != workdir:
+        raise MshC3D10Error(f"deck_path must be located directly within workdir: {deck_path} vs {workdir}")
+
+    # R76-3: Verify model and deck consistency before solver invocation
+    deck_text = deck_path.read_text(encoding="utf-8", errors="replace")
+
+    if "FIXED_NODES" in model.sets:
+        if "*NSET, NSET=FIXED_NODES" not in deck_text:
+            raise MshC3D10Error("deck_path is missing *NSET, NSET=FIXED_NODES defined in model")
+
+    if "LOAD_NODES" in model.sets:
+        if "*NSET, NSET=LOAD_NODES" not in deck_text:
+            raise MshC3D10Error("deck_path is missing *NSET, NSET=LOAD_NODES defined in model")
+
     conv = CalculiXConverter()
     result = conv.run(model, deck_path, workdir)
     summary = summarize_result(result)
