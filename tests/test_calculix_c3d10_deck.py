@@ -613,6 +613,53 @@ def test_reject_deck_model_physics_discrepancies(tmp_path: Path, minimal_c3d10_m
     with pytest.raises(MshC3D10Error, match=r"Non-finite load value \(nan\)"):
         run_c3d10_simulation(tmp_path, model, d6)
 
+    # 7. Model with non-finite BC (NaN) followed by duplicate 0.0 BC (must not be masked)
+    from caelab.model.schema import BoundaryCondition
+    model_nan_bc = build_c3d10_structural_model(
+        minimal_c3d10_mesh,
+        fixed_nodes=[1, 2],
+        loaded_nodes=[3, 4],
+        load_vector=(0.0, 0.0, -100.0),
+    )
+    model_nan_bc.bcs.insert(0, BoundaryCondition(name="nan_bc", target_set="FIXED_NODES", fixed_dofs=[1], values={1: float("nan")}))
+    d_normal = tmp_path / "d_normal.inp"
+    d_normal.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"defines non-finite value \(nan\)"):
+        run_c3d10_simulation(tmp_path, model_nan_bc, d_normal)
+
+    # 8. Boundary condition difference exceeding ULP budget (e.g. 0.0 -> 1e-8)
+    d8 = tmp_path / "d8.inp"
+    d8.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 1e-8\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"boundary condition value for .* does not match"):
+        run_c3d10_simulation(tmp_path, model, d8)
+
+    # 9. Load difference exceeding ULP budget (e.g. -50.0 -> -50.0004)
+    d9 = tmp_path / "d9.inp"
+    d9.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\nLOAD_NODES, 3, -50.0004\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"force for .* does not match model expected per-node load"):
+        run_c3d10_simulation(tmp_path, model, d9)
+
 
 def test_reject_deck_outside_workdir(tmp_path: Path, minimal_c3d10_mesh):
     """R76-4: deck_path outside workdir must be rejected to prevent cwd/stem collision."""

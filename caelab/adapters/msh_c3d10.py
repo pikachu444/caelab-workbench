@@ -1068,12 +1068,35 @@ def run_c3d10_simulation(
             target_nodes = set(model.sets[bc.target_set].members)
         elif bc.target_set and bc.target_set.isdigit():
             target_nodes = {int(bc.target_set)}
+
+        # Validate finiteness of all defined values in bc.values upfront
+        if bc.values:
+            for v_dof, v_val in bc.values.items():
+                try:
+                    f_val = float(v_val)
+                except (ValueError, TypeError):
+                    raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines invalid value ({v_val})")
+                if not math.isfinite(f_val):
+                    raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines non-finite value ({v_val})")
+
         for nid in target_nodes:
             for dof in bc.fixed_dofs:
                 val = 0.0
                 if bc.values:
-                    val = float(bc.values.get(dof, bc.values.get(str(dof), 0.0)))
-                expected_bcs[(nid, dof)] = val
+                    raw_val = bc.values.get(dof, bc.values.get(str(dof), 0.0))
+                    try:
+                        val = float(raw_val)
+                    except (ValueError, TypeError):
+                        raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines invalid value ({raw_val})")
+                    if not math.isfinite(val):
+                        raise MshC3D10Error(f"Model boundary condition '{bc.name}' defines non-finite value ({val})")
+                key = (nid, dof)
+                if key in expected_bcs and not math.isclose(expected_bcs[key], val, abs_tol=1e-12):
+                    raise MshC3D10Error(
+                        f"Model defines conflicting boundary conditions for node {nid}, DOF {dof}: "
+                        f"{expected_bcs[key]} vs {val}"
+                    )
+                expected_bcs[key] = val
 
     if expected_bcs and "*BOUNDARY" not in deck_text.upper():
         raise MshC3D10Error("model defines boundary conditions, but deck_path lacks *BOUNDARY keyword")
@@ -1088,7 +1111,8 @@ def run_c3d10_simulation(
         )
     for key, exp_val in expected_bcs.items():
         act_val = deck_bcs[key]
-        if not math.isfinite(act_val) or not math.isclose(act_val, exp_val, abs_tol=1e-7):
+        bc_budget = 10 * max(math.ulp(exp_val), 1e-12)
+        if not math.isfinite(act_val) or abs(act_val - exp_val) > bc_budget:
             raise MshC3D10Error(
                 f"deck_path boundary condition value for (node {key[0]}, DOF {key[1]}) ({act_val}) "
                 f"does not match model expected value ({exp_val})"
@@ -1107,6 +1131,16 @@ def run_c3d10_simulation(
             target_nodes = {int(ld.target_set)}
         if not target_nodes or not ld.values:
             continue
+
+        # Validate finiteness of all defined load components upfront
+        for k, comp in ld.values.items():
+            try:
+                f_comp = float(comp)
+            except (ValueError, TypeError):
+                raise MshC3D10Error(f"Model load '{ld.name}' defines invalid value ({comp})")
+            if not math.isfinite(f_comp):
+                raise MshC3D10Error(f"Model load '{ld.name}' defines non-finite value ({comp})")
+
         n = len(target_nodes)
         for k, comp in ld.values.items():
             dof = dof_map.get(str(k).lower(), dof_map.get(k))
@@ -1129,7 +1163,8 @@ def run_c3d10_simulation(
         )
     for key, exp_val in expected_loads.items():
         act_val = deck_loads[key]
-        if not math.isfinite(act_val) or not math.isclose(act_val, exp_val, rel_tol=1e-5, abs_tol=1e-7):
+        load_budget = 10 * max(math.ulp(exp_val), 1e-12)
+        if not math.isfinite(act_val) or abs(act_val - exp_val) > load_budget:
             raise MshC3D10Error(
                 f"deck_path *CLOAD force for (node {key[0]}, DOF {key[1]}) ({act_val}) "
                 f"does not match model expected per-node load ({exp_val})"
