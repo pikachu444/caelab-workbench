@@ -88,11 +88,56 @@ FileVersion/ProductVersion은 `0.0.0.0`이며, manifest는 이 실제 값을 보
 이 컴파일 관측에는 Workbench 설치 EXE 실행, 앱 설치/제거/업데이트·WMI 실행·
 Qt/VTK 실화면·솔버·rollback·clean Windows/E2E 검수가 포함되지 않습니다.
 현재 PC의 사용자 범위 설치·실행·별도 시험 프로젝트 저장·정상 닫기/재열기는
-추가 승인되어 기존 WB 담당이 확인 중이며 실제 관측 결과는 별도로 연결합니다.
+추가 승인됐습니다. 그중 설치·시작의 부분 관측과 저장 입력 차단은 아래에 기록합니다.
 원 사용자 자료·설정을 보존하고 자식 프로세스 설정과 시험 자료를 격리합니다.
 제거·업그레이드·clean Windows·솔버 전체 검수는 이 승인에 포함되지 않습니다.
 설치 중 rollback의 완전성은 실제 검수 전까지 미확인입니다. 이전 payload 보존과
 빌드 산출물의 원자적 게시를 같은 보장으로 합치지 않습니다.
+
+### 2026-11-05 현재 PC 부분 관측
+
+기존 WB 담당은 위 canonical 설치 EXE로 현재 개발 PC의 사용자 범위 설치를
+1회 수행했습니다. 로그의 `Installation process succeeded`·재시작 불필요,
+HKCU 앱 등록과 시작 메뉴 링크 2개로 설치 상태를 확인했습니다. 설치 프로세스의
+직접 exit code는 회수하지 못해 `null`로 보존하며 0으로 추정하지 않습니다.
+설치 payload 6,946파일/1,069,940,374 bytes의 목록·크기·SHA256을 compiled
+manifest inventory와 1회 대조해 전부 일치/검사 exit 0을 확인했습니다.
+이는 새 설치 copy 검사이며 기존 r2 ZIP/source hash 검사를 반복한 결과가 아닙니다.
+시작 메뉴의 앱 target은 고정 payload EXE, WorkingDirectory는 버전 독립
+Workspace, Arguments는 빈 값이었습니다. 실제 시험은 이 target·작업 폴더를
+사용한 직접 실행이며 시작 메뉴 링크를 클릭한 검수는 수행하지 않았습니다.
+
+설치된 앱은 자식 프로세스 전용 UI·Expert·MDO 절대 INI 경로 3개와 Workspace
+CWD로 실행했습니다. 프로세스 live/responding·stdout/stderr 0 bytes 및 Qt의
+초기 새 프로젝트 창·저장 버튼 접근성 트리를 관측했습니다. 화면 캡처는 검게
+나왔고 첫 저장 입력 1회는 `failed to activate captured window`로 실패했습니다.
+재관측에서 저장 dialog·새 시험 프로젝트 파일·격리 INI 생성은 없었습니다.
+저장·정상 닫기·재열기·실화면 렌더링은 미확인으로 유지합니다.
+
+같은 기존 QA는 이 1차 기록의 설치·직접 실행 진입 증거를 수용했고 읽은 범위에서
+새 P1/P2가 없다고 회신했습니다. QA는 실행·입력·payload 해시 검사를 반복하지
+않았으며 설치 exit code·실행 경로·미검증 GUI 과업의 구분을 유지했습니다.
+
+별도 후속에서는 같은 설치 앱을 새 프로세스로 실행하고 새 접근성 트리에서
+관측한 `Raise`를 공식 `perform_secondary_action`으로 1회 호출했습니다.
+이 호출도 `failed to activate captured window`로 실패했습니다. 읽기 재관측에서
+새 프로젝트 상태가 유지됐고 시험 프로젝트·격리 INI는 생성되지 않았습니다.
+이 후속 관측에 대한 같은 QA의 해석 검토는 아직 회수하지 못했으며 1차 수용을
+후속이나 전체 GUI 검수로 확대하지 않습니다.
+
+각 시험에서 경로와 시작 시각을 확인한 빈 시험 앱 프로세스만 강제 정리했고
+각 모니터도 종료했습니다. 종료값 `4294967295`는 강제 정리 결과이며 정상 닫기나
+crash의 판정 근거가 아닙니다. 설치 앱·바로가기·원 산출물은 보존했고 원 사용자
+프로젝트·설정을 열거나 덮지 않았습니다. 제거·업그레이드는 수행하지 않았습니다.
+
+기존 다른 앱에서도 나타난 캡처/활성화 제약과 분리되지 않아 환경 입력·관측
+차단으로 기록합니다. 관측한 두 지원 경로의 활성화 실패이며 모든 API의 사용
+불가·실제 권한 거절·제품 저장/렌더링 결함을 뜻하지 않습니다. 실패 후 추가 입력,
+비지원 입력 주입·잠금/보안 우회·합성 저장은 하지 않았습니다. 재개에는 정상
+창 활성화·입력 관측의 새 근거나 보안 경계를 우회하지 않는 문서화된 지원 UI
+경로가 필요합니다. 현재 PC의 설치 copy·
+시작 관측을 clean Windows·Qt/VTK 품질·솔버·rollback·전체 E2E 합격으로
+확대하지 않습니다.
 
 공식 근거: [lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm),
 [WorkingDir](https://jrsoftware.org/ishelp/topic_iconssection.htm),
