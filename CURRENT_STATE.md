@@ -1,6 +1,6 @@
 # 현재 상태
 
-문서 기준은 main `b8266199b5edaf7fef04a1765e3a56b768990052`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
+문서 기준은 main `549b2adb2c547adf01ded19ed1ed20f7fd007431`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## 구현 범위
 
@@ -107,7 +107,8 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 | 독립 입력과 검색 평가 | 과거 현황의 PASS 표와 잔여·독립성 판정이 상충함. [종료 표](docs/history/implementation-history.md#1단계-종료-조건별-판정)와 [입력 적격성](docs/history/implementation-history.md#독립-입력-적격성)의 원자료·시점·서명 범위를 대조하기 전 전체 완료를 확정하지 않음 |
 | Windows 포터블 배포 후보 (1단계 진행 중) | [PR84](https://github.com/pikachu444/caelab-workbench/pull/84)에서 Prep PR66 호환 포터블 아카이브 CLI(`scripts/archive_windows_bundle.py`)를 구현·통합했습니다. 실물 로컬 패키징을 통해 13개 핵심 의존성 정적 검사 통과(`build_windows_bundle.py`, `built_static_only`), 6,945개 멤버 파일 CRC 및 SHA-256 검증, `CAELabWorkbench-portable.zip` (381,565,354 bytes, SHA-256 `4f0acfff2163ce7a0065356a1826f49c0d785b0b7254e7139440fb3ac6ff6c83`) 및 `.sha256` 체크섬 발행, 독립 바이너리 스모크 테스트(`CAELabWorkbench.exe --help`, `--caelab-solver-gate`, `--caelab-module`) 정상 통과를 확인했습니다. 단, 이는 정적 번들 후보 생성 단계이며 실제 clean Windows 환경에서의 Qt/VTK GUI 실화면 렌더링, CalculiX/OpenRadioss 실물 솔버 구동 및 E2E 전체 과업 검증은 아직 미완료 잔여입니다. 1단계 포터블 배포는 2026-11-05 18:00 KST 목표로 추진하며 2단계 Windows Installer(`caelab-workbench-setup.exe`)는 조건부 목표(2026-11-08 18:00 KST)로 유지합니다. |
 | 보조 StructuralModel 창 | [PR67](https://github.com/pikachu444/caelab-workbench/pull/67)의 #44 단위 표시 교정은 main에 통합됐습니다. 정확한 `si`만 SI 환산·기호를 적용하고 다른 선언·미선언은 원값과 단위 미확인 안내를 유지합니다. 계산 비동기화·소유 취소와 영구 실행 이력은 [PR71](https://github.com/pikachu444/caelab-workbench/pull/71)의 범위이며 위 설명과 해당 PR의 상태를 따릅니다. Windows 실화면·본선 실행의 완료로 확대하지 않습니다. |
-| 미구현 실행 환경 | Windows installer, WSL 파일/작업 연결, 일부 솔버별 전처리·결과 판독은 [플랫폼 계약](ARCHITECTURE.md#플랫폼별-실행-전제)에 명시 |
+| Windows 설치형 준비 및 Inno Setup 어댑터 (2단계 진행 중) | [PR89](https://github.com/pikachu444/caelab-workbench/pull/89)에서 고정 번들 스냅샷 대조 기반 설치형 준비 도구(`scripts/build_windows_installer.py`) 및 Inno Setup 템플릿(`scripts/windows_installer/caelab-workbench.iss`), 가이드(`docs/tutorials/windows-installer.md`)를 구현·통합했습니다. 검증된 r2 매니페스트(`build-manifest.json`) 및 ZIP의 6,945개 멤버 파일 바이트 해시를 검증하여 고정 스냅샷(`payload/`, 6,946개 파일, 1,069,940,374 바이트) 및 per-user 비관리자 설치용 `setup.iss` 스크립트를 생성하고 `prepared_not_compiled` 상태를 기록합니다. 설치/제거 전 동명 프로세스 WMI 무결성 검증, 21개 합성 fixture 검사 통과 및 독립 QA P2 2건(최종 해시 무결성, Source 중괄호 이스케이프) 종결을 확인했습니다. 단, 이는 설치기 입력 준비 단계이며 실제 ISCC 컴파일러를 통한 인스톨러 바이너리 빌드 및 clean Windows 환경 설치/제거 E2E 검수는 2단계 조건부 목표(2026-11-08 18:00 KST)로 유지합니다. |
+| 미구현 실행 환경 | WSL 파일/작업 연결, 일부 솔버별 전처리·결과 판독은 [플랫폼 계약](ARCHITECTURE.md#플랫폼별-실행-전제)에 명시 |
 
 ## 검사 결과의 범위
 
