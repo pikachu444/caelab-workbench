@@ -60,10 +60,36 @@ python scripts/build_windows_installer.py --manifest <build-output>/build-manife
 | 제거·다시 설치 | 기록된 앱/링크만 제거, 프로젝트·Workspace·QSettings/명시 INI 보존 |
 | 대표 과업 | 저장한 project/run·대화·설정 재개, native 제출/취소/실패·결과/프레임 연결 |
 
-현재 Inno 컴파일러 설치·실제 사용자 PC 설치/제거/UAC·clean Windows GUI/Qt·VTK·
-실물 솔버 과업은 수행하지 않았습니다. 설치 중 rollback의 완전성은 실제 검수
-전까지 미확인입니다. 이전 payload 보존과 빌드 산출물의 원자적 게시를 같은
-보장으로 합치지 않습니다.
+### 2026-11-05 실제 컴파일 관측
+
+[PR89](https://github.com/pikachu444/caelab-workbench/pull/89)의 installer 코드
+`a1ccf8bf52a1f12ec746d5fe8609051a9de6b656`는 병합 `549b2adb`와 같은 코드 트리입니다.
+작성자는 별도 승인된 Inno Setup 7.1.1 x64를 사용자 범위에 설치한 뒤, 기존 r2 앱
+source `b8266199b5edaf7fef04a1765e3a56b768990052`의 같은 build manifest를 사용해
+실제 ISCC compile을 1회 수행했고 exit 0을 확인했습니다. 입력 manifest SHA256은
+`998cf5f78304c8d40627c1058f3783b67b7df253e779067d97bb011f6a85a200`입니다.
+앱은 다시 빌드하지 않았으며 이전 prepare-only 산출물과 원 r2 ZIP은 보존했습니다.
+준비·컴파일 과정의 임시 ZIP은 인도 r2 ZIP과 별도 컨테이너로 기록합니다.
+
+결과 `caelab-workbench-setup.exe`는 **257,711,146 bytes**이고 SHA256은
+`4f0adf2e9aef04456ddea30ab1c7818f3c311f70e94e4c7f86d86c09b2429538`입니다.
+manifest 상태는 `compiled_not_installed`, `compile_exit_code=0`이며,
+설치/제거/업데이트 검증은 `not_performed`입니다. 같은 원 QA가 EXE·manifest·
+sidecar·생성 스크립트·로그·source를 읽기 대조해 실제 컴파일 산출물 인수 범위를
+통과시켰습니다. 이 대조에서 재컴파일·프로그램 실행·행동 검사는 반복하지 않았습니다.
+
+설치 registry와 compiler console은 7.1.1을 기록하지만 ISCC PE resource의
+FileVersion/ProductVersion은 `0.0.0.0`이며, manifest는 이 실제 값을 보존합니다.
+생성 EXE의 서명 상태는 `NotSigned`입니다. `x64` 식별자 사용 중단 예정 및
+`x64os` 대체 경고와 `Non-commercial use only` 배너도 로그에 남겼습니다.
+콘솔 배너만으로 기존 사용자 승인 라이선스 범위를 변경하거나 추가 구매·새 약관
+수락·상업/공개 배포 승인을 자동 결정하지 않았습니다.
+
+이 컴파일 관측에는 Workbench 설치 EXE 실행, 앱 설치/제거/업데이트·WMI 실행·
+Qt/VTK 실화면·솔버·rollback·clean Windows/E2E 검수가 포함되지 않습니다.
+현재 PC의 신규 설치·배치 확인·제거/보존 확인도 별도 명시 승인을 기다립니다.
+설치 중 rollback의 완전성은 실제 검수 전까지 미확인입니다. 이전 payload 보존과
+빌드 산출물의 원자적 게시를 같은 보장으로 합치지 않습니다.
 
 공식 근거: [lowest](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm),
 [WorkingDir](https://jrsoftware.org/ishelp/topic_iconssection.htm),
