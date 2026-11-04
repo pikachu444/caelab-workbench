@@ -1,7 +1,8 @@
 """Connections to external programs — the workbench's main line.
 
 The workbench does not reimplement preprocessors or postprocessors.
-FreeCAD owns CAD; solver-specific preprocessors own the FE model
+FreeCAD is the default CAD connection; additional CAD programs keep their
+own native documents. Solver-specific preprocessors own the FE model
 (PrePoMax for CalculiX, Salome-Meca for Code_Aster). Gmsh is a mesher,
 not a complete OpenRadioss preprocessor. This registry describes programs:
 how to find them on the machine, whether they are available, and how
@@ -40,6 +41,16 @@ PROGRAMS: tuple[ProgramSpec, ...] = (
         "freecad", "FreeCAD", "cad", "CAELAB_FREECAD",
         ("freecad", "FreeCAD"),
         "CAD 원본(.FCStd)을 편집하고 STEP 형상을 전달합니다. 기존 FEM 경로도 열 수 있습니다.",
+    ),
+    ProgramSpec(
+        "solidcraft", "SolidCraft", "cad", "CAELAB_SOLIDCRAFT",
+        ("solidcraft", "SolidCraft"),
+        "SolidCraft 원본(.sc/.solidcraft)을 엽니다. STEP 내보내기와 다음 단계의 출력 등록은 별도 작업입니다.",
+    ),
+    ProgramSpec(
+        "cadcraft", "CADCraft", "cad", "CAELAB_CADCRAFT",
+        ("cadcraft", "CADCraft"),
+        "CADCraft 도면(.dxf/.dwg/.dwt)을 엽니다. DXF/SVG 교환은 명시적으로 수행하며 STEP 생성으로 취급하지 않습니다.",
     ),
     ProgramSpec(
         "prepomax", "PrePoMax", "preprocessor", "CAELAB_PREPOMAX",
@@ -382,6 +393,14 @@ def launch_request(status: ProgramStatus, file: str | Path) -> LaunchRequest:
     if status.spec.id == "freecad":
         if document.suffix.lower() != ".fcstd":
             raise ValueError("FreeCAD 문서(.FCStd)를 선택하세요.")
+        argv = [status.path, str(document)]
+    elif status.spec.id == "solidcraft":
+        if document.suffix.lower() not in {".sc", ".solidcraft"}:
+            raise ValueError("SolidCraft 작업 문서(.sc/.solidcraft)를 선택하세요. STEP 내보내기는 별도 작업입니다.")
+        argv = [status.path, str(document)]
+    elif status.spec.id == "cadcraft":
+        if document.suffix.lower() not in {".dxf", ".dwg", ".dwt"}:
+            raise ValueError("CADCraft 도면(.dxf/.dwg/.dwt)을 선택하세요. STEP 솔리드 연결은 제공하지 않습니다.")
         argv = [status.path, str(document)]
     elif status.spec.id == "prepomax":
         if document.suffix.lower() not in {".pmx", ".step", ".stp", ".brep", ".igs", ".iges", ".inp", ".frd", ".unv", ".vol", ".stl"}:
