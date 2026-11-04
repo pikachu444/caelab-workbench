@@ -188,7 +188,9 @@ if mode == stage + '_fail':
     print(stage + ' deliberately failed', flush=True)
     raise SystemExit(9)
 listing = Path(prefix + ('_0000.out' if stage == 'starter' else '_0001.out'))
-listing.write_text('FATAL ERROR\n' if mode == stage + '_bad_listing' else 'NORMAL TERMINATION\n0 ERROR(S)\n0 WARNING(S)\n')
+listing.write_text('FATAL ERROR\n' if mode == stage + '_bad_listing' else
+                   'TERMINATION WITH WARNING\n0 ERROR(S)\n1 WARNING(S)\n' if stage == 'starter' and mode == 'starter_warning' else
+                   'NORMAL TERMINATION\n0 ERROR(S)\n0 WARNING(S)\n')
 if stage == 'starter' and mode != 'starter_missing_restart':
     Path(prefix + '_0000_0001.rst').write_bytes(b'opaque restart probe')
 if stage == 'engine':
@@ -247,6 +249,69 @@ def test_radioss_stage_failure_stops_pipeline_and_keeps_receipts(tmp_path, radio
         assert "output" not in project.nodes[node.id].files
     finally:
         wb.close()
+
+
+@pytest.mark.parametrize("stage,text", [
+    ("starter", "ERROR TERMINATION\nTERMINATION WITH WARNING\n0 ERROR(S)\n1 WARNING(S)\n"),
+    ("starter", "TERMINATION WITH WARNING\n0 ERROR(S)\n1 WARNING(S)\n1 ERROR(S) reported earlier\n"),
+    ("starter", "TERMINATION WITH WARNING\n1 WARNING(S)\n"),
+    ("engine", "TERMINATION WITH WARNING\n0 ERROR(S)\n1 WARNING(S)\n"),
+], ids=["error-marker", "positive-errors", "missing-error-count", "engine-warning"])
+def test_warning_marker_never_overrides_stage_failure(tmp_path, stage, text):
+    from caelab.native.adapter import OpenRadiossAdapter
+
+    sequence = "0000" if stage == "starter" else "0001"
+    (tmp_path / f"case_{sequence}.out").write_text(text)
+    (tmp_path / "case_0000_0001.rst").write_bytes(b"restart")
+    with pytest.raises(ValueError):
+        OpenRadiossAdapter().validate_stage(stage, tmp_path, {"run_name": "case"})
+
+
+def test_radioss_rejects_existing_stage_outputs_before_any_process(tmp_path, radioss_probe):
+    from caelab.native.adapter import OpenRadiossAdapter
+
+    status = ProgramStatus(next(spec for spec in PROGRAMS if spec.id == "opencourant"), sys.executable,
+                           source="simulated solver process")
+    snapshot = {"run_name": "case", "execution_input": "case_0000.rad"}
+    for name in ("case_0000.out", "case_0001.out", "case_0000_0001.rst"):
+        folder = tmp_path / name
+        folder.mkdir()
+        existing = folder / name
+        existing.write_bytes(b"must not delete or overwrite")
+        with pytest.raises(ValueError, match="기존.*출력"):
+            OpenRadiossAdapter().build_run_stages(status, folder, snapshot)
+        assert existing.read_bytes() == b"must not delete or overwrite"
+        assert not (folder / "probe-events.txt").exists()
+
+
+def test_starter_warning_continues_engine_and_survives_reopen(tmp_path, radioss_probe):
+    wb, project, node = _project(tmp_path, _input_pair(tmp_path / "source"))
+    radioss_probe["mode"] = "starter_warning"
+    try:
+        submitted = wb.submit_native(project, node.id, timeout=10)
+        run = _wait(wb, project, submitted.id)
+        assert run.state == "completed", run.error
+        assert run.parse_state == "partial"
+        assert [(stage["name"], stage["returncode"]) for stage in run.snapshot["stages"]] == [("starter", 0), ("engine", 0)]
+        diagnostic = run.snapshot["stages"][0]["diagnostics"]
+        assert diagnostic["termination"] == "warning"
+        assert diagnostic["error_count"] == 0 and diagnostic["warning_count"] == 1
+        assert diagnostic["listing"] == "independent_case_0000.out"
+        assert len(diagnostic["messages"]) == 1 and "모델 검토 필요" in diagnostic["messages"][0]
+        assert diagnostic["messages"][0] in run.result["warnings"]
+        assert any(message not in diagnostic["messages"] for message in run.result["warnings"])
+        assert (run.workdir / "probe-events.txt").read_text().splitlines() == ["starter", "engine"]
+        saved = wb.save_native_project(project, project.path)
+        assert wb.close()
+        reopened = Workbench()
+        try:
+            restored = reopened.selected_native_run(reopened.open_native_project(saved), node.id)
+            assert restored.snapshot["stages"][0]["diagnostics"] == diagnostic
+            assert restored.result["warnings"] == run.result["warnings"] and restored.parse_state == "partial"
+        finally:
+            assert reopened.close()
+    finally:
+        assert wb.close()
 
 
 @pytest.mark.parametrize("stage_name", ["starter", "engine"])
