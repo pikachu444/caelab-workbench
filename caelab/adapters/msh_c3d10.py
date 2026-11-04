@@ -625,6 +625,18 @@ def assemble_c3d10_master_deck(
 
     loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
 
+    # R76-2: Strict 3-component load vector check
+    if not isinstance(load_vector, (tuple, list)) or len(load_vector) != 3:
+        raise MshC3D10Error(
+            f"load_vector must be a sequence of exactly 3 components (fx, fy, fz), got length {len(load_vector) if isinstance(load_vector, (tuple, list)) else type(load_vector)}"
+        )
+
+    # R76-2: Strict 3-component load vector check
+    if not isinstance(load_vector, (tuple, list)) or len(load_vector) != 3:
+        raise MshC3D10Error(
+            f"load_vector must be a sequence of exactly 3 components (fx, fy, fz), got length {len(load_vector) if isinstance(load_vector, (tuple, list)) else type(load_vector)}"
+        )
+
     # R76-2: Non-zero load with empty target check
     if any(load_vector) and not loaded_list:
         raise MshC3D10Error("Non-zero load_vector specified but loaded_nodes is empty")
@@ -729,6 +741,12 @@ def build_c3d10_structural_model(
     fixed_list = sorted(set(fixed_nodes)) if fixed_nodes else []
     loaded_list = sorted(set(loaded_nodes)) if loaded_nodes else []
 
+    # R76-2: Strict 3-component load vector check
+    if not isinstance(load_vector, (tuple, list)) or len(load_vector) != 3:
+        raise MshC3D10Error(
+            f"load_vector must be a sequence of exactly 3 components (fx, fy, fz), got length {len(load_vector) if isinstance(load_vector, (tuple, list)) else type(load_vector)}"
+        )
+
     # R76-2: Non-zero load with empty target check
     if any(load_vector) and not loaded_list:
         raise MshC3D10Error("Non-zero load_vector specified but loaded_nodes is empty")
@@ -816,6 +834,33 @@ def build_c3d10_structural_model(
     )
 
 
+def parse_deck_nset_nodes(deck_text: str, nset_name: str) -> set[int] | None:
+    """Parse node IDs defined under an *NSET card with the given set name."""
+    target_header = f"*NSET, NSET={nset_name}".upper()
+    lines = deck_text.splitlines()
+    in_nset = False
+    nodes: set[int] = set()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("**"):
+            continue
+        if line.startswith("*"):
+            upper_line = line.upper().replace(" ", "")
+            if upper_line == target_header.replace(" ", ""):
+                in_nset = True
+                continue
+            elif in_nset:
+                break
+        elif in_nset:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            for p in parts:
+                try:
+                    nodes.add(int(p))
+                except ValueError:
+                    pass
+    return nodes if in_nset else None
+
+
 def run_c3d10_simulation(
     workdir: Path | str,
     model: StructuralModel,
@@ -833,12 +878,34 @@ def run_c3d10_simulation(
     deck_text = deck_path.read_text(encoding="utf-8", errors="replace")
 
     if "FIXED_NODES" in model.sets:
-        if "*NSET, NSET=FIXED_NODES" not in deck_text:
+        expected_fixed = set(model.sets["FIXED_NODES"].members)
+        actual_fixed = parse_deck_nset_nodes(deck_text, "FIXED_NODES")
+        if actual_fixed is None:
             raise MshC3D10Error("deck_path is missing *NSET, NSET=FIXED_NODES defined in model")
+        if actual_fixed != expected_fixed:
+            raise MshC3D10Error(
+                f"deck_path FIXED_NODES node IDs do not match model FIXED_NODES set. "
+                f"Model has {len(expected_fixed)} nodes, deck has {len(actual_fixed)} nodes."
+            )
+        if model.bcs:
+            if "*BOUNDARY" not in deck_text.upper():
+                raise MshC3D10Error("model defines boundary conditions, but deck_path lacks *BOUNDARY keyword")
+            if "FIXED_NODES" not in deck_text.upper():
+                raise MshC3D10Error("deck_path lacks *BOUNDARY reference to FIXED_NODES")
 
     if "LOAD_NODES" in model.sets:
-        if "*NSET, NSET=LOAD_NODES" not in deck_text:
+        expected_loaded = set(model.sets["LOAD_NODES"].members)
+        actual_loaded = parse_deck_nset_nodes(deck_text, "LOAD_NODES")
+        if actual_loaded is None:
             raise MshC3D10Error("deck_path is missing *NSET, NSET=LOAD_NODES defined in model")
+        if actual_loaded != expected_loaded:
+            raise MshC3D10Error(
+                f"deck_path LOAD_NODES node IDs do not match model LOAD_NODES set. "
+                f"Model has {len(expected_loaded)} nodes, deck has {len(actual_loaded)} nodes."
+            )
+        if any(load.values for load in model.loads):
+            if "*CLOAD" not in deck_text.upper():
+                raise MshC3D10Error("model defines loads, but deck_path lacks *CLOAD keyword")
 
     conv = CalculiXConverter()
     result = conv.run(model, deck_path, workdir)

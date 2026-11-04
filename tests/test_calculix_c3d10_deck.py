@@ -225,7 +225,7 @@ def test_mock_solver_run_and_result_summary(tmp_path: Path, monkeypatch, minimal
     )
 
     deck_path = tmp_path / "job.inp"
-    deck_path.write_text("*NODE FILE\nU, RF\n*EL FILE\nS\n*NSET, NSET=FIXED_NODES\n1, 2, 3\n*NSET, NSET=LOAD_NODES\n4\n*END STEP\n", encoding="utf-8")
+    deck_path.write_text("*NODE FILE\nU, RF\n*EL FILE\nS\n*NSET, NSET=FIXED_NODES\n1, 2, 3\n*NSET, NSET=LOAD_NODES\n4\n*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n*CLOAD\n4, 3, -100.0\n*END STEP\n", encoding="utf-8")
 
     # 10 nodes for DISP and FORC
     disp_values = {nid: [0.0, 0.0, 0.0] for nid in range(1, 11)}
@@ -420,6 +420,25 @@ def test_reject_invalid_parameters_and_missing_nodes(minimal_c3d10_mesh):
         )
 
 
+def test_reject_load_vector_not_3_components(minimal_c3d10_mesh):
+    """R76-2: load_vector must have exactly 3 components (fx, fy, fz)."""
+    with pytest.raises(MshC3D10Error, match="must be a sequence of exactly 3 components"):
+        assemble_c3d10_master_deck(
+            "inc.inp",
+            fixed_nodes=[1, 2],
+            loaded_nodes=[3],
+            load_vector=(0.0, 0.0, -100.0, 25.0),
+        )
+
+    with pytest.raises(MshC3D10Error, match="must be a sequence of exactly 3 components"):
+        build_c3d10_structural_model(
+            minimal_c3d10_mesh,
+            fixed_nodes=[1, 2],
+            loaded_nodes=[3],
+            load_vector=(0.0, 0.0),
+        )
+
+
 def test_reject_deck_and_model_inconsistency(tmp_path: Path, minimal_c3d10_mesh):
     """R76-3: Inconsistent deck content and model node sets must be rejected before solve."""
     model = build_c3d10_structural_model(
@@ -428,12 +447,49 @@ def test_reject_deck_and_model_inconsistency(tmp_path: Path, minimal_c3d10_mesh)
         loaded_nodes=[3, 4],
         load_vector=(0.0, 0.0, -100.0),
     )
-    # Write a deck that lacks *NSET, NSET=LOAD_NODES
+    # 1. Deck missing *NSET, NSET=LOAD_NODES
     deck_path = tmp_path / "job.inp"
-    deck_path.write_text("*HEADING\n*INCLUDE, INPUT=inc.inp\n*NSET, NSET=FIXED_NODES\n1, 2\n*END STEP\n", encoding="utf-8")
+    deck_path.write_text("*HEADING\n*INCLUDE, INPUT=inc.inp\n*NSET, NSET=FIXED_NODES\n1, 2\n*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n*END STEP\n", encoding="utf-8")
 
     with pytest.raises(MshC3D10Error, match=r"deck_path is missing \*NSET, NSET=LOAD_NODES"):
         run_c3d10_simulation(tmp_path, model, deck_path)
+
+    # 2. Deck with swapped node IDs under identical NSET names
+    deck_swapped = tmp_path / "job_swapped.inp"
+    deck_swapped.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n3, 4\n"
+        "*NSET, NSET=LOAD_NODES\n1, 2\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n"
+        "*CLOAD\n1, 3, -50.0\n2, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match="deck_path FIXED_NODES node IDs do not match model FIXED_NODES set"):
+        run_c3d10_simulation(tmp_path, model, deck_swapped)
+
+    # 3. Deck missing *BOUNDARY condition for model with boundary conditions
+    deck_no_bnd = tmp_path / "job_no_bnd.inp"
+    deck_no_bnd.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*CLOAD\n3, 3, -50.0\n4, 3, -50.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"model defines boundary conditions, but deck_path lacks \*BOUNDARY keyword"):
+        run_c3d10_simulation(tmp_path, model, deck_no_bnd)
+
+    # 4. Deck missing *CLOAD condition for model with active loads
+    deck_no_cload = tmp_path / "job_no_cload.inp"
+    deck_no_cload.write_text(
+        "*HEADING\n*INCLUDE, INPUT=inc.inp\n"
+        "*NSET, NSET=FIXED_NODES\n1, 2\n"
+        "*NSET, NSET=LOAD_NODES\n3, 4\n"
+        "*BOUNDARY\nFIXED_NODES, 1, 3, 0.0\n*END STEP\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MshC3D10Error, match=r"model defines loads, but deck_path lacks \*CLOAD keyword"):
+        run_c3d10_simulation(tmp_path, model, deck_no_cload)
 
 
 def test_reject_deck_outside_workdir(tmp_path: Path, minimal_c3d10_mesh):
