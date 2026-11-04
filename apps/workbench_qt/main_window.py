@@ -793,7 +793,10 @@ class MainWindow(QMainWindow):
             field = self.field_combo.currentData() or "U_mag"
             scale_mode = self.scale_mode_combo.currentData() or "auto"
             factor = self.scale_spin.value()
-            self.viewport.show_results(model, result, field_name=field, scale_mode=scale_mode, scale_factor=factor)
+            try:
+                self.viewport.show_results(model, result, field_name=field, scale_mode=scale_mode, scale_factor=factor)
+            except TypeError:
+                self.viewport.show_results(model, result)
             self._update_legend_label(model, result)
             self._set_flow(3)
         else:

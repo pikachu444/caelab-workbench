@@ -236,6 +236,7 @@ class Viewport(QWidget):
         if not self._node_ids or any(n not in result.displacements for n in self._node_ids):
             self._base_scale = None
             self._auto_scale = None
+            self._last_model, self._last_result = None, None
             self.show_model(model)
             return
 
@@ -407,7 +408,7 @@ class Viewport(QWidget):
             _apply_text_font(label_prop)
             bar.SetLabelFormat("%.3g")
             self._scalar_bar = bar
-            self._renderer.AddActor2D(bar)
+            self._renderer.AddActor(bar)
 
         self._renderer.ResetCamera()
         self._render()
