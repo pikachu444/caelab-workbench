@@ -1,209 +1,241 @@
-# 상용 CAE(HyperWorks / Abaqus / PrePoMax) 1:1 대조 CAELab 통합 GUI 상세 명세서
+# 상용 CAE 1:1 대조 CAELab 통합 GUI 상세 명세서
 
-> **문서 상태**: 정본 초안 (Canonical Working Draft - PR 등록용)  
+> **문서 상태**: 2차 개정 정본 초안 (Revision 2 - Codex 피어 리뷰 PR78-WB1~WB6 및 PREP78-R1~R7 전건 반영)  
 > **기준 커밋 (Base SHA)**: `09d2b56f259e57ef019ed9548b3f9a0e2e41cc92` (`main`)  
-> **적용 범위**: `caelab-workbench` (통합 관리자 및 3D 결과 가시화) 및 `caelab-prep` (CourantPrep 전처리 연동)  
-> **작성자**: Gemini (메인/통합 책임자)  
-> **피어 리뷰 협의**: Codex (Prep/메싱 담당), 젠클스 (QA/전문가 대화 담당), 사용자(Product Owner)  
-> **공개 기준 문서**:  
-> - Abaqus/CAE 2022 User's Manual (Dassault Systèmes), Chapter 11(Mesh), 12(Step), 13(Load), 14(Visualization)  
-> - PrePoMax v2.0 User Manual (§3 Geometry and Meshing, §4 Model, §5 Results)  
-> - Altair HyperWorks 2023 User Guide (Part/Component Collectors, 2D BatchMesher, 3D Solid Sweep)  
-> - CAELab Prep 8제품 벤치마크 (`docs/benchmarks/2026-10-30/`) 및 실행 계획 (`docs/execution-stages.md`)
+> **대상 Head SHA**: `bffd5ed902a5d9c2db7d465838174086b50e4adc` (이전 Head) $\rightarrow$ 개정 커밋 반영 예정  
+> **적용 범위**: `caelab-workbench` (통합 관리자, 노드 오케스트레이션, 3D 결과 가시화) 및 `caelab-prep` (CourantPrep 전처리 연동)  
+> **작성 및 검토 역할**:  
+> - 작성: Gemini (메인/통합 책임자)  
+> - 독립 검토: Codex (Prep 및 CAE 비판 리뷰), 젠클스 (QA 및 전문가 대화 담당)  
+> **공개 기준 문헌 및 벤치마크 (Pinned Primary References)**:  
+> 1. [PrePoMax v2.0.0 Manual (2023-12-09)](https://prepomax.fs.um.si/wp-content/uploads/2023/12/PrePoMax-v2.0.0-manual.pdf): 목차 p.2, §4 Geometry and Mesh (p.14), §5 FE Model (p.18), §6 Results (p.49)  
+> 2. [Altair HyperMesh 2025.1 Element Quality Calculations](https://2025.help.altair.com/2025/hwdesktop/hwx/topics/pre_processing/meshing/element_quality_calculations_hypermesh_r.htm): 2D/3D 요소 품질 정의 및 계산법  
+> 3. [Abaqus 2022 User's Manual (Dassault Systèmes)](https://docs.software.vt.edu/abaqusv2025/English/SIMACAEGSARefMap/simagsa-c-absunits.htm): Consistent Units and Modeling Guidelines  
+> 4. [Qt 6.8 High DPI Documentation](https://doc.qt.io/qt-6/highdpi.html): DPI Scaling Policies and Multi-monitor Rounding  
+> 5. [CAELab Prep 공개 벤치마크](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/docs/benchmarks/2026-10-30/README.md) 및 [실행 계획](https://github.com/pikachu444/caelab-prep/blob/f18739cb5ff8e9b52c5a81e6ccd901d6aff82b3f/docs/execution-stages.md)
 
 ---
 
-## 1. 개요 및 설계 철학
+## 1. 아키텍처 원칙 및 전처리기 소유권 경계
 
-CAELab은 독자적인 전용 포맷의 폐쇄적 도구가 아닌, 검증된 오픈소스 공학 솔버(CalculiX, OpenRadioss)와 전처리기(CourantPrep, Gmsh)를 결합하여 상용 CAE 수준의 통합 사용성을 제공하는 엔지니어링 워크벤치이다.
+CAELab은 다중 솔버와 전용 전처리기를 결합하는 유연한 아키텍처를 채택하며, 특정 프로그램이 모든 전처리를 독점하지 않는다.
 
-### 1.1 핵심 단일 책임 원칙 (Single Responsibility Principle)
-1. **`caelab-prep` (CourantPrep)**:
-   - 형상/CAD 임포트, 2D/3D 격자 생성(테트라/헥사 스윕), 솔버 원문 카드(`/PART`, `/MAT`, `*ELEMENT`) 및 경계조건/하중 전처리 단일 소유.
-   - FORM(속성 인스펙터)과 TEXT(원문 카드 편집기)의 탭 전환 기반 무손실 편집 및 Undo/Redo 트랜잭션 보장.
-2. **`caelab-workbench`**:
-   - 프로젝트 오케스트레이션, 솔버 백그라운드 비동기 실행 제어(`JobManager`), 프로세스 라이프사이클 관리.
-   - 전처리 문서의 변경 감지(`mtime`/해시) 및 하류 해석 결과의 만료(`STALE`) 상태 전파.
-   - 솔버 해석 결과의 3D 뷰포트 내장 가시화(변위 및 Von Mises 응력 컨투어, 레전드, 실변형 배율).
+### 1.1 솔버별 전처리기 소유권 및 포맷 경계 (DESIGN §2.1 준수)
+* **CalculiX 전처리**: PrePoMax(`.pmx` $\rightarrow$ `.inp` 내보내기) 우선 및 FreeCAD FEM 호환 체계. Workbench는 독자적인 FE 모델 생성기가 아니며, 변환 어댑터(`msh_c3d10.py`)를 통해 메시를 C3D10 덱으로 조립하거나 PrePoMax가 생성한 `.inp`를 소비한다.
+* **OpenRadioss 전처리**: `caelab-prep` (CourantPrep)이 소유. RAD 포맷(`/BEGIN`, `/PART`, `/MAT`, `/PROP`, `/BCS`) 세션 및 `.caeprep` 작업 문서를 단일 소유하며, 솔버 실행용 `_0000.rad`를 명시적으로 export한다.
+* **MSH 파일의 위상**: Gmsh MSH 4.1은 독립 교환 자산(Exchange Asset)이며, Prep에서는 `external_mesh.py`를 통해 명시적 프로파일 검토 후 native 채택(`adopt`)되고, Workbench에서는 C3D10 변환 파이프라인의 입력으로 취급된다.
+
+### 1.2 창(Window) 역할 및 상호작용 분리
+* **`ProjectWindow` (부모 런처)**: 프로젝트 파일(`.caelab` / JSON)을 관리하며, 계산 노드 파이프라인(`ProgramNode`), 입력/문서/출력 바인딩, 전용 프로그램 실행(`open_program`)을 총괄.
+* **`Native Analysis Window`**: 개별 솔버/전처리기 프로세스의 실행, 로그 수집, 취소(`JobManager.cancel`)를 모니터링.
+* **`MainWindow` (보조 모델 뷰어)**: 경량 `StructuralModel`의 절점/요소/세트 조회 및 3D 뷰포트를 통한 해석 결과(변위 및 Von Mises 응력) 컨투어 가시화 전담. **본 창에서 전처리 형상이나 카드를 직접 수정하지 않는다.**
 
 ---
 
-## 2. 대표 사용자 과업 (End-to-End User Flow) 및 상태 전이
+## 2. 대표 과업(User Flow) 및 전체 라이프사이클 명세
 
-### 2.1 C3D10 솔리드 외팔보 벤치마크 과업 흐름
+### 2.1 C3D10 솔리드 외팔보 벤치마크 및 전처리기 연동 흐름
 ```mermaid
 stateDiagram-v2
-    [*] --> ProjectOpened: Workbench에서 프로젝트 열기 (.caeproj / .msh)
-    ProjectOpened --> ModelInspected: 모델 탐색기에서 절점/요소/세트 확인
+    [*] --> ProjectSaved: 프로젝트 열기/저장 (.caelab JSON)
+    ProjectSaved --> NodeSelected: ProjectWindow에서 노드 선택 (node.program_id)
     
-    state "전처리기 연동 편집 (CourantPrep / PrePoMax)" as PreprocessorScope {
-        ModelInspected --> LaunchPrep: "전용 프로그램에서 편집" 클릭
-        LaunchPrep --> EditInPrep: Workbench.open_program() 실행
-        EditInPrep --> SavePrepDoc: 형상/메시/경계 수정 후 저장 (.caeprep / .inp)
-        SavePrepDoc --> ClosePrep: 전처리기 종료 및 Workbench 복귀
+    state "전용 전처리기 연동 (PrePoMax / CourantPrep)" as PreprocessorLifecycle {
+        NodeSelected --> LaunchProgram: open_program(project, node_id, use_input=False)
+        LaunchProgram --> Editing: 전처리기 실행 (소유 문서 .pmx 또는 .caeprep)
+        Editing --> NativeSaved: 모델 수정 후 전처리기 전용 포맷 저장
+        NativeSaved --> ExportDeck: 솔버 덱 명시적 export (.inp 또는 _0000.rad)
     }
     
-    ClosePrep --> StaleDetected: Workbench가 파일 mtime 변경 감지 -> 결과 STALE 처리
-    StaleDetected --> RunValidation: [입력 검사] 클릭 (Fail-Closed 정합성 검증)
-    RunValidation --> Solving: [솔버 실행 ▶] 클릭 (JobManager 백그라운드 Worker)
-    Solving --> Solved: 해석 성공 (CalculiX Spooles 완주)
-    Solving --> SolverFailed: 수렴 실패 / 입력 에러 (로그 출력 및 하이라이트)
+    ExportDeck --> ModificationDetected: Workbench 복귀 시 파일 mtime/해시 변경 감지
+    ModificationDetected --> DownstreamStale: 하류 해석 결과 상태를 STALE(만료)로 전이
+    DownstreamStale --> UserSubmit: 사용자가 명시적으로 [해석 실행 ▶] 클릭
     
-    Solved --> ContourVisualized: 3D 뷰포트에 Von Mises 응력 및 변형 형상 렌더링
-    ContourVisualized --> [*]
+    state "솔버 실행 (JobManager)" as SolverExecution {
+        UserSubmit --> RunningWorker: JobManager.launch 백그라운드 Worker 기동
+        RunningWorker --> SolverSuccess: CalculiX Spooles 정상 수렴 완주
+        RunningWorker --> SolverFailed: 수렴 실패 / 입력 거절 (에러 하이라이트)
+    }
+    
+    SolverSuccess --> ResultVisualized: MainWindow 3D 뷰포트에 결과 컨투어 가시화
+    ResultVisualized --> Reopened: 프로젝트 저장 및 새 프로세스 재열기 검증
+    Reopened --> [*]
 ```
 
-### 2.2 상세 사용자 상호작용 및 예외 복구 규격
+### 2.2 상세 단계별 계약 및 예외 복구 규격
 
-#### 과업 1: "전용 프로그램에서 편집 (Edit in Native Preprocessor)"
-- **진입점**: `MainWindow` 우측 속성 패널 하단의 `[전용 프로그램에서 편집]` 버튼.
-- **실행 동작**:
-  1. 현재 선택된 모델/파트의 원본 파일 경로(`doc_path`)를 조회.
-  2. `Workbench.open_program(doc_path)`을 호출하여 해당 포맷의 등록된 실행기(`caelab-prep` 또는 `prepomax`)를 `JobManager.launch`로 비동기 실행.
-- **예외 복구 (Error Recovery)**:
-  - *프로그램 미등록 시*: "전처리기 실행 파일이 등록되지 않았습니다" 안내와 함께 [설정 다이얼로그]를 띄워 사용자가 직접 실행 파일 경로를 지정하도록 유도.
-  - *문서 파일 부재 시*: "원본 모델 파일({path})을 찾을 수 없습니다" 경고 후 [파일 다시 연결 (Re-link)] 또는 [새 템플릿 생성] 선택창 제공.
-- **상태 동기화 및 Stale 전파**:
-  - 포커스가 Workbench로 복귀하거나 저장 이벤트 발생 시, 파일의 `st_mtime` 및 SHA256을 대조.
-  - 원본이 수정된 경우, 기 보유 중인 해석 결과 및 파생 데이터의 상태를 즉시 `STALE (만료됨)` 아이콘 및 툴팁으로 표시.
-  - 자동 재실행을 금지하며, 사용자가 명시적으로 `[솔버 실행]`을 누를 때만 파이프라인 가동.
+#### [과업 단계 1: 전용 프로그램 실행]
+* **호출 API**: `Workbench.open_program(project, node_id, use_input=False)`
+* **소유권 대조**: `node.program_id`를 조회하여 등록된 `ProgramSpec` 확인.
+  - OpenRadioss 노드 $\rightarrow$ `caelab-prep.exe` 비동기 기동.
+  - CalculiX 노드 $\rightarrow$ `prepomax.exe` 비동기 기동.
+* **예외 복구**:
+  - *실행 파일 미등록*: "전처리기({program_id}) 경로가 설정되지 않았습니다" 안내 및 환경설정 다이얼로그 호출.
+  - *소유 문서 부재*: "연결된 작업 문서({path})가 없습니다" 경고 후 [파일 다시 연결 (Re-link)] 대화상자 표시. 임의의 템플릿으로 원본을 자동 덮어쓰지 않음.
+
+#### [과업 단계 2: 변경 감지 및 하류 Stale 전파]
+* **감지 메커니즘**: 포커스 복귀 시점 또는 주기적 폴링(Polling) 시 대상 덱 파일의 `st_mtime` 및 SHA256 대조.
+* **상태 전이**: 원본 덱이 갱신된 경우, 기존 계산 결과의 캐시 유효성을 즉시 무효화하고 UI에 `[STALE - 재실행 필요]` 배지 표기. 자동 재실행은 엄격히 금지.
+
+#### [과업 단계 3: 작업 취소 및 프로세스 격리]
+* **취소 메커니즘**: `JobManager.cancel(run_id)`을 호출하여 해당 소유 프로세스 트리만을 안전하게 종료. 외부 편집기나 별도 PID를 임의 강제 종료하지 않음.
 
 ---
 
-## 3. 8대 기능 카탈로그 및 8개 상용 제품 상호작용 2차원 매트릭스
+## 3. 8대 기능 카탈로그 및 필수 8제품 상호작용 2차원 매트릭스
 
-상용 매뉴얼의 공학 기능 분류(기능 축)와 Prep `DESIGN`의 8제품 상호작용 모델(표현 축)을 엄격히 구분하여 정의한다.
-
-### 3.1 8대 기능 카탈로그 세부 스펙 (Functional Catalog)
+### 3.1 8대 기능 카탈로그 세부 공학 스펙
 
 #### Module 1: 형상 및 CAD 인터페이스 (Geometry & CAD Interface)
-* **1.1 CAD 임포트**: STEP (.stp), IGES (.igs), BREP 지원. Bounding Box 크기 기반 단위계(mm vs m) 감지 및 사용자 확인 다이얼로그. (Abaqus 2022 Manual §10.3)
-* **1.2 토폴로지 클린업**: Free Edge(자유 모서리: Red), Shared Edge(공유 모서리: Green), T-junction(T-접합: Yellow) 시각화 및 허용공차 기반 스티칭. (HyperWorks 2023 Topology Cleanup)
-* **1.3 디피처링 (Defeaturing)**: 설정 반경 이하의 필렛, 소구경 홀 원클릭 억제/제거.
-* **1.4 박판 중립면 추출**: 판재 부품 중립면(Mid-surface) 자동 추출 및 판 두께 자동 연동.
+* **1.1 CAD 임포트 및 단위계 원칙**:
+  - **단위계 판정**: Bounding Box 크기만으로 단위를 자동 확정하는 것을 금지함. 파일 메타데이터 및 사용자의 명시적 선언(`units_declaration`)만을 정본으로 취급하며, Bounding Box는 비정상 스케일(예: $10^6$ 이상) 시 경고를 출력하는 용도로만 한정. (Abaqus Consistent Units 원칙 준수)
+* **1.2 토폴로지 클린업 (Topology Cleanup)**: Free Edge(Red), Shared Edge(Green), T-junction(Yellow) 시각화 및 허용공차 기반 스티칭. (HyperMesh 2025.1)
+* **1.3 디피처링 (Defeaturing)**: 미세 필렛/홀 반경 임계값 기반 원클릭 억제/제거.
+* **1.4 박판 중립면 추출**: 판재 중립면 추출 및 판 두께 자동 연동.
 
 #### Module 2: 2D 쉘 격자 생성 (2D Surface Meshing)
-* **2.1 표면 자동 메시어 (Auto-meshing / BatchMesher)**: 타깃 크기, 최소 크기, 곡률 적응 제어. Quad-dominant 및 All-Tri 지원.
-* **2.2 법선 벡터 정렬 (Normal / Shell Winding)**: 인접 요소 간 법선 방향 일치 정렬 및 반전(Reverse).
-* **2.3 품질 기준 (Quality Criteria)**: 종횡비(Aspect Ratio $\le 5.0$), 왜도(Skewness $\le 60^\circ$), 휨(Warpage $\le 15^\circ$), 자코비안(Jacobian $\ge 0.6$). 미달 요소 뷰포트 하이라이트.
+* **2.1 표면 자동 메시어 (Auto-meshing / BatchMesher)**: 타깃 크기, 최소 크기 제어. Quad-dominant 및 All-Tri 지원.
+* **2.2 법선 벡터 정렬 (Shell Winding)**: 인접 요소 간 법선 방향 일치 정렬 및 반전(Reverse).
+* **2.3 요소 품질 기준 (Quality Criteria - Altair HyperMesh 공식 기준 인용)**:
+  - **Aspect Ratio**: $L_{\text{max}} / L_{\text{min}} \le 5.0$ (Tri/Quad 공통 목표 제안치).
+  - **Skewness**: Tri는 각도 기반 $|90^\circ - \theta_{\text{min}}|$, Quad는 중앙 대각선 사이 각도 편차. 목표 제안치 $\le 60^\circ$.
+  - **Warpage**: Quad 4절점의 비평면성 각도 편차. 목표 제안치 $\le 15^\circ$ (Tri는 $0^\circ$ 불변).
+  - **Jacobian**: 가우스 적분점에서의 행렬식 정규화 최소값. 목표 제안치 $\ge 0.6$.
+  - *비고*: 위 수치들은 공학적 목표치이며, 현재 `MeshingCriteria` 구현의 fail-closed 차단 기준이 아님을 명시.
 
 #### Module 3: 3D 솔리드 격자 생성 (3D Solid Meshing)
 * **3.1 6면체 스윕 메시어 (Hexahedral Sweep)**:
-  - *기구현 범위(PR34, PR62, PR63)*: 단일 패치 코너/벡터 스윕, 레이어 분할 수, 레시피 보존 및 재생성.
-  - *신규 추가 범위*: 양단 바이어스(Biasing ratio), 다중 공유 패치 스윕, 곡면 가이드 스윕.
-* **3.2 4면체 테트라 메시어 (Gmsh C3D10 연동)**: Delaunay 3D 기반 Tet10 2차 요소 생성 및 형상 표면 곡률 투영.
-* **3.3 품질 검사**: 음수 체적(Negative Volume) 및 네거티브 자코비안 요소 원천 차단.
+  - **기구현 실적 (PR34, PR62, PR63)**: 정확히 두 인접 평면 패치의 직선 스윕 및 공유 경계 정합(`structured_geometry.py`), divisions/global layers 분할 및 레시피 보존/재생성. (단일 패치 제한은 `mesh_workflow.py`의 코너/벡터 편집 UI에 한정)
+  - **신규 제안 범위 (미구현)**: 양단 바이어스(Biasing ratio), 다중 3개 이상 패치 스윕, 곡면 가이드 스윕.
+* **3.2 4면체 테트라 메시어 (Tetrahedral Meshing)**:
+  - **기구현 직선 Tet10 (`msh_c3d10.py` 및 Prep worker)**: `SecondOrderLinear=1`, 직선 midside 8-ULP 예산, corner-scaled Jacobian $J \ge 0.5$, 6개 코너 모서리 비 $\le 4$.
+  - **신규 곡면 Tet10 (미구현 제안)**: 곡면 형상 투영 midside는 형상 연계 및 고차 요소 전역 유효성 검증이 요구되는 별도 신규 범위로 분리.
+* **3.3 품질 검사**: 음수 체적 요소 원천 차단.
 
 #### Module 4: 모델 구성 및 엔티티 관리 (Model Organization & Collectors)
-* **4.1 컴포넌트 컬렉터**: 파트 ID, 컴포넌트 이름, 색상(RGB), 재료 및 단면 1:1 바인딩.
-* **4.2 재료 모델**: 선형 탄성(Linear Elastic), 탄소성(Johnson-Cook, Swift-Voce 경화).
-* **4.3 엔티티 세트 (Sets)**: 절점 세트(NSET), 요소 세트(ELSET), 면 세트(SURF). 박스/면/루프 선택 필터.
+* **4.1 컴포넌트 컬렉터**: 파트 ID, 컴포넌트 명칭, 표시 색상, 재료/단면 바인딩.
+* **4.2 재료 모델**: 선형 탄성, 소성 재료(Johnson-Cook 등).
+* **4.3 엔티티 세트 (Sets)**: NSET, ELSET, SURF. 박스/면/루프 필터 지원.
 
 #### Module 5: 하중 및 경계조건 (Boundary Conditions & Loading)
 * **5.1 자유도 구속조건 (SPC)**:
-  - **솔리드 요소(C3D10)의 엄밀한 자유도 정의**: 병진 자유도 $U_1, U_2, U_3$만 지원하며, 회전 자유도(4, 5, 6)를 무차별 적용하지 않음.
-  - 뷰포트 기호: 구속된 축 방향으로 삼각 피라미드 기호 렌더링.
+  - **C3D10 솔리드 자유도 엄밀 한정**: 병진 자유도 $U_1, U_2, U_3$만 지원하며, 회전 자유도(4, 5, 6)를 무차별 적용하지 않음.
 * **5.2 하중 조건**:
-  - 집중 하중(Nodal Force): 단일 절점 하중 및 NSET 기반 총 하중(Total Load = $F_{\text{node}} \times N_{\text{nodes}}$) 구분.
-  - 표면 압력(Pressure): 요소 면 법선 방향 작용. 뷰포트 화살표 렌더링.
+  - 집중 하중(Nodal Force): 단일 절점 하중과 NSET 기반 총 하중(Total Load = $F_{\text{node}} \times N_{\text{nodes}}$) 분리.
 
 #### Module 6: 솔버 덱 조립 및 정합성 검증 (Solver Deck Assembly & Validation)
-* **6.1 다중 솔버 어댑터**: CalculiX (`.inp`) 및 OpenRadioss (`_0000.rad`, `_0001.rad`) 표준 덱 생성.
-* **6.2 Fail-Closed 사전 정합성 검증**:
-  - `parse_deck_boundary_dofs`: 모델의 `fixed_dofs`와 덱의 `*BOUNDARY` 구속 자유도 완전 일치 대조.
-  - `parse_deck_cload_totals`: 모델의 `load_vector`와 덱의 `*CLOAD` 합계(NSET 크기 배수 반영) 수치 일치 대조.
+* **6.1 다중 솔버 어댑터**: CalculiX `.inp` 및 OpenRadioss `_0000.rad` 생성.
+* **6.2 사전 정합성 검증 (PR77 제안 검증 범위)**:
+  - `parse_deck_boundary_dofs`: 모델의 `fixed_dofs`와 덱 내 `*BOUNDARY` 구속 DOF 대조.
+  - `parse_deck_cload_totals`: 모델의 `load_vector`와 덱 내 `*CLOAD` NSET 크기 배수 합계 대조. (다축 하중 및 복합 분배 대응은 PR77 잔여 과제로 추적)
 
 #### Module 7: 다중 솔버 실행 및 작업 모니터링 (Multi-Solver Execution & Monitoring)
-* **7.1 JobManager 비동기 파이프라인**: 백그라운드 Worker 스레드 기반 GUI 응답성 유지. 취소(Cancel/Kill) 보장.
-* **7.2 실시간 수렴 모니터링**: CalculiX 비선형 잔차 곡선 및 OpenRadioss 에너지/질량 오차율 실시간 플롯.
+* **7.1 JobManager 비동기 제어**: 백그라운드 Worker 스레드 실행, 프로세스 트리 취소.
+* **7.2 수렴 모니터링**: CalculiX 비선형 잔차 및 OpenRadioss 에너지/질량 오차율 실시간 모니터링.
 
 #### Module 8: 3D 결과 가시화 및 분석 (Post-Processing & Visualization)
 * **8.1 3D 컨투어 데이터 계약 (Data Contract)**:
-  - 성분: Von Mises 등가응력($\sigma_{\text{vm}}$), 주응력($\sigma_1, \sigma_2, \sigma_3$), 변위($U_x, U_y, U_z, |U|$).
-  - 데이터 위치: 적분점(Integration Points) 데이터와 절점 외삽(Extrapolated Nodal) 데이터를 명확히 메타데이터에 분리 표기.
-  - 단위계: 입력 덱의 확정 단위계(`mm, N` $\rightarrow$ `MPa`, `m, N` $\rightarrow$ `Pa`)가 확인된 경우만 라벨 표기. 미확인 시 `[단위 미선언]` 표시.
-  - 커버리지: 미계산/미지원 요소는 `NaN`으로 마스킹하여 뷰포트에서 회색(Uncovered) 처리.
-* **8.2 변형 형상 및 배율 정의**:
-  - 표시 좌표 계산 공식: $\mathbf{x}_{\text{display}} = \mathbf{x}_{\text{orig}} + S \cdot \mathbf{u}$.
+  - **성분**: Von Mises 응력($\sigma_{\text{vm}}$), 주응력($\sigma_1, \sigma_2, \sigma_3$), 변위($U_x, U_y, U_z, |U|$).
+  - **데이터 위치 및 커버리지**: 적분점(Integration Points)과 절점 외삽(Extrapolated Nodal) 데이터 위치를 메타데이터로 분리. 절점별 결측(missing/NaN) 요소를 보존하여 뷰포트에서 회색(Uncovered) 처리.
+  - **단위계 원칙**: 입력 덱의 확정 단위계(`mm, N` $\rightarrow$ `MPa`, `m, N` $\rightarrow$ `Pa`)가 확인된 경우만 라벨 표기. 미확인 시 `[단위 미선언]` 표시.
+* **8.2 변형 형상 배율 공식**:
+  - 표시 좌표: $\mathbf{x}_{\text{display}} = \mathbf{x}_{\text{orig}} + S \cdot \mathbf{u}$ (단, $\mathbf{x}_{\text{orig}}$와 $\mathbf{u}$는 동일한 단위계이어야 함).
   - 실변형 1배($S = 1.0$)와 화면 맞춤용 자동 배율($S = S_{\text{auto}}$)을 명시적 옵션으로 분리.
-* **8.3 외부 뷰어 연동**: ParaView(`.vtu` / `.pvd`) 외부 열기 기능 영구 보존.
+* **8.3 외부 뷰어 연동**: ParaView(`.vtu` / `.pvd`) 외부 열기 기능 유지.
 
 ---
 
-### 3.2 8대 기능 $\times$ 8제품 상호작용 매핑 매트릭스
+### 3.2 Prep DESIGN R2 필수 8제품 상호작용 매핑 매트릭스
 
-| 8대 기능 분류 | BeidPrep (BE) | Naksha (NA) | PrePoMax (PP) | Abaqus/CAE (AB) | HyperWorks (HW) | Ansys WB (AN) | FreeCAD FEM (FC) | OpenCourant (OC) |
-|---|---|---|---|---|---|---|---|---|
-| **1. 형상/CAD** | 트리+FORM/TEXT | Outline/Details | Geometry 트리 | Part/Feature 모듈 | Geometry 리본 | SpaceClaim/DM | FreeCAD Part 트리 | CLI/스크립트 |
-| **2. 2D 쉘 메시** | Mesh 메뉴+카드 | Mesh 패널 | Shell 단면 지정 | Mesh 모듈+컨트롤 | 2D BatchMesher | Meshing Applet | Netgen/Gmsh 파라미터 | Gmsh API |
-| **3. 3D 솔리드** | PR34/62/63 스윕 | Solid 생성 다이얼로그 | Solid 3D 테트라 | Hex/Tet 선택 도구 | 3D Solid Map/Sweep | Method(Sweep/Patch) | Gmsh 3D 알고리즘 | msh_c3d10 어댑터 |
-| **4. 엔티티/컬렉터**| PART/MAT 카드 | Component/Material | Material/Section 트리 | Property 모듈 | Model Browser 컬렉터 | Engineering Data | Material 객체 | Deck include |
-| **5. 하중/구속** | /BCS, /CLOAD 카드 | Boundary 조건 탭 | Boundary/Load 트리 | Load 모듈 (SPC/Force) | Load Collector | Static Structural 트리 | FEM Constraint 객체 | Deck *BOUNDARY |
-| **6. 덱 조립** | RAD 내보내기 | 내보내기 | .inp 작성 | Job 쓰기 | Solver Deck Export | Solver Deck 쓰기 | ccx .inp 작성 | msh_c3d10 조립 |
-| **7. 실행/모니터** | 외부 솔버 호출 | 실행 다이얼로그 | Monitor 탭 (실시간) | Job Monitor/Log | Run Manager | Solution 모니터 | ccx 프로세스 실행 | JobManager Worker |
-| **8. 3D 가시화** | VTK 뷰포트 | 3D View | 결과 컨투어/레전드 | Visualization 모듈 | HyperView 연동 | Mechanical Results | VTK Post 뷰어 | 내장 컨투어+ParaView |
+> **작성 원칙**: Prep `DESIGN` R2에 명시된 필수 8제품을 원본 그대로 복원하며, 원제품 관측과 CAELab 구현/목표를 열 단위로 엄격히 분리한다.
+
+| 제품명 (약칭) | 공개 원본 관측 (버전, URL/Locator, 관측 한계) | 현재 CAELab 코드 구현 상태 | 향후 목표 및 미확인 과제 |
+|---|---|---|---|
+| **1. HyperMesh** (HM) | 2023/2025.1 Help, Part/Component 컬렉터, 2D BatchMesher, 3D Hexa Sweep | 형상 임포트 및 Gmsh 기반 격자 생성 연동 (`caelab_prep/adapters/gmsh_worker.py`) | HM 스타일 2D 배치메셔 룰 세부 설정 및 고급 스윕 가이드 |
+| **2. PrePoMax** (PP) | v2.0.0 Manual (2023-12-09, 목차 p.2), §4 형상/메시(p.14), §5 FE모델(p.18), §6 결과(p.49) | Workbench에서 `open_program`을 통한 `.pmx` 실행 및 CalculiX `.inp` 소비 | PrePoMax 결과 파일 직접 파싱 연동 및 Windows 환경 E2E 검증 |
+| **3. Naksha** (NA) | v0.5.07 공개 벤치마크, 선택 띠, Outline/Details 2열 배치 | 트리-인스펙터 구조 및 QSS 스타일 적용 | 세부 선택 마스크 및 속성 에디터 상호작용 일치 |
+| **4. Abaqus/CAE** (AB) | 2022 Manual, 모듈 바(Module Bar) 기반 트리/도구 상호 전환 | Workbench 메인 윈도우 모듈 탭 전환 (`apps/workbench_qt/main_window.py`) | 모델-결과 뷰포트 완전 통합 및 스텝별 출력 요청 세부 설정 |
+| **5. COMSOL** (CM) | Model Builder 트리, 1열 계층 구조, 피처 기반 설정 | Prep 모델 트리 계층 구조 (`caelab_prep/ui/widgets/tree.py`) | 다중 물리 필드 연계 인터페이스 및 복합 경계조건 트리 매핑 |
+| **6. midas NFX** (MN) | 리본 메뉴, 작업 트리, 속성 그리드 3단 레이아웃 | 리본형 툴바 및 독(Dock) 분할 배치 | NFX 스타일 고급 3D 메싱 마법사 인터페이스 |
+| **7. MIDAS MeshFree** (MF) | 무격자/경계 격자 자동화, 3단계(CAD-조건-해석) 단순 흐름 | 1클릭 파이프라인 지향 및 백그라운드 JobManager 자동화 | 복잡 형상 자동 해석 단순화 인터페이스 구축 |
+| **8. BeidPrep** (BE) | v2.0 관측, 중앙 3D 뷰포트, 좌측 MODEL 트리, 우측 FORM/TEXT 탭 인스펙터 | CourantPrep 2026 레이아웃 (`caelab_prep/ui/prep_workspace.py` PR #40) | 대형 어셈블리 렌더링 성능 최적화 및 세부 카드 편집기 확장 |
+
+*추가 비교군 (보조)*:
+- **Ansys Workbench**: 프로젝트 스키매틱(Schematic) 노드 연결 모델 $\rightarrow$ CAELab `ProjectWindow`의 파이프라인 그래프 모델에 참고.
+- **FreeCAD FEM**: 오픈소스 GUI FEM 워크벤치 $\rightarrow$ Gmsh 및 CalculiX 기본 연동 방식 참고.
 
 ---
 
 ## 4. UI 레이아웃 및 상용 CAE 위계 구조
 
-### 4.1 Workbench 메인 윈도우 와이어프레임
+### 4.1 Workbench 보조 모델 뷰어 (`MainWindow`) 와이어프레임
+
+> [!NOTE]
+> 본 와이어프레임은 경량 `StructuralModel` 및 해석 결과를 조회하는 **보조 `MainWindow`의 결과 가시화 화면**을 나타내며, 수치들은 이해를 돕기 위한 **가상 설명값(Placeholder Mock-up)**입니다.
+
 ```
 +-----------------------------------------------------------------------------------------------------------------+
-| 메뉴: 파일(F) | 편집(E) | 프로젝트(P) | 해석(A) | 결과(R) | 보기(V) | 도움말(H)                               |
+| 메뉴: 파일(F) | 해석(A) | 결과(R) | 보기(V) | 도움말(H)                                                         |
 +-----------------------------------------------------------------------------------------------------------------+
-| 메인 툴바: [열기] [저장] | [전처리기 열기] | [입력 검사] [솔버 실행 ▶] [실행 취소 ⏹] | [단위: mm, N, MPa (확정)]      |
-+------------------------------------------------------+----------------------------------------------------------+
-| 모듈 탭: [ 1. 모델/트리 ] [ 2. 하중/조건 ] [ 3. 솔버 작업 ] [ ★ 4. 3D 결과 가시화 ]                                |
-+--------------------------+---------------------------+----------------------------------------------------------+
+| 메인 툴바: [열기] [저장] | [입력 검사] [솔버 실행 ▶] [취소 ⏹] | [단위: Length=mm, Force=N (입력 선언 확인)]            |
++-----------------------------------------------------------------------------------------------------------------+
+| 모듈 탭: [ 1. 모델 검사 ] [ 2. 하중/구속 확인 ] [ ★ 3. 3D 결과 가시화 ]                                         |
++--------------------------+--------------------------------------------------------------------------------------+
 | [좌측 독: 모델 탐색기]   | [중앙: 3D 그래픽스 뷰포트 (VTK)]                                                      |
-| ├── 📦 부품 (Parts)      | 뷰 제어: [등각] [정면] [평면] [맞춤] | 모드: [요소] [절점] | 표시: [ 실변형 1x | 자동배율 ]  |
-| │   └── 🔹 Beam (C3D10)  |                                                                                          |
-| ├── 🧱 재료 (Materials)  |                                                                                          |
-| │   └── 🏷️ Steel        |                       [ 3D CAE 메시 & Von Mises 응력 컨투어 ]                            |
+| ├── 📦 부품 (Parts)      | 뷰 제어: [등각] [정면] [평면] [맞춤] | 모드: [요소] [절점] | 표시: (o) 실변형 1x  ( ) 자동배율|
+| │   └── 🔹 Part-1 (C3D10)|                                                                                          |
 | ├── 📌 구속 (BCs)        |                                                                                          |
-| │   └── 🔒 Fix-Base      |                                                                                          |
-| ├── ⬇️ 하중 (Loads)      |                                                               [ 컬러 레전드 (범례) ]     |
-| │   └── 🎯 Force-Z(-100N)|                                                               Max: 215.4 MPa (Red)      |
-| └── 📊 해석 결과         |                                                               ...                       |
-|     ├── 📈 변위 (U)      |                                                               Min: 0.00 MPa (Blue)       |
-|     └── 🌈 Von Mises 응력|                                                               [커버리지: 100% 정상]      |
+| │   └── 🔒 Base (DOFs:123)|                     [ 3D 메시 & Von Mises 등가응력 컨투어 렌더링 ]                       |
+| ├── ⬇️ 하중 (Loads)      |                                                                                          |
+| │   └── 🎯 Tip (-100N)   |                                                               [ 컬러 레전드 (범례) ]     |
+| └── 📊 해석 결과         |                                                               Max: {max_val} MPa (Red)   |
+|     ├── 📈 변위 (|U|)    |                                                               ...                        |
+|     └── 🌈 Von Mises 응력|                                                               Min: {min_val} MPa (Blue)  |
+|                          |                                                               [커버리지: 정상 / 미계산 NaN] |
 +--------------------------+--------------------------------------------------------------------------------------+
 | [우측/하단 독: 컨텍스트 패널 및 작업 모니터]                                                                    |
-| [ 모델/조건 속성 ]                     [ 실행 로그 및 수렴 그래프 ]            [ 데이터 정합성 검증 ]            |
-| 파트명: Beam_C3D10                     [11:20:01] CalculiX 2.21 solver start  *BOUNDARY DOFs: 1, 2, 3 (OK)       |
-| 요소수: 142 (C3D10)                    [11:20:02] Factorization completed     *CLOAD Total: -100.0 N (OK)        |
-| 절점수: 325                            [11:20:02] Solution converged in 1 iter 단위계: Length=mm, Force=N        |
-| [전용 프로그램에서 편집] (CourantPrep)  결과 상태: 정상 완주 (Pass)             유도 응력 단위: MPa (정합성 확인)   |
+| [ 선택 객체 정보 ]                     [ 솔버 실행 로그 ]                      [ 정합성 검증 상태 ]              |
+| 파트: Part-1 (C3D10)                   [로그] ccx -i c3d10_beam ...            *BOUNDARY DOFs: 1, 2, 3 (확인)     |
+| [전용 프로그램에서 편집] (CourantPrep)  [로그] Convergence achieved             *CLOAD Total: -100.0 N (확인)      |
+| 상태: STALE (원본 덱 수정 감지됨)      결과: 정상 완주 (Pass)                  유도 응력 단위: MPa (선언 일치)    |
 +-----------------------------------------------------------------------------------------------------------------+
-| 상태표시줄: 준비 완료 | 활성 문서: beam_study.caeproj | 솔버: CalculiX Spooles | 상태: 최신 결과 (Up-to-date)    |
+| 상태표시줄: 준비 완료 | 활성 프로젝트: beam_study.caelab | 솔버: CalculiX 2.21 | 결과 상태: STALE (재실행 필요)   |
 +-----------------------------------------------------------------------------------------------------------------+
 ```
 
-### 4.2 Windows 환경 및 고DPI 대응 규격
+### 4.2 Windows 환경 및 고DPI / 폰트 / IME 대응 규격
 1. **DPI Scaling**:
-   ```python
-   os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-   QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
-       Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-   )
-   ```
-2. **글꼴 위계**: 하드코딩 픽셀을 배제하고 Windows 시스템 폰트(Segoe UI / 맑은 고딕) 기반 `pt` 단위 적용.
-3. **한국어 IME 입력 보호**: 포커스 이동 시 조합 중 텍스트 유실 방지 이벤트 필터 적용.
+   - 하드코딩된 환경변수 상시 강제를 지양하고, [Qt 6.8 공식 가이드](https://doc.qt.io/qt-6/highdpi.html)에 따라 `QGuiApplication`의 기본 DPI 스케일링 정책(`PassThrough`)을 활용하며, 혼합 DPI 다중 모니터 이동 시 창 크기/폰트 왜곡 방지.
+2. **글꼴 위계**: Windows 시스템 폰트(Segoe UI / 맑은 고딕) 기반의 상대적 `pt` 포인트 크기 적용.
+3. **한국어 IME 입력 보호**: `QInputMethodEvent`의 preedit(조합 중 텍스트) 상태에서 Tab, Enter, 포커스 이동, Undo/Redo 시 글자가 유실되거나 중복 입력되지 않도록 `collections.py`의 IME 보호 처리 계승.
 
 ---
 
-## 5. 수용 기준 (Acceptance Criteria)
+## 5. 관측 가능한 수용 기준 (Acceptance Criteria)
 
-1. **[AC-1: 단일 책임 및 왕복 무결성]**:
-   - `MainWindow`에서 [전용 프로그램에서 편집] 클릭 시 `Workbench.open_program`을 통해 지정된 외부 프로그램이 실행되어야 한다.
-   - 외부 프로그램에서 파일을 수정 후 저장하면, Workbench는 원본 변경을 감지하여 기존 해석 결과를 즉시 `STALE`로 전이시키고 재계산을 요구해야 한다.
-2. **[AC-2: 솔리드 구속 자유도 엄밀성]**:
-   - C3D10 3차원 솔리드 모델에 대해 회전 자유도(4, 5, 6)를 구속하거나 하중을 부여하는 오류를 원천 차단하고, 병진 자유도(1, 2, 3)만을 취급해야 한다.
+1. **[AC-1: 전처리기 연동 및 Stale 전파 라이프사이클]**:
+   - `MainWindow`에서 [전용 프로그램에서 편집] 클릭 시 `Workbench.open_program(project, node_id)`이 호출되어 등록된 외부 프로그램이 비동기 실행되어야 한다.
+   - 외부 프로그램에서 파일을 수정한 후 Workbench로 복귀 시, 파일의 `mtime`/해시 변경을 감지하여 기존 결과 배지가 즉시 `STALE`로 전이되고 자동 실행 없이 대기해야 한다.
+2. **[AC-2: 솔리드 요소 구속 자유도 엄밀성]**:
+   - C3D10 솔리드 모델에 대해 회전 자유도(4, 5, 6)를 구속하거나 하중을 부여하는 오류를 fail-closed로 차단하고, 병진 자유도(1, 2, 3)만을 허용해야 한다.
 3. **[AC-3: 3D 컨투어 데이터 계약 준수]**:
-   - CalculiX 계산 결과의 Von Mises 응력을 뷰포트에 표시할 때, 원본 데이터 위치(적분점 vs 절점 외삽)와 확인된 단위(MPa/Pa)를 반드시 함께 표기해야 한다.
-   - 단위가 불분명한 경우 단위를 임의 표기하지 않고 경고를 출력해야 하며, 미계산 요소는 `NaN` 마스킹으로 회색 렌더링되어야 한다.
+   - 뷰포트에 Von Mises 응력을 표시할 때 데이터 위치(적분점 vs 절점 외삽)와 확정된 단위(MPa/Pa)를 반드시 함께 표기해야 한다.
+   - 단위가 선언되지 않은 경우 단위를 임의 표기하지 않고 `[단위 미선언]` 경고를 출력해야 하며, 미계산 요소는 `NaN` 마스킹으로 회색 렌더링되어야 한다.
 4. **[AC-4: 변형 배율 수식 정합성]**:
-   - 뷰포트의 변형 형상은 $\mathbf{x}_{\text{display}} = \mathbf{x}_{\text{orig}} + S \cdot \mathbf{u}$를 정확히 따라야 하며, $S=1.0$(실변형)과 $S=S_{\text{auto}}$(자동 배율)이 명확히 구별되어야 한다.
-5. **[AC-5: 문서 및 코드 동기화]**:
+   - 뷰포트의 변형 형상은 $\mathbf{x}_{\text{display}} = \mathbf{x}_{\text{orig}} + S \cdot \mathbf{u}$를 정확히 따라야 하며, $S=1.0$(실변형)과 $S=S_{\text{auto}}$(자동 배율)이 명시적 라디오 버튼으로 분리되어야 한다.
+5. **[AC-5: Prep 대표 과업 (G1) 무손실 왕복]**:
+   - `caelab-prep`에서 재료/단면 각 2개 생성 $\rightarrow$ 파트 할당 $\rightarrow$ 다른 파트 불변 확인 $\rightarrow$ invalid 입력 시 Escape 취소 $\rightarrow$ Undo/Redo $\rightarrow$ `.caeprep` 저장 $\rightarrow$ 새 프로세스 재열기 전 과정에서 데이터 손실이 없어야 한다.
+6. **[AC-6: 문서 및 정적 검사 통과]**:
    - `scripts/check_doc_sync.py --mode pre-commit`을 100% 통과해야 한다.
+
+---
+
+## 6. 개발 WBS 및 단계별 협업 계획
+
+| WBS ID | 세부 과업 내용 | 담당 세션 | 선행 조건 | 완료 산출물 및 수용 조건 |
+|---|---|---|---|---|
+| **WBS-1** | **PR #78 정본 명세 2차 개정 반영** | Gemini | PR78-WB1~6 / PREP78-R1~7 피드백 | 본 문서 PR 승인 및 main 병합 |
+| **WBS-2** | **PR #77 C3D10 계약 보강 최종 승인** | Codex / Gemini | 커밋 `042e077` CI 통과 | PR #77 Squash Merge 및 main 동기화 |
+| **WBS-3** | **Workbench 3D 응력 컨투어 내장 가시화** | Gemini | WBS-1, WBS-2 | CalculiX 결과 뷰포트 렌더링, AC-3, AC-4 충족 |
+| **WBS-4** | **전문가 대화창 비동기 이벤트 격리 (Issue #45)** | 젠클스 | 기준 SHA `09d2b56` | 첨부 파일 검증 백그라운드 Worker 분리 및 PR 개설 |
+| **WBS-5** | **Prep 고급 스윕 파라미터 확장 (Phase 3.7)** | Codex | 기존 PR34/62/63 | 양단 바이어스 및 다중 패치 스윕 백엔드/UI 확장 |
