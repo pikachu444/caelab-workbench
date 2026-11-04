@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QDialog,
     QDockWidget,
     QDoubleSpinBox,
@@ -215,13 +216,32 @@ class MainWindow(QMainWindow):
         fit_btn = QPushButton("화면 맞춤")
         fit_btn.clicked.connect(lambda: self.viewport.fit())
         view_bar.addWidget(fit_btn)
-        view_bar.addWidget(QLabel("변형 배율"))
+
+        view_bar.addWidget(QLabel("표시 필드"))
+        self.field_combo = QComboBox()
+        self.field_combo.addItem("변위 (크기)", "U_mag")
+        self.field_combo.addItem("변위 X (Ux)", "U_x")
+        self.field_combo.addItem("변위 Y (Uy)", "U_y")
+        self.field_combo.addItem("변위 Z (Uz)", "U_z")
+        self.field_combo.addItem("Von Mises 응력", "von_mises")
+        self.field_combo.currentIndexChanged.connect(self._on_display_setting_changed)
+        view_bar.addWidget(self.field_combo)
+
+        view_bar.addWidget(QLabel("배율 모드"))
+        self.scale_mode_combo = QComboBox()
+        self.scale_mode_combo.addItem("자동 배율", "auto")
+        self.scale_mode_combo.addItem("실변형 (1x)", "real")
+        self.scale_mode_combo.currentIndexChanged.connect(self._on_display_setting_changed)
+        view_bar.addWidget(self.scale_mode_combo)
+
+        view_bar.addWidget(QLabel("배율 계수"))
         self.scale_spin = QDoubleSpinBox()
         self.scale_spin.setRange(0.1, 100.0)
         self.scale_spin.setValue(1.0)
         self.scale_spin.setDecimals(1)
-        self.scale_spin.valueChanged.connect(self._rescale)
+        self.scale_spin.valueChanged.connect(self._on_display_setting_changed)
         view_bar.addWidget(self.scale_spin)
+
         view_bar.addStretch(1)
         self.legend_label = QLabel("")
         self.legend_label.setObjectName("panelHint")
@@ -769,12 +789,12 @@ class MainWindow(QMainWindow):
             summary = (f'계산 완료 — 최대 변위 {fmt_length(result.max_displacement, result.units.get("length"))}, '
                        f'반력 합 Fy {fmt_force(result.reaction_totals.get("fy"), result.units.get("force"))} '
                        f'({result.verification})')
-            self.viewport.show_results(model, result)
-            unit = result.units.get("length")
-            if not model.mesh.nodes or not model.mesh.nodes.keys() <= result.displacements.keys():
-                self.legend_label.setText("변위 필드 누락 — 변형 미표시")
-            else:
-                self.legend_label.setText(f"색상 범례: 변위 ({'mm' if unit == 'm' else unit or '단위 미확인'})")
+            self._displayed_model = model
+            field = self.field_combo.currentData() or "U_mag"
+            scale_mode = self.scale_mode_combo.currentData() or "auto"
+            factor = self.scale_spin.value()
+            self.viewport.show_results(model, result, field_name=field, scale_mode=scale_mode, scale_factor=factor)
+            self._update_legend_label(model, result)
             self._set_flow(3)
         else:
             self._set_flow(2)
@@ -850,7 +870,43 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _rescale(self) -> None:
-        self.viewport.rescale(self.scale_spin.value())
+        self._on_display_setting_changed()
+
+    def _on_display_setting_changed(self) -> None:
+        if not hasattr(self, "field_combo") or not hasattr(self, "scale_mode_combo"):
+            return
+        field = self.field_combo.currentData() or "U_mag"
+        mode = self.scale_mode_combo.currentData() or "auto"
+        factor = self.scale_spin.value()
+        self.viewport.update_display(field_name=field, scale_mode=mode, scale_factor=factor)
+        model = getattr(self, "_displayed_model", self.model)
+        result = getattr(self, "_last_result", None)
+        if model is not None and result is not None:
+            self._update_legend_label(model, result)
+
+    def _update_legend_label(self, model: StructuralModel, result: ResultSet) -> None:
+        field = self.field_combo.currentData() or "U_mag"
+        if not model.mesh.nodes or not model.mesh.nodes.keys() <= result.displacements.keys():
+            self.legend_label.setText("변위 필드 누락 — 변형 미표시")
+            return
+        unit = result.units.get("length")
+        length_unit = "mm" if unit == "m" else (unit or "mm")
+
+        if field == "von_mises":
+            from apps.workbench_qt.viewport import deduce_stress_unit
+            s_unit = deduce_stress_unit(result.units)
+            if s_unit is None:
+                self.legend_label.setText("색상 범례: Von Mises 응력 — [단위 미선언: 파생 응력 보류]")
+            else:
+                self.legend_label.setText(f"색상 범례: Von Mises 응력 ({s_unit}) [절점 외삽]")
+        elif field == "U_x":
+            self.legend_label.setText(f"색상 범례: 변위 X ({length_unit}) [절점]")
+        elif field == "U_y":
+            self.legend_label.setText(f"색상 범례: 변위 Y ({length_unit}) [절점]")
+        elif field == "U_z":
+            self.legend_label.setText(f"색상 범례: 변위 Z ({length_unit}) [절점]")
+        else:
+            self.legend_label.setText(f"색상 범례: 변위 크기 ({length_unit}) [절점]")
 
     def show_diagnostics(self) -> None:
         dlg = QDialog(self)
