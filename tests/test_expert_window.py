@@ -953,4 +953,3 @@ def test_background_asset_verification_completes_when_draft_saved_during_verific
     assert ui._asset_mailbox.empty()
     assert ui._asset_issues == []
     assert not ui.asset_warning.isVisible()
-
