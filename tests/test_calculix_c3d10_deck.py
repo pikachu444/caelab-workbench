@@ -694,9 +694,11 @@ def test_reject_deck_model_physics_discrepancies(tmp_path: Path, minimal_c3d10_m
         loaded_nodes=[3, 4],
         load_vector=(0.0, 0.0, -100.0),
     )
-    model_dup_conflict.bcs.append(BoundaryCondition(name="dup_bc_1", target_set="FIXED_NODES", fixed_dofs=[1], values={1: 1.0}))
+    # Set the existing base BC's DOF 1 value to 1.0
+    model_dup_conflict.bcs[0].values = {1: 1.0, 2: 0.0, 3: 0.0}
+    # Append the duplicate BC with value 1.0000000005 on DOF 1
     model_dup_conflict.bcs.append(BoundaryCondition(name="dup_bc_2", target_set="FIXED_NODES", fixed_dofs=[1], values={1: 1.0000000005}))
-    with pytest.raises(MshC3D10Error, match=r"Model defines conflicting boundary conditions for node .* DOF 1"):
+    with pytest.raises(MshC3D10Error, match=r"Model defines conflicting boundary conditions for node .* DOF 1: 1.0 vs 1.0000000005"):
         run_c3d10_simulation(tmp_path, model_dup_conflict, d_normal)
 
 
