@@ -73,3 +73,13 @@ def test_solver_gate_import_and_dispatch_do_not_import_qt(monkeypatch):
             "C:/한글 실행/solver.log"]
     assert entry.main(["--caelab-solver-gate", *args]) == 125
     assert calls == [args]
+
+
+def test_diagnostics_dispatch_has_one_fixed_target_and_keeps_other_arguments(monkeypatch):
+    entry = importlib.import_module('apps.workbench_qt.desktop_entry')
+    calls = []
+    monkeypatch.setattr(entry, 'import_module', lambda name: SimpleNamespace(
+        main=lambda args: calls.append((name, args)) or 1))
+    args = ['--output', 'C:/new-diagnostic']
+    assert entry.main(['--caelab-diagnostics', *args]) == 1
+    assert calls == [('apps.workbench_qt.bundle_diagnostics', args)]
