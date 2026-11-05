@@ -1,6 +1,6 @@
 # 현재 상태
 
-문서 기준은 main `549b2adb2c547adf01ded19ed1ed20f7fd007431`입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
+문서 기준은 main `3c18ea100c6ab301e90f836d209cffcfda1af338`와 아래 CAD GUI 통합 후보 `f5652c7984c39143e1c9a735ff2743e23e07d4a3`입니다. CAD 후보의 문서 합성 시점에는 새 최종 QA·CI·병합이 미완료입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## 구현 범위
 
@@ -96,6 +96,7 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 
 | 항목 | 확인된 상태·다음 판정 |
 |---|---|
+| 선택 geometry의 CAD·편집 문서 연결 | 모듈과 실제 `ProjectWindow` 소비자를 결합한 소스 후보를 인수했습니다. FreeCAD/SolidCraft/CADCraft 선택, `document` 등록·문서 우선 열기·누락 문서 재지정과 기존 FreeCAD input-only 경로를 연결합니다. CADCraft의 교환 출력은 DXF/SVG로 구분합니다. [사용·소유 경계](docs/tutorials/cad-file-handoff.md#cad-연결-편집-모듈과-소비자-경계)와 [후보의 검사 범위](#cad-gui-integration-candidate)를 따르며, 최종 원 QA·필수 CI·병합 및 실제 CAD/Windows 검수를 완료로 표시하지 않습니다. |
 | 전문가 오류 안내 분류 | [PR65](https://github.com/pikachu444/caelab-workbench/pull/65)에서 `user_error()`의 개정 충돌·문서 잠금·무결성·파일 누락을 예외 타입 및 정밀 어휘로 우선 분류하여 '없' 오분류를 교정했습니다 (#48). main에 병합 완료되었습니다. |
 | 설치 매니페스트 예외 처리 | [PR64](https://github.com/pikachu444/caelab-workbench/pull/64)에서 매니페스트 누락·파손·구조 결함 시 전체 상태 조회가 중단되지 않고 안전하게 연결 불가로 진단하도록 교정했습니다 (#50). main에 병합 완료되었습니다. |
 | 전문가 대화 시간 예산·단계 표시 | [PR73](https://github.com/pikachu444/caelab-workbench/pull/73)은 main `009d96211c496ced3269763da82975cce642a1f9`에 병합됐습니다 (#46). 준비 20초(정책 기본값)·공급자 응답 60초·전체 관리 대기 85초를 분리하며, 원 독립 QA의 기존 8반례에서 늦은 응답·취소·전환 경계를 확인했습니다. 후속 GUI 후보는 현재 요청의 준비/응답 단계를 표시하고 취소·완료·이전 요청의 늦은 알림을 무시합니다. 관련 Qt offscreen 32검사가 통과했습니다. 후속 PR의 재검토·CI 결과는 해당 PR을 따르며, 실제 공급자·OS 실화면 검증과 전체 제품 완료로 확대하지 않습니다. |
@@ -109,6 +110,68 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 | 보조 StructuralModel 창 | [PR67](https://github.com/pikachu444/caelab-workbench/pull/67)의 #44 단위 표시 교정은 main에 통합됐습니다. 정확한 `si`만 SI 환산·기호를 적용하고 다른 선언·미선언은 원값과 단위 미확인 안내를 유지합니다. 계산 비동기화·소유 취소와 영구 실행 이력은 [PR71](https://github.com/pikachu444/caelab-workbench/pull/71)의 범위이며 위 설명과 해당 PR의 상태를 따릅니다. Windows 실화면·본선 실행의 완료로 확대하지 않습니다. |
 | Windows 설치형 준비·컴파일·현재 PC 부분 관측 | [PR89](https://github.com/pikachu444/caelab-workbench/pull/89)의 준비 도구·Inno 템플릿은 main `549b2adb`에 통합됐습니다. 기존 prepare-only와 2026-11-05 실제 compile 1회 exit 0은 별도 기록입니다. 앱 source `b8266199`·installer 코드 `a1ccf8b`로 생성한 EXE는 257,711,146 bytes이며 컴파일 당시 manifest 상태 `compiled_not_installed`, 정확한 SHA256·입력 연결과 같은 원 QA의 산출물 읽기 인수 범위는 [컴파일 관측](docs/tutorials/windows-installer.md#2026-11-05-실제-컴파일-관측)에 기록합니다. 설치 registry/console 7.1.1과 PE resource 0.0.0.0, unsigned EXE·로그 경고를 보존합니다. 추가 승인된 현재 개발 PC 시험에서 설치 로그·HKCU 등록·시작 메뉴 2링크를 확인했고 직접 설치 exit code는 미회수(null)입니다. 새 설치 payload 6,946파일/1,069,940,374 bytes의 목록·크기·SHA256은 compiled inventory와 전부 일치했습니다. 시작 메뉴 링크의 target·작업 폴더를 대조했고 실제 시험은 같은 경로의 직접 실행입니다. 설치 앱 live/responding·초기 Qt 접근성 트리까지 관측했으나 black capture와 첫 Save 입력의 활성화 실패로 저장·정상 닫기·재열기·실화면은 미확인입니다. 같은 QA는 1차 설치·직접 실행 증거만 수용했습니다. 별도 새 프로세스의 공식 Raise 1회도 같은 활성화 오류로 실패했으며 후속 QA 해석은 미회수입니다. 각 빈 시험 프로세스의 강제 정리 4294967295와 모니터 종료를 정상 닫기/crash로 세지 않습니다. 설치 앱·원 사용자 자료/설정은 보존했고 비지원 입력 주입·보안 우회·합성 저장은 하지 않았습니다. [현재 PC 관측](docs/tutorials/windows-installer.md#2026-11-05-현재-pc-부분-관측)은 환경 입력/관측 차단과 제품 결함 미확정을 구분합니다. 제거·업그레이드는 미승인·미실시이며 clean Windows·WMI 차단 경계·Qt/VTK 품질·솔버·rollback·전체 E2E 검수는 남습니다. 전체 설치형 납품은 미완료이고 2026-11-08 18:00 KST는 조건부 목표입니다. |
 | 미구현 실행 환경 | WSL 파일/작업 연결, 일부 솔버별 전처리·결과 판독은 [플랫폼 계약](ARCHITECTURE.md#플랫폼별-실행-전제)에 명시 |
+
+<a id="cad-gui-integration-candidate"></a>
+
+## CAD GUI 통합 후보 — 2026-11-05
+
+통합 후보 `f5652c7984c39143e1c9a735ff2743e23e07d4a3`는 기존 G 소비자
+`6cdead6`와 모듈 `6bf1fbb`의 결합 `465073c896c69fc2ed62488866cf61c316bc4a3f`를
+계승합니다. 선택 geometry의 편집기와 기본 문서 등록 경로 모두 프로젝트·선택
+노드·프로그램 문맥을 확인하며, 파일 선택 중 문맥이 바뀌거나 취소되면 등록·실행하지
+않습니다. backend가 변경 후 실패하면 실제 모델을 다시 표시하고 남은/불확실한
+변경과 기존 dirty를 보존합니다. 부모 상자에는 소유 문서·변경/누락 상태를 표시하되
+실행/실패 상태를 파일 경고로 덮지 않습니다. 공통 core/schema·설정·의존성 변경은 없습니다.
+runtime와 CAD 가이드는 `570dd26` 및 이전 결합 `2f6b805`와 동일하며,
+이번 복구 변경은 `tests/test_native_project_gui.py`의 창 정리 절차에 한정합니다.
+등록 후 지속 읽기 실패로 새 참조가 남으면 해당 경로의 이전 캐시를 무효화하고,
+실제 문서 경로·확인 불가·dirty와 원 오류 안내를 유지하도록 보완했습니다. 실패한
+읽기는 캐시하지 않으며 같은 metadata로 접근이 복구돼도 다시 확인합니다.
+
+작성자는 runtime 수정 `570dd26`에서 Python 3.13.5·Qt offscreen으로 CAD·지속 읽기 실패·
+정상 캐시 관련 **31건**의 실패·오류·skip 0, exit 0과 외부 audit 이벤트 0을 보고했습니다.
+이전 `54d6481`의 CAD **27건**과 input-only·누락 파일 기본 버튼·연결 저장/Save As
+호환성 **8건**은 각각의 당시 실행이며 31건에 합산하거나 현재 코드 전체 검사로 바꾸지 않습니다.
+실제 Workbench·프로젝트 저장 및 다른 `ProjectWindow` 인스턴스 재열기를 사용하되
+jobs 실행 경계는 기록 대역으로 두고, 호스트 프로그램 availability는 검사 fixture로
+고정했습니다. 이는 실제 CAD 실행·export·OS 화면 검수가 아닙니다. 수정 전 중간
+22건을 최종 결과에 합산하지 않습니다.
+
+같은 원 QA는 이전 문서 후보 `65ebe7d`를 지속 읽기 실패의 실제 오류 안내 차단과
+Ubuntu에서 Windows argv를 검사하는 fixture 전제 두 P2로 인도 보류했습니다.
+후자는 소스 반례이며 실제 Ubuntu 실행 실패와 구분합니다. 그 외 지적의 명시 종결과
+별도 공존 그래프·새 창 probe 1건 통과도 두 P2의 종결은 아닙니다. 이번 수정은 Windows
+host 모델을 해당 flow에 명시하고, document-only 첫 열기 뒤 서로 다른 input/document/output·
+연결·단위·stale의 저장/새 창 복원과 문서 우선 열기를 같은 영구 검사에 보완했습니다.
+지속 읽기 실패는 신규 경로·동일 경로 ready 캐시·누락 문서 기본 등록 경로에서 확인하고,
+metadata 불변 복구를 포함했습니다. 같은 원 비판자는 결합 `2f6b805`에서 두 P2를
+각각 종결하고 새 P1/P2가 없다고 판정했습니다. 독립 delta 8건/skip 0과 지속 읽기
+probe의 경고 1·Qt 미처리 예외 0·실제 경로/dirty 보존을 확인했으며 다른 실행과 합산하지 않습니다.
+
+이후 `2f6b805`의 [CI41944510227](https://github.com/pikachu444/caelab-workbench/actions/runs/41944510227)에서
+Product Python 3.11은 1488 passed/46 skipped, 실제 CalculiX·OpenCourant 작업은
+성공했습니다. Product Python 3.12는 전체 회귀 79% 이후 job 15분 제한으로 취소됐고
+최종 pytest 요약은 없습니다. 이를 CI 통과나 특정 제품 assertion 실패로 표시하지 않습니다.
+두 환경의 Qt·SciPy 버전도 달라 timeout의 전체 원인은 미확정입니다.
+
+기존 WB·원 QA의 격리 4검사 baseline/비교에서는 닫힌 소유 Qt 창의 잔존을 관측했고,
+대상별 삭제 완료 시 7개에서 0개가 됐습니다. 단일 Windows 관측 pair를 일반 개선율이나
+Linux CI 복구로 확대하지 않습니다. 이번 테스트 수정은 정상 닫기 수락 뒤 소유 대상에만
+DeferredDelete를 완료하며, 이미 삭제된 Qt wrapper를 다시 읽지 않도록 Workbench 참조를
+먼저 보관합니다. global 삭제·GC·제품 탐색·workflow·timeout·skip은 바꾸지 않았습니다.
+작성자는 수정된 native GUI 모듈을 Python 3.13.5·Qt 6.9.1 offscreen·격리 INI로 한 번
+실행해 **136 passed, 0 failed/error/skipped**, exit 0·외부 audit 이벤트 0을 보고했습니다.
+실제 프로그램 탐색과 기존 검증·params를 유지한 이 로컬 결과를 이전 실행에 합산하거나
+새 Linux 전체 CI 결과로 바꾸지 않습니다. 이 문서가 포함된 새 최종 head의 원 QA 확인과
+필수 CI는 아직 미완료입니다.
+
+[Draft PR93](https://github.com/pikachu444/caelab-workbench/pull/93)의 원 QA 모듈
+17건과 [CI 4작업 성공](https://github.com/pikachu444/caelab-workbench/actions/runs/41882182590)은
+모듈 `6bf1fbb`의 기존 증거입니다. 소비자·이 현황 문서를 포함한 최종 결합 head의
+원 QA 재검토나 CI로 바꿔 표시하지 않습니다. 문서 합성 시점에 그 최종 검토·필수 CI와
+전체 제품 회귀는 미완료이며, 같은 원 QA의 수용 비판 종결과 정확한 후보 검증 뒤
+지정 통합 담당의 정상 병합·새 clone 확인을 거칩니다. 기존 frozen r2에는 이 CAD GUI
+코드가 없고, 실제 CAD·Windows 실화면·전체 CAD→해석 과업의 인수는 남아 있습니다.
 
 ## 검사 결과의 범위
 
