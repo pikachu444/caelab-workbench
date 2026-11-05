@@ -25,6 +25,7 @@ analysis = Analysis(
     hiddenimports=[
         "apps.workbench_qt.__main__",
         "apps.workbench_qt.native_analysis",
+        "apps.workbench_qt.bundle_diagnostics",
         "apps.workbench_qt.expert_window",
         "apps.workbench_qt.mdo_studio.__main__",
         "caelab.native.windows_gate",
