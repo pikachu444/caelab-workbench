@@ -1084,21 +1084,26 @@ def test_generic_stale_file_does_not_invent_a_model_change_or_calculated_result(
 
 
 @pytest.mark.parametrize('state', ['running', 'failed'])
-def test_file_warnings_do_not_replace_execution_or_failure_status(window, tmp_path, state):
+@pytest.mark.parametrize('role', ['input', 'document'])
+def test_file_warnings_do_not_replace_execution_or_failure_status(cad_window, tmp_path, state, role):
     from apps.workbench_qt.project_window import STATE_LABELS
+    window = cad_window
     box = window.add_box('geometry')
-    window.register_file(box.node_id, _file(tmp_path, 'source.FCStd'))
+    window.register_file(box.node_id, _file(tmp_path, 'source.FCStd'), role)
     window.register_file(box.node_id, _file(tmp_path, 'output.inp'), 'output')
     node = window.project.nodes[box.node_id]
     node.state, node.reason = state, '[Errno 13] Permission denied: private source'
-    node.files['input'].stale = True
+    node.files[role].stale = True
     window._reflect_node(node.id)
     window._selection_changed()
     assert box.state == state
     assert (box.status_label or STATE_LABELS[box.state]) == {'running': '실행 중', 'failed': '실패'}[state]
-    assert window.input_summary.text() == '입력 파일 갱신 필요'
+    if role == 'input':
+        assert window.input_summary.text() == '입력 파일 갱신 필요'
+    else:
+        assert window.cad_editor.document_status.text() == '갱신 확인 필요'
     # A ready output likewise must not clear another important node state.
-    node.files['input'].stale = False
+    node.files[role].stale = False
     window._reflect_node(node.id)
     assert box.state == state and not box.status_label
 
@@ -1662,7 +1667,27 @@ def test_analysis_exec_metrics_card_handles_stale_and_missing_finished_at(themed
     assert window.exec_metrics_title.text() == window.exec_metrics_body.text() == ""
 
 
-def test_cad_connection_editor_integration_flow(window, tmp_path, monkeypatch):
+@pytest.fixture
+def cad_window(app, monkeypatch):
+    from caelab.connections import PROGRAMS, ProgramStatus
+    from caelab.workbench import Workbench
+    monkeypatch.setattr(Workbench, 'programs', lambda self: [
+        ProgramStatus(spec, reason='설정한 실행 파일이 없습니다.') for spec in PROGRAMS])
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: QMessageBox.Ok)
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Cancel)
+    monkeypatch.setattr(subprocess, 'Popen', lambda *args, **kwargs: pytest.fail('unexpected launch'))
+    monkeypatch.setattr(urllib.request, 'urlopen', lambda *args, **kwargs: pytest.fail('unexpected network'))
+    instance = ProjectWindow()
+    yield instance
+    instance._dirty = False
+    instance.close()
+    assert instance.workbench.close()
+
+
+@pytest.mark.parametrize('program_id,suffix', [('freecad', '.FCStd'), ('solidcraft', '.sc'), ('cadcraft', '.dxf')])
+def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatch, program_id, suffix):
+    from caelab.connections import PROGRAMS, ProgramStatus
+    window = cad_window
     geom_box = window.add_box("geometry")
     node_id = geom_box.node_id
 
@@ -1682,17 +1707,24 @@ def test_cad_connection_editor_integration_flow(window, tmp_path, monkeypatch):
     window._selection_changed()
     assert window._cad_context_epoch == initial_epoch
 
-    # 3. Change program to solidcraft via editor
+    # 3. Change the actual model via the editor's immediate consumer.
     window.cad_editor.program_choice.setCurrentIndex(
-        window.cad_editor.program_choice.findData("solidcraft")
+        window.cad_editor.program_choice.findData(program_id)
     )
-    assert window.project.nodes[node_id].program_id == "solidcraft"
-    assert window.cad_editor.program_choice.currentData() == "solidcraft"
-    assert window._cad_context_epoch > initial_epoch
+    assert window.project.nodes[node_id].program_id == program_id
+    assert window.cad_editor.program_choice.currentData() == program_id
+    assert window._cad_context_epoch >= initial_epoch
     assert window._dirty
+    if program_id != 'freecad':
+        assert window.open_button.text() == '편집 문서 등록…'
+        requests = []
+        monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: requests.append(args) or ('', ''))
+        window.open_button.click()
+        assert len(requests) == 1 and suffix in requests[0][3]
+        assert window.project.nodes[node_id].files == {}
 
     # 4. Register document file
-    sc_file = tmp_path / "model.sc"
+    sc_file = tmp_path / ('한글 설계 공백' + suffix)
     sc_file.write_bytes(b"solidcraft test model")
 
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(sc_file), ""))
@@ -1703,17 +1735,20 @@ def test_cad_connection_editor_integration_flow(window, tmp_path, monkeypatch):
     assert node.files["document"].path == str(sc_file.resolve())
     assert window.cad_editor.document_path.text() == str(sc_file.resolve())
     assert window.cad_editor.document_status.text() == "등록됨"
-    assert window.open_button.text() == "SolidCraft 열기"
+    program_name = next(spec.name for spec in PROGRAMS if spec.id == program_id)
+    assert window.open_button.text() == f'{program_name} 열기'
+    assert geom_box.file_label.endswith(sc_file.name) and sc_file.name in geom_box.toolTip()
+    assert geom_box.status_label != '입력 파일 미지정'
     assert not window._needs_file(geom_box)
     assert not window._needs_upstream(geom_box)
 
     # When program is unavailable, open button is disabled
     assert not window.open_button.isEnabled()
 
-    # 5. When program is available, open_button is enabled and click invokes open_program with use_input=False
-    from caelab.connections import PROGRAMS, ProgramStatus
+    # Only the launch boundary is replaced: real Workbench chooses the document.
+    executable = _file(tmp_path, 'CAD 도구.exe', 'not executable; argv inspection only')
     available_statuses = [
-        ProgramStatus(spec, path="configured.exe", reason="")
+        ProgramStatus(spec, path=str(executable), host_os='windows')
         for spec in PROGRAMS
     ]
     monkeypatch.setattr(window.workbench, "programs", lambda: available_statuses)
@@ -1722,41 +1757,59 @@ def test_cad_connection_editor_integration_flow(window, tmp_path, monkeypatch):
 
     calls = []
     record = SimpleNamespace(state="opened", error="")
-    monkeypatch.setattr(
-        window.workbench, "open_program",
-        lambda proj, nid, use_input=False: (calls.append((nid, use_input)), record)[1]
-    )
+    monkeypatch.setattr(window.workbench.jobs, 'launch', lambda request: calls.append(request) or record)
     window.open_button.click()
-    assert calls == [(node_id, False)]
+    assert len(calls) == 1 and calls[0].argv == [str(executable), str(sc_file)]
+    assert calls[0].cwd == tmp_path and calls[0].program_id == program_id
 
     # 6. Save and reload project
     proj_path = tmp_path / "project.json"
     assert window.save_project(proj_path)
 
-    assert window.open_project(proj_path)
-    box_after = list(window.boxes.values())[0]
-    _select(window, box_after)
-    assert not window.cad_editor.isHidden()
-    assert window.cad_editor.program_choice.currentData() == "solidcraft"
-    assert window.cad_editor.document_path.text() == str(sc_file.resolve())
-    assert window.open_button.text() == "SolidCraft 열기"
+    reopened = ProjectWindow()
+    try:
+        monkeypatch.setattr(reopened.workbench, 'programs', lambda: available_statuses)
+        monkeypatch.setattr(reopened.workbench.jobs, 'launch', lambda request: calls.append(request) or record)
+        assert reopened.open_project(proj_path)
+        assert reopened.project is not window.project
+        box_after = reopened.boxes[node_id]
+        _select(reopened, box_after)
+        assert not reopened.cad_editor.isHidden() and not reopened._dirty
+        assert reopened.cad_editor.program_choice.currentData() == program_id
+        assert reopened.cad_editor.document_path.text() == str(sc_file.resolve())
+        assert box_after.file_label.endswith(sc_file.name) and sc_file.name in box_after.toolTip()
+        reopened.open_button.click()
+        assert len(calls) == 2 and calls[-1].argv == [str(executable), str(sc_file)]
+        assert sc_file.read_bytes() == b'solidcraft test model'
 
-    # 7. When document file is missing
-    sc_file.unlink()
-    window.project.refresh()
-    window._selection_changed()
-    assert window._needs_file(box_after)
-    assert window.open_button.text() == "편집 문서 다시 지정…"
-    assert window.cad_editor.document_status.text() == "파일 누락"
+        # Missing-document recovery retains role, including cancellation.
+        sc_file.unlink()
+        reopened.refresh_files()
+        assert reopened._needs_file(box_after)
+        assert reopened.open_button.text() == '편집 문서 다시 지정…'
+        assert reopened.cad_editor.document_status.text() == '파일 누락'
+        assert box_after.status_label == '편집 문서 누락'
+        previous = reopened.project.nodes[node_id].files['document']
+        monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: ('', ''))
+        reopened.open_button.click()
+        assert reopened.project.nodes[node_id].files['document'] is previous and len(calls) == 2
+        replacement = _file(tmp_path, '재지정' + suffix)
+        monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(replacement), ''))
+        reopened.open_button.click()
+        assert set(reopened.project.nodes[node_id].files) == {'document'}
+        assert reopened.project.nodes[node_id].files['document'].path == str(replacement)
+        assert reopened._dirty and len(calls) == 2
+        reopened.scene.clearSelection()
+        assert reopened.cad_editor.isHidden() and not reopened.cad_editor.isEnabled()
+        assert reopened.cad_editor.document_path.text() == ''
+    finally:
+        reopened._dirty = False
+        reopened.close()
+        assert reopened.workbench.close()
 
-    # 8. Deselecting geometry clears editor and hides it
-    window.scene.clearSelection()
-    assert window.cad_editor.isHidden()
-    assert not window.cad_editor.isEnabled()
-    assert window.cad_editor.document_path.text() == ""
 
-
-def test_cadcraft_geometry_open_and_filter(window, tmp_path, monkeypatch):
+def test_cadcraft_geometry_open_and_filter(cad_window, tmp_path, monkeypatch):
+    window = cad_window
     geom_box = window.add_box("geometry")
     node_id = geom_box.node_id
     _select(window, geom_box)
@@ -1774,11 +1827,142 @@ def test_cadcraft_geometry_open_and_filter(window, tmp_path, monkeypatch):
     window.cad_editor.document_button.click()
 
     assert window.open_button.text() == "CADCraft 열기"
+    assert '2D' in window.output_summary.text() and 'STEP' not in window.output_summary.text()
+    requests = []
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: requests.append(args) or ('', ''))
+    window.output_button.click()
+    assert len(requests) == 1
+    assert '*.dxf' in requests[0][3] and '*.svg' in requests[0][3]
+    assert '*.step' not in requests[0][3]
+    window.register_file(node_id, dxf_file, 'output')
+    assert '2D' in window.output_summary.text() and 'STEP' not in window.output_summary.text()
+
+
+@pytest.mark.parametrize('entry', ['editor', 'missing_default'])
+@pytest.mark.parametrize('change', ['project', 'node', 'program', 'clear_return', 'status'])
+def test_cad_picker_checks_actual_window_context(cad_window, tmp_path, monkeypatch, entry, change):
+    window = cad_window
+    first, other = window.add_box('geometry'), window.add_box('geometry')
+    original = _file(tmp_path, '元 문서.FCStd')
+    window.register_file(first.node_id, original, 'document')
+    original.unlink()
+    window.refresh_files()
+    _select(window, first)
+    saved = tmp_path / '같은 노드 ID.json'
+    assert window.save_project(saved)
+    chosen = _file(tmp_path, '새 문서.FCStd')
     calls = []
-    record = SimpleNamespace(state="opened", error="")
-    monkeypatch.setattr(
-        window.workbench, "open_program",
-        lambda proj, nid, use_input=False: (calls.append((nid, use_input)), record)[1]
-    )
-    window.open_selected()
-    assert calls == [(node_id, False)]
+    set_file = window.workbench.set_node_file
+    def register(*args, **kwargs):
+        calls.append((args, kwargs))
+        return set_file(*args, **kwargs)
+    monkeypatch.setattr(window.workbench, 'set_node_file', register)
+    epoch = window._cad_context_epoch
+    def choose(*args):
+        if change == 'project':
+            assert window.open_project(saved, confirm=False)
+            _select(window, window.boxes[first.node_id])
+        elif change == 'node':
+            _select(window, other)
+        elif change == 'program':
+            window.cad_editor.program_choice.setCurrentIndex(window.cad_editor.program_choice.findData('solidcraft'))
+        elif change == 'clear_return':
+            window.scene.clearSelection()
+            _select(window, first)
+        else:
+            window._selection_changed()
+            assert window._cad_context_epoch == epoch
+        return str(chosen), ''
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', choose)
+    (window.cad_editor.document_button if entry == 'editor' else window.open_button).click()
+    assert len(calls) == (1 if change == 'status' else 0)
+    reference = window.project.nodes[first.node_id].files['document']
+    assert reference.path == str(chosen if change == 'status' else original)
+    assert not window.workbench.jobs.launches
+
+
+@pytest.mark.parametrize('change', ['project', 'node', 'program'])
+def test_cad_consumer_rechecks_cached_context_at_signal_boundary(cad_window, tmp_path, change):
+    from copy import deepcopy
+    window = cad_window
+    box, other = window.add_box('geometry'), window.add_box('geometry')
+    _select(window, box)
+    if change == 'project':
+        replacement = window.workbench.new_native_project()
+        replacement.nodes = deepcopy(window.project.nodes)
+        window.project = replacement  # No UI rebind: the consumer must catch this itself.
+    elif change == 'node':
+        _select(window, other)
+    else:
+        window.project.nodes[box.node_id].program_id = 'solidcraft'
+    current = window.project.nodes[box.node_id]
+    program_before = current.program_id
+    window._dirty = False
+    window.cad_editor.document_registration_requested.emit(box.node_id, str(tmp_path / 'must-not-register.FCStd'))
+    window.cad_editor.program_change_requested.emit(box.node_id, 'cadcraft')
+    assert current.files == {} and current.program_id == program_before
+    assert not window._dirty
+
+
+@pytest.mark.parametrize('entry', ['editor', 'missing_default', 'program'])
+@pytest.mark.parametrize('was_dirty', [False, True])
+def test_cad_partial_mutation_error_keeps_dirty_references_and_actual_display(
+        cad_window, tmp_path, monkeypatch, entry, was_dirty):
+    window = cad_window
+    source, cad, downstream = [window.add_box(kind) for kind in ('geometry', 'geometry', 'preprocessor')]
+    input_path = _file(tmp_path, '유지할 입력.FCStd')
+    output_path = _file(tmp_path, '유지할 출력.step')
+    original = _file(tmp_path, '이전 문서.FCStd')
+    chosen = _file(tmp_path, '새 편집 문서.FCStd')
+    window.register_file(source.node_id, input_path, 'output', {'length': 'mm'})
+    window.register_file(cad.node_id, output_path, 'output', {'length': 'mm'})
+    window.register_file(cad.node_id, original, 'document')
+    assert window.connect(source.node_id, cad.node_id)
+    assert window.connect(cad.node_id, downstream.node_id)
+    _select(window, cad)
+    if entry == 'missing_default':
+        original.unlink()
+        window.refresh_files()
+    before_input = window.workbench.input_file(window.project, cad.node_id)
+    before_output = window.project.nodes[cad.node_id].files['output']
+    edges = list(window.project.connections)
+    window._dirty = was_dirty
+    observed_errors = []
+    def warning(*args):
+        observed_errors.append(args[1])
+        assert window._dirty  # Set before entering the nested error dialog.
+        if entry == 'program':
+            assert window.cad_editor.program_choice.currentData() == 'solidcraft'
+        else:
+            assert window.cad_editor.document_path.text() == str(chosen)
+        return QMessageBox.Ok
+    monkeypatch.setattr(QMessageBox, 'warning', warning)
+    if entry == 'program':
+        invalidate = window.project.invalidate
+        def fail_after_invalidation(*args, **kwargs):
+            monkeypatch.setattr(window.project, 'invalidate', invalidate)
+            invalidate(*args, **kwargs)
+            raise OSError('injected after actual program mutation')
+        monkeypatch.setattr(window.project, 'invalidate', fail_after_invalidation)
+        window.cad_editor.program_choice.setCurrentIndex(window.cad_editor.program_choice.findData('solidcraft'))
+    else:
+        refresh = window.project.refresh
+        def fail_after_file_assignment():
+            monkeypatch.setattr(window.project, 'refresh', refresh)
+            raise OSError('injected after actual document assignment')
+        monkeypatch.setattr(window.project, 'refresh', fail_after_file_assignment)
+        monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(chosen), ''))
+        (window.cad_editor.document_button if entry == 'editor' else window.open_button).click()
+    assert len(observed_errors) == 1 and window._dirty
+    node = window.project.nodes[cad.node_id]
+    assert window.workbench.input_file(window.project, cad.node_id) is before_input
+    assert node.files['output'] is before_output and before_output.stale
+    assert window.project.connections == edges
+    assert window.project.nodes[downstream.node_id].state == 'stale'
+    assert input_path.read_text(encoding='utf-8') == output_path.read_text(encoding='utf-8') == 'native file'
+    assert chosen.read_text(encoding='utf-8') == 'native file'
+    if original.exists():
+        assert original.read_text(encoding='utf-8') == 'native file'
+    assert node.program_id == ('solidcraft' if entry == 'program' else 'freecad')
+    assert node.files['document'].path == str(original if entry == 'program' else chosen)
+    assert not window.workbench.jobs.launches
