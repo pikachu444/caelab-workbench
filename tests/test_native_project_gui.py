@@ -10,9 +10,11 @@ from types import SimpleNamespace
 
 import pytest
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog,
                                QLabel, QLineEdit, QMessageBox, QTextEdit, QWidget)
+from shiboken6 import isValid
 
 from apps.workbench_qt.project_window import ProjectWindow
 from apps.workbench_qt.native_analysis import NativeAnalysisWindow
@@ -21,6 +23,15 @@ from apps.workbench_qt.native_analysis import NativeAnalysisWindow
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def _delete_closed_window(instance):
+    if not isValid(instance):
+        return
+    assert not instance.isVisible() and not instance.run_timer.isActive()
+    instance.deleteLater()
+    QCoreApplication.sendPostedEvents(instance, QEvent.DeferredDelete)
+    assert not isValid(instance)
 
 
 @pytest.fixture(autouse=True)
@@ -40,8 +51,10 @@ def window(app, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: pytest.fail("unexpected network"))
     instance = ProjectWindow()
     yield instance
-    instance._dirty = False
-    instance.close()
+    if isValid(instance):
+        instance._dirty = False
+        assert instance.close()
+    _delete_closed_window(instance)
 
 
 def _file(tmp_path, name, content="native file"):
@@ -1521,8 +1534,10 @@ def themed_window(app, monkeypatch, tmp_path):
         yield instance
     finally:
         set_theme_mode("dark")
-        instance._dirty = False
-        instance.close()
+        if isValid(instance):
+            instance._dirty = False
+            assert instance.close()
+        _delete_closed_window(instance)
 
 
 def test_project_window_dark_default_and_light_theme_toggle(themed_window, app, tmp_path):
@@ -1678,10 +1693,13 @@ def cad_window(app, monkeypatch):
     monkeypatch.setattr(subprocess, 'Popen', lambda *args, **kwargs: pytest.fail('unexpected launch'))
     monkeypatch.setattr(urllib.request, 'urlopen', lambda *args, **kwargs: pytest.fail('unexpected network'))
     instance = ProjectWindow()
+    workbench = instance.workbench
     yield instance
-    instance._dirty = False
-    instance.close()
-    assert instance.workbench.close()
+    if isValid(instance):
+        instance._dirty = False
+        assert instance.close()
+    assert workbench.close()
+    _delete_closed_window(instance)
 
 
 @pytest.mark.parametrize('program_id,suffix', [('freecad', '.FCStd'), ('solidcraft', '.sc'), ('cadcraft', '.dxf')])
@@ -1781,6 +1799,7 @@ def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatc
     saved_output = vars(window.project.nodes[node_id].files['output']).copy()
 
     reopened = ProjectWindow()
+    reopened_workbench = reopened.workbench
     try:
         monkeypatch.setattr(reopened.workbench, 'programs', lambda: available_statuses)
         monkeypatch.setattr(reopened.workbench.jobs, 'launch', lambda request: calls.append(request) or record)
@@ -1827,9 +1846,11 @@ def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatc
         assert reopened.cad_editor.isHidden() and not reopened.cad_editor.isEnabled()
         assert reopened.cad_editor.document_path.text() == ''
     finally:
-        reopened._dirty = False
-        reopened.close()
-        assert reopened.workbench.close()
+        if isValid(reopened):
+            reopened._dirty = False
+            assert reopened.close()
+        assert reopened_workbench.close()
+        _delete_closed_window(reopened)
 
 
 def test_cadcraft_geometry_open_and_filter(cad_window, tmp_path, monkeypatch):
