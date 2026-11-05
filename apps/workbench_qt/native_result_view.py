@@ -79,6 +79,7 @@ class _NativeViewport(Viewport):
             array.SetName(scalar_name)
             grid.GetPointData().SetScalars(array)
         self.display_grid = grid
+        self._scalar_bar = None
         if self.available:
             self._renderer.RemoveAllViewProps()
             mapper = vtk.vtkDataSetMapper()
@@ -99,7 +100,7 @@ class _NativeViewport(Viewport):
             actor.SetMapper(mapper)
             actor.GetProperty().EdgeVisibilityOn()
             self._renderer.AddActor(actor)
-            if values is not None:
+            if values is not None and finite_count:
                 legend = vtk.vtkScalarBarActor()
                 legend.SetLookupTable(mapper.GetLookupTable())
                 legend.SetTitle(f'{name} [{component}]')
@@ -222,7 +223,11 @@ class NativeResultView(QWidget):
             return
         selected = self.component.currentData()
         count = self.viewport.show_component(self.native_grid, *(selected or (None, 0)))
-        coverage = f'선택 성분 유한값 {count} / 메시 절점 {self.native_grid.GetNumberOfPoints()}' if selected else '표시할 원 저장 성분 없음'
+        coverage = '표시할 원 저장 성분 없음'
+        if selected:
+            coverage = f'선택 성분 유한값 {count} / 메시 절점 {self.native_grid.GetNumberOfPoints()}'
+            if count == 0:
+                coverage += ' · 유한값 없음'
         self.notice.setText(f'{coverage} · 결측/비유한 값은 회색\n필드 단위·위치 미확인 · 원 좌표, 변형·파생 응력 계산 안 함')
 
     def stop(self):

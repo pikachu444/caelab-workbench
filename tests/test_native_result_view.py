@@ -155,6 +155,28 @@ def test_recorded_hash_does_not_make_a_different_actual_frame_acceptable(app, tm
         dispose(view, app)
 
 
+def test_all_uncovered_values_have_no_visible_numeric_legend(app, tmp_path):
+    run = make_run(tmp_path)
+    text = _geometry() + _field([(999, [7])], name='CUSTOM', components=[('V1', 1, 0, 0, 0)]) + ' 9999\n'
+    (run.workdir / 'model.frd').write_text(text, encoding='ascii')
+    run.result = collect_results(run.workdir)
+    run.parse_state = run.result['status']
+    run.snapshot['artifacts'] = {name: file_revision(run.workdir / name) for name in run.result['exchange_files']}
+    view = NativeResultView(Workbench().read_native_frame)
+    view.viewport.available = True
+    view.viewport._renderer = vtk.vtkRenderer()
+    view.viewport._render = lambda: None
+    try:
+        view.set_selection(run, 0)
+        wait_for(app, lambda: view.frame_data is not None)
+        assert np.isnan(vtk_to_numpy(view.native_grid.GetPointData().GetArray('CUSTOM'))).all()
+        assert view.viewport._scalar_bar is None
+        assert view.viewport._renderer.GetActors2D().GetNumberOfItems() == 0
+        assert '유한값 없음' in view.notice.text()
+    finally:
+        dispose(view, app)
+
+
 def test_slow_old_read_never_replaces_new_selection_or_closed_view(app, tmp_path):
     run = make_run(tmp_path)
     other_root = tmp_path / 'other-run'
@@ -243,3 +265,41 @@ def test_close_during_read_discards_the_late_result(app, tmp_path):
     finally:
         release.set()
         dispose(view, app)
+
+
+def test_explicit_project_reload_retries_a_recovered_single_frame(app, tmp_path, monkeypatch):
+    run = make_run(tmp_path)
+    run.result['frames'] = run.result['frames'][:1]
+    run.result['summary']['frame_index'] = 0
+    wb = Workbench()
+    project = wb.new_native_project('read recovery')
+    node = wb.add_program_node(project, 'analysis', 'calculix')
+    wb.set_node_file(project, node.id, run.input_path, units=run.units, unit_source=run.unit_source)
+    wb.save_native_project(project, tmp_path / 'project.json')
+    run.node_id = node.id
+    store = RunStore(project.run_store)
+    store.write(run)
+    store.select(node.id, run.id)
+    real_read = wb.read_native_frame
+    calls = []
+    blocked = [True]
+    def read(run, frame):
+        calls.append((run.id, frame))
+        if blocked[0]:
+            raise PermissionError('transient read denial')
+        return real_read(run, frame)
+    monkeypatch.setattr(wb, 'read_native_frame', read)
+    window = NativeAnalysisWindow(project.path, node.id, wb)
+    try:
+        wait_for(app, lambda: 'transient read denial' in window.native_view.source.text())
+        blocked[0] = False
+        window.refresh_runs()
+        assert len(calls) == 1
+        window.reload_project()
+        wait_for(app, lambda: window.native_view.frame_data is not None)
+        assert calls == [(run.id, 0), (run.id, 0)]
+        assert window.native_view.frame_data.run_id == run.id
+        window.refresh_runs()
+        assert len(calls) == 2
+    finally:
+        dispose(window, app)

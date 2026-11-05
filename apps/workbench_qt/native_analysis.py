@@ -632,6 +632,7 @@ class NativeAnalysisWindow(QMainWindow):
             self._project_signature = _signature(project.path)
             self._runs.clear()
             self._displayed_run_id = None
+            self.native_view.set_selection(None, None)
             self.refresh_input()
             self.refresh_runs()
         except (OSError, ValueError) as error:
