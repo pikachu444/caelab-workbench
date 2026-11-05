@@ -16,6 +16,8 @@ _MODULES = {
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "--caelab-diagnostics":
+        return import_module("apps.workbench_qt.bundle_diagnostics").main(args[1:])
     if args and args[0] == "--caelab-solver-gate":
         return import_module("caelab.native.windows_gate").main(args[1:])
 

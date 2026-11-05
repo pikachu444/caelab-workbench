@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from apps.workbench_qt.native_analysis import NativeAnalysisWindow
 from caelab.workbench import Workbench
+from caelab.native.run_store import NativeRun, utc_now
 
 
 @pytest.fixture(autouse=True)
@@ -67,11 +68,13 @@ def make_run(root, identifier, state, parse_state, result):
     directory.mkdir(exist_ok=True)
     log = directory / "solver.log"
     log.write_text(f"log for {identifier}", encoding="utf-8")
-    return SimpleNamespace(id=identifier, state=state, parse_state=parse_state,
+    return NativeRun(id=identifier, state=state, parse_state=parse_state,
                            result=result, node_id="", created_at="2026-10-24 09:00",
                            input_path=str(root / f"{identifier}.inp"), input_revision="a" * 64,
                            units={"length": "mm"}, workdir=directory, log_path=str(log),
-                           error="", stale=False, stale_reason="", snapshot={})
+                           error="", stale=False, stale_reason="", snapshot={},
+                           unit_source="test declaration",
+                           finished_at=utc_now() if state in {"completed", "failed", "cancelled", "interrupted"} else None)
 
 
 def result(value):
