@@ -1769,13 +1769,18 @@ class ProjectWindow(QMainWindow):
         return True
 
     def _on_cad_document_registration_requested(self, node_id: str, chosen_path: str) -> bool:
-        if not chosen_path or self._cad_request_node(node_id) is None:
+        node = self._cad_request_node(node_id)
+        if not chosen_path or node is None:
             return False
+        previous_document = node.files.get('document')
         failure = None
         try:
             self.workbench.set_node_file(self.project, node_id, chosen_path, role='document')
         except Exception as exc:
             failure = exc
+            retained = node.files.get('document')
+            if isinstance(exc, OSError) and retained is not None and retained is not previous_document:
+                getattr(self, '_file_status_cache', {}).pop(retained.path, None)
         finally:
             self._mark_dirty()
             self._reflect_programs()
@@ -2223,10 +2228,11 @@ class ProjectWindow(QMainWindow):
                 box.status_error = output_status == 'missing'
         if not execution_state and node.kind in {'preprocessor', 'geometry'} and node.files.get('document'):
             document_status = self._file_status(node.files['document'])
-            if document_status in {'stale', 'changed', 'missing'}:
-                box.status_label = {'stale': '편집 문서 갱신 필요', 'changed': '편집 문서 변경됨', 'missing': '편집 문서 누락'}[document_status]
+            if document_status in {'stale', 'changed', 'missing', 'unknown'}:
+                box.status_label = {'stale': '편집 문서 갱신 필요', 'changed': '편집 문서 변경됨',
+                                    'missing': '편집 문서 누락', 'unknown': '편집 문서 확인 불가'}[document_status]
                 box.status_warning = document_status in {'stale', 'changed'}
-                box.status_error = document_status == 'missing'
+                box.status_error = document_status in {'missing', 'unknown'}
         file_label = self._file_tooltip(display_reference.path) if display_reference else "입력 파일 없음"
         box.setToolTip(f"{box.title}\n{box.subtitle}\n{file_label}\n{self._node_note(node, reference)}")
 
@@ -2240,7 +2246,13 @@ class ProjectWindow(QMainWindow):
         key = (reference.path, reference.revision, reference.stale, metadata)
         cache = getattr(self, "_file_status_cache", {})
         if cache.get(reference.path, (None,))[0] != key:
-            cache[reference.path] = (key, reference.status)
+            try:
+                status = reference.status
+            except OSError:
+                # Retry after access recovers, even when file metadata is unchanged.
+                cache.pop(reference.path, None)
+                return 'unknown'
+            cache[reference.path] = (key, status)
             self._file_status_cache = cache
         return cache[reference.path][1]
 
