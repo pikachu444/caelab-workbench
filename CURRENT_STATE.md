@@ -1,6 +1,6 @@
 # 현재 상태
 
-문서 기준은 main `3c18ea100c6ab301e90f836d209cffcfda1af338`와 아래 CAD GUI 코드 후보 `570dd268dc13f69e7269db2d58e2dd17660dce26`입니다. CAD 후보의 문서 합성 시점에는 최종 QA·CI·병합이 미완료입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
+문서 기준은 main `3c18ea100c6ab301e90f836d209cffcfda1af338`와 아래 CAD GUI 통합 후보 `f5652c7984c39143e1c9a735ff2743e23e07d4a3`입니다. CAD 후보의 문서 합성 시점에는 새 최종 QA·CI·병합이 미완료입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## 구현 범위
 
@@ -115,18 +115,20 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 
 ## CAD GUI 통합 후보 — 2026-11-05
 
-코드 후보 `570dd268dc13f69e7269db2d58e2dd17660dce26`는 기존 G 소비자
+통합 후보 `f5652c7984c39143e1c9a735ff2743e23e07d4a3`는 기존 G 소비자
 `6cdead6`와 모듈 `6bf1fbb`의 결합 `465073c896c69fc2ed62488866cf61c316bc4a3f`를
 계승합니다. 선택 geometry의 편집기와 기본 문서 등록 경로 모두 프로젝트·선택
 노드·프로그램 문맥을 확인하며, 파일 선택 중 문맥이 바뀌거나 취소되면 등록·실행하지
 않습니다. backend가 변경 후 실패하면 실제 모델을 다시 표시하고 남은/불확실한
 변경과 기존 dirty를 보존합니다. 부모 상자에는 소유 문서·변경/누락 상태를 표시하되
 실행/실패 상태를 파일 경고로 덮지 않습니다. 공통 core/schema·설정·의존성 변경은 없습니다.
+runtime와 CAD 가이드는 `570dd26` 및 이전 결합 `2f6b805`와 동일하며,
+이번 복구 변경은 `tests/test_native_project_gui.py`의 창 정리 절차에 한정합니다.
 등록 후 지속 읽기 실패로 새 참조가 남으면 해당 경로의 이전 캐시를 무효화하고,
 실제 문서 경로·확인 불가·dirty와 원 오류 안내를 유지하도록 보완했습니다. 실패한
 읽기는 캐시하지 않으며 같은 metadata로 접근이 복구돼도 다시 확인합니다.
 
-작성자는 현재 고정 코드에서 Python 3.13.5·Qt offscreen으로 CAD·지속 읽기 실패·
+작성자는 runtime 수정 `570dd26`에서 Python 3.13.5·Qt offscreen으로 CAD·지속 읽기 실패·
 정상 캐시 관련 **31건**의 실패·오류·skip 0, exit 0과 외부 audit 이벤트 0을 보고했습니다.
 이전 `54d6481`의 CAD **27건**과 input-only·누락 파일 기본 버튼·연결 저장/Save As
 호환성 **8건**은 각각의 당시 실행이며 31건에 합산하거나 현재 코드 전체 검사로 바꾸지 않습니다.
@@ -142,7 +144,26 @@ Ubuntu에서 Windows argv를 검사하는 fixture 전제 두 P2로 인도 보류
 host 모델을 해당 flow에 명시하고, document-only 첫 열기 뒤 서로 다른 input/document/output·
 연결·단위·stale의 저장/새 창 복원과 문서 우선 열기를 같은 영구 검사에 보완했습니다.
 지속 읽기 실패는 신규 경로·동일 경로 ready 캐시·누락 문서 기본 등록 경로에서 확인하고,
-metadata 불변 복구를 포함했습니다. 이 수정에 대한 원 비판자의 새 최종 head 재검토는 아직 미완료입니다.
+metadata 불변 복구를 포함했습니다. 같은 원 비판자는 결합 `2f6b805`에서 두 P2를
+각각 종결하고 새 P1/P2가 없다고 판정했습니다. 독립 delta 8건/skip 0과 지속 읽기
+probe의 경고 1·Qt 미처리 예외 0·실제 경로/dirty 보존을 확인했으며 다른 실행과 합산하지 않습니다.
+
+이후 `2f6b805`의 [CI41944510227](https://github.com/pikachu444/caelab-workbench/actions/runs/41944510227)에서
+Product Python 3.11은 1488 passed/46 skipped, 실제 CalculiX·OpenCourant 작업은
+성공했습니다. Product Python 3.12는 전체 회귀 79% 이후 job 15분 제한으로 취소됐고
+최종 pytest 요약은 없습니다. 이를 CI 통과나 특정 제품 assertion 실패로 표시하지 않습니다.
+두 환경의 Qt·SciPy 버전도 달라 timeout의 전체 원인은 미확정입니다.
+
+기존 WB·원 QA의 격리 4검사 baseline/비교에서는 닫힌 소유 Qt 창의 잔존을 관측했고,
+대상별 삭제 완료 시 7개에서 0개가 됐습니다. 단일 Windows 관측 pair를 일반 개선율이나
+Linux CI 복구로 확대하지 않습니다. 이번 테스트 수정은 정상 닫기 수락 뒤 소유 대상에만
+DeferredDelete를 완료하며, 이미 삭제된 Qt wrapper를 다시 읽지 않도록 Workbench 참조를
+먼저 보관합니다. global 삭제·GC·제품 탐색·workflow·timeout·skip은 바꾸지 않았습니다.
+작성자는 수정된 native GUI 모듈을 Python 3.13.5·Qt 6.9.1 offscreen·격리 INI로 한 번
+실행해 **136 passed, 0 failed/error/skipped**, exit 0·외부 audit 이벤트 0을 보고했습니다.
+실제 프로그램 탐색과 기존 검증·params를 유지한 이 로컬 결과를 이전 실행에 합산하거나
+새 Linux 전체 CI 결과로 바꾸지 않습니다. 이 문서가 포함된 새 최종 head의 원 QA 확인과
+필수 CI는 아직 미완료입니다.
 
 [Draft PR93](https://github.com/pikachu444/caelab-workbench/pull/93)의 원 QA 모듈
 17건과 [CI 4작업 성공](https://github.com/pikachu444/caelab-workbench/actions/runs/41882182590)은
