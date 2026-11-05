@@ -390,6 +390,9 @@ class NativeAnalysisWindow(QMainWindow):
         output_tabs = QTabWidget()
         output_tabs.addTab(log_panel, "로그")
         output_tabs.addTab(result_panel, "결과")
+        from .native_result_view import NativeResultView
+        self.native_view = NativeResultView(self.workbench.read_native_frame)
+        output_tabs.addTab(self.native_view, "선택 프레임 보기")
         run_layout.addWidget(output_tabs)
         split = QSplitter(Qt.Vertical)
         split.addWidget(input_tabs)
@@ -456,6 +459,7 @@ class NativeAnalysisWindow(QMainWindow):
             table.setItem(row, column, QTableWidgetItem(str(value)))
 
     def _clear_result(self):
+        self.native_view.set_selection(None, None)
         self.result_text.clear()
         self.field_table.setRowCount(0)
         self.dat_table.setRowCount(0)
@@ -765,6 +769,7 @@ class NativeAnalysisWindow(QMainWindow):
         if run is None:
             self._clear_result()
             return
+        self.native_view.set_selection(run, self.frame_selector.currentData())
         self.field_table.setRowCount(0)
         self.dat_table.setRowCount(0)
         self._update_unit_badges()
@@ -893,6 +898,7 @@ class NativeAnalysisWindow(QMainWindow):
             event.ignore()
             return
         self.timer.stop()
+        self.native_view.stop()
         event.accept()
 
 

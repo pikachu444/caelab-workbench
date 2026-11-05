@@ -404,12 +404,25 @@ def verify_evidence(evidence: dict, asset_root: Path) -> list[str]:
     return issues
 
 
-def native_results_file(run, *, native_format=None) -> Path:
+def native_results_file(run, *, native_format=None, frame_index=None) -> Path:
     """Only open recorded, intact exchange files from this selected run."""
     _terminal(run)
     files = run.result.get('exchange_files', [])
-    chosen = next((name for name in files if name.lower().endswith('.pvd')), None)
-    chosen = chosen or next((name for name in files if name.lower().endswith('.vtu')), None)
+    if frame_index is not None:
+        if type(frame_index) is not int or frame_index < 0 or native_format is not None:
+            raise ValueError('선택 결과 프레임 번호가 잘못되었습니다.')
+        frames = run.result.get('frames', [])
+        if not isinstance(frames, list) or any(not isinstance(frame, dict) or type(frame.get('index')) is not int for frame in frames):
+            raise ValueError('실행에 기록된 결과 프레임 자료가 잘못되었습니다.')
+        matches = [frame for frame in frames if frame['index'] == frame_index]
+        if len(matches) != 1:
+            raise ValueError('선택 실행에서 해당 결과 프레임을 확인할 수 없습니다.')
+        chosen = matches[0].get('vtu_file')
+        if not isinstance(chosen, str) or not chosen.lower().endswith('.vtu') or chosen not in files:
+            raise ValueError('선택 프레임의 VTU가 이 실행의 교환 파일에 기록되지 않았습니다.')
+    else:
+        chosen = next((name for name in files if name.lower().endswith('.pvd')), None)
+        chosen = chosen or next((name for name in files if name.lower().endswith('.vtu')), None)
     if native_format is not None:
         if native_format != 'frd' or run.solver_id != 'calculix':
             raise ValueError('선택한 솔버 결과를 이 후처리 형식으로 열 수 없습니다.')
