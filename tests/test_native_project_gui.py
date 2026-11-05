@@ -1687,6 +1687,7 @@ def cad_window(app, monkeypatch):
 @pytest.mark.parametrize('program_id,suffix', [('freecad', '.FCStd'), ('solidcraft', '.sc'), ('cadcraft', '.dxf')])
 def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatch, program_id, suffix):
     from caelab.connections import PROGRAMS, ProgramStatus
+    monkeypatch.setattr('caelab.connections.host_platform', lambda: 'windows')
     window = cad_window
     geom_box = window.add_box("geometry")
     node_id = geom_box.node_id
@@ -1762,9 +1763,22 @@ def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatc
     assert len(calls) == 1 and calls[0].argv == [str(executable), str(sc_file)]
     assert calls[0].cwd == tmp_path and calls[0].program_id == program_id
 
-    # 6. Save and reload project
+    # A different connected input must not win over the owned document after reopen.
+    source, downstream = window.add_box('geometry'), window.add_box('preprocessor')
+    connected_input = _file(tmp_path, '별도 연결 입력.step')
+    exchange_output = _file(tmp_path, '내보낸 출력' + ('.dxf' if program_id == 'cadcraft' else '.step'))
+    units = {'length': 'mm'}
+    window.register_file(source.node_id, connected_input, 'output', units)
+    window.register_file(node_id, exchange_output, 'output', units)
+    assert window.connect(source.node_id, node_id)
+    assert window.connect(node_id, downstream.node_id)
+    edges = list(window.project.connections)
+    _select(window, geom_box)
+
+    # 6. Save and reload into a different window.
     proj_path = tmp_path / "project.json"
     assert window.save_project(proj_path)
+    saved_output = vars(window.project.nodes[node_id].files['output']).copy()
 
     reopened = ProjectWindow()
     try:
@@ -1778,9 +1792,15 @@ def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatc
         assert reopened.cad_editor.program_choice.currentData() == program_id
         assert reopened.cad_editor.document_path.text() == str(sc_file.resolve())
         assert box_after.file_label.endswith(sc_file.name) and sc_file.name in box_after.toolTip()
+        input_after = reopened.workbench.input_file(reopened.project, node_id)
+        assert input_after.path == str(connected_input) and input_after.units == units
+        assert vars(reopened.project.nodes[node_id].files['output']) == saved_output
+        assert reopened.project.connections == edges
+        assert reopened.workbench.input_file(reopened.project, downstream.node_id).path == str(exchange_output)
         reopened.open_button.click()
         assert len(calls) == 2 and calls[-1].argv == [str(executable), str(sc_file)]
         assert sc_file.read_bytes() == b'solidcraft test model'
+        assert connected_input.read_bytes() == exchange_output.read_bytes() == b'native file'
 
         # Missing-document recovery retains role, including cancellation.
         sc_file.unlink()
@@ -1796,8 +1816,12 @@ def test_cad_connection_editor_integration_flow(cad_window, tmp_path, monkeypatc
         replacement = _file(tmp_path, '재지정' + suffix)
         monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(replacement), ''))
         reopened.open_button.click()
-        assert set(reopened.project.nodes[node_id].files) == {'document'}
+        assert set(reopened.project.nodes[node_id].files) == {'document', 'output'}
         assert reopened.project.nodes[node_id].files['document'].path == str(replacement)
+        assert reopened.workbench.input_file(reopened.project, node_id) is input_after
+        assert reopened.project.connections == edges
+        assert reopened.project.nodes[node_id].files['output'].stale
+        assert reopened.project.nodes[downstream.node_id].state == 'stale'
         assert reopened._dirty and len(calls) == 2
         reopened.scene.clearSelection()
         assert reopened.cad_editor.isHidden() and not reopened.cad_editor.isEnabled()
@@ -1965,4 +1989,55 @@ def test_cad_partial_mutation_error_keeps_dirty_references_and_actual_display(
         assert original.read_text(encoding='utf-8') == 'native file'
     assert node.program_id == ('solidcraft' if entry == 'program' else 'freecad')
     assert node.files['document'].path == str(original if entry == 'program' else chosen)
+    assert not window.workbench.jobs.launches
+
+
+@pytest.mark.parametrize('entry,same_path', [('editor', False), ('editor', True), ('missing_default', False)])
+def test_cad_repeated_read_failure_rebinds_without_promoting_cached_ready(
+        cad_window, tmp_path, monkeypatch, entry, same_path):
+    import sys
+    window = cad_window
+    box = window.add_box('geometry')
+    original = _file(tmp_path, 'old.FCStd')
+    window.register_file(box.node_id, original, 'document')
+    previous = window.project.nodes[box.node_id].files['document']
+    assert window._file_status(previous) == 'ready'  # Same-path case starts with a real ready cache.
+    if entry == 'missing_default':
+        original.unlink()
+        window.refresh_files()
+    chosen = original if same_path else _file(tmp_path, 'new.FCStd')
+    chosen = chosen.resolve()
+    window._dirty = False
+    rejected, warnings, uncaught = [], [], []
+    actual_open = Path.open
+    def unreadable_after_assignment(path, mode='r', *args, **kwargs):
+        retained = window.project.nodes[box.node_id].files.get('document')
+        if path.resolve() == chosen and mode == 'rb' and retained is not previous:
+            rejected.append(str(path))
+            raise PermissionError(errno.EACCES, 'document remains unreadable after assignment', str(path))
+        return actual_open(path, mode, *args, **kwargs)
+    def warning(*args):
+        warnings.append((window._dirty, window.cad_editor.document_path.text(),
+                         window.cad_editor.document_status.text()))
+        return QMessageBox.Ok
+    monkeypatch.setattr(Path, 'open', unreadable_after_assignment)
+    monkeypatch.setattr(QMessageBox, 'warning', warning)
+    monkeypatch.setattr(sys, 'excepthook', lambda kind, error, trace: uncaught.append(error))
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args: (str(chosen), ''))
+    (window.cad_editor.document_button if entry == 'editor' else window.open_button).click()
+    retained = window.project.nodes[box.node_id].files['document']
+    assert retained is not previous and retained.path == str(chosen)
+    assert window._dirty and window.cad_editor.document_path.text() == str(chosen)
+    assert window.cad_editor.document_status.text() == '상태 미확인'
+    assert box.status_label == '편집 문서 확인 불가' and box.status_error
+    assert warnings == [(True, str(chosen), '상태 미확인')] and uncaught == []
+    assert len(rejected) >= 2 and window._file_status(retained) == 'unknown'
+    monkeypatch.setattr(Path, 'open', actual_open)
+    assert window._file_status(retained) == 'ready'  # Access recovery does not require metadata changes.
+    window.refresh_files()
+    assert window.cad_editor.document_status.text() == '등록됨' and window._dirty
+    assert window.cad_editor.document_path.text() == str(chosen)
+    assert chosen.read_bytes() == b'native file'
+    if original.exists():
+        assert original.read_bytes() == b'native file'
     assert not window.workbench.jobs.launches
