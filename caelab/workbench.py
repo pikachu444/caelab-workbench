@@ -419,6 +419,10 @@ class Workbench:
             raise ValueError('연결된 해석 노드에서 실행을 선택하세요.')
         return capture_run_evidence(run, asset_root, frame_index=frame_index)
 
+    def read_native_frame(self, run: NativeRun, frame_index: int):
+        from .native.frame_view import read_native_frame
+        return read_native_frame(run, frame_index)
+
     def import_expert_files(self, asset_root: Path, **kwargs) -> dict:
         from .native.evidence import import_file_evidence
         return import_file_evidence(asset_root, **kwargs)
