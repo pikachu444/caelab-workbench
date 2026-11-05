@@ -622,6 +622,7 @@ class NativeAnalysisWindow(QMainWindow):
             self.status.setText("저장된 프로젝트가 변경되었습니다. ‘프로젝트 다시 읽기’로 계산할 입력을 확인하세요.")
 
     def reload_project(self) -> None:
+        previous_selection = (self._displayed_run_id, self.frame_selector.currentData())
         try:
             project = self.workbench.open_native_project(self.project.path)
             node = project.nodes.get(self.node_id)
@@ -634,7 +635,7 @@ class NativeAnalysisWindow(QMainWindow):
             self._displayed_run_id = None
             self.native_view.set_selection(None, None)
             self.refresh_input()
-            self.refresh_runs()
+            self.refresh_runs(preferred_selection=previous_selection)
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, "프로젝트를 다시 읽지 못했습니다", _display_reason(error, "프로젝트 파일 위치와 접근 권한을 확인하세요."))
 
@@ -660,7 +661,7 @@ class NativeAnalysisWindow(QMainWindow):
                 self.workbench.cancel_native_run(run.id)
         self.refresh_runs()
 
-    def refresh_runs(self) -> None:
+    def refresh_runs(self, *, preferred_selection=None) -> None:
         try:
             runs = self.workbench.native_runs(self.project, self.node_id)
             selected = self.workbench.selected_native_run(self.project, self.node_id)
@@ -702,7 +703,7 @@ class NativeAnalysisWindow(QMainWindow):
             self._clear_result()
             self._update_log_summary()
             return
-        self._show_run(selected)
+        self._show_run(selected, preferred_selection=preferred_selection)
 
     def select_run(self) -> None:
         run_id = self.run_selector.currentData()
@@ -714,7 +715,7 @@ class NativeAnalysisWindow(QMainWindow):
         except (OSError, ValueError, RuntimeError) as error:
             QMessageBox.warning(self, "실행을 선택하지 못했습니다", _display_reason(error, "프로젝트를 다시 읽은 뒤 실행 기록을 선택하세요."))
 
-    def _show_run(self, run) -> None:
+    def _show_run(self, run, *, preferred_selection=None) -> None:
         changed = run.id != self._displayed_run_id
         self._displayed_run_id = run.id
         state = _RUN_LABELS.get(run.state, run.state)
@@ -752,6 +753,8 @@ class NativeAnalysisWindow(QMainWindow):
         result = run.result or {}
         if changed or result != self._displayed_result:
             previous = self.frame_selector.currentData() if not changed else None
+            if preferred_selection is not None and preferred_selection[0] == run.id:
+                previous = preferred_selection[1]
             self._displayed_result = result
             self.frame_selector.blockSignals(True)
             self.frame_selector.clear()
@@ -761,6 +764,8 @@ class NativeAnalysisWindow(QMainWindow):
                 self.frame_selector.addItem(label, frame.get("index"))
             default = result.get("summary", {}).get("frame_index")
             index = self.frame_selector.findData(previous if previous is not None else default)
+            if index < 0:
+                index = self.frame_selector.findData(default)
             self.frame_selector.setCurrentIndex(index if index >= 0 else self.frame_selector.count() - 1)
             self.frame_selector.blockSignals(False)
         self.show_result()

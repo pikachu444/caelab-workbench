@@ -267,10 +267,11 @@ def test_close_during_read_discards_the_late_result(app, tmp_path):
         dispose(view, app)
 
 
-def test_explicit_project_reload_retries_a_recovered_single_frame(app, tmp_path, monkeypatch):
+@pytest.mark.parametrize('frame_count', [1, 2])
+def test_explicit_project_reload_retries_the_same_recovered_frame(app, tmp_path, monkeypatch, frame_count):
     run = make_run(tmp_path)
-    run.result['frames'] = run.result['frames'][:1]
-    run.result['summary']['frame_index'] = 0
+    run.result['frames'] = run.result['frames'][:frame_count]
+    run.result['summary']['frame_index'] = frame_count - 1
     wb = Workbench()
     project = wb.new_native_project('read recovery')
     node = wb.add_program_node(project, 'analysis', 'calculix')
@@ -282,7 +283,7 @@ def test_explicit_project_reload_retries_a_recovered_single_frame(app, tmp_path,
     store.select(node.id, run.id)
     real_read = wb.read_native_frame
     calls = []
-    blocked = [True]
+    blocked = [frame_count == 1]
     def read(run, frame):
         calls.append((run.id, frame))
         if blocked[0]:
@@ -291,15 +292,22 @@ def test_explicit_project_reload_retries_a_recovered_single_frame(app, tmp_path,
     monkeypatch.setattr(wb, 'read_native_frame', read)
     window = NativeAnalysisWindow(project.path, node.id, wb)
     try:
+        if frame_count == 2:
+            wait_for(app, lambda: window.native_view.frame_data is not None)
+            blocked[0] = True
+            window.frame_selector.setCurrentIndex(0)
         wait_for(app, lambda: 'transient read denial' in window.native_view.source.text())
+        previous_calls = len(calls)
         blocked[0] = False
         window.refresh_runs()
-        assert len(calls) == 1
+        assert len(calls) == previous_calls
         window.reload_project()
         wait_for(app, lambda: window.native_view.frame_data is not None)
-        assert calls == [(run.id, 0), (run.id, 0)]
+        assert calls[-2:] == [(run.id, 0), (run.id, 0)]
+        assert len(calls) == previous_calls + 1
         assert window.native_view.frame_data.run_id == run.id
+        assert window.frame_selector.currentData() == window.native_view.frame_data.frame['index'] == 0
         window.refresh_runs()
-        assert len(calls) == 2
+        assert len(calls) == previous_calls + 1
     finally:
         dispose(window, app)
