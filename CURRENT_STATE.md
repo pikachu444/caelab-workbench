@@ -1,6 +1,6 @@
 # 현재 상태
 
-문서 기준은 main `3c18ea100c6ab301e90f836d209cffcfda1af338`와 아래 CAD GUI 통합 후보 `f5652c7984c39143e1c9a735ff2743e23e07d4a3`입니다. CAD 후보의 문서 합성 시점에는 새 최종 QA·CI·병합이 미완료입니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
+문서 기준은 main `54d62f4f1c93f7a6cc220ded13a017cf0f08d8f5`와 그 위에 결합한 native 프레임 표시 `a3ea9bd80bcdbcf192e6236fdd34165cc522515a`·번들 진단 `14a495c1fc861fa50f620ce6c3f817ac9f7f1d33` 소스입니다. 두 단위의 원 QA 판정은 아래에 구분합니다. 문서 합성 시점에는 이 문서를 포함한 통합 후보의 최종 QA·회귀·CI·병합이 미완료였으며, 원격 반영은 해당 후보의 PR·정확 head CI·main tree 확인과 대조해야 합니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## 구현 범위
 
@@ -74,7 +74,7 @@ E 이후 source 후속은 생성 실패 ACK의 원 예외 접두부를 보존해
 | 사용자 작업 | main의 구현 | 남은 조건 |
 |---|---|---|
 | 프로그램과 파일 연결 | 런처형 프로젝트, 역할별 프로그램 추가·연결, 입력/편집 문서/출력 구분, stale, 제거·복원, 저장·다른 이름 저장 | 프로그램 등록을 실제 교환 형식·계산 지원으로 확대하지 않음. PrePoMax Windows GUI 끝단은 미검증 |
-| CalculiX 계산·후처리 | 원 덱/INCLUDE snapshot, JobManager 실행·취소·로그·이력, FRD/DAT 판독·VTU/PVD·ParaView 전달 | 선언 단위·프레임·partial을 유지. 모든 카드·물리 모델의 정확성 보증이 아님 |
+| CalculiX 계산·후처리 | 원 덱/INCLUDE snapshot, JobManager 실행·취소·로그·이력, FRD/DAT 판독·VTU/PVD·ParaView 전달. 아래 후보는 독립 해석 창의 선택 run/frame을 원 VTU로 표시 | 선언 단위·프레임·partial을 유지. 새 후보의 frozen·OS 실화면과 모든 카드·물리 모델의 정확성 보증은 별도 |
 | CAELab Prep 연결 | 독립 Prep에 RAD input/document 전달, 내보낸 덱 output, 선택적 NumericEdit 재사용 | Prep 모델·Undo·문서 버전은 별도 저장소 소유. 위젯 사용이 독립 앱 배포 검증은 아님 |
 | 전문가 대화 | 독립 창, 선택 자료의 사본·출처·대화 저장과 재개, 공급자 연결·취소 | 실제 공급자/검색 품질과 실패 처리는 해당 실행 증거로 판정. 열기만으로 요청하지 않음 |
 | MDO Studio | 독립 연구 창, 스칼라 INP 토큰 변수, DoE·실제 관측·대리모델·최적화·민감도·적용/Undo | CAD 재생성·재메시 없음. 예측과 실제 해석, 제약 충족과 공학 승인은 구별 |
@@ -96,7 +96,7 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 
 | 항목 | 확인된 상태·다음 판정 |
 |---|---|
-| 선택 geometry의 CAD·편집 문서 연결 | 모듈과 실제 `ProjectWindow` 소비자를 결합한 소스 후보를 인수했습니다. FreeCAD/SolidCraft/CADCraft 선택, `document` 등록·문서 우선 열기·누락 문서 재지정과 기존 FreeCAD input-only 경로를 연결합니다. CADCraft의 교환 출력은 DXF/SVG로 구분합니다. [사용·소유 경계](docs/tutorials/cad-file-handoff.md#cad-연결-편집-모듈과-소비자-경계)와 [후보의 검사 범위](#cad-gui-integration-candidate)를 따르며, 최종 원 QA·필수 CI·병합 및 실제 CAD/Windows 검수를 완료로 표시하지 않습니다. |
+| 선택 geometry의 CAD·편집 문서 연결 | [PR93](https://github.com/pikachu444/caelab-workbench/pull/93)은 원 QA·필수 CI 뒤 main `54d62f4`에 정상 병합됐고 새 clone에서 tree와 관련 7검사를 확인했습니다. FreeCAD/SolidCraft/CADCraft 선택, `document` 등록·문서 우선 열기·누락 문서 재지정과 기존 FreeCAD input-only 경로를 연결하며 CADCraft 교환 출력은 DXF/SVG로 구분합니다. [사용·소유 경계](docs/tutorials/cad-file-handoff.md#cad-연결-편집-모듈과-소비자-경계)와 [검사 범위](#cad-gui-integration-candidate)를 따릅니다. 제한된 portable 등록·저장·새 프로세스 재열기 관측은 실제 외부 CAD 실행·교환·전체 Windows 검수가 아닙니다. |
 | 전문가 오류 안내 분류 | [PR65](https://github.com/pikachu444/caelab-workbench/pull/65)에서 `user_error()`의 개정 충돌·문서 잠금·무결성·파일 누락을 예외 타입 및 정밀 어휘로 우선 분류하여 '없' 오분류를 교정했습니다 (#48). main에 병합 완료되었습니다. |
 | 설치 매니페스트 예외 처리 | [PR64](https://github.com/pikachu444/caelab-workbench/pull/64)에서 매니페스트 누락·파손·구조 결함 시 전체 상태 조회가 중단되지 않고 안전하게 연결 불가로 진단하도록 교정했습니다 (#50). main에 병합 완료되었습니다. |
 | 전문가 대화 시간 예산·단계 표시 | [PR73](https://github.com/pikachu444/caelab-workbench/pull/73)은 main `009d96211c496ced3269763da82975cce642a1f9`에 병합됐습니다 (#46). 준비 20초(정책 기본값)·공급자 응답 60초·전체 관리 대기 85초를 분리하며, 원 독립 QA의 기존 8반례에서 늦은 응답·취소·전환 경계를 확인했습니다. 후속 GUI 후보는 현재 요청의 준비/응답 단계를 표시하고 취소·완료·이전 요청의 늦은 알림을 무시합니다. 관련 Qt offscreen 32검사가 통과했습니다. 후속 PR의 재검토·CI 결과는 해당 PR을 따르며, 실제 공급자·OS 실화면 검증과 전체 제품 완료로 확대하지 않습니다. |
@@ -113,7 +113,7 @@ Starter→Engine을 하나의 실행 이력·timeout·취소 범위에서 순서
 
 <a id="cad-gui-integration-candidate"></a>
 
-## CAD GUI 통합 후보 — 2026-11-05
+## CAD GUI 통합과 기존 검증 이력 — 2026-11-05
 
 통합 후보 `f5652c7984c39143e1c9a735ff2743e23e07d4a3`는 기존 G 소비자
 `6cdead6`와 모듈 `6bf1fbb`의 결합 `465073c896c69fc2ed62488866cf61c316bc4a3f`를
@@ -162,16 +162,80 @@ DeferredDelete를 완료하며, 이미 삭제된 Qt wrapper를 다시 읽지 않
 작성자는 수정된 native GUI 모듈을 Python 3.13.5·Qt 6.9.1 offscreen·격리 INI로 한 번
 실행해 **136 passed, 0 failed/error/skipped**, exit 0·외부 audit 이벤트 0을 보고했습니다.
 실제 프로그램 탐색과 기존 검증·params를 유지한 이 로컬 결과를 이전 실행에 합산하거나
-새 Linux 전체 CI 결과로 바꾸지 않습니다. 이 문서가 포함된 새 최종 head의 원 QA 확인과
-필수 CI는 아직 미완료입니다.
+새 Linux 전체 CI 결과로 바꾸지 않습니다. 당시 문서 합성 시점에는 새 최종 head의
+원 QA 확인과 필수 CI가 미완료였습니다.
 
-[Draft PR93](https://github.com/pikachu444/caelab-workbench/pull/93)의 원 QA 모듈
+[PR93](https://github.com/pikachu444/caelab-workbench/pull/93)의 원 QA 모듈
 17건과 [CI 4작업 성공](https://github.com/pikachu444/caelab-workbench/actions/runs/41882182590)은
 모듈 `6bf1fbb`의 기존 증거입니다. 소비자·이 현황 문서를 포함한 최종 결합 head의
-원 QA 재검토나 CI로 바꿔 표시하지 않습니다. 문서 합성 시점에 그 최종 검토·필수 CI와
-전체 제품 회귀는 미완료이며, 같은 원 QA의 수용 비판 종결과 정확한 후보 검증 뒤
-지정 통합 담당의 정상 병합·새 clone 확인을 거칩니다. 기존 frozen r2에는 이 CAD GUI
-코드가 없고, 실제 CAD·Windows 실화면·전체 CAD→해석 과업의 인수는 남아 있습니다.
+원 QA 재검토나 CI로 바꿔 표시하지 않습니다.
+
+그 뒤 최종 `db2b29a`는 같은 원 QA의 비판 종결과 문서·fixture delta 수용을 받았고,
+[후보 CI41951900733](https://github.com/pikachu444/caelab-workbench/actions/runs/41951900733)의
+4작업이 성공했습니다. Product Python 3.11·3.12는 각각 **1488 passed/46 skipped**이며
+실제 CalculiX·OpenCourant 작업도 성공했습니다. 정상 병합 main `54d62f4`의
+[자동 CI41953137200](https://github.com/pikachu444/caelab-workbench/actions/runs/41953137200)도
+4작업 성공, 두 Product 환경은 각각 **1488 passed/46 skipped**입니다. 별도 실행을 합산하지 않습니다.
+병합 후 새 clone의 전체 tree가 검토 후보와 일치했고 관련 **7 passed/0 skipped**를
+Python 3.13.5·PySide6 6.9.1·offscreen·격리 INI에서 확인했습니다. 기존 frozen r2에는
+이 CAD GUI 코드가 없습니다. 외부 CAD 실행·교환·전체 CAD→해석 과업 인수는 남아 있습니다.
+
+## Native 선택 프레임 표시·번들 진단 통합 후보 — 2026-11-05
+
+native 소스 `a3ea9bd`는 독립 `NativeAnalysisWindow`에서 선택한 run/frame의
+기록된 VTU를 읽어 원 메시·절점/요소 ID·저장 scalar 성분을 그대로 표시합니다.
+`Workbench.read_native_frame`과 기존 evidence 검증으로 실행 소유 경로·기록 프레임·
+실제 소비 bytes의 SHA256을 확인하며 보조 `StructuralModel`로 재구성하지 않습니다.
+새 응력·변형량·변형 배율을 계산하지 않고 원 components·NaN·partial·stale·선언 단위와
+위치 미확인을 유지합니다. 기존 ParaView 전체 PVD 열기와 같은 실행의 전문가 자료 전달은 유지합니다.
+
+읽기는 run 사본과 요청 token으로 백그라운드 처리하고 선택 변경·오류 때 이전 표시를
+비우며 늦은 완료를 폐기합니다. 정상 poll은 같은 프레임을 반복 판독하지 않습니다.
+기존 ‘프로젝트 다시 읽기’는 같은 run의 유효한 선택 frame을 유지한 채 한 번 재조회하고,
+run이 달라지거나 프레임이 없으면 기존 기본/마지막 frame 선택을 따릅니다. 유한값이 없는
+성분에는 숫자 범례를 표시하지 않고 ‘유한값 없음’을 안내합니다.
+
+원 QA는 초기 `ea19c3f`에서 전값 결측의 0–1 범례와 일시 읽기 오류 뒤 같은 선택 복구 불가
+두 P2를 재현했습니다. 작성자는 반박 근거 없음·수용으로 수정했으며 `fe61ee9`의 단일 frame
+복구만으로는 복수 frame의 선택 보존을 충족하지 못한다는 재지적도 수용했습니다.
+같은 원 비판자는 `a3ea9bd`에서 원 반례의 frame 0 유지·읽기 한 번 추가를 확인해
+잔여 P2를 명시 종결했고 새 P1/P2가 없다고 판정했습니다. 마지막 독립 회귀 **2 passed**와
+앞선 `fe61ee9` 영향 **6 passed**·`ea19c3f` 독립 **20 passed**는 각 실행의 범위입니다.
+작성자 최종 관련 검사는 **84 passed/12 deselected**, 실패·오류·skip 0입니다.
+외부 probe·실제 ccx·부모 창 관련 항목은 이 작성자 실행에서 제외했으며 전체 회귀로 쓰지 않습니다.
+이 근거는 source/offscreen·실제 mapper 자료 검사이고 새 frozen·OS 실화면·전체 P4/P5 또는
+same-frame 외부 API 인수가 아닙니다.
+
+진단 소스 `14a495c`는 기존 desktop entry에 고정 명령
+`--caelab-diagnostics --output ABS_NEW_DIR`를 추가합니다. 기존 출력 경로와 임의 module/script/code를
+허용하지 않으며 기존 네 desktop module·solver gate를 유지합니다. 별도 자식 프로세스가
+offscreen Qt paint와 고정 VTK primitive를 PNG로 저장하고 signature·decode·크기·비단일 픽셀을
+검사합니다. VTK Finalize·소유 Qt 창 close·app.exec 반환 뒤에만 성공 JSON을 기록하며
+인자/경로 거절은 exit 2, 진단 실패는 1, 성공은 0입니다. 내부 10초와 호출자 30초 제한을
+구분하고 timeout·강제 종료를 정상 종료로 세지 않습니다. 작성자 source **19 passed**와
+원 QA의 순수 **18 passed**·guard 정정 뒤 source-child **1 passed**는 별도 실행입니다.
+같은 원 QA는 이 source 범위를 수용했으며 실제 frozen 진단 검증은 통합 후 새 build에서 남아 있습니다.
+
+문서 합성 시점에는 두 단위와 이 현황을 결합한 후보의 정확 SHA에 대한 원 QA·관련/전체
+회귀·필수 CI가 미완료였습니다. 이 새 source는 아래 기존 `54d62f4` 바이너리에 들어 있지 않습니다.
+
+### 기존 54d62f4 로컬 시험 산출물과 인도 범위
+
+source `54d62f4`의 기존 로컬 portable ZIP은 **384,668,555 bytes**,
+SHA256 `9cd80948d66d2c2d4ae639c4c5ca1c790218d8d1087b98752406c609d215666c`이며
+setup EXE는 **259,175,067 bytes**,
+SHA256 `c7b820ef4a1514ad539c5bb66630aa8974c3353043b898e5b51ff317b24ec435`입니다.
+이 산출물은 앞선 포터블·설치 compile 관측과 별도 후보이며 기존 r2를 설치·업그레이드하지 않았습니다.
+같은 원 QA는 제한된 portable CAD 등록·저장·정상 종료·새 프로세스 재열기 기록을 수용했습니다.
+CAD 열기 버튼은 해당 관측에서 비활성이고 샘플 등록은 vendor 파일 해석·외부 실행·교환 성공이
+아닙니다. 마지막 선택 자동 복원·일반 INI 지속·clean Windows·VTK 검수도 이 근거로 승인하지 않습니다.
+
+기존 54d 후보의 Tier1은 CLI 7/7·harness exit 0까지이며 제공된 Qt/VTK 진단 진입점이 없어
+전체 Tier1 완료가 아닙니다. 다른 PC용 Tier2 체크리스트 최종 **10,003 bytes**,
+SHA256 `b13a83f5e92aac47334705e6d9f8197be3b75092de6fdd1bb281900c281ca6c4`는
+같은 원 QA의 문서 지적 두 건을 종결하고 인수됐지만 실제 19개 항목은 미실행입니다.
+원 설치·프로젝트·설정은 보존하며 새 후보 build·전체 Tier1·후보에 맞춘 체크리스트 확인과
+실물 PC 검수, 공개 릴리스는 별도로 남아 있습니다.
 
 ## 검사 결과의 범위
 
