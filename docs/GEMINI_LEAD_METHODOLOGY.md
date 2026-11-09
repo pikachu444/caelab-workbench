@@ -2,9 +2,9 @@
 
 > [!IMPORTANT]
 > **문서 목적 및 적용 대상**
-> 이 문서는 **Gemini (Antigravity / Gemini 4 Argon)** 개발 총괄 에이전트가 사용자의 의도를 해석하고, 상용 엔지니어링 소프트웨어를 설계·구현·시각 검증·배포하는 **전 과정의 사고방식과 실행 프로토콜을 정형화한 표준 매뉴얼**입니다.
+> 이 문서는 **Gemini (Antigravity / Gemini 4 Argon)** 개발 총괄 에이전트가 사용자의 의도를 해석하고, 상용 엔지니어링 소프트웨어를 설계·구현·시각 검증·배포하는 **전 과정의 사고방식과 팀 오케스트레이션 원리를 정형화한 표준 매뉴얼**입니다.
 >
-> 추후 **Claude (Claude Code / Claude Desktop 등)** 가 메인 총괄이나 구현 에이전트로 투입되거나, Gemini와 교대로 작업을 이어받을 때 **과거 에이전트(Codex 등)의 실패 패턴(기계적 증명 집착·관료적 면책 문구 도배·낮은 정보 밀도·미실행 완료 선언)을 원천 차단**하고, **Gemini 총괄과 100% 동일한 품질과 감각**으로 동작하도록 강제합니다.
+> 특정 벤더나 CLI 도구에 종속되지 않도록 **모델 등급(Tier)과 추론 강도(Reasoning Effort)를 조합한 보편적 팀 운영 원리**를 본문에 정의하고, 현재 환경(Gemini + Codex CLI)에서 실행했던 구성은 **구체적 적용 예시(Reference Example)** 로 수록했습니다. 따라서 **Claude 단독 체제(Opus / Sonnet / Haiku)** 로 전환하거나 다른 에이전트 환경을 쓰더라도 이 원리를 1:1로 매핑해 100% 동일한 품질과 감각으로 동작할 수 있습니다.
 
 ---
 
@@ -13,7 +13,7 @@
 ### 1.1 '예시(Example)'에서 '상용 표준 체계(System Taxonomy)'를 추출하는 법
 사용자가 불만을 제기하거나 예시를 들 때(예: *"HyperMesh 매뉴얼 안 읽어봤어? 각 세부 목록이 구분되고 기능 설명이 나온다고. 저런 수준이어야 하는 거 아니냐"*), 절대 그 문장에 등장한 특정 단어(예: '메시어') 하나만 고치거나 변명하지 않습니다.
 
-Gemini 총괄은 사용자의 발화를 다음과 같이 **3단계로 추상화하여 전체 설계에 반영**합니다:
+총괄 에이전트는 사용자의 발화를 다음과 같이 **3단계로 추상화하여 전체 설계에 반영**합니다:
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ flowchart LR
 
 ## 2. Gemini 총괄의 상용 엔지니어링 GUI 7대 설계 법칙 (GUI Design Laws)
 
-과거 에이전트가 단독으로 작업했을 때 가장 크게 망가뜨린 부분이 **"프로그램을 공학 도구가 아니라 면책 조항 게시판으로 만든 것"**이었습니다. Claude나 후임 에이전트는 모든 화면을 구성할 때 아래 **7대 법칙**을 기계적으로 준수해야 합니다.
+과거 에이전트가 단독으로 작업했을 때 가장 크게 망가뜨린 부분이 **"프로그램을 공학 도구가 아니라 면책 조항 게시판으로 만든 것"**이었습니다. 모든 에이전트는 화면을 구성할 때 아래 **7대 법칙**을 기계적으로 준수해야 합니다.
 
 ### Law 1: '관료적 면책 문구(Disclaimer)' 및 '훈계성 안내문' 영구 금지
 화면의 고정 영역(배너, 상태바, 스칼라 바 제목, 폼 상단/하단)에 개발자 방어용 문구나 사용자를 가르치려 드는 문구를 넣는 것을 **엄격히 금지**합니다.
@@ -90,41 +90,59 @@ flowchart LR
 
 ---
 
-## 3. 에이전트 지휘 및 협업 아키텍처 (Claude / Gemini 호환)
+## 3. 모델 등급(Tier)과 추론 강도(Reasoning Effort)를 조절하는 보편적 팀 오케스트레이션 원리
 
-Claude가 메인 총괄이 되든, Gemini가 메인 총괄이 되든 **작업 분해 ➔ 격리 구현 ➔ 독립 3중 검수** 구조는 동일하게 작동합니다.
+단일 에이전트(Single Session)가 설계, 수천 줄의 코드 탐색, 구현, 수백 개의 테스트 로그 읽기, 시각 검수를 혼자 다 처리하면 **① 최상위 모델 토큰/쿼터가 순식간에 고갈**되고, **② 컨텍스트 창이 로그로 오염되어 판단력이 흐려지며**, **③ 자기가 짠 코드의 결함을 스스로 합리화(Confirmation Bias)** 하게 됩니다.
+
+따라서 어떤 AI 생태계(Claude 단독, Gemini 단독, 또는 하이브리드)를 쓰더라도 반드시 **역할별로 모델 등급(Tier)과 추론 강도(Reasoning Effort / Extended Thinking Budget)를 분리하여 오케스트레이션**해야 합니다.
+
+### 3.1 역할별 모델 등급 & 추론 강도(Reasoning Effort) 배분 매트릭스
+
+| 역할 (Role) | 요구 지능 특성 | 추론 강도 (Reasoning / Thinking) | **Claude 단독 운영 시 매핑** | **Gemini 단독 운영 시 매핑** | 핵심 임무 및 토큰 절약 규칙 |
+|---|---|---|---|---|---|
+| **1. 총괄 아키텍트**<br>(`Team Lead`) | 최상위 추상화, 아키텍처·공유 계약 설계, 사용자 소통, 최종 결정 | **High ~ Max**<br>(핵심 설계 시 Extended Thinking 최대, 단순 조율 시 Low) | **Claude Opus 4.x**<br>(또는 메인 **Sonnet 4.x + High Thinking**) | **Gemini 4 Argon**<br>(`inherit`) | **직접 대량 코딩이나 긴 테스트 로그 읽기를 하지 않음.** `Concrete Spec` 작성 ➔ 서브에이전트 지시 ➔ 검수 보고 수렴 ➔ 최종 통합만 수행하여 메인 쿼터를 아낌. |
+| **2. 격리 구현 워커 A·B**<br>(`Impl Worker`) | 정확한 코드 편집, 단위 테스트 실행, 빠른 반복 수정 | **Medium ~ High**<br>(스펙이 이미 확정되어 있으므로 과도한 철학적 추론 불필요) | **Claude Sonnet 4.x** 서브에이전트<br>(독립 `git worktree` 할당) | **Gemini Pro** 서브에이전트<br>(독립 `git worktree` 할당) | 총괄이 내려준 `Concrete Spec`의 파일·줄번호·문자열 지시를 그대로 코드로 옮기고 지정된 `pytest`와 `check_doc_sync.py`를 통과시켜 커밋 SHA만 보고함. |
+| **3. 독립 코드·계약 감사관**<br>(`chief-reviewer`) | 깐깐한 규칙 대조, 엣지 케이스·회귀 결함 적발 (작성자와 분리된 컨텍스트) | **High / Extended Thinking**<br>(비판적·적대적 검토를 위해 높은 추론 예산 부여) | **Claude Sonnet 4.x (High Thinking)** 또는 **Opus** (별도 읽기 전용 서브에이전트) | **Gemini Pro / Argon** (`chief-reviewer`, 읽기 전용 맥락) | 구현 워커의 완료 주장을 배제하고, 오직 `git diff <base>..<head>`와 `DESIGN.md`·`AGENTS.md`·`Spec`만 대조하여 위반 사항을 적발함. |
+| **4. 실무 CAE 시각·UX 심사관**<br>(`cae-user-expert`) | 멀티모달(Vision) 픽셀 판독, 상용 CAE 도메인 감각 | **Medium ~ High + Vision 필수** | **Claude Sonnet 4.x (Vision)** 별도 서브에이전트 | **Gemini Pro (Vision)** (`cae-user-expert`) | 실제 실행 후 캡처된 모든 창·모든 하위 탭의 PNG 이미지를 직접 눈으로 열어 콤보박스 잘림, 폰트 깨짐(`□`), 뷰포트 비율(70%), 면책 문구 잔존 여부를 감수함. |
+| **5. 탐색·로그·스크립트 보조**<br>(`Research / Aux`) | 빠른 파일 검색, 대량 로그 요약, 단순 반복 실행 | **Low / Fast**<br>(추론 최소화, 속도·비용 최우선) | **Claude Haiku 4.x** 서브에이전트 | **Gemini Flash / Flash-Lite** 서브에이전트 | 수만 줄의 CI 실패 로그에서 에러 트레이스백만 발췌하거나, 저장소 내 특정 심볼/문자열 위치를 빠르게 전수 조사해 총괄에게 10줄 이내로 요약 보고함. |
+
+### 3.2 보편적 지휘 흐름 (Claude 단독 및 모든 멀티에이전트 공통)
 
 ```mermaid
 sequenceDiagram
     participant User as 사용자
-    participant Lead as 총괄 에이전트 (Claude 또는 Gemini Argon)
-    participant Worker as 구현 워커 (격리된 Git Worktree)
-    participant CodeQA as 코드/계약 감사관 (chief-reviewer)
-    participant VisualQA as 실무 CAE 시각 심사관 (cae-user-expert)
+    participant Lead as 1. 총괄 (Opus / Argon)
+    participant Aux as 5. 탐색 보조 (Haiku / Flash)
+    participant Worker as 2. 구현 워커 (Sonnet / Pro @ Worktree)
+    participant CodeQA as 3. 코드 감사관 (Sonnet-High / Pro)
+    participant VisualQA as 4. 시각 UX 심사관 (Sonnet-Vision / Pro)
 
     User->>Lead: 요구사항 또는 점검 지시
-    Lead->>Lead: 기존 코드/실행화면 직접 캡처 및 사실 대조 (완료 보고 불신)
-    Lead->>Worker: Concrete Spec (파일·줄번호·문자열·불변조건) 하달
-    Worker->>Lead: 격리 Worktree 구현 + 단위 테스트 + check_doc_sync 통과 커밋 제출
-    par 독립 코드 감사 & 독립 시각 UX 감사
-        Lead->>CodeQA: 커밋 SHA & git diff 전달 (작성자 주장 배제)
-        Lead->>VisualQA: 실제 실행 후 모든 탭 전환 캡처 PNG 전달
+    Lead->>Aux: 관련 파일·기존 테스트·줄번호 빠르게 탐색 지시
+    Aux-->>Lead: 핵심 파일·줄번호·기존 계약 요약 보고 (총괄 컨텍스트 절약)
+    Lead->>Lead: 7대 GUI 법칙 & 상용 CAE 기준으로 Concrete Spec 작성
+    Lead->>Worker: Concrete Spec 하달 (독립 git worktree에서 실행)
+    Worker-->>Lead: 구현 완료 커밋 SHA 및 테스트 요약 보고
+    par 독립 코드 감사 & 독립 시각 UX 감사 (작성자와 완전히 분리된 새 서브에이전트)
+        Lead->>CodeQA: 대상 커밋 SHA & git diff 감사 지시
+        Lead->>VisualQA: 전 화면·전 하위 탭 캡처 PNG 시각 감수 지시
     end
-    CodeQA-->>Lead: 아키텍처·계약·테스트 검수 결과 (PASS / CRITIQUE)
-    VisualQA-->>Lead: 상용 CAE 기준 시각·동선 검수 결과 (PASS / CRITIQUE)
+    CodeQA-->>Lead: 계약·아키텍처 검수 판정 (PASS / CRITIQUE)
+    VisualQA-->>Lead: 상용 CAE 시각·동선 판정 (PASS / CRITIQUE)
     opt 비판(Critique)이 1건이라도 존재할 때
-        Lead->>Worker: 후속 수정 Spec 하달 및 재커밋
+        Lead->>Worker: 후속 수정 Spec 하달 (동일 워커 세션 재개)
+        Worker-->>Lead: 수정 커밋 SHA 제출
         Lead->>VisualQA: 재캡처 화면 제출 및 원 비판자의 명시적 APPROVED 회수
     end
-    Lead->>Lead: PR 생성 ➔ CI 전건 통과 ➔ main 병합 ➔ 클린 클론 검증 ➔ 패키징(setup.exe)
-    Lead->>User: 전/후 화면 비교 카루셀 및 실증 근거 보고
+    Lead->>Lead: PR 생성 ➔ CI 통과 ➔ main 병합 ➔ 클린 클론 검증 ➔ 패키징(setup.exe)
+    Lead->>User: 전/후 화면 비교 및 실증 근거 보고
 ```
 
-### 3.1 구현 워커에게 지시할 때의 'Concrete Spec' 작성 표준
-구현을 서브에이전트(Claude subagent, Gemini subagent, 또는 백그라운드 CLI 워커)에게 위임할 때는 **절대 디자인 재량이나 범위 판단을 워커에게 맡기지 않습니다.** 반드시 아래 항목을 확정한 명세서를 줍니다:
+### 3.3 구현 워커를 통제하는 'Concrete Spec' 작성 표준
+총괄 에이전트가 구현 워커(Claude Sonnet 서브에이전트 등)에게 일을 시킬 때는 **절대 디자인 재량이나 범위 판단을 워커에게 맡기지 않습니다.** 반드시 아래 5가지를 확정한 명세서를 내려줍니다:
 1. **대상 Worktree 경로, 브랜치명, 기준(Base) SHA** (`git status` 및 기존 미커밋 작업 백업 선행 필수).
 2. **파일별·줄번호별 정밀 수정 지시**:
-   - 어느 파일의 어느 클래스/메서드에서 어떤 위젯/라벨을 추가·수정·숨김(`hide()`) 처리할지 정확한 문자열로 명시.
+   - 어느 파일의 어느 클래스/메서드에서 어떤 위젯/라벨을 추가·수정·숨김(`hide()`) 처리할지 **정확한 한국어/영어 문자열**로 명시합니다.
 3. **GUI·서비스 불변 계약 명시 (`DESIGN.md` 준수)**:
    - 기존 위젯의 `objectName`, 공개 속성명, Qt `Signal` 시그니처는 절대 임의 변경하거나 삭제하지 않습니다 (불필요한 배너는 위젯 삭제 대신 `hide()`로 처리하여 테스트 및 참조 무결성 보존).
    - 다크 모드(기본)와 라이트 모드 전환(`DESIGN.md §11.3`)에서 대비 불량이 발생하지 않도록 하드코딩 HEX 색상(`#ffffff`, `#000000`) 대신 공용 시맨틱 팔레트 토큰(`get_palette()`)을 사용합니다.
@@ -134,15 +152,36 @@ sequenceDiagram
 5. **절대 금지 사항**:
    - `uv.lock` 임의 커밋 금지, 개인 PC 경로(`C:\Users\...`)나 비공개 스크린샷의 공개 저장소 커밋 금지, 기존 워크트리/브랜치 무단 삭제 금지.
 
-### 3.2 독립 감사관(CodeQA / VisualQA) 비판 처리 철칙 (`AGENTS.md` 준수)
-- 코드 감사관(`chief-reviewer`)이나 시각 UX 감사관(`cae-user-expert`)으로부터 **단 1건의 비판(Critique)이라도 제기되면, 이를 '범위 밖(Out of scope)', '추후 작업(Future work)', '부분 승인'으로 분류해 넘어가는 것을 절대 금지**합니다.
+### 3.4 독립 감사관(CodeQA / VisualQA) 비판 처리 철칙 (`AGENTS.md` 준수)
+- 코드 감사관이나 시각 UX 감사관으로부터 **단 1건의 비판(Critique)이라도 제기되면, 이를 '범위 밖(Out of scope)', '추후 작업(Future work)', '부분 승인'으로 분류해 넘어가는 것을 절대 금지**합니다.
 - 형식만 갖춘 억지 반론을 만들지 않으며, 반박 근거가 없으면 즉시 수용하여 코드를 수정하고 **재캡처한 화면을 원래 비판을 제기한 감사관에게 다시 제출해 명시적인 `PASS / APPROVED`를 회수**해야만 PR 및 병합 단계로 진입할 수 있습니다.
+
+---
+
+### 3.5 [참고 예시] 환경별 오케스트레이션 실제 적용 사례
+
+위 3.1~3.4의 보편적 원리를 각 실행 환경에 맞춰 구현하는 구체적인 예시입니다.
+
+#### 예시 A: Claude 단독 체제 (Claude Code / Subagents 활용 시 — 권장 목표 구성)
+- **총괄 (`Team Lead`)**: 메인 세션(Claude Opus 또는 Sonnet + Extended Thinking)이 아키텍처와 `Concrete Spec`만 작성하고, 직접 무거운 파일 수정이나 전체 테스트 실행을 돌리지 않습니다.
+- **탐색 보조 (`Task / Explore subagent` — Haiku)**: 파일 위치 탐색, 기존 테스트 단언 확인, CI 실패 로그 발췌를 수행해 메인 세션의 컨텍스트 창을 깨끗하게 유지합니다.
+- **병렬 구현 (`Task / Worker subagent` — Sonnet)**:
+  - `git worktree add ../wt-wb-feature -b feat/wb-feature origin/main`으로 격리된 워크트리를 만든 뒤, 각 워크트리 전담 Sonnet 서브에이전트에게 `Concrete Spec`을 전달하여 구현·단위 테스트·로컬 커밋을 수행하게 합니다.
+- **독립 교차 검수 (`Task / QA subagent` — Sonnet High Thinking + Vision)**:
+  - 구현 서브에이전트와 **완전히 분리된 새 서브에이전트** 2개를 호출합니다. 하나는 `git diff`와 `DESIGN.md`를 대조하는 코드 감사관으로, 다른 하나는 캡처된 PNG 파일들을 `Read`/`View` 도구로 직접 열어 7대 GUI 법칙을 검사하는 시각 UX 심사관으로 운영합니다.
+
+#### 예시 B: 하이브리드 체제 (2026-11-09 v0.1.0 출하 당시 Gemini 4 Argon + 로컬 Codex CLI 적용 사례)
+- **적용 배경**: Antigravity 메인 세션(Gemini 4 Argon)의 주간 토큰 한도를 극도로 아끼기 위해 적용했던 실전 사례입니다.
+- **역할 배분**:
+  - **총괄 (`Gemini 4 Argon`)**: `scratch/spec-wb-gui-density.md`, `scratch/spec-prep-core-ui.md` 등 파일·줄번호·문자열까지 지정한 명세서만 작성.
+  - **구현 워커 (`로컬 Codex CLI` — `gpt-6.1-sol`, `reasoning_effort="high"`)**: 두 개의 독립 워크트리(`wb-gui-density`, `prep-core-ui`)에서 백그라운드 명령(`$spec | codex exec -C <wt> -s danger-full-access --json ...`)으로 코드 수정 및 테스트 수행, 비판 수정 시 `codex exec -C <wt> -s danger-full-access resume <THREAD_ID>`로 동일 세션 재개.
+  - **독립 검수단 (`Gemini Pro` 서브에이전트 4개)**: `chief-reviewer`(코드 감사)와 `cae-user-expert`(시각 UX 감사)를 모두 `Model: "pro"` 서브에이전트로 띄워 검수하고, `cae-user-expert`가 지적한 `Preview` 수동 체크박스 마찰과 `output_tabs` 캡처 누락을 재수정해 명시적 `APPROVED`를 받은 뒤 `main`에 병합함.
 
 ---
 
 ## 4. 무신뢰(Zero-Trust) 3단계 검증 프로토콜
 
-Gemini 총괄 방식의 핵심은 **"내 눈으로 실제 렌더링된 픽셀과 실제 실행된 바이너리를 확인하기 전에는 절대 완료라고 말하지 않는다"**는 것입니다.
+총괄 방식의 핵심은 **"내 눈으로 실제 렌더링된 픽셀과 실제 실행된 바이너리를 확인하기 전에는 절대 완료라고 말하지 않는다"**는 것입니다.
 
 ### Stage 1: 코드·계약·문서 동기화 검증 (`chief-reviewer`)
 - **Windows 인코딩 및 오프스크린 실행 환경변수 표준**:
@@ -161,7 +200,7 @@ Gemini 총괄 방식의 핵심은 **"내 눈으로 실제 렌더링된 픽셀과
 - 기존 실패(Baseline failure)와 이번 변경으로 인한 실패를 엄격히 구분하며, `skip`이나 `xfail`로 결함을 숨기지 않습니다.
 
 ### Stage 2: 전 화면·전 탭 실렌더링 캡처 및 시각 UX 검수 (`cae-user-expert`)
-- **가장 중요한 단계입니다.** 오프스크린 또는 실화면에서 창을 띄우고 PNG로 저장하여 시각 검수 에이전트 및 총괄 자신의 이미지 열람 도구(`read_file` / `View`)로 직접 열어봅니다.
+- **가장 중요한 단계입니다.** 오프스크린 또는 실화면에서 창을 띄우고 PNG로 저장하여 시각 검수 에이전트 및 총괄 자신의 이미지 열람 도구(`Read` / `View` / `read_file`)로 직접 열어봅니다.
 - **필수 캡처 체크리스트**:
   1. **한글 폰트 명시 로드**: Windows 오프스크린 캡처 시 글리프 깨짐을 막기 위해 `QFontDatabase.addApplicationFont("C:/Windows/Fonts/malgun.ttf")`를 로드합니다.
   2. **1440×900 실해상도 강제 및 레이아웃 안정화**: 오프스크린 캡처 시 기본 `640×480`으로 찌그러지지 않도록 반드시 `window.resize(1440, 900)`(또는 `1280, 920`) ➔ `window.show()` ➔ `app.processEvents()`를 호출한 뒤 도킹 폭(`MODEL` 175~210px, 중앙 3D 뷰포트 `>= 1000px`, `FORM` 240px~16%)을 확인하고 캡처합니다.
@@ -189,27 +228,37 @@ Gemini 총괄 방식의 핵심은 **"내 눈으로 실제 렌더링된 픽셀과
      --manifest C:\Temp\caelab_release\bundle\build-manifest.json `
      --output C:\Temp\caelab_release\installer
    ```
-3. **실설치 및 Tier 1 / Tier 2 게이트 실행**:
-   - 빌드된 `CAELabWorkbench.exe`로 `--caelab-diagnostics` 및 `--caelab-solver-gate <output_dir>`(실제 CalculiX / OpenCourant 해석)를 실행하여 `overall_ok: true`를 확인합니다.
-   - `caelab-workbench-setup.exe /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="C:\Temp\caelab_installed"`로 실제 설치 후 설치본 기동·검증·언인스톨(`unins000.exe`)까지 완료합니다.
+3. **실설치 및 Tier 1 / Tier 2 게이트 실행 (반드시 올바른 CLI 플래그 사용)**:
+   - **진단 게이트 (`--caelab-diagnostics --output <new_abs_dir>`)**:
+     ```powershell
+     & "C:\Temp\caelab_release\bundle\dist\CAELabWorkbench\CAELabWorkbench.exe" --caelab-diagnostics --output "C:\Temp\caelab_release\diag_out"
+     ```
+     (최초 실행 시 Windows Defender 스캔으로 10초 예산을 넘기면 즉시 두 번째 warm 실행으로 `< 2초` 내 `status: passed` 여부를 확인합니다.)
+   - **솔버 게이트 (`--caelab-solver-gate <gate_file_or_-> <json_cmd_array> <log_path> <receipt_json>`)**:
+     4개의 위치 인자를 정확히 전달하여 `{"started": true}` 영수증과 종료 코드 `0`을 확인합니다.
+   - **실설치 검증 (`caelab-workbench-setup.exe`)**:
+     `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`로 설치 후 `installer-manifest.json`에 기록된 `bundle_id` 경로(`%LOCALAPPDATA%\Programs\CAELabWorkbench\payloads\<bundle_id>\CAELabWorkbench.exe`)가 생성되었는지 확인하고 설치본 진단을 실행합니다.
 
 ---
 
 ## 5. Claude 전환 시 즉시 사용하는 인계 프롬프트 (Copy & Paste)
 
-추후 Codex를 배제하고 **Claude를 메인 에이전트로 전환**하시거나 새 세션을 여실 때, 아래 문구만 복사해서 첫 메시지로 주시면 Claude가 즉시 이 문서를 로드하여 Gemini 4 Argon 총괄과 동일한 방식으로 작업을 수행합니다:
+추후 **Claude를 메인 에이전트로 전환**하시거나 새 세션을 여실 때, 아래 문구만 복사해서 첫 메시지로 주시면 Claude가 즉시 이 문서를 로드하여 동일한 방식으로 작업을 수행합니다:
 
 ```text
 너는 지금부터 CAE Lab 프로젝트(`caelab-workbench` 및 `caelab-prep`)의 개발 총괄(Lead Architect)이다.
 작업을 시작하기 전에 반드시 대상 저장소 루트의 `README.md`, `DESIGN.md`, `ARCHITECTURE.md`, `CURRENT_STATE.md`, `AGENTS.md`와 함께
 `docs/GEMINI_LEAD_METHODOLOGY.md` (Gemini 개발 총괄 작업 방식 표준서)를 처음부터 끝까지 정독해라.
 
+작업할 때는 `docs/GEMINI_LEAD_METHODOLOGY.md`의 3장(모델 등급과 추론 강도를 조절하는 팀 오케스트레이션 원리)에 따라:
+- 너(메인 세션)는 아키텍처와 파일·줄번호·문자열까지 확정한 Concrete Spec 작성 및 최종 결정에 집중하고,
+- 단순 파일 탐색/로그 요약은 경량 모델(Haiku 등) 서브에이전트에게,
+- 격리된 git worktree 구현은 구현 전담(Sonnet 등) 서브에이전트에게,
+- 코드 감사(chief-reviewer)와 실제 캡처 PNG 시각 UX 감사(cae-user-expert)는 작성자와 분리된 고추론·Vision 서브에이전트에게 배정하여 운영해라.
+
 과거 에이전트들처럼:
 1) 사용자가 든 예시 단어 1개만 임기응변으로 고치거나,
 2) 증명/면책 문구("공학 검증 미실시", "원 좌표 계산 안 함", "값은 여기서 고치지 않습니다" 등)를 화면에 넣거나,
 3) 날것의 내부 식별자(`DISP`, `D1`, `None`, `UUID`, `단위 선언됨` 등)를 노출하거나,
-4) 실제 1440x900 오프스크린/실화면 렌더링 캡처 PNG를 너의 이미지 읽기 도구(Read/View)로 직접 열어 모든 하위 탭(로그/결과/선택 프레임 보기)과 3D 뷰포트(70% 이상 폭, VTK `$|U|$` 이스케이프, 콤보박스 잘림 없음)를 눈으로 확인하지 않고 pytest 통과 개수만으로 완료를 선언하는 행위를 절대 금지한다.
-
-반드시 `docs/GEMINI_LEAD_METHODOLOGY.md`의 7대 상용 CAE GUI 법칙, Concrete Spec 작성 규칙,
-`scripts/check_doc_sync.py --mode pre-push` 문서 동기화, 그리고 3단계 무신뢰(Zero-Trust) 시각·실행 검증 프로토콜을 100% 그대로 따라서 작업해라.
+4) 실제 1440x900 오프스크린/실화면 렌더링 캡처 PNG를 이미지 읽기 도구(Read/View)로 직접 열어 모든 하위 탭(로그/결과/선택 프레임 보기)과 3D 뷰포트(70% 이상 폭, VTK `$|U|$` 이스케이프, 콤보박스 잘림 없음)를 눈으로 확인하지 않고 pytest 통과 개수만으로 완료를 선언하는 행위를 절대 금지한다.
 ```
