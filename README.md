@@ -31,6 +31,44 @@ python -m venv .venv
 
 상세 설치, 외부 실행 파일 지정, RAD 실행, 저장·재개와 문제 해결은 [워크벤치 시작 가이드](docs/tutorials/workbench_quickstart.md)를 따르세요. 위 명령은 원격 저장소를 받습니다. 미게시 로컬 수정까지 설치하는 명령은 아닙니다.
 
+## 내장 SciPy 2D PDE API
+
+FEniCSx 설치 없이 직사각형 영역의 정상 열전도/Poisson 문제
+`-div(k grad(u)) = f`와 일반화 고유값 `K phi = lambda M phi`를 계산할 수 있습니다.
+설치는 `python -m pip install -e ".[numerical]"`입니다. `nx`, `ny`는 방향별 셀 수이며
+각 셀을 선형 삼각형(T3) 두 개로 나눕니다. 확산계수와 질량계수는 양의 상수입니다.
+
+```python
+import math
+from caelab.pde.scipy_solver import solve_poisson_2d, solve_eigenmodes_2d
+from caelab.solvers.pde_solver import SciPyPDESolver
+
+rhs = lambda x, y: 2 * math.pi**2 * math.sin(math.pi*x) * math.sin(math.pi*y)
+solution = solve_poisson_2d(nx=32, ny=32, rhs_func=rhs)
+print(solution.values, solution.flux)  # q = -k grad(u), 면적 가중 절점 평균
+result = SciPyPDESolver().solve_poisson_2d(rhs_func=rhs)
+print(result.summary())
+modes = solve_eigenmodes_2d(num_modes=3)  # M-정규화 모드, 일반적인 lambda
+```
+
+소스 기본값은 0, 경계 기본값은 전체 `u=0`입니다. `dirichlet_bc`에는 상수,
+`f(x, y)` 함수 또는 `{"left": 1, "right": 0}`처럼 면별 값을 지정할 수 있습니다.
+`neumann_bc={"top": g}`는 **`g=k du/dn`**이며 바깥 방향 열유속은 `-g`입니다.
+미지정 면은 자연경계 `g=0`이고 순수 Neumann·상충하는 모서리 값은 거부합니다.
+고유모드는 동차 Dirichlet 조건만 받으며 모드 수는 자유 절점 수보다 작아야 합니다.
+고유값의 물리 의미는 확산·질량계수에 따르며 Hz로 자동 해석하지 않습니다.
+
+`ResultSet` 호환 어댑터는 1부터 시작하는 절점 ID로 `u→displacements[0]`,
+`qx,qy→stresses[0:2]`, `max(abs(u))→max_displacement`를 담고 PDE 전용 요약을 제공합니다.
+`reaction_totals.fx/fy`는 **절점 flux 성분의 단순 합**으로 메시 의존 진단값이며
+반력이나 경계 열수지가 아닙니다. 실제 스칼라 FEM 경계 반응은 `solution.reactions`입니다.
+단위는 호출자가 일관되게 정하고 어댑터의 `units`에 선언하며 기본값은 미선언입니다.
+이 슬롯을 구조 변형·Von Mises 계산에 사용하면 안 됩니다.
+
+현재 범위는 2D 정상 계산 Python API입니다. 3D·시간적분·Workbench 작업 등록·VTU 생성과
+`NativeResultView` 화면 연결은 포함하지 않습니다. 기존 FEniCSx 경로는 유지합니다.
+`python -m pytest tests/test_pde_scipy_solver.py tests/test_pde_line.py -v`로 검증합니다.
+
 ## 문서
 
 | 목적 | 문서 |
