@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFrame, QHeaderView, QHBoxLayout, QLabel,
-                              QMainWindow, QMessageBox, QPlainTextEdit, QSpinBox,
+                              QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
                               QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QToolBar,
                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 from PySide6.QtCore import QRect, Qt, QTimer
@@ -222,6 +222,8 @@ class NativeAnalysisWindow(QMainWindow):
         self._owned_run_ids = set()
         self._displayed_run_id = None
         self._displayed_result = None
+        self._expert_windows = {}
+        self._expert_window = None
         node = self.project.nodes[node_id]
         from caelab.native.adapter import supported_solver_ids
         if node.kind != "analysis" and node.program_id not in supported_solver_ids():
@@ -232,6 +234,10 @@ class NativeAnalysisWindow(QMainWindow):
         self.resize(1050, 760)
         self.view_menu = self.menuBar().addMenu("보기(&V)")
         self.theme_action = self.view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
+        self.tools_menu = self.menuBar().addMenu("도구(&T)")
+        self.expert_action = self.tools_menu.addAction("AI 전문가 자문 및 토론 요청…")
+        self.expert_action.setShortcut(QKeySequence("Ctrl+E"))
+        self.expert_action.triggered.connect(self.request_expert_debate)
         toolbar = QToolBar("해석", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
@@ -256,6 +262,10 @@ class NativeAnalysisWindow(QMainWindow):
         self.timeout.setToolTip("최대 실행 시간. 이 시간이 지나면 이 창에서 시작한 계산을 종료합니다.")
         toolbar.addWidget(QLabel("  제한 시간 "))
         toolbar.addWidget(self.timeout)
+        toolbar.addSeparator()
+        self.expert_toolbar_action = toolbar.addAction("AI 전문가 자문 (Ctrl+E)")
+        self.expert_toolbar_action.setToolTip("현재 계산 결과 및 로그를 바탕으로 AI 전문가 패널 토론을 시작합니다 (Ctrl+E)")
+        self.expert_toolbar_action.triggered.connect(self.request_expert_debate)
         container = QWidget()
         layout = QVBoxLayout(container)
         header_card = QFrame()
@@ -334,8 +344,15 @@ class NativeAnalysisWindow(QMainWindow):
         log_panel = QWidget()
         log_layout = QVBoxLayout(log_panel)
         log_layout.setContentsMargins(0, 0, 0, 0)
+        log_header = QHBoxLayout()
         self.log_summary_badge = QLabel()
-        log_layout.addWidget(self.log_summary_badge)
+        log_header.addWidget(self.log_summary_badge, 1)
+        self.btn_log_expert = QPushButton("AI 원인 분석 및 자문 요청 (Ctrl+E)")
+        self.btn_log_expert.setObjectName("expert_log_btn")
+        self.btn_log_expert.setToolTip("이 로그와 실행 결과를 바탕으로 AI 전문가 패널 토론을 시작합니다 (Ctrl+E)")
+        self.btn_log_expert.clicked.connect(self.request_expert_debate)
+        log_header.addWidget(self.btn_log_expert)
+        log_layout.addLayout(log_header)
         log_layout.addWidget(self.log)
         result_panel = QWidget()
         result_layout = QVBoxLayout(result_panel)
@@ -350,6 +367,12 @@ class NativeAnalysisWindow(QMainWindow):
         self.result_verify_badge = QLabel()
         self.result_verify_badge.hide()
         frame_line.addWidget(self.result_verify_badge)
+        self.btn_result_expert = QPushButton("AI 전문가 결과 검토 요청 (Ctrl+E)")
+        self.btn_result_expert.setObjectName("expert_result_btn")
+        self.btn_result_expert.setToolTip("선택한 결과와 요약을 바탕으로 AI 전문가 패널 토론을 시작합니다 (Ctrl+E)")
+        self.btn_result_expert.clicked.connect(self.request_expert_debate)
+        self.btn_expert_debate = self.btn_result_expert
+        frame_line.addWidget(self.btn_result_expert)
         result_layout.addLayout(frame_line)
         kpis = QHBoxLayout()
         for title, attr in (("최대 변위", "kpi_disp_value"),
@@ -417,6 +440,60 @@ class NativeAnalysisWindow(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_runs)
         self.timer.start()
+
+    def request_expert_debate(self) -> None:
+        """Open a separate discussion with a draft for the displayed run/frame."""
+        run = self._runs.get(self._displayed_run_id)
+        run_id = run.id if run else None
+        frame_index = self.frame_selector.currentData() if run else None
+        context = (self.project.path, self.node_id, run_id, frame_index)
+        # Keep edited drafts and attachments tied to their original run/frame.
+        if context not in self._expert_windows:
+            from .expert_window import ExpertWindow
+            self._expert_windows[context] = ExpertWindow(
+                project_path=self.project.path, node_id=self.node_id,
+                run_id=run_id, workbench=self.workbench,
+            )
+            self._expert_windows[context].setAttribute(Qt.WA_DeleteOnClose)
+            self._expert_windows[context].destroyed.connect(
+                lambda _object=None, key=context: self._forget_expert_window(key))
+        self._expert_window = window = self._expert_windows[context]
+        if not window.question.toPlainText().strip():
+            lines = [f"[{self.project.name}] 해석 결과를 검토해 주세요."]
+            if run:
+                lines.extend([f"솔버: {run.solver_id}", self.run_source.text(),
+                              f"실행 시각: {_time_text(run.created_at)}", self.run_status.text()])
+                if run.returncode is not None:
+                    lines.append(f"프로세스 종료 코드: {run.returncode}")
+                if run.finished_at:
+                    try:
+                        elapsed = (datetime.fromisoformat(run.finished_at)
+                                   - datetime.fromisoformat(run.created_at)).total_seconds()
+                    except (ValueError, TypeError):
+                        pass
+                    else:
+                        lines.append(f"실행 경과 시간: {elapsed:.2f}초")
+                lines.append(self.result_unit_badge.text())
+                if frame_index is not None:
+                    lines.append("선택 프레임: " + self.frame_selector.currentText())
+                lines.extend(["", "[현재 결과 요약]", self.result_text.toPlainText()])
+                log_lines = [line.strip() for line in self.log.toPlainText().splitlines() if line.strip()]
+                diagnostics = [line for line in log_lines if re.search(
+                    r"ERROR|WARNING|FAIL|DIVERG|STOP|NOT CONVERG|오류|경고", line, re.I)]
+                if log_lines:
+                    lines.extend(["", "[최근 로그 오류·경고]" if diagnostics else "[최근 로그]"])
+                    lines.extend(f"  * {line}" for line in (diagnostics or log_lines)[-5:])
+            else:
+                lines.append("아직 선택한 실행이 없습니다. 해석 입력과 확인할 사항을 논의하고 싶습니다.")
+            window.question.setPlainText("\n".join(lines))
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _forget_expert_window(self, context) -> None:
+        window = self._expert_windows.pop(context, None)
+        if self._expert_window is window:
+            self._expert_window = None
 
     def apply_theme(self, mode: str | None = None) -> None:
         resolved = mode if mode in ("dark", "light") else current_theme_mode()
@@ -914,6 +991,10 @@ class NativeAnalysisWindow(QMainWindow):
             self.result_text.setPlainText(text)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        for window in list(self._expert_windows.values()):
+            if not window.close():
+                event.ignore()
+                return
         if self.workbench.close() is False:
             self.run_status.setText("소유한 계산을 종료하고 있습니다. 종료 후 다시 닫으세요.")
             event.ignore()

@@ -2,6 +2,16 @@
 
 문서 기준은 main `54d62f4f1c93f7a6cc220ded13a017cf0f08d8f5`와 그 위에 결합한 native 프레임 표시 `a3ea9bd80bcdbcf192e6236fdd34165cc522515a`·번들 진단 `14a495c1fc861fa50f620ce6c3f817ac9f7f1d33` 소스입니다. 두 단위의 원 QA 판정은 아래에 구분합니다. 문서 합성 시점에는 이 문서를 포함한 통합 후보의 최종 QA·회귀·CI·병합이 미완료였으며, 원격 반영은 해당 후보의 PR·정확 head CI·main tree 확인과 대조해야 합니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
+## TRACK-1-EXPERT-BRIDGE — 2026-11-09 로컬 구현
+
+기준 `8f709451548b3269c055c740be448520f7c61b24`, 브랜치 `feature/wb-expert-bridge`에서 네이티브 해석 창의 **도구 → AI 전문가와 결과 토론… (Ctrl+E)**, 툴바와 로그·결과 아래 버튼을 독립 `ExpertWindow`에 연결합니다. 현재 조회 실행의 실제 solver_id·종료 코드·실행/판독 상태, 기록 시각의 경과 시간, 선택 프레임의 기존 판독 요약·선언 단위, 최근 로그 오류·경고 최대 5줄을 빈 질문에 채웁니다. 미선언 단위를 mm로 가정하거나 미판독 값을 만들지 않습니다. Von Mises 극값을 새로 계산하는 기능은 추가하지 않습니다.
+
+열린 창은 프로젝트·노드·실행·프레임별로 재사용하고 작성 중 질문과 첨부를 보존합니다. 닫힌 창은 폐기 후 다시 생성합니다. 공유 Workbench를 주입받은 전문가 창은 닫을 때 계산 관리자를 종료하지 않으며, 해석 창을 닫을 때 전문가 창의 종료 거절을 존중합니다. 원자료는 전달된 실행 참조를 **계산 결과 가져오기…**에서 확인해 명시적으로 첨부합니다. 창 열기는 첨부·LLM 호출·계산을 시작하지 않습니다. 원격 게시·main 반영 범위는 아닙니다.
+
+작성자 신규 연결 검사 **14 passed**, 신규 연결+기존 전문가 창 검사 **48 passed**를 확인했습니다. 별도 QA도 신규 **14 passed**와 실제 Workbench/JobManager의 공유·단독 창 종료를 offscreen에서 확인하고 맥락 혼선·공유 실행 취소·닫힌 창 타이머 재사용 지적을 종결했습니다. 지정한 `test_native_analysis_expert_bridge.py`·`test_native_runs_gui.py` 조합은 offscreen 진단 실행(`-vv -o faulthandler_timeout=30`)에서 **42 passed / 676.89초**로 정상 종료했습니다. 초기 조합 실행에서 Qt 이벤트 처리 접근 위반이 한 번 있었으나 현재 단독·전체 조합과 별도 QA의 기준 SHA 실행 창 전체 **28 passed / 643.82초**에서 재현되지 않았으며 최초 원인은 미확정입니다. 긴 대기는 현재·기준 모두 기존 테마 갱신과 프로그램 탐색의 `shutil.which()`에서 관측했습니다.
+
+전체 제품 회귀는 `QT_QPA_PLATFORM=offscreen`, `PYTHONUTF8=1`, xdist 4 workers/loadfile로 **3 failed, 1569 passed, 25 skipped, 383 warnings / 1489.75초**, 초기화 오류 0입니다. 실패는 `test_installer.py`의 `test_manual_entry_skips_with_reason`·`test_manual_entry_registers_placed_file`·`test_archive_install_and_idempotency`이며 별도 QA가 격리한 동일 기준 `8f70945`에서도 세 실패를 모두 재현했습니다. 설치기 코드는 변경하지 않았고 전체 회귀를 통과로 표시하지 않습니다. Windows 임시 모의 프로젝트의 프로세스는 Qt 이벤트 루프에 진입했으나 지원 UI 도구의 창 목록에 노출되지 않아 실화면 조작을 확인하지 못했습니다. 해당 시험 프로세스는 정리했습니다. 이번 연결의 실제 솔버·LLM 토론 검증은 수행하지 않았으며 전체 제품/GUI 인도 완료로 확대하지 않습니다.
+
 ## WBS-B1-B2 표시명·DAT 요약 후속 수정 — 2026-11-09
 
 기준은 `d74a43e48ae7ee7ded55bfae76d7c70df2666534`, 작업 브랜치는 `feat/wb-gui-density`입니다. 전달된 `cae-user-expert` 비판을 수용해 NativeAnalysis 결과 표와 요약의 `DISP`/`D1` 등 단독 코드를 `변위 (DISP)`·`Ux (D1)` 및 `응력 (STRESS)`·`Sxx` 등으로 표시합니다. 미지 필드·성분은 원 이름을 유지하며 필드별 행 수·최솟값/최댓값·coverage와 원 metadata는 보존합니다. 성분별 summary가 없으면 기존 한 행에 표시명을 나열하고 새 크기/응력 행은 추가하지 않습니다.
