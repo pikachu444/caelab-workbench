@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFrame, QHeaderView, QHBoxLayout, QLabel,
-                              QMainWindow, QMessageBox, QPlainTextEdit, QSpinBox,
+                              QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
                               QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QToolBar,
                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 from PySide6.QtCore import QRect, Qt, QTimer
@@ -222,6 +222,8 @@ class NativeAnalysisWindow(QMainWindow):
         self._owned_run_ids = set()
         self._displayed_run_id = None
         self._displayed_result = None
+        self._expert_windows = {}
+        self._expert_window = None
         node = self.project.nodes[node_id]
         from caelab.native.adapter import supported_solver_ids
         if node.kind != "analysis" and node.program_id not in supported_solver_ids():
@@ -232,6 +234,10 @@ class NativeAnalysisWindow(QMainWindow):
         self.resize(1050, 760)
         self.view_menu = self.menuBar().addMenu("보기(&V)")
         self.theme_action = self.view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
+        self.tools_menu = self.menuBar().addMenu("도구(&T)")
+        self.expert_action = self.tools_menu.addAction("AI 전문가와 결과 토론…")
+        self.expert_action.setShortcut(QKeySequence("Ctrl+E"))
+        self.expert_action.triggered.connect(self.request_expert_debate)
         toolbar = QToolBar("해석", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
@@ -256,6 +262,9 @@ class NativeAnalysisWindow(QMainWindow):
         self.timeout.setToolTip("최대 실행 시간. 이 시간이 지나면 이 창에서 시작한 계산을 종료합니다.")
         toolbar.addWidget(QLabel("  제한 시간 "))
         toolbar.addWidget(self.timeout)
+        self.expert_toolbar_action = toolbar.addAction("전문가 토론")
+        self.expert_toolbar_action.setToolTip("현재 실행의 결과와 로그로 AI 전문가 토론 창을 엽니다 (Ctrl+E)")
+        self.expert_toolbar_action.triggered.connect(self.request_expert_debate)
         container = QWidget()
         layout = QVBoxLayout(container)
         header_card = QFrame()
@@ -401,6 +410,11 @@ class NativeAnalysisWindow(QMainWindow):
         self.native_view = NativeResultView(self.workbench.read_native_frame)
         output_tabs.addTab(self.native_view, "선택 프레임 보기")
         run_layout.addWidget(output_tabs)
+        self.btn_expert_debate = QPushButton("AI 전문가와 결과 토론")
+        self.btn_expert_debate.setObjectName("expert_debate_btn")
+        self.btn_expert_debate.setToolTip("선택한 실행의 결과 요약과 최근 오류·경고를 질문 초안으로 전달합니다")
+        self.btn_expert_debate.clicked.connect(self.request_expert_debate)
+        run_layout.addWidget(self.btn_expert_debate)
         split = QSplitter(Qt.Vertical)
         split.addWidget(input_tabs)
         split.addWidget(run_panel)
@@ -417,6 +431,60 @@ class NativeAnalysisWindow(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_runs)
         self.timer.start()
+
+    def request_expert_debate(self) -> None:
+        """Open a separate discussion with a draft for the displayed run/frame."""
+        run = self._runs.get(self._displayed_run_id)
+        run_id = run.id if run else None
+        frame_index = self.frame_selector.currentData() if run else None
+        context = (self.project.path, self.node_id, run_id, frame_index)
+        # Keep edited drafts and attachments tied to their original run/frame.
+        if context not in self._expert_windows:
+            from .expert_window import ExpertWindow
+            self._expert_windows[context] = ExpertWindow(
+                project_path=self.project.path, node_id=self.node_id,
+                run_id=run_id, workbench=self.workbench,
+            )
+            self._expert_windows[context].setAttribute(Qt.WA_DeleteOnClose)
+            self._expert_windows[context].destroyed.connect(
+                lambda _object=None, key=context: self._forget_expert_window(key))
+        self._expert_window = window = self._expert_windows[context]
+        if not window.question.toPlainText().strip():
+            lines = [f"[{self.project.name}] 해석 결과를 검토해 주세요."]
+            if run:
+                lines.extend([f"솔버: {run.solver_id}", self.run_source.text(),
+                              f"실행 시각: {_time_text(run.created_at)}", self.run_status.text()])
+                if run.returncode is not None:
+                    lines.append(f"프로세스 종료 코드: {run.returncode}")
+                if run.finished_at:
+                    try:
+                        elapsed = (datetime.fromisoformat(run.finished_at)
+                                   - datetime.fromisoformat(run.created_at)).total_seconds()
+                    except (ValueError, TypeError):
+                        pass
+                    else:
+                        lines.append(f"실행 경과 시간: {elapsed:.2f}초")
+                lines.append(self.result_unit_badge.text())
+                if frame_index is not None:
+                    lines.append("선택 프레임: " + self.frame_selector.currentText())
+                lines.extend(["", "[현재 결과 요약]", self.result_text.toPlainText()])
+                log_lines = [line.strip() for line in self.log.toPlainText().splitlines() if line.strip()]
+                diagnostics = [line for line in log_lines if re.search(
+                    r"ERROR|WARNING|FAIL|DIVERG|STOP|NOT CONVERG|오류|경고", line, re.I)]
+                if log_lines:
+                    lines.extend(["", "[최근 로그 오류·경고]" if diagnostics else "[최근 로그]"])
+                    lines.extend(f"  * {line}" for line in (diagnostics or log_lines)[-5:])
+            else:
+                lines.append("아직 선택한 실행이 없습니다. 해석 입력과 확인할 사항을 논의하고 싶습니다.")
+            window.question.setPlainText("\n".join(lines))
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _forget_expert_window(self, context) -> None:
+        window = self._expert_windows.pop(context, None)
+        if self._expert_window is window:
+            self._expert_window = None
 
     def apply_theme(self, mode: str | None = None) -> None:
         resolved = mode if mode in ("dark", "light") else current_theme_mode()
@@ -914,6 +982,10 @@ class NativeAnalysisWindow(QMainWindow):
             self.result_text.setPlainText(text)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        for window in list(self._expert_windows.values()):
+            if not window.close():
+                event.ignore()
+                return
         if self.workbench.close() is False:
             self.run_status.setText("소유한 계산을 종료하고 있습니다. 종료 후 다시 닫으세요.")
             event.ignore()

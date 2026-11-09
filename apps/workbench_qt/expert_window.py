@@ -44,6 +44,7 @@ class ExpertWindow(QMainWindow):
     def __init__(self, discussion_path=None, *, project_path=None, node_id=None,
                  run_id=None, workbench=None, view_settings=None):
         super().__init__()
+        self._owns_workbench = workbench is None
         self.workbench = workbench or Workbench()
         self.view_settings = _view_settings(view_settings)
         self._pending_view = None
@@ -907,7 +908,8 @@ class ExpertWindow(QMainWindow):
                 event.ignore()
                 return
         self.timer.stop()
-        self.workbench.close()
+        if self._owns_workbench:
+            self.workbench.close()
         event.accept()
 
 
