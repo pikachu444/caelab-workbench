@@ -1,5 +1,49 @@
 # 현재 상태
 
+## TRACK-2 내장 SciPy 2D PDE — 2026-11-09 로컬 구현
+
+`feature/wb-scipy-pde-solver`의 기준 `8f709451`에서 구현한 Python API입니다.
+`caelab/pde/scipy_solver.py`는 직사각형 T3 요소의 COO→CSR 조립, 정상
+Poisson/열전도 `-div(k grad(u))=f`, 비영 Dirichlet lifting·혼합 Neumann,
+`spsolve`, 면적 가중 절점 flux, consistent mass와 `eigsh` 고유모드를 제공합니다.
+확산·질량계수는 양의 상수이며 순수 Neumann은 지원하지 않습니다.
+
+`caelab/solvers/pde_solver.py`의 `SciPyPDESolver`는 스칼라·flux를 기존
+`ResultSet` 배열 모양으로 제공하고 `PDEResultSet.summary()`에서 PDE 의미로 표시합니다.
+`reaction_totals.fx/fy`는 메시 의존 절점 flux 단순 합이며 반력·열수지가 아닙니다.
+단위는 호출자 선언을 복사하고 추정하지 않습니다. 임의 입력의 오차가 MMS 검증값과
+같다고 주장하지 않습니다. [사용법과 필드 의미](README.md#내장-scipy-2d-pde-api)를 따릅니다.
+
+Windows Python 3.13.5·NumPy 2.5.2·SciPy 1.18.0에서 지정 PDE 검사 명령은
+**36 passed, 1 skipped**입니다. skip은 기존 FEniCSx 인터프리터 부재입니다.
+실제 SciPy MMS의 요소 내부 적분 L2 오차는 16×16에서 `0.0053774901`,
+32×32에서 `0.0013504397`(<0.003), 수렴 차수 `1.99350`입니다.
+독립 Duffy 적분과 비교하며 비영 Dirichlet·Neumann 부호, flux 평균,
+질량 정규화·고유쌍 잔차·입력 거절·ResultSet 형식도 검사했습니다.
+독립 CAE 검토자는 같은 staged 소스의 API/화면 경계·flux 합 의미·고유값 해석에
+대한 지적 C1–C3를 수정 계약과 실제 구현으로 종결하고 PDE 범위를 수용했습니다.
+별도 실제 계산에서도 네 방향 혼합 affine patch와 소스가 있는 포물선 문제의
+2차 수렴·혼합 경계 고유값·질량 직교·잔차를 확인했습니다.
+
+전체 제품 회귀는 Qt offscreen·xdist 4 workers/worksteal에서 **5 failed,
+1581 passed, 25 skipped, 383 warnings, 1441.44s**, exit 1입니다.
+JUnit은 설치기 assertion 실패 3개와 native GUI worker crash 2개로 구분합니다.
+설치기 `test_manual_entry_skips_with_reason`, `test_manual_entry_registers_placed_file`,
+`test_archive_install_and_idempotency`는 기준 `8f709451`의 임시 Git archive에서도
+동일한 세 실패 메시지를 재현했습니다(**3 failed**, 별도 실행).
+GUI의 `test_empty_node_delete_needs_no_confirmation_and_cancelled_removal_is_unchanged`와
+`test_natural_scene_dock_clamp_restores_user_scroll[end-closed0-restored0]`는 전체 병렬
+실행 중 worker 종료로 기록됐고 Windows access violation 로그도 있습니다.
+같은 두 테스트의 격리 xdist 4 실행은 기준 소스 **2 passed/25.26s**, 현재 변경본
+**2 passed/19.91s**이며, 전체 실행의 crash 원인은 미확정입니다. PDE 변경에는
+Qt·환경변수·전역 fixture 변경이나 기존
+앱의 새 API 호출이 없지만, 병렬 수집·순서·부하 영향까지 배제한 것은 아닙니다.
+전체 회귀를 통과로 표시하지 않습니다. 개별 실행의 통과 수를 합산하지 않습니다.
+
+이 범위는 2D 정상 계산 API이며 3D·시간적분·Workbench 등록·VTU 출력·
+`NativeResultView` 연결과 OS 실화면 확인은 포함하지 않습니다. 기존 FEniCSx 코드는
+유지합니다. 원격 게시·main 반영은 수행하지 않았습니다.
+
 문서 기준은 main `54d62f4f1c93f7a6cc220ded13a017cf0f08d8f5`와 그 위에 결합한 native 프레임 표시 `a3ea9bd80bcdbcf192e6236fdd34165cc522515a`·번들 진단 `14a495c1fc861fa50f620ce6c3f817ac9f7f1d33` 소스입니다. 두 단위의 원 QA 판정은 아래에 구분합니다. 문서 합성 시점에는 이 문서를 포함한 통합 후보의 최종 QA·회귀·CI·병합이 미완료였으며, 원격 반영은 해당 후보의 PR·정확 head CI·main tree 확인과 대조해야 합니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
 ## TRACK-1-EXPERT-BRIDGE — 2026-11-09 로컬 구현
