@@ -2,6 +2,20 @@
 
 문서 기준은 main `54d62f4f1c93f7a6cc220ded13a017cf0f08d8f5`와 그 위에 결합한 native 프레임 표시 `a3ea9bd80bcdbcf192e6236fdd34165cc522515a`·번들 진단 `14a495c1fc861fa50f620ce6c3f817ac9f7f1d33` 소스입니다. 두 단위의 원 QA 판정은 아래에 구분합니다. 문서 합성 시점에는 이 문서를 포함한 통합 후보의 최종 QA·회귀·CI·병합이 미완료였으며, 원격 반영은 해당 후보의 PR·정확 head CI·main tree 확인과 대조해야 합니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
+## WBS-B1-B2 표시명·DAT 요약 후속 수정 — 2026-11-09
+
+기준은 `d74a43e48ae7ee7ded55bfae76d7c70df2666534`, 작업 브랜치는 `feat/wb-gui-density`입니다. 전달된 `cae-user-expert` 비판을 수용해 NativeAnalysis 결과 표와 요약의 `DISP`/`D1` 등 단독 코드를 `변위 (DISP)`·`Ux (D1)` 및 `응력 (STRESS)`·`Sxx` 등으로 표시합니다. 미지 필드·성분은 원 이름을 유지하며 필드별 행 수·최솟값/최댓값·coverage와 원 metadata는 보존합니다. 성분별 summary가 없으면 기존 한 행에 표시명을 나열하고 새 크기/응력 행은 추가하지 않습니다.
+
+기존 로그·결과·선택 프레임 보기 탭은 같은 순서로 유지하고 `NativeAnalysisWindow.output_tabs`로 직접 선택할 수 있습니다. DAT 상세 요약도 표 제목의 같은 필터링 문구를 재사용해 없는 단계·증분은 생략하고 0은 보존합니다. MainWindow의 초기 안내는 `파일 > 열기(Ctrl+O)`로 정리했습니다. 검토에서 Ctrl+O가 미연결인 점을 추가 확인해 파일 메뉴 열기 QAction 한 곳에만 표준 Open 단축키를 등록하고 기존 실행 중 잠금 목록을 유지했습니다.
+
+지정한 `test_native_runs_gui.py`·`test_native_result_view.py`·`test_native_project_gui.py`의 전체 선택 범위는 pytest-xdist 4 workers/worksteal에서 **182 passed, 114 warnings, 618.78s**, 실패·오류·skip 0입니다. 경고는 기존 VTK/NumPy deprecation입니다. 필드별 표시명·unknown fallback·summary 유무의 행 수/수치/coverage·원 metadata 불변·DAT None/0·실제 Qt Ctrl+O 호출 경로를 검사했습니다. 별도 작성자 focused **3 passed/4.86s** 및 독립 focused **3 passed/5.91s**는 182건에 합산하지 않습니다.
+
+같은 모의 실행 자료·창 크기로 변경 전후 NativeAnalysis의 결과 탭과 MainWindow 초기 안내를 1280/1000 폭·다크/라이트 Qt offscreen에서 확인했습니다. 표를 스크롤한 상태에서 STRESS 성분과 DAT 상세의 None 제거도 확인했습니다. OS 실화면/물리 키 입력 검수나 실제 솔버 재실행을 뜻하지 않습니다. 독립 검토자가 전달된 UX 범위와 추가 Ctrl+O 지적의 수정을 수용했습니다.
+
+전체 제품 회귀는 xdist 4 workers/worksteal에서 **4 failed, 1554 passed, 25 skipped, 382 warnings, 1012.64s**, 초기화 오류 0입니다. 실패는 아래 선행 WBS 검증에서 기준 소스에도 재현한 설치기 3개와 `test_preprocessor_routing.py`의 기본 cp949 JSON 읽기 1개이며, 이전 JUnit과 네 failure message가 모두 같습니다. 전체 회귀를 통과로 표시하지 않습니다. pytest 부모는 `python -X utf8`로 시작했으나 xdist worker의 해당 읽기는 cp949였으며, 앞선 독립 단일 프로세스 UTF-8 통과와 구분합니다. 검사 중 120초 faulthandler 스택은 기존 테마 갱신/프로그램 경로 검색에서 관측됐고 검사 중단이나 추가 실패는 없었습니다.
+
+문서 동기화의 staged `--mode pre-commit`은 이번 코드 2개·문서 1개, 커밋 후 요청한 `--mode pre-push`는 브랜치 전체 코드 8개·문서 3개로 통과했습니다. 독립 검토자는 정확 후속 후보의 코드·요구사항 범위를 수용했습니다. 이 수정의 범위는 표시명·탭 선택·열기 단축키이며 계산 결과를 변경하지 않습니다.
+
 ## WBS-B1-B2 고밀도 GUI 로컬 후보 — 2026-11-09
 
 기준 `fa56b883105e2d50a608e31063cf6e804c369103`, 브랜치 `feat/wb-gui-density`의 로컬 변경입니다. 원격 게시·main 반영은 이 작업 범위가 아닙니다.

@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -132,7 +133,9 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         menu = self.menuBar()
         file_menu = menu.addMenu("파일")
-        self._locked_actions.append(file_menu.addAction("열기…", self.open_project_dialog))
+        open_action = file_menu.addAction("열기…", self.open_project_dialog)
+        open_action.setShortcut(QKeySequence.Open)
+        self._locked_actions.append(open_action)
         self._locked_actions.append(file_menu.addAction("저장", self.save_project))
         analysis_menu = menu.addMenu("해석")
         self._locked_actions.append(analysis_menu.addAction("입력 검사", self.run_check))
@@ -283,7 +286,7 @@ class MainWindow(QMainWindow):
         bottom = QWidget()
         bottom_layout = QVBoxLayout(bottom)
         status_row = QHBoxLayout()
-        self.status = QLabel("준비됨 — 파일 ▸ 열기로 프로젝트를 여세요.")
+        self.status = QLabel("준비됨 — 파일 > 열기(Ctrl+O)로 프로젝트를 여세요.")
         status_row.addWidget(self.status, 1)
         self.btn_goto = QPushButton("고칠 위치로 이동")
         self.btn_goto.setEnabled(False)
