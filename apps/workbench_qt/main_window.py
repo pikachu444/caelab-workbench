@@ -139,9 +139,6 @@ class MainWindow(QMainWindow):
         self._locked_actions.append(analysis_menu.addAction("실행", self.run_solve))
         self._cancel_actions.append(analysis_menu.addAction("계산 취소", self.cancel_run))
         analysis_menu.addAction("MDO Studio 열기", self.open_optimization_panel)
-        results_menu = menu.addMenu("결과")
-        results_menu.addAction("ParaView에서 열기 (다음 단계)",
-                               lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))
         view_menu = menu.addMenu("보기")
         self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         help_menu = menu.addMenu("도움말")
@@ -216,9 +213,14 @@ class MainWindow(QMainWindow):
         fit_btn = QPushButton("화면 맞춤")
         fit_btn.clicked.connect(lambda: self.viewport.fit())
         view_bar.addWidget(fit_btn)
+        view_bar.addStretch(1)
+        centre_layout.addLayout(view_bar)
 
+        view_bar = QHBoxLayout()
         view_bar.addWidget(QLabel("표시 필드"))
         self.field_combo = QComboBox()
+        self.field_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.field_combo.setMinimumContentsLength(14)
         self.field_combo.addItem("변위 (크기)", "U_mag")
         self.field_combo.addItem("변위 X (Ux)", "U_x")
         self.field_combo.addItem("변위 Y (Uy)", "U_y")
@@ -229,6 +231,8 @@ class MainWindow(QMainWindow):
 
         view_bar.addWidget(QLabel("배율 모드"))
         self.scale_mode_combo = QComboBox()
+        self.scale_mode_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.scale_mode_combo.setMinimumContentsLength(14)
         self.scale_mode_combo.addItem("자동 배율", "auto")
         self.scale_mode_combo.addItem("실변형 (1x)", "real")
         self.scale_mode_combo.currentIndexChanged.connect(self._on_display_setting_changed)
@@ -245,8 +249,9 @@ class MainWindow(QMainWindow):
         view_bar.addStretch(1)
         self.legend_label = QLabel("")
         self.legend_label.setObjectName("panelHint")
-        view_bar.addWidget(self.legend_label)
+        self.legend_label.setWordWrap(True)
         centre_layout.addLayout(view_bar)
+        centre_layout.addWidget(self.legend_label)
         self.viewport = Viewport()
         centre_layout.addWidget(self.viewport, 1)
         self.setCentralWidget(centre)
@@ -266,17 +271,9 @@ class MainWindow(QMainWindow):
         self.props_hint.setWordWrap(True)
         self.props_layout.addWidget(self.props_hint)
         self.props_layout.addStretch(1)
-        # This panel is a viewer, not an editor (DESIGN: the built-in
-        # screens stay at check/run/summary level; preprocessing edits
-        # belong to the native programs). The guide stays visible under
-        # the values so the way to change a value is never a dead end:
-        # edit in the native program.
-        self.props_guide = QLabel(
-            "값은 여기서 고치지 않습니다. 형상·재료·조건을 바꾸려면 "
-            "FreeCAD·Salome 같은 전용 프로그램에서 수정한 뒤 다시 여세요.")
-        self.props_guide.setObjectName("panelHint")
-        self.props_guide.setWordWrap(True)
-        self.props_layout.addWidget(self.props_guide)
+        # Compatibility for callers inspecting the old guide; it occupies no UI space.
+        self.props_guide = QLabel('전용 프로그램에서 편집', self.props_panel)
+        self.props_guide.hide()
         props_dock = QDockWidget("속성")
         props_dock.setWidget(self.props_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, props_dock)
@@ -329,12 +326,12 @@ class MainWindow(QMainWindow):
         self.context_bar.clear()
         actions = {
             "모델": [("열기", self.open_project_dialog), ("저장", self.save_project)],
-            "재료": [("재료 편집 안내", lambda: self._log("재료는 여기서 고치지 않습니다. FreeCAD 같은 전용 프로그램에서 수정한 뒤 다시 여세요."))],
+            "재료": [],
             "메시": [("메시 다시 표시", lambda: self._show_current_model(manual=True))],
             "해석 단계": [],
             "하중·구속": [],
             "작업": [("입력 검사", self.run_check), ("실행", self.run_solve)],
-            "결과": [("ParaView에서 열기 (다음 단계)", lambda: self._log("ParaView 연결은 다음 단계에서 붙입니다."))],
+            "결과": [],
         }.get(self.module, [])
         for label, fn in actions:
             action = self.context_bar.addAction(label, fn)

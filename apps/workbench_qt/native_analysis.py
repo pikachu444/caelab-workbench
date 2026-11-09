@@ -256,8 +256,8 @@ class NativeAnalysisWindow(QMainWindow):
         header_card = QFrame()
         header_card.setObjectName("sectionCard")
         header = QVBoxLayout(header_card)
-        header.setContentsMargins(12, 10, 12, 10)
-        header.setSpacing(6)
+        header.setContentsMargins(8, 6, 8, 6)
+        header.setSpacing(4)
         status_line = QHBoxLayout()
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -342,12 +342,13 @@ class NativeAnalysisWindow(QMainWindow):
         frame_line.addWidget(self.frame_selector, 1)
         self.result_unit_badge = QLabel()
         frame_line.addWidget(self.result_unit_badge)
-        self.result_verify_badge = QLabel("공학 검증 미실시")
+        self.result_verify_badge = QLabel()
+        self.result_verify_badge.hide()
         frame_line.addWidget(self.result_verify_badge)
         result_layout.addLayout(frame_line)
         kpis = QHBoxLayout()
-        for title, attr in (("최대 변위 (판독 절점)", "kpi_disp_value"),
-                            ("변위 절점 / 메시 절점", "kpi_nodes_value"), ("DAT 판독 상태", "kpi_dat_value")):
+        for title, attr in (("최대 변위", "kpi_disp_value"),
+                            ("변위 / 메시 절점", "kpi_nodes_value"), ("집합 출력 상태 (DAT)", "kpi_dat_value")):
             card = QFrame()
             card.setObjectName("kpiCard")
             card_layout = QVBoxLayout(card)
@@ -399,9 +400,6 @@ class NativeAnalysisWindow(QMainWindow):
         split.addWidget(run_panel)
         split.setSizes([155, 555])
         layout.addWidget(split)
-        note = QLabel("입력 편집은 전용 프로그램에서 합니다. 실행 기록을 선택해도 새 계산은 시작되지 않습니다.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
         self.setCentralWidget(container)
         self._theme_mode = current_theme_mode()
         self.apply_theme()
@@ -436,7 +434,12 @@ class NativeAnalysisWindow(QMainWindow):
                                      (self.result_unit_badge, getattr(self._runs.get(self._displayed_run_id), 'units', {}),
                                       self._displayed_run_id in self._runs)):
             tone = 'ready' if units else 'warning' if exists else 'neutral'
-            badge.setText('단위 선언됨' if units else '단위 미확인' if exists else '자료 없음')
+            from .viewport import deduce_stress_unit
+            text = ' · '.join(str(units[key]) for key in ('length', 'force') if units.get(key))
+            stress_unit = deduce_stress_unit(units)
+            if stress_unit:
+                text += f' ({stress_unit})'
+            badge.setText(f'단위: {text}' if text else '단위 미확인' if exists else '자료 없음')
             badge.setStyleSheet(status_badge_style(tone, mode))
 
     @staticmethod
@@ -784,7 +787,7 @@ class NativeAnalysisWindow(QMainWindow):
         result = run.result or {}
         frame = next((frame for frame in result.get("frames", [])
                       if frame.get("index") == self.frame_selector.currentData()), None)
-        lines = [f"선언 단위: {_unit_text(run.units)}", "수치 검증·공학적 적합성: 미실시"]
+        lines = [f"선언 단위: {_unit_text(run.units)}"]
         if result.get("native_files"):
             lines.append(f"원본 결과 폴더: {run.workdir}")
             lines.append("원본 결과: " + ", ".join(result["native_files"]))
@@ -863,7 +866,10 @@ class NativeAnalysisWindow(QMainWindow):
             self.kpi_dat_value.setText(_PARSE_LABELS.get(dat_status, dat_status or '출력 없음'))
         self.dat_container.setVisible(bool(dat.get('sets')))
         metadata = dat.get('frame') or {}
-        self.dat_frame_label.setText(f"DAT 최종 프레임 — 단계 {metadata.get('step', '?')} / 증분 {metadata.get('increment', '?')} / 값 {metadata.get('value', '?')}\n선택한 FRD 프레임과 대응 여부 미확인")
+        frame_text = ' / '.join(f'{label} {metadata[key]}' for key, label in
+                                (('step', '단계'), ('increment', '증분'), ('value', '값'))
+                                if metadata.get(key) is not None)
+        self.dat_frame_label.setText('DAT 최종 프레임' + (f' · {frame_text}' if frame_text else ''))
         for name, values in dat.get('sets', {}).items():
             for key, label, unit_key, records in (
                     ('total_force', '절점력 합계 원값', 'force', 'nodal_forces'),

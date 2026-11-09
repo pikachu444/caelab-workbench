@@ -59,9 +59,15 @@ def compute_von_mises(stresses: dict[int, list[float]], node_ids: list[int]) -> 
     for i, nid in enumerate(node_ids):
         vec = stresses.get(nid) if stresses else None
         if vec and len(vec) >= 6 and all(map(math.isfinite, vec[:6])):
-            sxx, syy, szz, sxy, syz, szx = vec[:6]
+            scale = max(map(abs, vec[:6]))
+            if scale == 0:
+                vm[i] = 0.0
+                continue
+            # Normalize before squaring to preserve very large/small finite stresses.
+            sxx, syy, szz, sxy, syz, szx = (value / scale for value in vec[:6])
             val_sq = 0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2 + 6.0 * (sxy ** 2 + syz ** 2 + szx ** 2))
-            vm[i] = math.sqrt(max(0.0, val_sq))
+            value = scale * math.sqrt(max(0.0, val_sq))
+            vm[i] = value if math.isfinite(value) else np.nan
     return vm
 
 
@@ -348,10 +354,7 @@ class Viewport(QWidget):
             if stress_unit is None:
                 # AC-3: [단위 미선언] 경고 출력 및 파생 응력 표시 보류
                 active_scalar_name = None
-                if not units_declared and scale_mode == "real":
-                    legend_title = "[단위 미선언]\n파생 응력 표시 보류 · 실제 변형 억제"
-                else:
-                    legend_title = "[단위 미선언]\n파생 응력 표시 보류"
+                legend_title = "[단위 미선언]"
                 lo, hi = 0.0, 1.0
             else:
                 vm_values = compute_von_mises(getattr(result, "stresses", {}), self._node_ids)
@@ -359,13 +362,7 @@ class Viewport(QWidget):
                 vm_arr.SetName("von_mises")
                 grid.GetPointData().AddArray(vm_arr)
                 active_scalar_name = "von_mises"
-                if not units_declared:
-                    if scale_mode == "real":
-                        legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽 · 변형 단위 미선언: 실제 변형 억제]"
-                    else:
-                        legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽 · 변형 단위 미선언]"
-                else:
-                    legend_title = f"Von Mises [{stress_unit}]\n[절점 외삽]"
+                legend_title = f"Von Mises [{stress_unit}]"
                 valid = vm_values[np.isfinite(vm_values)]
                 lo = float(np.min(valid)) if len(valid) else 0.0
                 hi = float(np.max(valid)) if len(valid) else 1.0
@@ -374,36 +371,36 @@ class Viewport(QWidget):
         elif field_name == "U_x":
             active_scalar_name = "U_x"
             if not units_declared:
-                legend_title = "Displacement X\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement X\n[단위 미선언: 절점]"
+                legend_title = "Displacement X [단위 미선언]"
             else:
-                legend_title = f"Displacement X [{length_unit_str}]\n[절점]"
+                legend_title = f"Displacement X [{length_unit_str}]"
             lo, hi = float(disp_display[:, 0].min()), float(disp_display[:, 0].max())
             if lo == hi:
                 hi = lo + 1e-6
         elif field_name == "U_y":
             active_scalar_name = "U_y"
             if not units_declared:
-                legend_title = "Displacement Y\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement Y\n[단위 미선언: 절점]"
+                legend_title = "Displacement Y [단위 미선언]"
             else:
-                legend_title = f"Displacement Y [{length_unit_str}]\n[절점]"
+                legend_title = f"Displacement Y [{length_unit_str}]"
             lo, hi = float(disp_display[:, 1].min()), float(disp_display[:, 1].max())
             if lo == hi:
                 hi = lo + 1e-6
         elif field_name == "U_z":
             active_scalar_name = "U_z"
             if not units_declared:
-                legend_title = "Displacement Z\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement Z\n[단위 미선언: 절점]"
+                legend_title = "Displacement Z [단위 미선언]"
             else:
-                legend_title = f"Displacement Z [{length_unit_str}]\n[절점]"
+                legend_title = f"Displacement Z [{length_unit_str}]"
             lo, hi = float(disp_display[:, 2].min()), float(disp_display[:, 2].max())
             if lo == hi:
                 hi = lo + 1e-6
         else:  # U_mag
             active_scalar_name = "displacement_magnitude"
             if not units_declared:
-                legend_title = "Displacement\n[단위 미선언: 실제 변형 억제]" if scale_mode == "real" else "Displacement\n[단위 미선언: 절점]"
+                legend_title = "Displacement [단위 미선언]"
             else:
-                legend_title = f"Displacement [{length_unit_str}]\n[절점]"
+                legend_title = f"Displacement [{length_unit_str}]"
             lo, hi = float(magnitude.min()), float(magnitude.max()) or 1.0
             if lo == hi:
                 hi = lo + 1e-6
@@ -501,6 +498,12 @@ class Viewport(QWidget):
 
     def set_scale_mode(self, mode: str) -> None:
         self.update_display(scale_mode=mode)
+
+    def set_camera_preset(self, name: str) -> None:
+        self.set_view(name)
+
+    def reset_camera(self) -> None:
+        self.fit()
 
     def set_view(self, name: str) -> None:
         if not self.available:

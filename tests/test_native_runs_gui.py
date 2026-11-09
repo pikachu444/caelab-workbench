@@ -212,6 +212,8 @@ def test_dat_only_sets_are_visible_without_inventing_frd_or_reaction(analysis, t
     assert "집합 SUPPORT" in text and "절점력 합계 원값: (1, 2, 3) N" in text
     assert "반력" not in text
     assert window.frame_selector.count() == 0
+    assert window.dat_frame_label.text() == 'DAT 최종 프레임 · 값 1.0'
+    assert window.result_unit_badge.text() == '단위: mm · N (MPa)'
 
 
 def test_parent_updates_connected_result_when_other_window_selects_failed_run(app, tmp_path):
@@ -503,7 +505,7 @@ def test_result_tables_hide_run_store_and_clear_all_values_on_empty_or_error(ana
     assert window.field_table.item(0, 2).text() == '-1.25'
     assert window.dat_table.item(0, 1).text() == '절점력 합계 원값'
     assert '단계 2 / 증분 3 / 값 4' in window.dat_frame_label.text()
-    assert '대응 여부 미확인' in window.dat_frame_label.text()
+    assert '\n' not in window.dat_frame_label.text()
     text = window.result_text.toPlainText() + window.run_source.text() + window.run_source.toolTip() + window.log.toolTip()
     assert all(token not in text for token in (str(run.workdir), '.runs', run.id, '반력'))
     assert window.frame_selector.itemText(0).endswith('[최종]')

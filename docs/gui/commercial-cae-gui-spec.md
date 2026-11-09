@@ -16,6 +16,20 @@
 
 ---
 
+## WBS-B1-B2 사용자 승인 표시 보완 — 2026-11-09
+
+이 절은 아래 기존 보조 StructuralModel 범례·설명 문구보다 우선하는 표시 보완입니다. 부모 런처와 독립 해석·전문가·MDO의 제품 경계, 원 덱 실행 및 ParaView 전달 계약은 유지합니다.
+
+- **Native 선택 프레임**: 기록·해시 검증을 거친 VTU point data를 직접 소비합니다. `DISP`의 D1/D2/D3 이름으로 `|U|`, Ux/Uy/Uz를 표시하고 STRESS의 SXX/SYY/SZZ/SXY/SYZ/SZX가 모두 있으면 Von Mises를 먼저 제공합니다. 성분 순서가 달라도 이름으로 재정렬하며 다른 필드/성분은 원 이름을 유지합니다. 누락·비유한 값은 NaN으로 남깁니다.
+- **단위와 범례**: 기존 `compute_von_mises`, `deduce_stress_unit`, `deduce_length_unit`을 재사용합니다. Native 결과에는 helper의 결과 길이 단위(`mm`/`m`)를 쓰고 좌표와 변위가 동일 단위라는 선언을 따릅니다. Native 파생 응력은 단위 미선언이어도 원 수치계로 볼 수 있고 단위를 추측해 붙이지 않습니다. 보조 StructuralModel의 미선언 응력 표시 보류·실변형 억제 규칙은 유지합니다. 3D 범례에는 물리량과 알려진 단위만 한 줄로 표시하고 기존 보조 2D 상태 띠에는 단위 미확인 상태를 유지합니다. 일정값은 눈금 2개, 유한값이 없으면 숫자 범례를 표시하지 않습니다. [VTK 문자 렌더러](https://vtk.org/doc/nightly/release/9.3/html/classvtkTextRenderer.html)의 세로선 수식 구분을 피하도록 렌더 제목을 이스케이프해 실제 `|U|`를 보존하며, 한글 시스템 글꼴과 테마 대비·고정 글자 크기를 사용합니다.
+- **표시 변형**: native 도구 모음은 성분·원형 0x·실변형 1x·자동 배율·등각·정면·평면·화면 맞춤을 한 줄에 둡니다. 길이 단위와 정확한 3성분 변위가 있을 때만 `x_display = x_original + scale * u`를 적용합니다. 자동 배율은 모델 bounding box 최장축의 25% / 최대 유한 변위 크기이며 0변위는 0배율입니다. 비유한 변위 절점은 원 좌표를 유지하고 원 grid·배열·ID는 변경하지 않습니다. 배율 tooltip은 유효 변위 수와 원 저장 축 기준을 표시합니다.
+- **좌표계 범위**: 좌표계에 맞는 벡터를 더하는 표시 방식은 [ParaView Warp By Vector](https://docs.paraview.org/en/v5.10.1/UsersGuide/filteringData.html#warp-by-vector)를 따릅니다. [CalculiX frdvector.c](https://github.com/Dhondtguido/CalculiX/blob/master/src/frdvector.c)는 GLOBAL=NO 시 local 출력도 허용합니다. 이번 지원은 원 좌표계 기준 변위가 전제이며 로컬 출력 자동 판별·변환은 포함하지 않습니다. Ux/Uy/Uz 표기는 D1/D2/D3의 공학 표시명입니다.
+- **정보 밀도**: 프레임·있는 단계/증분·판독 상태·오래됨·선언 단위를 한 줄, 유효 절점을 한 줄로 표시합니다. UUID·raw enum·반복 면책 배너는 노출하지 않습니다. 해석 배지는 실제 단위와 유도 응력 단위를 표시하며 DAT에는 존재하는 단계/증분/값만 표시합니다. geometry 오류는 CAD 편집기에 한 번 표시하고 부모 도구 메뉴로 보조 모델 / C3D10 결과 뷰어를 명시적으로 엽니다. 보조 창은 좁은 폭에서도 잘리지 않도록 카메라와 필드/배율을 두 행으로 배치합니다. Expert·MDO는 기존 테스트의 작업 문구와 저장·실행 계약을 유지하며 여백만 축소합니다.
+
+수용 검사는 파생 수치(단축·순수 전단·정수압), 이름 재정렬, NaN·상수 범례, 단위 없는 변형 차단, 실제 표시 좌표와 원본 불변, 카메라 유지·새 프레임 초기화 및 메뉴 진입을 포함합니다. offscreen 검사와 Windows 실화면·키보드 확인, 실제 솔버 재실행은 별도 근거로 보고합니다. 현재 실행 결과는 [CURRENT_STATE](../../CURRENT_STATE.md)의 WBS-B1-B2 항목을 따릅니다.
+
+---
+
 ## 1. 아키텍처 원칙 및 전처리기 소유권 경계
 
 CAELab은 다중 솔버와 전용 전처리기를 결합하는 유연한 아키텍처를 채택하며, 특정 프로그램이 모든 전처리를 독점하지 않는다.

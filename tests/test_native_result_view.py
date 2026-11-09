@@ -70,8 +70,8 @@ def test_partial_stress_without_displacement_keeps_native_mesh_ids_and_nan(app, 
     try:
         view.set_selection(run, 0)
         wait_for(app, lambda: view.frame_data is not None)
-        assert view.component.itemText(0) == 'STRESS · SXX'
-        assert view.component.itemText(1) == 'STRESS · SYY'
+        assert view.component.itemText(0) == '응력 (S) · Sxx'
+        assert view.component.itemText(1) == '응력 (S) · Syy'
         grid = view.native_grid
         assert vtk_to_numpy(grid.GetPointData().GetArray('NativeNodeId')).tolist() == [40, 10, 90, 25]
         assert vtk_to_numpy(grid.GetCellData().GetArray('NativeElementId')).tolist() == [731]
@@ -80,8 +80,10 @@ def test_partial_stress_without_displacement_keeps_native_mesh_ids_and_nan(app, 
         assert raw[:2].tolist() == [[12, 2], [5, 3]]
         assert np.isnan(raw[2:]).all()
         assert vtk_to_numpy(grid.GetPointData().GetArray('Coverage_STRESS')).tolist() == [1, 1, 0, 0]
-        assert '2 / 메시 절점 4' in view.notice.text()
-        assert '단위 미선언' in view.source.text() and '위치 미확인' in view.notice.text()
+        assert view.notice.text() == '유효 절점 2 / 4'
+        assert '단위 미선언' in view.source.text()
+        assert ('STRESS', 'vm') not in [view.component.itemData(i) for i in range(view.component.count())]
+        assert not view.scale_combo.isEnabled()
         assert grid.GetPointData().GetArray('__CAELabNativeViewComponent') is None
         assert view.viewport.display_grid.GetPoint(0) == grid.GetPoint(0)
     finally:
@@ -103,9 +105,11 @@ def test_polling_same_selection_does_not_reread_and_failure_clears_previous(app,
             view.set_selection(copy.deepcopy(run), 0)
             app.processEvents()
         assert calls == [(run.id, 0)]
+        view.scale_combo.setCurrentIndex(view.scale_combo.findData('auto'))
         (run.workdir / run.result['frames'][1]['vtu_file']).write_bytes(b'tampered')
         view.set_selection(run, 1)
         assert view.native_grid is None and view.component.count() == 0
+        assert view.scale_combo.currentData() == 0.0 and not view.scale_combo.isEnabled()
         wait_for(app, lambda: '해시' in view.source.text())
         assert view.viewport.display_grid is None
         view.set_selection(None, None)
@@ -311,3 +315,139 @@ def test_explicit_project_reload_retries_the_same_recovered_frame(app, tmp_path,
         assert len(calls) == previous_calls + 1
     finally:
         dispose(window, app)
+
+
+@pytest.mark.parametrize('units,length_unit,stress_unit', [
+    ({'length': 'mm', 'force': 'N'}, 'mm', 'MPa'),
+    ({'length': 'm', 'force': 'N'}, 'm', 'Pa'),
+    ({}, None, None),
+])
+def test_engineering_contours_warp_and_constant_legend_preserve_native_data(app, tmp_path, units, length_unit, stress_unit):
+    from dataclasses import replace
+    from vtk.util.numpy_support import numpy_to_vtk
+    from apps.workbench_qt.native_result_view import _read_grid
+
+    run = make_run(tmp_path)
+    data = Workbench().read_native_frame(run, 0)
+    grid = _read_grid(data)
+    fields = []
+    # Deliberately permute components: engineering axes must follow names, not indices.
+    for name, names, values in (
+        ('DISP', ['D3', 'D1', 'D2'], [[0, 3, 4], [0, 3, 4], [0, np.nan, 4], [0, 0, 0]]),
+        ('STRESS', ['SXY', 'SZX', 'SZZ', 'SXX', 'SYZ', 'SYY'],
+         [[0, 0, 0, 100, 0, 0], [50, 0, 0, 0, 0, 0], [0, 0, 12, 12, 0, 12], [0, 0, 0, np.nan, 0, 0]]),
+    ):
+        array = numpy_to_vtk(np.array(values, dtype=float), deep=True)
+        array.SetName(name)
+        for index, label in enumerate(names):
+            array.SetComponentName(index, label)
+        grid.GetPointData().RemoveArray(name)
+        grid.GetPointData().AddArray(array)
+        fields.append({'name': name, 'components': [{'name': label} for label in names]})
+    frame = dict(data.frame, fields=fields, step=None, increment=None)
+    data = replace(data, frame=frame, units=units, stale=True, stale_reason='입력 변경')
+    original_points = vtk_to_numpy(grid.GetPoints().GetData()).copy()
+    original_disp = vtk_to_numpy(grid.GetPointData().GetArray('DISP')).copy()
+    view = NativeResultView(lambda *_: None)
+    view.viewport.available = True
+    view.viewport._renderer = vtk.vtkRenderer()
+    view.viewport._render = lambda: None
+    try:
+        view._install(data, grid)
+        assert view.component.currentData() == ('DISP', 'mag')
+        np.testing.assert_allclose(vtk_to_numpy(view.viewport.display_grid.GetPointData().GetScalars()),
+                                   [5, 5, np.nan, 0], equal_nan=True)
+        suffix = f' ({length_unit})' if length_unit else ''
+        title = r'$\vert U\vert$' if vtk.vtkTextRenderer.GetInstance().MathTextIsSupported() else '|U|'
+        assert view.viewport._scalar_bar.GetTitle() == title + suffix
+        assert '오래된 실행' in view.source.text() and 'None' not in view.source.text()
+        assert all(token not in view.source.text() for token in (run.id, 'readable', 'declared by user', '\n'))
+        assert view.scale_combo.isEnabled() == bool(length_unit)
+        assert view.scale_combo.currentData() == 0.0
+        camera = view.viewport._renderer.GetActiveCamera()
+        camera.SetPosition(9, 8, 7)
+        view.scale_combo.setCurrentIndex(view.scale_combo.findData(1.0))
+        expected = original_points.copy()
+        if length_unit:
+            expected[[0, 1]] += [3, 4, 0]
+        np.testing.assert_allclose(vtk_to_numpy(view.viewport.display_grid.GetPoints().GetData()), expected)
+        assert camera.GetPosition() == (9, 8, 7)
+        view.scale_combo.setCurrentIndex(view.scale_combo.findData('auto'))
+        size = max(np.ptp(original_points, axis=0))
+        expected = original_points.copy()
+        if length_unit:
+            expected[[0, 1]] += np.array([3, 4, 0]) * (.25 * size / 5)
+        np.testing.assert_allclose(vtk_to_numpy(view.viewport.display_grid.GetPoints().GetData()), expected)
+        view.component.setCurrentIndex(next(i for i in range(view.component.count())
+                                            if view.component.itemData(i) == ('DISP', 0)))
+        assert view.viewport._scalar_bar.GetTitle() == 'Uz' + suffix
+        assert view.viewport._scalar_bar.GetNumberOfLabels() == 2
+        view.component.setCurrentIndex(next(i for i in range(view.component.count())
+                                            if view.component.itemData(i) == ('STRESS', 'vm')))
+        np.testing.assert_allclose(vtk_to_numpy(view.viewport.display_grid.GetPointData().GetScalars()),
+                                   [100, np.sqrt(3) * 50, 0, np.nan], equal_nan=True)
+        assert view.viewport._scalar_bar.GetTitle() == 'Von Mises' + (f' ({stress_unit})' if stress_unit else '')
+        assert view.notice.text() == '유효 절점 3 / 4'
+        view.component.setCurrentIndex(next(i for i in range(view.component.count())
+                                            if view.component.itemData(i) == ('STRESS', 3)))
+        assert view.viewport._scalar_bar.GetTitle() == 'Sxx' + (f' ({stress_unit})' if stress_unit else '')
+        np.testing.assert_array_equal(vtk_to_numpy(grid.GetPoints().GetData()), original_points)
+        np.testing.assert_array_equal(vtk_to_numpy(grid.GetPointData().GetArray('DISP')), original_disp)
+        assert grid.GetPointData().GetArray('__CAELabNativeViewComponent') is None
+        view.stop()
+        assert view.scale_combo.currentData() == 0.0 and not view.scale_combo.isEnabled()
+    finally:
+        dispose(view, app)
+
+
+@pytest.mark.parametrize('field,component', [('DISP', 'D4'), ('STRESS', 'CUSTOM')])
+def test_unknown_components_keep_raw_label_without_invented_units(app, tmp_path, field, component):
+    from dataclasses import replace
+    from vtk.util.numpy_support import numpy_to_vtk
+    from apps.workbench_qt.native_result_view import _read_grid
+
+    data = Workbench().read_native_frame(make_run(tmp_path), 0)
+    grid = _read_grid(data)
+    grid.GetPointData().RemoveArray('DISP')
+    array = numpy_to_vtk(np.ones(4), deep=True)
+    array.SetName(field)
+    array.SetComponentName(0, component)
+    grid.GetPointData().AddArray(array)
+    data = replace(data, frame=dict(data.frame, fields=[{'name': field, 'components': [{'name': component}]}]))
+    view = NativeResultView(lambda *_: None)
+    view.viewport.available = True
+    view.viewport._renderer = vtk.vtkRenderer()
+    view.viewport._render = lambda: None
+    try:
+        view._install(data, grid)
+        assert view.component.currentText() == f'{field} · {component}'
+        assert view.viewport._scalar_bar.GetTitle() == f'{field} · {component}'
+        assert not view.scale_combo.isEnabled()
+    finally:
+        dispose(view, app)
+
+
+def test_large_finite_displacement_magnitude_and_auto_warp(app, tmp_path):
+    from vtk.util.numpy_support import numpy_to_vtk
+    from apps.workbench_qt.native_result_view import _read_grid
+
+    data = Workbench().read_native_frame(make_run(tmp_path), 0)
+    grid = _read_grid(data)
+    coordinates = vtk_to_numpy(grid.GetPoints().GetData()).copy()
+    displacement = numpy_to_vtk(np.tile([1e200, 0., 0.], (4, 1)), deep=True)
+    displacement.SetName('DISP')
+    for index, name in enumerate(('D1', 'D2', 'D3')):
+        displacement.SetComponentName(index, name)
+    grid.GetPointData().RemoveArray('DISP')
+    grid.GetPointData().AddArray(displacement)
+    view = NativeResultView(lambda *_: None)
+    try:
+        view._install(data, grid)
+        values = vtk_to_numpy(view.viewport.display_grid.GetPointData().GetScalars())
+        np.testing.assert_allclose(values, [1e200] * 4)
+        view.scale_combo.setCurrentIndex(view.scale_combo.findData('auto'))
+        size = max(np.ptp(coordinates, axis=0))
+        np.testing.assert_allclose(vtk_to_numpy(view.viewport.display_grid.GetPoints().GetData()),
+                                   coordinates + [.25 * size, 0, 0])
+    finally:
+        dispose(view, app)
