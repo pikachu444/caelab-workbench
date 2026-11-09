@@ -2062,3 +2062,42 @@ def test_cad_repeated_read_failure_rebinds_without_promoting_cached_ready(
     if original.exists():
         assert original.read_bytes() == b'native file'
     assert not window.workbench.jobs.launches
+
+
+def test_auxiliary_model_menu_opens_viewer_without_native_project_conversion(window, app, monkeypatch):
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtTest import QTest
+    from apps.workbench_qt.main_window import MainWindow
+
+    opened = []
+    monkeypatch.setattr(MainWindow, 'open_project_dialog', lambda viewer: opened.append(viewer))
+    original = window.project
+    window.show()
+    window.model_viewer_action.trigger()
+    app.processEvents()
+    assert len(window._model_viewers) == 1
+    viewer = window._model_viewers[0]
+    assert isinstance(viewer, MainWindow) and viewer.isVisible()
+    assert window.project is original and not original.nodes and not window._dirty
+    assert not viewer.props_guide.isVisible()
+    assert viewer.field_combo.sizeAdjustPolicy() == QComboBox.AdjustToContents
+    assert viewer.scale_mode_combo.minimumContentsLength() == 14
+    assert viewer.status.text() == '준비됨 — 파일 > 열기(Ctrl+O)로 프로젝트를 여세요.'
+    viewer.activateWindow()
+    app.processEvents()
+    QTest.keySequence(viewer, QKeySequence.Open)
+    app.processEvents()
+    assert opened == [viewer]
+    viewer.close()
+    QCoreApplication.sendPostedEvents(viewer, QEvent.DeferredDelete)
+    assert not window._model_viewers
+
+
+def test_geometry_summary_defers_to_visible_cad_status(window, app):
+    window.show()
+    window.add_box('geometry')
+    app.processEvents()
+    assert window.cad_editor.isVisible()
+    assert window.program_summary.isHidden()
+    assert window.zoom_out_button.text() == '-'

@@ -30,6 +30,11 @@ _PARSE_LABELS = {"pending": "대기", "unparsed": "미판독", "reading": "판�
                  "readable": "판독 완료", "partial": "일부 판독",
                  "unsupported": "미지원 출력 형식", "missing": "출력 없음", "failed": "판독 실패"}
 _ACTIVE_STATES = {"queued", "preparing", "running"}
+_FIELD_LABELS = {'DISP': '변위 (DISP)', 'STRESS': '응력 (STRESS)'}
+_COMPONENT_LABELS = {
+    'DISP': {'D1': 'Ux (D1)', 'D2': 'Uy (D2)', 'D3': 'Uz (D3)'},
+    'STRESS': {'SXX': 'Sxx', 'SYY': 'Syy', 'SZZ': 'Szz', 'SXY': 'Sxy', 'SYZ': 'Syz', 'SZX': 'Szx'},
+}
 
 
 class _RunStatusLabel(QLabel):
@@ -256,8 +261,8 @@ class NativeAnalysisWindow(QMainWindow):
         header_card = QFrame()
         header_card.setObjectName("sectionCard")
         header = QVBoxLayout(header_card)
-        header.setContentsMargins(12, 10, 12, 10)
-        header.setSpacing(6)
+        header.setContentsMargins(8, 6, 8, 6)
+        header.setSpacing(4)
         status_line = QHBoxLayout()
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -342,12 +347,13 @@ class NativeAnalysisWindow(QMainWindow):
         frame_line.addWidget(self.frame_selector, 1)
         self.result_unit_badge = QLabel()
         frame_line.addWidget(self.result_unit_badge)
-        self.result_verify_badge = QLabel("공학 검증 미실시")
+        self.result_verify_badge = QLabel()
+        self.result_verify_badge.hide()
         frame_line.addWidget(self.result_verify_badge)
         result_layout.addLayout(frame_line)
         kpis = QHBoxLayout()
-        for title, attr in (("최대 변위 (판독 절점)", "kpi_disp_value"),
-                            ("변위 절점 / 메시 절점", "kpi_nodes_value"), ("DAT 판독 상태", "kpi_dat_value")):
+        for title, attr in (("최대 변위", "kpi_disp_value"),
+                            ("변위 / 메시 절점", "kpi_nodes_value"), ("집합 출력 상태 (DAT)", "kpi_dat_value")):
             card = QFrame()
             card.setObjectName("kpiCard")
             card_layout = QVBoxLayout(card)
@@ -388,6 +394,7 @@ class NativeAnalysisWindow(QMainWindow):
         result_split.setSizes([355, 110])
         result_layout.addWidget(result_split)
         output_tabs = QTabWidget()
+        self.output_tabs = output_tabs
         output_tabs.addTab(log_panel, "로그")
         output_tabs.addTab(result_panel, "결과")
         from .native_result_view import NativeResultView
@@ -399,9 +406,6 @@ class NativeAnalysisWindow(QMainWindow):
         split.addWidget(run_panel)
         split.setSizes([155, 555])
         layout.addWidget(split)
-        note = QLabel("입력 편집은 전용 프로그램에서 합니다. 실행 기록을 선택해도 새 계산은 시작되지 않습니다.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
         self.setCentralWidget(container)
         self._theme_mode = current_theme_mode()
         self.apply_theme()
@@ -436,7 +440,12 @@ class NativeAnalysisWindow(QMainWindow):
                                      (self.result_unit_badge, getattr(self._runs.get(self._displayed_run_id), 'units', {}),
                                       self._displayed_run_id in self._runs)):
             tone = 'ready' if units else 'warning' if exists else 'neutral'
-            badge.setText('단위 선언됨' if units else '단위 미확인' if exists else '자료 없음')
+            from .viewport import deduce_stress_unit
+            text = ' · '.join(str(units[key]) for key in ('length', 'force') if units.get(key))
+            stress_unit = deduce_stress_unit(units)
+            if stress_unit:
+                text += f' ({stress_unit})'
+            badge.setText(f'단위: {text}' if text else '단위 미확인' if exists else '자료 없음')
             badge.setStyleSheet(status_badge_style(tone, mode))
 
     @staticmethod
@@ -784,7 +793,7 @@ class NativeAnalysisWindow(QMainWindow):
         result = run.result or {}
         frame = next((frame for frame in result.get("frames", [])
                       if frame.get("index") == self.frame_selector.currentData()), None)
-        lines = [f"선언 단위: {_unit_text(run.units)}", "수치 검증·공학적 적합성: 미실시"]
+        lines = [f"선언 단위: {_unit_text(run.units)}"]
         if result.get("native_files"):
             lines.append(f"원본 결과 폴더: {run.workdir}")
             lines.append("원본 결과: " + ", ".join(result["native_files"]))
@@ -798,20 +807,24 @@ class NativeAnalysisWindow(QMainWindow):
             lines.append("최대 변위: 미확인" if value is None else
                          f"{label}: {value:.8g} {run.units.get('length', '(단위 미확인)')}")
             for item in frame.get("fields", []):
-                components = ", ".join(component["name"] for component in item.get("components", [])
+                field_name = item.get('name', '')
+                field_label = _FIELD_LABELS.get(field_name, field_name)
+                component_labels = _COMPONENT_LABELS.get(field_name, {})
+                components = ", ".join(component_labels.get(component['name'], component['name']) for component in item.get("components", [])
                                        if component.get("exist", 0) in (0, 2))
                 coverage = item.get("coverage", {})
                 coverage_text = f"{coverage.get('record_count', '?')} / {coverage.get('mesh_node_count', '?')}"
                 component_rows = item.get('summary', {}).get('components', [])
                 for component in component_rows or [{}]:
                     low, high = component.get('minimum'), component.get('maximum')
-                    self._append_row(self.field_table, [item.get('name', ''), component.get('name', components),
+                    component_name = component.get('name', components)
+                    self._append_row(self.field_table, [field_label, component_labels.get(component_name, component_name),
                                      '?' if low is None else f'{low:.4g}', '?' if high is None else f'{high:.4g}', coverage_text])
-                lines.append(f"{item['name']} ({components}) — 판독 절점 {coverage.get('record_count', '?')} / 메시 절점 {coverage.get('mesh_node_count', '?')}")
+                lines.append(f"{field_label} ({components}) — 판독 절점 {coverage.get('record_count', '?')} / 메시 절점 {coverage.get('mesh_node_count', '?')}")
                 for component in item.get("summary", {}).get("components", []):
                     low, high = component.get("minimum"), component.get("maximum")
                     if low is not None and high is not None:
-                        lines.append(f"  {component['name']}: {low:.8g} ~ {high:.8g}")
+                        lines.append(f"  {component_labels.get(component['name'], component['name'])}: {low:.8g} ~ {high:.8g}")
             if frame.get("vtu_file"):
                 lines.append(f"교환 파일: {Path(frame['vtu_file']).name}")
         else:
@@ -863,7 +876,10 @@ class NativeAnalysisWindow(QMainWindow):
             self.kpi_dat_value.setText(_PARSE_LABELS.get(dat_status, dat_status or '출력 없음'))
         self.dat_container.setVisible(bool(dat.get('sets')))
         metadata = dat.get('frame') or {}
-        self.dat_frame_label.setText(f"DAT 최종 프레임 — 단계 {metadata.get('step', '?')} / 증분 {metadata.get('increment', '?')} / 값 {metadata.get('value', '?')}\n선택한 FRD 프레임과 대응 여부 미확인")
+        frame_text = ' / '.join(f'{label} {metadata[key]}' for key, label in
+                                (('step', '단계'), ('increment', '증분'), ('value', '값'))
+                                if metadata.get(key) is not None)
+        self.dat_frame_label.setText('DAT 최종 프레임' + (f' · {frame_text}' if frame_text else ''))
         for name, values in dat.get('sets', {}).items():
             for key, label, unit_key, records in (
                     ('total_force', '절점력 합계 원값', 'force', 'nodal_forces'),
@@ -876,9 +892,8 @@ class NativeAnalysisWindow(QMainWindow):
                     self._append_row(self.dat_table, [name, label, len(values[records]), '집합별 원 절점값', run.units.get(unit_key, '(단위 미확인)')])
         if dat and dat.get("status") != "missing":
             lines += ["", f"DAT 집합 결과: {_PARSE_LABELS.get(dat.get('status'), dat.get('status'))}"]
-            metadata = dat.get("frame") or {}
-            if metadata:
-                lines.append(f"DAT 최종 프레임 — 단계 {metadata.get('step')} / 증분 {metadata.get('increment')} / 값 {metadata.get('value')}")
+            if frame_text:
+                lines.append(self.dat_frame_label.text())
             value = dat.get("max_displacement")
             if value is not None:
                 lines.append(f"DAT 판독 절점 중 최대 변위: {value:.8g} {run.units.get('length', '(단위 미확인)')}")

@@ -212,6 +212,10 @@ def test_dat_only_sets_are_visible_without_inventing_frd_or_reaction(analysis, t
     assert "집합 SUPPORT" in text and "절점력 합계 원값: (1, 2, 3) N" in text
     assert "반력" not in text
     assert window.frame_selector.count() == 0
+    assert window.dat_frame_label.text() == 'DAT 최종 프레임 · 값 1.0'
+    assert window.dat_frame_label.text() in text
+    assert 'None' not in text
+    assert window.result_unit_badge.text() == '단위: mm · N (MPa)'
 
 
 def test_parent_updates_connected_result_when_other_window_selects_failed_run(app, tmp_path):
@@ -499,18 +503,20 @@ def test_result_tables_hide_run_store_and_clear_all_values_on_empty_or_error(ana
     state.runs, state.selected = [run], run
     window.refresh_runs()
     assert window.field_table.rowCount() == 1 and window.dat_table.rowCount() == 2
+    assert window.field_table.item(0, 0).text() == '변위 (DISP)'
+    assert window.field_table.item(0, 1).text() == 'Ux (D1)'
     assert window.kpi_disp_value.text() == '2.5 mm'
     assert window.field_table.item(0, 2).text() == '-1.25'
     assert window.dat_table.item(0, 1).text() == '절점력 합계 원값'
     assert '단계 2 / 증분 3 / 값 4' in window.dat_frame_label.text()
-    assert '대응 여부 미확인' in window.dat_frame_label.text()
+    assert '\n' not in window.dat_frame_label.text()
     text = window.result_text.toPlainText() + window.run_source.text() + window.run_source.toolTip() + window.log.toolTip()
     assert all(token not in text for token in (str(run.workdir), '.runs', run.id, '반력'))
     assert window.frame_selector.itemText(0).endswith('[최종]')
-    for tabs in window.findChildren(QTabWidget):
-        for index in range(tabs.count()):
-            if tabs.tabText(index) == '결과':
-                tabs.setCurrentIndex(index)
+    assert isinstance(window.output_tabs, QTabWidget)
+    assert [window.output_tabs.tabText(i) for i in range(window.output_tabs.count())] == ['로그', '결과', '선택 프레임 보기']
+    window.output_tabs.setCurrentIndex(1)
+    assert window.output_tabs.currentWidget().isAncestorOf(window.field_table)
     window.show()
     for width, height in ((1050, 760), (800, 650)):
         window.resize(width, height)
@@ -571,3 +577,53 @@ def test_native_diagnostic_payload_stays_out_of_status_and_error_dialogs(analysi
     run.error = env_err
     window.refresh_runs()
     assert "CalculiX 실행 파일 또는 연결 설정을 확인하세요." in window.run_status.text()
+
+
+def test_engineering_field_labels_preserve_rows_values_and_unknown_names(analysis, tmp_path):
+    import copy
+
+    window, state = analysis
+    parsed = result(2.5)
+    names_by_field = {
+        'DISP': ['D1', 'D2', 'D3', 'D4'],
+        'STRESS': ['SXX', 'SYY', 'SZZ', 'SXY', 'SYZ', 'SZX', 'OTHER'],
+        'CUSTOM': ['D1', 'SXX'],
+    }
+    labels_by_field = [
+        ('변위 (DISP)', ['Ux (D1)', 'Uy (D2)', 'Uz (D3)', 'D4']),
+        ('응력 (STRESS)', ['Sxx', 'Syy', 'Szz', 'Sxy', 'Syz', 'Szx', 'OTHER']),
+        ('CUSTOM', ['D1', 'SXX']),
+    ]
+    parsed['frames'][0]['fields'] = [
+        {'name': name, 'components': [{'name': component} for component in names],
+         'coverage': {'record_count': 4, 'mesh_node_count': 4},
+         'summary': {'components': [{'name': component, 'minimum': 0, 'maximum': 2.5} for component in names]}}
+        for name, names in names_by_field.items()
+    ]
+    parsed['dat'] = {'status': 'readable', 'frame': {'step': 0, 'increment': None, 'value': 0}, 'sets': {}}
+    original = copy.deepcopy(parsed)
+    run = make_run(tmp_path, 'engineering-labels', 'completed', 'readable', parsed)
+    state.runs, state.selected = [run], run
+    window.refresh_runs()
+    expected = [(field, label) for field, labels in labels_by_field for label in labels]
+    assert window.field_table.rowCount() == len(expected)
+    for row, (field, label) in enumerate(expected):
+        assert [window.field_table.item(row, column).text() for column in range(5)] == [field, label, '0', '2.5', '4 / 4']
+        assert f'  {label}: 0 ~ 2.5' in window.result_text.toPlainText()
+    assert 'DAT 최종 프레임 · 단계 0 / 값 0' in window.result_text.toPlainText()
+    assert 'None' not in window.result_text.toPlainText()
+    assert parsed == original
+
+    # Missing component summaries keep one joined-components row per field.
+    for field in parsed['frames'][0]['fields']:
+        field.pop('summary')
+    parsed['dat']['frame'] = {'step': None, 'increment': None, 'value': None}
+    window.show_result()
+    assert window.field_table.rowCount() == len(labels_by_field)
+    for row, (field, labels) in enumerate(labels_by_field):
+        assert window.field_table.item(row, 0).text() == field
+        assert window.field_table.item(row, 1).text() == ', '.join(labels)
+        assert f"{field} ({', '.join(labels)})" in window.result_text.toPlainText()
+    assert 'None' not in window.result_text.toPlainText()
+    assert 'DAT 최종 프레임' not in window.result_text.toPlainText()
+    assert window.kpi_disp_value.text() == '2.5 mm'

@@ -39,7 +39,7 @@ class CadConnectionEditor(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(4)
         program_label = QLabel('CAD 프로그램')
         self.program_choice = QComboBox()
         self.program_choice.setObjectName('cad_program_choice')
@@ -128,7 +128,7 @@ class CadConnectionEditor(QWidget):
         if status is None:
             self.program_status.setText('실행 파일 상태 미확인')
         elif status.available:
-            self.program_status.setText('실행 파일 확인됨 · 실제 열기는 별도 동작입니다.')
+            self.program_status.setText('실행 파일 확인됨 (열기 가능)')
         else:
             self.program_status.setText('실행 불가: ' + (status.reason or '실행 파일을 지정하세요.'))
         reference = node.files.get('document')
@@ -141,9 +141,9 @@ class CadConnectionEditor(QWidget):
         self.document_button.setText('변경…' if reference else '등록…')
         self.document_button.setEnabled(node.program_id in _DOCUMENT_FILTERS)
         spec = next((spec for spec in cad_specs if spec.id == node.program_id), None)
-        hint = '편집 원본을 참조합니다. 교환 파일은 출력에 따로 등록하세요.'
+        hint = '편집 원본 참조 · 교환 파일은 출력에 등록'
         if node.program_id == 'cadcraft':
-            hint += ' CADCraft 도면을 STEP 솔리드로 변환하지 않습니다.'
+            hint += ' · CADCraft 도면 (STEP 변환 없음)'
         self.hint.setText(hint if spec else 'CAD 프로그램을 선택하세요.')
         self.hint.setToolTip(spec.notes if spec else '')
         self.feedback.clear()

@@ -852,6 +852,9 @@ class ProjectWindow(QMainWindow):
         self.tools_menu_action = tools_menu.menuAction()
         self.optimization_action = tools_menu.addAction("MDO Studio 열기…")
         self.optimization_action.triggered.connect(self.open_optimization_panel)
+        self.model_viewer_action = tools_menu.addAction("보조 모델 / C3D10 결과 뷰어")
+        self.model_viewer_action.triggered.connect(self.open_model_viewer)
+        self._model_viewers = []
         self.toolbox = QListWidget()
         self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         view_menu.addSeparator()
@@ -900,7 +903,7 @@ class ProjectWindow(QMainWindow):
         control_row.setSpacing(2)
         self.zoom_out_button = QToolButton()
         self.zoom_out_button.setDefaultAction(self.zoom_out_action)
-        self.zoom_out_button.setText('−')
+        self.zoom_out_button.setText('-')
         self.zoom_percent = QToolButton()
         self.zoom_percent.setObjectName('zoomPercentage')
         self.zoom_percent.setFixedWidth(56)
@@ -1324,6 +1327,15 @@ class ProjectWindow(QMainWindow):
             self, "다른 이름으로 저장", str(self.project.path or "project.json"), PROJECT_FILTER)
         return self.save_project(path) if path else False
 
+    def open_model_viewer(self) -> None:
+        from .main_window import MainWindow
+
+        viewer = MainWindow(self.workbench)
+        viewer.setAttribute(Qt.WA_DeleteOnClose)
+        self._model_viewers.append(viewer)
+        viewer.destroyed.connect(lambda: self._model_viewers.remove(viewer))
+        viewer.show()
+
     def open_optimization_panel(self) -> None:
         selected = self._selected_boxes()
         node_id = selected[0].node_id if len(selected) == 1 else None
@@ -1693,7 +1705,7 @@ class ProjectWindow(QMainWindow):
         self.open_button.setText(self._default_label(box))
         self.open_button.setEnabled(not (program and not program.available and not self._needs_file(box))
                                     or node.kind in {'analysis', 'expert'} or self._needs_upstream(box))
-        self.program_summary.setVisible(bool(self.program_summary.text()))
+        self.program_summary.setVisible(bool(self.program_summary.text()) and self.cad_editor.isHidden())
         self.run_summary.setVisible(bool(self.run_summary.text()))
 
     def _needs_file(self, box):

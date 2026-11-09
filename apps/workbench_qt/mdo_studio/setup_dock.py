@@ -33,7 +33,7 @@ class SetupDockWidget(QWidget):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setContentsMargins(4, 4, 4, 4)
 
         self.context_tabs = QTabWidget()
         outer.addWidget(self.context_tabs)
@@ -44,7 +44,7 @@ class SetupDockWidget(QWidget):
         container = QWidget()
         container.setObjectName("setupDockContainer")
         layout = QVBoxLayout(container)
-        layout.setSpacing(10)
+        layout.setSpacing(6)
 
         # 1. Selected Point Header
         self.lbl_title = QLabel("Selected Design Point: None")

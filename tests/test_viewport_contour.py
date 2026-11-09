@@ -483,7 +483,7 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
     # 1. Real scale mode: deformation must be suppressed (S=0.0)
     vp.show_results(model_undeclared, result_undeclared, field_name="U_mag", scale_mode="real", scale_factor=1.0)
     assert vp._base_scale == 0.0
-    assert "[단위 미선언: 실제 변형 억제]" in vp._scalar_bar.GetTitle()
+    assert vp._scalar_bar.GetTitle() == "Displacement [단위 미선언]"
 
     win = MainWindow()
     win.model = model_undeclared
@@ -502,7 +502,7 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
     # 3. Auto scale mode: visual auto scaling allowed, but legend must note [단위 미선언: 절점]
     vp.show_results(model_undeclared, result_undeclared, field_name="U_mag", scale_mode="auto", scale_factor=1.0)
     assert vp._base_scale > 0.0
-    assert "[단위 미선언: 절점]" in vp._scalar_bar.GetTitle()
+    assert vp._scalar_bar.GetTitle() == "Displacement [단위 미선언]"
 
     win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("auto"))
     win._update_legend_label(model_undeclared, result_undeclared)
@@ -513,7 +513,7 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
     vp.show_results(model_undeclared, result_m_stress, field_name="von_mises", scale_mode="real", scale_factor=1.0)
     assert vp._base_scale == 0.0
     assert "Von Mises [Pa]" in vp._scalar_bar.GetTitle()
-    assert "[절점 외삽 · 변형 단위 미선언: 실제 변형 억제]" in vp._scalar_bar.GetTitle()
+    assert vp._scalar_bar.GetTitle() == "Von Mises [Pa]"
 
     win.field_combo.setCurrentIndex(win.field_combo.findData("von_mises"))
     win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("real"))
@@ -523,8 +523,15 @@ def test_undeclared_units_suppresses_real_scale_and_indicates_status():
     # In auto mode: visual auto deformation, legend indicates [변형 단위 미선언]
     vp.show_results(model_undeclared, result_m_stress, field_name="von_mises", scale_mode="auto", scale_factor=1.0)
     assert vp._base_scale > 0.0
-    assert "[절점 외삽 · 변형 단위 미선언]" in vp._scalar_bar.GetTitle()
+    assert vp._scalar_bar.GetTitle() == "Von Mises [Pa]"
 
     win.scale_mode_combo.setCurrentIndex(win.scale_mode_combo.findData("auto"))
     win._update_legend_label(model_undeclared, result_m_stress)
     assert "Von Mises 응력 (Pa) [절점 외삽 · 변형 단위 미선언]" in win.legend_label.text()
+
+
+@pytest.mark.parametrize('value', [1e200, 1e-200])
+def test_von_mises_preserves_extreme_finite_stress(value):
+    result = compute_von_mises({1: [value, 0, 0, 0, 0, 0], 2: [0, 0, 0, value, 0, 0]}, [1, 2])
+    assert result[0] == pytest.approx(value, rel=1e-14, abs=0)
+    assert result[1] == pytest.approx(math.sqrt(3) * value, rel=1e-14, abs=0)
