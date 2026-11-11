@@ -1,5 +1,34 @@
 # 현재 상태
 
+## 사용자 기능 점검 — 2026-11-12
+
+점검 기준은 원격 main `1c1cacb85018fd080c42f4d475812669b71cae90`, 연결 대상 Prep은
+`f40bfea307e4c2134cb8c4ae61864b629fda5c60`이다. 아래 날짜별 로컬 구현 기록은 당시
+실행 환경과 실패를 보존한 이력이며 현재 원격 반영 여부는 이 절을 우선한다.
+PR93(CAD 연결), PR95(컨투어·변형 표시), PR99(선택 실행→전문가 창), PR100(SciPy PDE)은
+이미 main에 병합됐다. [해당 main CI](https://github.com/pikachu444/caelab-workbench/actions/runs/42567284741)의
+Product Python 3.11/3.12·실제 CalculiX·실제 OpenCourant 4작업 성공을 확인했다.
+이 Ubuntu CI 성공이 아래 Windows 로컬 회귀의 실패 기록이나 clean Windows 인수 잔여를 해소하지는 않는다.
+
+| 사용자가 하려는 일 | 현재 사용할 수 있는 범위 | 남은 기능·확인 |
+|---|---|---|
+| CAD·전처리·계산·결과 연결 | CAD 편집 문서 연결, Prep RAD 전달, CalculiX/OpenCourant 실행·로그·저장/재열기. CalculiX VTU의 성분·Von Mises·변형 표시 | PrePoMax 전체 Windows 작업, 새 설치 인수, RAD animation 물리 필드의 완전 판독은 미완료 |
+| 재료 상수 탐색·최적화 | MDO Studio의 CalculiX INP 스칼라 토큰·DoE·대리모델·최적화·실제 재평가 경로 | DP/Xia 전용 재료법 편집·다시험 곡선 잔차·OpenCourant 재료 보정 evaluator는 없음. 범용 optimizer 존재를 재료 동정 완료로 세지 않음 |
+| 결과를 전문가와 토론 | 독립 ExpertWindow, 선택 run/frame 질문 초안·명시 첨부, 역할별 근거 제한, 공급자 연결·대화 저장 | 현재 GUI 전송은 선택 근거가 필요. 결과 없이 시작하는 일반 CAE 이론 자문은 별도 진입점 필요. 이번 환경은 공급자 미구성으로 새 LLM 답변을 검증하지 못함 |
+| 문헌 검색·심의 | solver별 로컬 검색, 근거 ID 확인, 제안의 파일·해시 무결성 검사와 사용자 검토 | 기본 자료는 CalculiX 요약 노트 7개. 자료 충분성·주장 지지 심의, 독립 전문가 승인 루프, LLM의 도구 호출은 미구현 |
+| OpenCourantRP 후처리 | 외부 앱을 별도 실행하여 프로젝트 폴더를 수동으로 여는 경로 평가 | RP 전용 프로그램 등록·동일 run 자동 열기·결과 재등록은 없음. native animation 판독의 partial 상태 유지 |
+
+과거 Windows A/B에서는 실제 OpenScience의 수렴·재료 답변과 저장/재열기를 확인한 기록이 있다.
+이는 이번 재실행 또는 독립 전문가 심의 완료와 구분한다.
+
+검색 실행에서 `calculix`의 Xia 질문 및 무관한 이론 질문에 관련 없는 기본 노트를 `ok`로
+돌려주는 반례를 확인했다. 검색 순위 반환·허용 인용 ID 확인을 근거 충분성이나 공학 승인으로
+표시해서는 안 된다. 전문가 첨부 검증 #45도 **OPEN**이다. PR82/87의 비동기 분리·P2 수정은
+반영됐지만 검증 중 UI 표시·창 닫기 후 늦은 결과 전용 회귀·Windows 확인은 남는다.
+
+후속 변경의 소유·순서와 수락조건은 [기존 개선 계획의 재료·자문·RP 보완](docs/review/2026-10-23-codex-improvement-plan.md#material-expert-rp-followup)을 따른다.
+이 점검은 상태·계획 변경이며 위 미구현 기능을 구현하거나 전체 제품을 인수한 것이 아니다.
+
 ## TRACK-2 내장 SciPy 2D PDE — 2026-11-09 로컬 구현
 
 `feature/wb-scipy-pde-solver`의 기준 `8f709451`에서 구현한 Python API입니다.
@@ -42,7 +71,7 @@ Qt·환경변수·전역 fixture 변경이나 기존
 
 이 범위는 2D 정상 계산 API이며 3D·시간적분·Workbench 등록·VTU 출력·
 `NativeResultView` 연결과 OS 실화면 확인은 포함하지 않습니다. 기존 FEniCSx 코드는
-유지합니다. 원격 게시·main 반영은 수행하지 않았습니다.
+유지합니다. 당시 로컬 확인 뒤 PR100으로 main `1c1cacb`에 반영됐습니다. 위 실행 수치와 미확인 범위는 당시 기록입니다.
 
 문서 기준은 main `54d62f4f1c93f7a6cc220ded13a017cf0f08d8f5`와 그 위에 결합한 native 프레임 표시 `a3ea9bd80bcdbcf192e6236fdd34165cc522515a`·번들 진단 `14a495c1fc861fa50f620ce6c3f817ac9f7f1d33` 소스입니다. 두 단위의 원 QA 판정은 아래에 구분합니다. 문서 합성 시점에는 이 문서를 포함한 통합 후보의 최종 QA·회귀·CI·병합이 미완료였으며, 원격 반영은 해당 후보의 PR·정확 head CI·main tree 확인과 대조해야 합니다. 이 문서는 구현 상태와 확인 범위를 소유합니다. 제품 기준은 [DESIGN](DESIGN.md), 계약은 [ARCHITECTURE](ARCHITECTURE.md), 사용 절차는 [시작 가이드](docs/tutorials/workbench_quickstart.md)를 따릅니다. 날짜별 실행·실패·정정·복구 위치는 [구현 이력](docs/history/implementation-history.md)에서 고정 원문으로 찾습니다.
 
@@ -50,7 +79,7 @@ Qt·환경변수·전역 fixture 변경이나 기존
 
 기준 `8f709451548b3269c055c740be448520f7c61b24`, 브랜치 `feature/wb-expert-bridge`에서 네이티브 해석 창의 **도구 → AI 전문가와 결과 토론… (Ctrl+E)**, 툴바와 로그·결과 아래 버튼을 독립 `ExpertWindow`에 연결합니다. 현재 조회 실행의 실제 solver_id·종료 코드·실행/판독 상태, 기록 시각의 경과 시간, 선택 프레임의 기존 판독 요약·선언 단위, 최근 로그 오류·경고 최대 5줄을 빈 질문에 채웁니다. 미선언 단위를 mm로 가정하거나 미판독 값을 만들지 않습니다. Von Mises 극값을 새로 계산하는 기능은 추가하지 않습니다.
 
-열린 창은 프로젝트·노드·실행·프레임별로 재사용하고 작성 중 질문과 첨부를 보존합니다. 닫힌 창은 폐기 후 다시 생성합니다. 공유 Workbench를 주입받은 전문가 창은 닫을 때 계산 관리자를 종료하지 않으며, 해석 창을 닫을 때 전문가 창의 종료 거절을 존중합니다. 원자료는 전달된 실행 참조를 **계산 결과 가져오기…**에서 확인해 명시적으로 첨부합니다. 창 열기는 첨부·LLM 호출·계산을 시작하지 않습니다. 원격 게시·main 반영 범위는 아닙니다.
+열린 창은 프로젝트·노드·실행·프레임별로 재사용하고 작성 중 질문과 첨부를 보존합니다. 닫힌 창은 폐기 후 다시 생성합니다. 공유 Workbench를 주입받은 전문가 창은 닫을 때 계산 관리자를 종료하지 않으며, 해석 창을 닫을 때 전문가 창의 종료 거절을 존중합니다. 원자료는 전달된 실행 참조를 **계산 결과 가져오기…**에서 확인해 명시적으로 첨부합니다. 창 열기는 첨부·LLM 호출·계산을 시작하지 않습니다. 당시 로컬 확인 뒤 PR99로 main `c9626db`에 반영됐습니다.
 
 작성자 신규 연결 검사 **14 passed**, 신규 연결+기존 전문가 창 검사 **48 passed**를 확인했습니다. 별도 QA도 신규 **14 passed**와 실제 Workbench/JobManager의 공유·단독 창 종료를 offscreen에서 확인하고 맥락 혼선·공유 실행 취소·닫힌 창 타이머 재사용 지적을 종결했습니다. 지정한 `test_native_analysis_expert_bridge.py`·`test_native_runs_gui.py` 조합은 offscreen 진단 실행(`-vv -o faulthandler_timeout=30`)에서 **42 passed / 676.89초**로 정상 종료했습니다. 초기 조합 실행에서 Qt 이벤트 처리 접근 위반이 한 번 있었으나 현재 단독·전체 조합과 별도 QA의 기준 SHA 실행 창 전체 **28 passed / 643.82초**에서 재현되지 않았으며 최초 원인은 미확정입니다. 긴 대기는 현재·기준 모두 기존 테마 갱신과 프로그램 탐색의 `shutil.which()`에서 관측했습니다.
 
