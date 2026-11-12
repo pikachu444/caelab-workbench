@@ -1,5 +1,14 @@
 # 범용 CAE 재료 연구, 전문가 자문과 프로그램 연결 구현 계약
 
+## 기존 개발 계획 안에서 읽는 순서 — 2026-11-12 통합
+
+제품 목표는 DESIGN, 구현 순서·담당 역할·완료 조건은 [기존 전체 계획](../review/2026-10-23-codex-improvement-plan.md#plan-integration), 현재 코드/검증/잔여는 각 저장소 CURRENT_STATE를 따른다. [12개 작업표](cae-research/IMPLEMENTATION_TASKS_ko.md)와 [자동 목록 v2](cae-research/implementation-map.json)는 그 전체 계획 아래의 세부 작업이다. 별도 전체 계획이나 별도 진행률이 아니다. Prep 단계·N표와의 연결도 기존 계획에 함께 적었다.
+
+수식·데이터·API는 이 통합 명세와 [공통 C0–C12](cae-research/core-implementation.md), 각 분야 A/B/C/D를 함께 구현한다. 공통 C11과 작업표는 A/B의 구체 어댑터 파일명을 사용한다. 선행 조건은 편집 전 합의·실제 코드 사용·최종 인수로 나눴다. 기존 수식·과거 실행·원자료의 판정 범위는 보존한다.
+
+공통 서비스는 작업자에서 실행하는 동기 API다. 활성 ID를 계산 전에 공개하고 긴 계산 동안 상태 잠금을 잡지 않는다. 중지는 이미 배정한 후보의 필수 시험을 마치는 경계, 취소는 요청 즉시 응답과 후속 종료 확인, 최종 확인은 `evaluate(...,execution_phase="confirmation",cache_policy="refresh")`의 새 실제 계산으로 정했다. 정확한 응답과 오류는 공통 C2/C7/C8을 따른다.
+
+
 개정일은 2026-11-12다. 이 문서는 앞으로 구현할 명세이며 제품 기능 완료 보고가 아니다. 기준 커밋은 Workbench `104cdd6888a5554eecc8cf965c60ff1bd980b6da`와 Prep `555af5b3ab2c6e7dc276111609302ef565bb4fc8`이다. 실행 환경과의 연결이 끊긴 뒤 재구성한 최종 계약은 다음 부속 명세와 함께 읽는다. **공통 서비스, 평가, 문서 변경 확인, 저장, 화면과 Prep 문서 적용은 공통 명세를 따른다. 각 물리 모델, 자문과 후처리 영역은 해당 부속 명세가 이 문서의 이전 문구보다 우선한다.** 회수하지 못한 원본 근거를 확보했다고 주장하지 않는다.
 
 | 구현 영역 | 기준이 되는 명세 |
@@ -21,7 +30,7 @@
 
 각 절은 기존 API와 제안 API를 구별한다. 존재하지 않는 `caelab/mdo/contracts.py`, `study_store.py`, `study.py`를 현재 재사용할 수 있는 모듈로 취급하지 않는다. 실제 최적화 데이터 전달 형식은 `mdo/optimize.py`에 있고 설계점 관리자는 `mdo/study_manager.py`에 있다. 현재 MDO v2 저장은 `mdo/service.py`가 담당한다. 기존 MDO, 프로젝트나 `NativeRun` 저장본을 새 재료 연구로 묵시적으로 이행하지 않는다.
 
-첫 코드 작업은 서로 독립적으로 착수할 수 있는 M1, E0/E1/E2와 POST01/02다. M1은 화면 없는 재료 공통 계약을 구현한다. E0/E1/E2는 첨부 문맥, 질문과 저장, 검색을 구현한다. POST01/02는 결과 참조와 파생 작업의 생성부터 종료까지를 구현한다. 공유 자료 계약을 먼저 확정하고 E3의 저장 VTU 조회와 POST03의 솔버 원본 결과 변환기를 연결한다. M2/M3, E4/E5와 POST04–06에 필요한 화면, 솔버 원본 실행, 실제 공급자와 Windows 조건은 각 절의 의존 관계와 인수 조건을 따른다. 프로그램명이나 모델명을 나열했다고 지원 완료로 세지 않는다.
+M1/M2/M3, E0–E5와 POST01–06은 이 명세의 분야별 단계명이며 별도 잔여 작업 수가 아니다. 실제 배정은 CORE01/02·STORE01·MAT-A/B·UI01·PREP01·LINK01·E0-2·E3-5·POST01-04·POST05-06의 12개 항목으로만 한다. 편집 전 계약을 합의하면 M1, E0/E1/E2와 POST01/02의 독립 부분부터 병렬 작성할 수 있다. M1은 화면 없는 재료 공통 계약을 구현한다. E0/E1/E2는 첨부 문맥, 질문과 저장, 검색을 구현한다. POST01/02는 결과 참조와 파생 작업의 생성부터 종료까지를 구현한다. 공유 자료 계약을 먼저 확정하고 E3의 저장 VTU 조회와 POST03의 솔버 원본 결과 변환기를 연결한다. M2/M3, E4/E5와 POST04–06에 필요한 화면, 솔버 원본 실행, 실제 공급자와 Windows 조건은 각 절의 의존 관계와 인수 조건을 따른다. 프로그램명이나 모델명을 나열했다고 지원 완료로 세지 않는다.
 
 ## 공통 자료 참조와 소유 계약
 
@@ -263,7 +272,7 @@ class MaterialAdapter(Protocol):
     def export(self, request: MaterialExportRequest) -> MaterialExportPlan: ...
 ```
 
-재료 평가 요청 `MaterialEvaluationRequest`는 `evaluation_id`, `request_id`, `point_id`, `study_revision`, `model_revision`, `adapter`를 담는다. 전체 물리 계수와 단위, 원래 인코딩 벡터와 코덱 버전, 순서가 있는 실험 변경 식별값, 평가 수준, 수치 설정과 해시, 실행 예산과 취소 문맥도 담는다.
+재료 평가 요청 `MaterialEvaluationRequest`는 `evaluation_id`, `request_id`, `point_id`, `study_revision`, `model_revision`, `adapter`를 담는다. 전체 물리 계수와 단위, 원래 인코딩 벡터와 코덱 버전, 순서가 있는 실제 실행 실험의 변경 식별값, 평가 수준, 수치 설정과 해시, 실행 예산과 취소 문맥도 담는다. 정식 필드 `execution_phase=exploration|confirmation`, `selection_ref:ArtifactRefV1|null`은 공통 C4 보완의 선택 고정·보류 시험 실행 경계를 따른다. 탐색 요청에는 보류 시험을 넣지 않는다.
 
 실행 계획 `EvaluationPlan`의 종류는 `in_process` 또는 `native_jobs`다. 전자는 등록된 콜백을 호출하며 JSON 코드를 실행하지 않는다. 후자는 순서가 명시된 솔버 원본 입력 참조, 솔버 상태와 제한 시간, 의존 관계를 담는다. 두 방식 모두 같은 관측량 계약을 반환한다. 계획에는 `state_reset_policy="fresh_per_experiment"`를 고정한다. 각 후보와 실험 조합의 초기 상태 고정 사본과 해시, 순서가 있는 증분과 구간, 온도와 속도 및 하중 이력도 고정한다. 재료 내부 상태나 소성 상태가 후보 또는 독립 실험 사이에 유출되면 안 된다. 한 실험 안에서는 검증된 구간의 순서와 연속성을 유지한다.
 
@@ -299,6 +308,7 @@ v1은 선언한 비교 영역 안의 **고정된 관측 격자**에 예측을 �
 
 ```
 evaluation_id/request_id/point_id/study_id/study_revision
+execution_phase/selection_ref
 model_id/model_revision/adapter_identity/evaluation_level
 physical_parameters+units/encoded_values+feature_order+codec_version
 experiment_results[]:
@@ -315,7 +325,7 @@ assessment: fit_status, validation_status, holdout_status, adequacy_status,
 provenance_refs[], content_sha256
 ```
 
-상태는 `pending→running→completed/failed/cancelled/timed_out/interrupted`로 전이한다. 자료 처리 상태와 적합 판정은 독립적이다. 구조화된 오류에는 `code`, 단계, 실험과 관측량 ID, 이유, 재시도 가능 여부와 자료 참조를 담는다. 오류 코드는 `UNSUPPORTED_MODEL`, `UNSUPPORTED_UNIT`, `MEASURE_MISMATCH`, `COVERAGE_INCOMPLETE`, `SOLVER_FAILED`, `PARSE_FAILED`, `CANCELLED`, `TIMEOUT`, `STALE_INPUT`, `ADAPTER_VERSION_MISMATCH`를 포함한다.
+재료 평가 상태는 `pending→running→completed/failed/cancelled/timed_out/interrupted`로 전이한다. 이미 등록했으나 실행 배정 전 중지한 평가는 `pending→stopped`도 허용한다. 이 경우 실제 실행·시도 수는 0이고 `objective.eligible=false,fit_loss=null`이다. 아직 생성하지 않은 미래 후보를 만들어 저장하지 않는다. 캠페인 중지/취소, 기존 MDO 대문자 점 상태와 최적화기 종료 사유의 대응은 공통 C7을 따른다. 자료 처리 상태와 적합 판정은 독립적이다. 구조화된 오류에는 `code`, 단계, 실험과 관측량 ID, 이유, 재시도 가능 여부와 자료 참조를 담는다. 오류 코드는 `UNSUPPORTED_MODEL`, `UNSUPPORTED_UNIT`, `MEASURE_MISMATCH`, `COVERAGE_INCOMPLETE`, `SOLVER_FAILED`, `PARSE_FAILED`, `CANCELLED`, `TIMEOUT`, `STALE_INPUT`, `ADAPTER_VERSION_MISMATCH`를 포함한다.
 
 적합에 필수인 실험이 무효이면 집계 적합 목적함수를 만들지 않는다. `valid=False`, 이유와 빈 필수 응답을 반환한다. 진단이나 보류 시험의 실패로 유효한 학습 손실을 없애지는 않는다. 공통 명세 C4를 따른다. 실패한 실행을 실수 벌점으로 바꾸거나 평균에서 제외하지 않는다. 이전에 완료한 평가와 부분 자료는 열람을 위해 보존한다.
 
@@ -352,7 +362,7 @@ materials/<study_id>/exports/<id>/manifest.json
 
 재료와 곡선을 여러 카드에 적용할 때는 자료형이 정해진 자원 후보 상태를 모두 준비하고 연결된 곡선과 재료 참조 및 의존 사용처를 변경 없이 검사한다. 이어 기존 `cae_core/document.py:CommandDispatcher.execute_many(states, label, additions=..., removals=..., expected_revision=...)`를 세션 잠금 아래에서 한 번 호출한다. 카드 연결과 적용 준비는 새 기능이지만 `execute_many`는 이미 있다. 한 번의 Undo가 건드린 모든 자원과 연결을 원자적으로 복구해야 한다.
 
-지원하지 않는 카드 필드나 구현되지 않은 원자적 적용 준비 및 연결 경로는 `UNSUPPORTED_ATOMIC_APPLY`로 내보내기만 허용한다. 전체 문서를 교체하거나 별개의 `set_fields` 명령을 여러 번 호출하지 않는다. 변경 번호나 해시가 맞지 않으면 계획과 초안을 보존하고 아무것도 적용하지 않은 채 다시 읽고 검토하도록 한다. Workbench의 INP 파일 트랜잭션 실행 취소를 Prep 문서의 실행 취소인 것처럼 쓰지 않는다.
+지원하지 않는 카드 필드나 구현되지 않은 원자적 적용 준비 및 연결 경로는 `UNSUPPORTED_ATOMIC_APPLY`로 적용을 거부한다. 해당 모델·솔버·판본의 내보내기 구현을 별도로 검증한 경우에만 솔버 덱 내보내기를 허용한다. 그 구현도 없으면 계수·평가 보고서만 저장할 수 있으며 솔버 카드/덱 출력 성공으로 표시하지 않는다. 전체 문서를 교체하거나 별개의 `set_fields` 명령을 여러 번 호출하지 않는다. 변경 번호나 해시가 맞지 않으면 계획과 초안을 보존하고 아무것도 적용하지 않은 채 다시 읽고 검토하도록 한다. Workbench의 INP 파일 트랜잭션 실행 취소를 Prep 문서의 실행 취소인 것처럼 쓰지 않는다.
 
 ### 8. 첫 실행 구현 단계와 인수 조건
 
@@ -379,7 +389,8 @@ class CalibrationStudyService:
                comparisons: tuple[ComparisonSpec,...], assessment_policy, user_constraints,
                expected_revision: str) -> StudySnapshot: ...
     def evaluate(self, values: Mapping[str,float|str], *, expected_revision: str,
-               on_progress: Callable[[dict],None]|None=None) -> EvaluationReceipt: ...
+               on_progress: Callable[[dict],None]|None=None,
+               cache_policy: str="reuse", execution_phase: str="exploration") -> EvaluationReceipt: ...
     def optimize(self, config: OptimizationConfig, *, expected_revision: str,
                on_progress: Callable[[dict],None]|None=None) -> CampaignReceipt: ...
     def cancel(self, campaign_id: str) -> CancelReceipt: ... # thread-safe request, not terminal claim
@@ -410,7 +421,7 @@ M1의 추가 인수 조건은 다음과 같다.
 
 **M2: 같은 공통 구조의 완전한 사용자 진입점.** 실제 CSV의 열, 단위와 관측량 선택에서 시작해 계수의 고정 여부, 자유값과 경계값 설정, 실행과 중지 및 취소, 관측과 예측 및 잔차와 보류 시험 그래프, 저장과 다시 열기, 내보내기 상태까지 연결한다. 필요한 곳에서는 호스트 계약으로 Prep 위젯을 사용하며 연구 상태는 Workbench가 소유한다. 저장소 밖의 독립 CSV, 실제 Windows 화면, 라이브러리 누락, 오류와 취소 흐름을 시험한다. 수치 참조 시험으로 이 사용자 인수를 대신하지 않는다.
 
-**M3: 처음 지원할 솔버 재료법 연결.** 설치해 사용할 수 있는 솔버와 재료법, 외부에서 작성한 단일 요소나 시험편 덱을 선택한다. 솔버 유한요소 어댑터는 기존 `JobManager`, `RunStore`와 같은 입력에서 같은 결과를 내는 추출기를 쓴다. 해당 모델에서는 프로세스 내부 구성식 어댑터보다 먼저 구현하거나 이를 대체할 수 있다. 계수에서 솔버 입력 바이트, 실행, 측정 물리량, 같은 잔차 계약과 실제 확인으로 이어지는 흐름을 증명한다. 첫 Prep 적용은 현재 LAW1의 E를 쓸 수 있다. 미지원 복잡 재료법은 내보내기만 허용한다. 수정하지 않은 원래 필드, INCLUDE, 순서와 줄바꿈을 보존하는지, 변경 번호 충돌과 한 번의 Undo를 검사한다. 고정폭 RAD와 INP 코덱은 별도 형식 시험을 둔다.
+**M3: 처음 지원할 솔버 재료법 연결.** 설치해 사용할 수 있는 솔버와 재료법, 외부에서 작성한 단일 요소나 시험편 덱을 선택한다. 솔버 유한요소 어댑터는 기존 `JobManager`, `RunStore`와 같은 입력에서 같은 결과를 내는 추출기를 쓴다. 해당 모델에서는 프로세스 내부 구성식 어댑터보다 먼저 구현하거나 이를 대체할 수 있다. 계수에서 솔버 입력 바이트, 실행, 측정 물리량, 같은 잔차 계약과 실제 확인으로 이어지는 흐름을 증명한다. 첫 Prep 적용은 현재 LAW1의 E를 쓸 수 있다. Apply 미지원 모델의 솔버 덱 출력은 해당 모델·솔버·판본의 내보내기 구현을 별도로 검증한 경우에만 허용한다. 그 구현도 없으면 계수·평가 보고서만 제공하며 솔버 덱 성공으로 표시하지 않는다. 수정하지 않은 원래 필드, INCLUDE, 순서와 줄바꿈을 보존하는지, 변경 번호 충돌과 한 번의 Undo를 검사한다. 고정폭 RAD와 INP 코덱은 별도 형식 시험을 둔다.
 
 **M4: 추가 모델 어댑터와 연구 수준.** 각 재료, 라이브러리나 솔버 모델은 공통부 분기 대신 형식, 지원 능력과 검증 시험으로 추가한다. 다른 측도, 여러 하중 경로, 온도 및 속도 의존성, Prony 항이나 초탄성 시험 방식은 등록 어댑터와 단위 및 실험 계약이 지원할 때만 허용한다. 재구현보다 기존 공개 솔버 재료법과 사용 가능한 라이브러리를 우선한다. 모델은 재료 라이브러리 수준과 솔버 유한요소 수준을 독립적으로 제공할 수 있다. 수준 간 일치는 명시적 연구 보고서로 검증하며 가정하지 않는다. 전문가 검토는 고정 자료를 읽고 변경을 제안하지만 조용히 실행하거나 적용하지 않는다.
 

@@ -1,5 +1,9 @@
 # 한국어 문서 편집과 검토 결과
 
+이번 계획 통합에서 발견한 문제와 수정·검토 방법은 [추가 검토 결과](PLAN_INTEGRATION_REVIEW_ko.md)에 정리했습니다.
+
+> 이 문서는 작성 당시 검토 범위와 판정을 보존합니다. 2026-11-12의 추가 계획 통합은 [기존 전체 계획](../../review/2026-10-23-codex-improvement-plan.md#plan-integration)과 [새 실제 토론 기록](plan-integration-debate-ascii.jsonl)을 따릅니다. 과거 승인을 바뀐 모든 문서나 제품 구현의 승인으로 확대하지 않습니다.
+
 작성일: 2026년 11월 12일
 
 ## 왜 다시 썼는지
