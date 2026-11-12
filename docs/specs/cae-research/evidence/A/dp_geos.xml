@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<Problem>
+ <Events maxTime="1"><SoloEvent name="driver" target="/Tasks/driver"/></Events>
+ <Constitutive><DruckerPrager name="dp" defaultDensity="2700" defaultBulkModulus="1000000000.0" defaultShearModulus="600000000.0" defaultCohesion="1000000.0" defaultFrictionAngle="30" defaultDilationAngle="10" defaultHardeningRate="50000000.0"/></Constitutive>
+ <Tasks><TriaxialDriver name="driver" material="dp" mode="mixedControl" axialControl="axial" radialControl="radial" initialStress="-2000000.0" steps="100" precision="16" output="dp_native.txt"/></Tasks>
+ <Functions><TableFunction name="axial" inputVarNames="{ time }" coordinates="{0,1}" values="{0,-0.01}"/><TableFunction name="radial" inputVarNames="{ time }" coordinates="{0,1}" values="{-2000000.0,-2000000.0}"/></Functions>
+</Problem>

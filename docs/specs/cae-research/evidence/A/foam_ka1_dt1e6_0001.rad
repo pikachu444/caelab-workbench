@@ -1,0 +1,8 @@
+#RADIOSS ENGINE
+/RUN/foam_ka1/1
+.05
+/TFILE/4
+.0005
+/TH/TITLE
+/DTIX
+1e-06 1e-06

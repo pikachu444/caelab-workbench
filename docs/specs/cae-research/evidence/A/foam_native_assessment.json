@@ -1,0 +1,46 @@
+{
+  "kind": "independent numerical reference comparison, actual D Linux native probe",
+  "native_product_workflow": false,
+  "oracle": "fine 1D source-law ODE with exact affine command; not experimental validation",
+  "fine_dt_s": 2.5e-07,
+  "results": [
+    {
+      "ka": 0,
+      "source_csv": "evidence/D/foam_ka0/foam_ka0T01.csv",
+      "source_sha256": "a86ddfe3c6af75de48b6359177e8ce08fb8d8b6ebc1cf2aa0291e249f9956012",
+      "row_count": 100,
+      "column_count": 82,
+      "time_last": 0.0495007,
+      "max_stress_abs_error_MPa": 2.70821499920304e-07,
+      "max_J_disagreement": 5.083787398829642e-07,
+      "max_command_displacement_error_mm": 1.0000000001675335e-08,
+      "max_transverse_stress_MPa": 2.305103e-08,
+      "max_added_mass_Mg": 0,
+      "max_hourglass_energy": 0,
+      "native_final_SX_MPa": -0.1,
+      "independent_final_SX_MPa": -0.1,
+      "pass_stress": true,
+      "pass_J": true,
+      "pass_disp": true
+    },
+    {
+      "ka": 1,
+      "source_csv": "evidence/D/foam_ka1/foam_ka1T01.csv",
+      "source_sha256": "bd01598f59a3200d6eb3136045e2736e9fb6c73c326958c1d66c5ef27ed715b2",
+      "row_count": 100,
+      "column_count": 82,
+      "time_last": 0.04950116,
+      "max_stress_abs_error_MPa": 3.123068067531487e-06,
+      "max_J_disagreement": 5.097505466622465e-07,
+      "max_command_displacement_error_mm": 1.0000000003410059e-08,
+      "max_transverse_stress_MPa": 1.677526e-08,
+      "max_added_mass_Mg": 0,
+      "max_hourglass_energy": 0,
+      "native_final_SX_MPa": -0.07701539,
+      "independent_final_SX_MPa": -0.07701523196558588,
+      "pass_stress": true,
+      "pass_J": true,
+      "pass_disp": true
+    }
+  ]
+}

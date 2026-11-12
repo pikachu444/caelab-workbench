@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "capability_profile": "B-HYP-COMP-1",
+  "differentiable": false,
+  "optimizer_responses": [
+    {
+      "schema_version": 1,
+      "response_id": "fit_loss",
+      "unit": "",
+      "source_kind": "residual",
+      "source_name": "fit_loss"
+    },
+    {
+      "schema_version": 1,
+      "response_id": "bulk_ratio",
+      "unit": "",
+      "source_kind": "parameter_expression",
+      "source_name": "K/mu1"
+    },
+    {
+      "schema_version": 1,
+      "response_id": "stability_min_acoustic_over_mu",
+      "unit": "",
+      "source_kind": "adapter_scalar",
+      "source_name": "ogden.stability.min_acoustic_over_mu.v1"
+    },
+    {
+      "schema_version": 1,
+      "response_id": "stability_derivative_discrepancy_over_mu",
+      "unit": "",
+      "source_kind": "adapter_scalar",
+      "source_name": "ogden.stability.max_derivative_discrepancy_over_mu.v1"
+    },
+    {
+      "schema_version": 1,
+      "response_id": "lateral_min_log_slope_over_mu",
+      "unit": "",
+      "source_kind": "adapter_scalar",
+      "source_name": "ogden.lateral.min_log_slope_over_mu.v1"
+    }
+  ],
+  "optimizer_constraints": [
+    {
+      "id": "bulk_lower",
+      "response_id": "bulk_ratio",
+      "kind": "LOWER",
+      "limit": 10,
+      "scale": 10,
+      "tolerance": 0,
+      "unit": ""
+    },
+    {
+      "id": "bulk_upper",
+      "response_id": "bulk_ratio",
+      "kind": "UPPER",
+      "limit": 1000,
+      "scale": 1000,
+      "tolerance": 0,
+      "unit": ""
+    },
+    {
+      "id": "acoustic_min",
+      "response_id": "stability_min_acoustic_over_mu",
+      "kind": "LOWER",
+      "limit": 0.000001,
+      "scale": 1,
+      "tolerance": 0,
+      "unit": ""
+    },
+    {
+      "id": "derivative_agreement",
+      "response_id": "stability_derivative_discrepancy_over_mu",
+      "kind": "UPPER",
+      "limit": 0.001,
+      "scale": 0.001,
+      "tolerance": 0,
+      "unit": ""
+    },
+    {
+      "id": "lateral_slope",
+      "response_id": "lateral_min_log_slope_over_mu",
+      "kind": "LOWER",
+      "limit": 0.000001,
+      "scale": 1,
+      "tolerance": 0,
+      "unit": ""
+    }
+  ],
+  "invalid_required_constraint": "CONSTRAINT_RESPONSE_INVALID; objective.eligible=false; fit_loss=null; constraint_status=NOT_ASSESSED",
+  "finite_constraint_violation": "objective.eligible=true; preserve finite fit_loss; existing ConstraintAssessment INFEASIBLE",
+  "INC_variant": "no bulk_ratio or lateral_slope response/constraints; same two acoustic responses/constraints",
+  "recovery_status": "reconstructed JSON; schema_version=1 added to every ScalarResponseSpecV1; no filesystem/runtime re-execution after environment loss"
+}

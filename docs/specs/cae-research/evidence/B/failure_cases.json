@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "scope": "Planned product adapter negative/assessment fixtures, not executed reconstructed product tests",
+  "cases": [
+    {
+      "id": "HYP_BAD_J",
+      "profile": "B-HYP-COMP-1",
+      "input": {
+        "F_diagonal": [
+          1,
+          1,
+          0
+        ]
+      },
+      "error": "INVALID_PARAMETER",
+      "reason": "NONPOSITIVE_J",
+      "fit_loss": null
+    },
+    {
+      "id": "HYP_K_UNIDENTIFIED",
+      "profile": "B-HYP-COMP-1",
+      "input": {
+        "all_J": 1,
+        "free": [
+          "K"
+        ]
+      },
+      "evaluation": "finite",
+      "identifiability_status": "not_identifiable",
+      "reason": "ZERO_K_SENSITIVITY"
+    },
+    {
+      "id": "HYP_MIX_INC_COMP",
+      "profile": "B-HYP-COMP-1",
+      "input": {
+        "data_formulation": "incompressible_closed_form",
+        "declared_finite_K": 100
+      },
+      "error": "MEASURE_MISMATCH",
+      "reason": "FORMULATION_MISMATCH",
+      "fit_loss": null
+    },
+    {
+      "id": "VIS_SUM",
+      "profile": "B-VIS-TRS-1",
+      "input": {
+        "a": [
+          0.8,
+          0.3
+        ]
+      },
+      "error": "INVALID_PARAMETER",
+      "reason": "PRONY_FRACTION_SUM",
+      "fit_loss": null
+    },
+    {
+      "id": "VIS_ORDER",
+      "profile": "B-VIS-TRS-1",
+      "input": {
+        "tau_s": [
+          10,
+          0.1
+        ]
+      },
+      "error": "INVALID_PARAMETER",
+      "reason": "PRONY_TERM_ORDER",
+      "fit_loss": null
+    },
+    {
+      "id": "VIS_TREF_RANK",
+      "profile": "B-VIS-TRS-1",
+      "input": {
+        "all_T_K": 293.15,
+        "Tref_K": 293.15,
+        "free": [
+          "C1",
+          "C2"
+        ]
+      },
+      "evaluation": "finite",
+      "identifiability_status": "not_identifiable",
+      "reason": "ZERO_SHIFT_SENSITIVITY"
+    },
+    {
+      "id": "VIS_WLF_POLE",
+      "profile": "B-VIS-TRS-1",
+      "input": {
+        "T_K": 193.15,
+        "Tref_K": 293.15,
+        "C2_delta_K": 100
+      },
+      "error": "INVALID_PARAMETER",
+      "reason": "WLF_SINGULAR_DENOMINATOR",
+      "fit_loss": null
+    },
+    {
+      "id": "VIS_PHASE_UNKNOWN",
+      "profile": "B-VIS-TRS-1",
+      "input": {
+        "representation": "amplitude_phase",
+        "phase_convention": "unknown"
+      },
+      "error": "MEASURE_MISMATCH",
+      "reason": "PHASE_CONVENTION_UNKNOWN",
+      "fit_loss": null
+    },
+    {
+      "id": "VIS_TIME_DUPLICATE",
+      "profile": "B-VIS-TRS-1",
+      "input": {
+        "time_s": [
+          0,
+          1,
+          1,
+          2
+        ],
+        "segment_boundaries": []
+      },
+      "error": "DATA_RECIPE_INCOMPATIBLE",
+      "reason": "UNDECLARED_DUPLICATE_TIME",
+      "fit_loss": null
+    },
+    {
+      "id": "CYC_LIBRARY_MISSING",
+      "profile": "B-CYC-AF2-1",
+      "input": {
+        "neml_installed": false
+      },
+      "error": "BACKEND_UNAVAILABLE",
+      "fit_loss": null
+    },
+    {
+      "id": "CYC_RESET_REVERSAL",
+      "profile": "B-CYC-AF2-1",
+      "input": {
+        "reset_at_each_segment": true
+      },
+      "error": "UNSUPPORTED_STATE_CONTINUATION",
+      "reason": "INTRA_EXPERIMENT_STATE_RESET",
+      "fit_loss": null
+    },
+    {
+      "id": "CYC_NONISO",
+      "profile": "B-CYC-AF2-1",
+      "input": {
+        "temperature_K": [
+          293.15,
+          323.15
+        ]
+      },
+      "error": "UNSUPPORTED_DOMAIN",
+      "reason": "ISOTHERMAL_PROFILE_ONLY",
+      "fit_loss": null
+    },
+    {
+      "id": "JC_ETA_SIGN",
+      "profile": "B-JC-STATE-1",
+      "input": {
+        "triaxiality_sign": "unknown"
+      },
+      "error": "MEASURE_MISMATCH",
+      "reason": "TRIAXIALITY_SIGN_UNKNOWN",
+      "fit_loss": null
+    },
+    {
+      "id": "JC_GLOBAL_DISPLACEMENT",
+      "profile": "B-JC-STATE-1",
+      "input": {
+        "data": "global_force_displacement_only"
+      },
+      "error": "DATA_RECIPE_INCOMPATIBLE",
+      "reason": "LOCAL_PLASTIC_STATE_REQUIRED",
+      "fit_loss": null
+    },
+    {
+      "id": "JC_Gf",
+      "profile": "B-JC-STATE-1",
+      "input": {
+        "fracture_energy_N_per_mm": 10
+      },
+      "error": "UNSUPPORTED_REGULARIZATION",
+      "reason": "LOCAL_INITIATION_ONLY",
+      "fit_loss": null
+    },
+    {
+      "id": "JC_REFERENCE_RANK",
+      "profile": "B-JC-STATE-1",
+      "input": {
+        "all_rate_per_s": 1,
+        "all_T_K": 293.15
+      },
+      "evaluation": "finite",
+      "flow_identifiable_rank": 3,
+      "flow_parameter_count": 5,
+      "identifiability_status": "not_identifiable"
+    },
+    {
+      "id": "REQUIRED_TRAIN_MISSING",
+      "profile": "all",
+      "input": {
+        "coverage": {
+          "expected": 26,
+          "valid": 25
+        }
+      },
+      "error": "COVERAGE_INCOMPLETE",
+      "fit_loss": null
+    },
+    {
+      "id": "VALID_HIGH_ERROR",
+      "profile": "all",
+      "input": {
+        "required_train_execution": "complete",
+        "train_loss": 0.5,
+        "fit_limit": 0.01
+      },
+      "fit_loss": 0.5,
+      "fit_status": "fail"
+    },
+    {
+      "id": "HOLDOUT_FAILED",
+      "profile": "all",
+      "input": {
+        "required_train_execution": "complete",
+        "train_loss": 0.001,
+        "holdout_loss": 0.5,
+        "holdout_limit": 0.01
+      },
+      "fit_loss": 0.001,
+      "holdout_status": "fail"
+    },
+    {
+      "id": "HYP_FINITE_INSTABILITY",
+      "profile": "B-HYP-COMP-1",
+      "input": {
+        "stability_min_acoustic_over_mu": -0.02,
+        "train_loss": 0.02
+      },
+      "objective_eligible": true,
+      "fit_loss": 0.02,
+      "constraint_status": "INFEASIBLE"
+    },
+    {
+      "id": "HYP_UNCOMPUTED_SCALAR",
+      "profile": "B-HYP-COMP-1",
+      "input": {
+        "stability_min_acoustic_over_mu": null
+      },
+      "error": "CONSTRAINT_RESPONSE_INVALID",
+      "fit_loss": null
+    },
+    {
+      "id": "HYP_MULTIPLE_ROOTS",
+      "profile": "B-HYP-COMP-1",
+      "input": {
+        "test_residual_terms": [
+          [
+            1,
+            2
+          ],
+          [
+            -2.5,
+            1
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      "error": "INTEGRATION_FAILED",
+      "reason": "AMBIGUOUS_EQUILIBRIUM",
+      "fit_loss": null
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "kind": "actual Linux LAW33 Ka1 capped timestep refinement",
+  "not_product_workflow": true,
+  "cap_baseline_s": 2e-06,
+  "cap_half_s": 1e-06,
+  "source_files": {
+    "ka1_dt2e6/foam_ka1T01.csv": "92f76f9076b0a387a82deab460165b59efdaaa0ef368e483f2631e0c6bf8836f",
+    "ka1_dt1e6/foam_ka1T01.csv": "e04b55417e9372ba7b062fc529cbbeb48780fc511af68ef316ef5c44482bae4e"
+  },
+  "grid": {
+    "start_s": 0,
+    "stop_s": 0.045,
+    "step_s": 0.0005,
+    "count": 91,
+    "interpolation": "linear actual native TIME; no extrapolation"
+  },
+  "stress_oracle_tol_MPa": "1e-5+.005*abs(oracle)",
+  "refinement_tol_MPa": "1e-5+.0025*abs(half)",
+  "max_source_dt_s": [
+    2e-06,
+    1e-06
+  ],
+  "max_refinement_stress_difference_MPa": 7.5667400000062335e-06,
+  "max_baseline_oracle_error_MPa": 5.206617626762888e-06,
+  "max_half_oracle_error_MPa": 7.5667400000062335e-06,
+  "source_first_last": [
+    [
+      0.0,
+      0.0495
+    ],
+    [
+      0.0,
+      0.0495
+    ]
+  ],
+  "all_numeric_checks_pass": true,
+  "remaining": "Long Ka1 hold/rate/shear, real experiments and Windows/product workflow not performed"
+}

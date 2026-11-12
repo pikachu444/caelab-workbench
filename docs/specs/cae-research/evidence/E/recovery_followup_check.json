@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "reviewer": "E",
+  "runtime": "functions-js",
+  "scope": "Fresh deterministic re-review of reconstructed C followup; not semantic/provider certification.",
+  "checks": {
+    "target": "4c6bbb9c274c914ec7976cd5af9d0b59e480bc2b",
+    "reply_hash": true,
+    "reply_codepoints": 98,
+    "request_hash": true,
+    "request_canonical_bytes": true,
+    "pack_hash": true,
+    "pack_canonical_bytes": true,
+    "old_context_hash": true,
+    "distinct_context_pack": true,
+    "exact_segments": true,
+    "exact_reviewer_record": true,
+    "old_event_context": true,
+    "old_link": true,
+    "coverage": {
+      "answer_sha256": "3cb5f37fe8d0799d75f4ff461bee2106c2ce4dfa43e7973ce28dcdb120ded970",
+      "nonwhitespace_count": 80,
+      "covered_nonwhitespace_count": 80,
+      "segment_count": 2,
+      "checked_segment_count": 2,
+      "claim_count": 2,
+      "complete": true,
+      "nonclaim_policy_id": "cae-nonclaim-v1"
+    }
+  }
+}

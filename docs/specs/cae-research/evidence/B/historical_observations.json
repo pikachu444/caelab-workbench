@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "status": "historical_observations_transcribed_not_original_receipt_bytes",
+  "source": "Visible tool outputs and author's R3 report before environment became unavailable",
+  "environment": {
+    "host": "Linux",
+    "python": "3.12.14",
+    "numpy": "2.3.5",
+    "scipy": "1.17.0",
+    "pyvisco": "2.1.3",
+    "filelock": "4.2.10",
+    "cmake": "4.4.4"
+  },
+  "original_part_sha256": "f3f1ce4d1d96fa60738268aa0d2dc685232a2e4a2ca6b849d48930f32924c399",
+  "original_part_bytes_recovered": false,
+  "original_csv_and_raw_receipt_bytes_recovered": false,
+  "recorded_optimizer": {
+    "termination": "CONVERGED",
+    "observations": 146,
+    "fit_loss": 1.4321823375482084e-13,
+    "parameters": {
+      "E0": 99.99991157325094,
+      "a1": 0.19999927747118482,
+      "a2": 0.3000001346797645,
+      "tau1": 0.10000070016113262,
+      "tau2": 9.99998403748328
+    },
+    "holdout_loss": 3.2911807678520303e-14,
+    "holdout_used_in_fit": false,
+    "WLF": "fixed"
+  },
+  "recorded_equilibrium": {
+    "case_count": 243,
+    "residual_limit_MPa": 1e-9,
+    "order_invariance": "exact",
+    "failure_cases": [
+      "no_root",
+      "outside_domain",
+      "multiple_roots",
+      "tangent_uncertified"
+    ]
+  },
+  "recorded_cold_replay": {
+    "original_bundle_and_core_read_denial": true,
+    "reference_exit": 0,
+    "equilibrium_exit": 0,
+    "pyvisco_exit": 0,
+    "optimizer_exit": 0,
+    "constraint_exit": 0,
+    "integrity_exit": 0,
+    "neml_exit": 20
+  },
+  "recorded_asset_check": {
+    "frozen_files": 30,
+    "numeric_expected_checks": 19
+  },
+  "recorded_NEML_install": {
+    "status": "failed",
+    "reason": "BLAS_LIBRARIES missing",
+    "actual_tensor_NEML_executed": false
+  },
+  "reconstructed_code_executed": false,
+  "product_material_service_GUI_executed": false,
+  "Windows_executed": false,
+  "native_solver_executed_by_B": false
+}

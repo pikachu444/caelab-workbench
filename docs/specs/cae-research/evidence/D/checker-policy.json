@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "recovery_status": "New reconstructed negative acceptance policy, not a recovered execution receipt",
+  "required_cases": [
+    {
+      "id": "F-11-layer3",
+      "mutation": "remove layer3",
+      "expected": "MISSING_REQUIRED_SHELL_ARRAY"
+    },
+    {
+      "id": "F-11-all",
+      "mutation": "remove all shell stress arrays",
+      "expected": "MISSING_REQUIRED_SHELL_ARRAY"
+    },
+    {
+      "id": "F-11-renamed",
+      "mutation": "rename layer3 as layer30",
+      "expected": "MISSING_REQUIRED_SHELL_ARRAY"
+    },
+    {
+      "id": "F-11-element-ID",
+      "mutation": "swap only element IDs",
+      "expected": "OBSERVABLE_MISMATCH_PART or FAMILY"
+    },
+    {
+      "id": "F-11-node-ID",
+      "mutation": "swap only node IDs",
+      "expected": "NODE_U_ORACLE or NODE_ID_GEOMETRY_MISMATCH"
+    },
+    {
+      "id": "F-11-time",
+      "mutation": "remove TIME",
+      "expected": "MISSING_TIME"
+    },
+    {
+      "id": "F-11-distinct-wrong-layer",
+      "mutation": "synthetic middle xx5 replaced with upper xx10",
+      "expected": "WRONG_LAYER_ORACLE; exact requested key must not fallback"
+    },
+    {
+      "id": "F-11-valid-permutation",
+      "mutation": "permute coordinates,point arrays and remap connectivity together",
+      "expected": "accepted; IDs remain the lookup keys"
+    },
+    {
+      "id": "TH-title",
+      "mutation": "TITLES absent",
+      "expected": "UNSUPPORTED_OBSERVABLE before dispatch"
+    },
+    {
+      "id": "TH-time",
+      "mutation": "duplicate/decreasing actual time",
+      "expected": "INVALID_DATASET / TIME_NOT_STRICTLY_INCREASING"
+    },
+    {
+      "id": "TH-row",
+      "mutation": "row width differs",
+      "expected": "COVERAGE_INCOMPLETE"
+    },
+    {
+      "id": "TH-range",
+      "mutation": "requested endpoint not bracketed",
+      "expected": "COVERAGE_INCOMPLETE, no extrapolation"
+    },
+    {
+      "id": "TH-force1row",
+      "mutation": "one force sample",
+      "expected": "COVERAGE_INCOMPLETE; >=3 required"
+    },
+    {
+      "id": "LIFE-cancel-validating",
+      "mutation": "cancel after converter0 but before commit",
+      "expected": "cancelled; no completed dataset"
+    },
+    {
+      "id": "LIFE-SaveAs",
+      "mutation": "active child writer or operation writer",
+      "expected": "typed busy before copy; no torn closure"
+    },
+    {
+      "id": "RP-late",
+      "mutation": "late ready after timeout",
+      "expected": "ignored; first terminal state persists"
+    },
+    {
+      "id": "F-11-shape",
+      "mutation": "replace required layer3 tensor9 with Ncells x6",
+      "expected": "INVALID_COMPONENT_COUNT"
+    }
+  ],
+  "derivative_example": {
+    "time": [
+      0,
+      1,
+      3
+    ],
+    "impulse": [
+      0,
+      1,
+      9
+    ],
+    "official_secant_force": [
+      1,
+      3,
+      4
+    ],
+    "exact_instantaneous_force_for_I_t_squared": [
+      0,
+      2,
+      6
+    ],
+    "note": "Algorithm fixture only; native reaction-force fit remains unverified"
+  },
+  "limitations": "Historical checks were seven rejection mutations plus one consistent permutation, as reported before loss. The NEW reconstructed checker now specifies eight rejection cases (including a new explicit component-shape mutation) plus consistent point permutation. No post-loss execution pass is claimed. Native membrane layers are uniform; the separate distinct-value array selection check does not prove native through-thickness placement or product reader behavior. Lifecycle/TH boundaries remain implementation acceptance obligations."
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "scope": "Proposed bounded remote Linux reference verification of newly reconstructed bytes; not yet run",
+  "python": "3.12",
+  "minimal_numeric_install": "python -m pip install numpy==2.3.5 scipy==1.17.0",
+  "numeric_expected_zero": [
+    "python \"$B/reference_probe.py\"",
+    "python \"$B/equilibrium_probe.py\"",
+    "python \"$B/check_assets.py\""
+  ],
+  "full_reference_install": "python -m pip install numpy==2.3.5 scipy==1.17.0 pyvisco==2.1.3 filelock==4.2.10",
+  "full_expected_zero": [
+    "python \"$B/reference_probe.py\"",
+    "python \"$B/equilibrium_probe.py\"",
+    "python \"$B/run_pyvisco.py\"",
+    "python \"$B/optimizer_probe.py\" --workbench-root \"$GITHUB_WORKSPACE\"",
+    "python \"$B/constraint_probe.py\" --workbench-root \"$GITHUB_WORKSPACE\"",
+    "python \"$B/check_assets.py\"",
+    "python \"$B/cold_reproduce.py\" --workbench-root \"$GITHUB_WORKSPACE\" --destination \"$RUNNER_TEMP/B-cold\""
+  ],
+  "NEML_separate_expected_exit": 20,
+  "NEML_command": "python \"$B/run_neml.py\"",
+  "limits": [
+    "NEML is not installed by these commands",
+    "NEML20 is an unmet backend gate, not pass/skip",
+    "cold wrapper exit0 means references pass while NEML20/21 is recorded separately",
+    "No product service/GUI, actual material or Windows acceptance",
+    "Do not bypass seven pinned core hash/origin checks"
+  ]
+}

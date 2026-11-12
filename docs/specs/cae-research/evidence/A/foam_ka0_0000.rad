@@ -1,0 +1,79 @@
+#RADIOSS STARTER
+/BEGIN
+foam_ka0
+      2024
+                  Mg                  mm                   s
+                  Mg                  mm                   s
+/MAT/LAW33/1
+A synthetic foam; native verification pending
+               1e-10
+                  10         0         0                   1
+                   0                 0.1                   0
+                 0.1                   0                   0                 100
+/PROP/SOLID/1
+affine one-point small-strain reference
+         1         4         0         0         0         0      1000         1                   0
+                   0                   0                   0                   0                   0
+                   0                   0                   0                   0                   0
+/PART/1
+foam
+         1         1         0
+/NODE
+         1                   0                   0                   0
+         2                   1                   0                   0
+         3                   1                   1                   0
+         4                   0                   1                   0
+         5                   0                   0                   1
+         6                   1                   0                   1
+         7                   1                   1                   1
+         8                   0                   1                   1
+/BRICK/1
+         1         1         2         3         4         5         6         7         8
+/GRNOD/NODE/1
+group1
+         1         4         5         8
+/GRNOD/NODE/2
+group2
+         2         3         6         7
+/GRNOD/NODE/3
+group3
+         1         2         3         4         5         6         7         8
+/BCS/1
+all yz zero
+   011 000         0         3
+/BCS/2
+left x zero
+   100 000         0         1
+/FUNCT/1
+velocity with smooth ramps
+                   0                   0
+               0.001                  -1
+               0.019                  -1
+                0.02                   0
+               0.021                   1
+               0.029                   1
+                0.03                   0
+               0.031                  -1
+               0.039                  -1
+                0.04                   0
+                0.05                   0
+/IMPVEL/1
+right vx
+         1         X         0         0         2         0         0
+                   1                   1                   0                0.05
+/TH/BRIC/1
+BRIC
+SX        SY        SZ        SXY       SYZ       SXZ       DENS      VOL       IE        BULK      
+         1          foam
+/TH/NODE/2
+NODE
+DX        DY        DZ        VX        VY        VZ        
+         1         0n1
+         2         0n2
+         3         0n3
+         4         0n4
+         5         0n5
+         6         0n6
+         7         0n7
+         8         0n8
+/END

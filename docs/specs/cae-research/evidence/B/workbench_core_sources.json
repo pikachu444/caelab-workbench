@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "repository": "pikachu444/caelab-workbench",
+  "baseline_revision": "104cdd6888a5554eecc8cf965c60ff1bd980b6da",
+  "scope": "critical existing MDO implementation bytes, not an assertion that all optional imported libraries are from this repository",
+  "files": [
+    {
+      "path": "caelab/__init__.py",
+      "sha256": "9a697f29de4653cd7f51f63a15b098a6b9bc3605240a38d464ba26e9fa4e0c92"
+    },
+    {
+      "path": "caelab/mdo/__init__.py",
+      "sha256": "64c29b1eadcf4d4c39faed4d001d94292895f4fb7d474c1cc23d7adf8f263924"
+    },
+    {
+      "path": "caelab/mdo/variables.py",
+      "sha256": "f6dc457dc44437a651e65ee7a771f4343a73c68a8a17cefefba5e686bac36137"
+    },
+    {
+      "path": "caelab/mdo/optimize.py",
+      "sha256": "2f835d4ddb5487b7884bb1d166f403c52b5fe424891b00ea7b30014e5499cc3f"
+    },
+    {
+      "path": "caelab/mdo/objectives.py",
+      "sha256": "c1cb9b57ba7d1dd4c26fd93bfaebb8a7219ea947cf0ab50cdd57b8026b9828d7"
+    },
+    {
+      "path": "caelab/mdo/constraints.py",
+      "sha256": "4efcebb721428f402e49a53159858beaac780721e49bccb6a71170253529a645"
+    },
+    {
+      "path": "caelab/mdo/pareto.py",
+      "sha256": "a205719e63bcdec49b92198001e787c537ae4a8d9853ce131c5adebb49aa11a4"
+    }
+  ]
+}
