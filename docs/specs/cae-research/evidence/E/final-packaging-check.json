@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "reviewer": "E",
+  "kind": "independent_final_packaging_review",
+  "repository": "pikachu444/caelab-workbench",
+  "reviewed_commit": "a2ae42ce474468a3fade1d2c66ff018731d58c99",
+  "decision": "READY for final packaging with the verified one-line correction below. No unresolved E design or packaging finding remains; an unseen later commit is not byte-certified by this receipt.",
+  "scope": "Packaging only. Existing immutable review-E.md and E journal entries were not changed. Product/runtime acceptance is excluded.",
+  "checks": {
+    "inventory": {
+      "path": "docs/specs/cae-research/recovery-assets.json",
+      "blob_sha": "13b6f8a724e2816e149e6331fd134027ad7eb2c9",
+      "selected_files": 78,
+      "unique_paths": 78,
+      "actual_commit_file_fetches": 78,
+      "connector_blob_matches": 78,
+      "independent_recomputed_git_sha1_matches": 78,
+      "declared_sha256_mismatches": 0,
+      "self_inventory_excluded": true
+    },
+    "normative_and_reports": {
+      "exact_match": true,
+      "targets": {
+        "docs/specs/spec-cae-research-implementation.md": "0a84d2e009dbd891d3115d1fcb036e644628ba9a",
+        "docs/specs/cae-research/core-implementation.md": "b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac",
+        "docs/specs/cae-research/material-pressure-orthotropic.md": "1f8fb280e3a0f8413721d9c4eed9f7596a163f4d",
+        "docs/specs/cae-research/material-finite-history.md": "f5e122220fb6f6c5706dcb4906832c0d80fded2b",
+        "docs/specs/cae-research/expert-implementation.md": "035b6e431f34e94bac33e29f2f0cc1e796995438",
+        "docs/specs/cae-research/post-implementation.md": "279e81037d279f0852a40577d32ec4188bfcc599",
+        "docs/specs/cae-research/review-E.md": "cedc0f8a961db7e6c934799b75e790968ff3e3df",
+        "docs/specs/cae-research/review-F.md": "ab47e80c5786709a9fa2b2b03771cc843f1d671f"
+      }
+    },
+    "json_readability": {
+      "files": 28,
+      "failures": 0
+    },
+    "routing": {
+      "implementation_map": "db2a951dc156889508f599c10dbd172324abdff0",
+      "task_count": 12,
+      "undefined_dependencies": 0,
+      "dependency_graph_acyclic": true,
+      "specification_paths_exist": true,
+      "product_states_planned": true
+    },
+    "links": {
+      "scope": "Relative Markdown file targets in all inventoried Markdown; URL fragments and remote HTTP availability are outside this check.",
+      "occurrences": 57,
+      "broken": 0,
+      "outside_inventory_unique_targets_retrieved": 13
+    },
+    "journal": {
+      "blob_sha": "4f982da312b10d080e7fd2ea714a4bc3c1ec2450",
+      "ascii": true,
+      "protocol_plus_entries": 12,
+      "authored_entries": 11,
+      "writer_order": [
+        "M",
+        "E",
+        "F",
+        "M",
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "M"
+      ],
+      "all_seq_writer_pairs_match": true,
+      "all_previous_git_blob_prefix_hashes_match": true,
+      "own_E9_preserved": true,
+      "readable_ascii_is_exact_pretty_print": true
+    },
+    "hash_implementation": {
+      "method": "E independently implemented SHA1 and used SHA1('blob '+UTF8_byte_length+NUL+actual_content), with known empty/abc vectors before all78 files and complete journal prefix checks. Optional declared SHA256 used E's previously vector-tested independent implementation.",
+      "known_sha1_empty": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+      "known_sha1_abc": "a9993e364706816aba3e25717850c26c9cd0d89d"
+    },
+    "checker": {
+      "blob_sha": "6b0ab186df7de01543df2a8e4e706f50214b43b2",
+      "actual_read": true,
+      "git_blob_nul_literal_correct": true,
+      "complete_journal_gate_present": true
+    }
+  },
+  "correction": {
+    "id": "E-PACK-01",
+    "path": "docs/specs/cae-research/USER_PROGRESS_ko.md",
+    "reviewed_commit_blob": "872c62a635d1c953f0e89a5eb06976bca218f589",
+    "finding": "The summary shorthand nullobjective regressed the approved requirement to preserve the objective object.",
+    "actual_corrected_blob": "506aac35a46acb68b61e075936e960b4a3785e11",
+    "actual_single_change": "nullobjective -> objective.eligible=false,objective.fit_loss=null",
+    "replacement_fetched_and_exact_single_substitution_verified": true,
+    "status": "closed in actual replacement bytes; root must include this replacement and update inventory in the final commit"
+  },
+  "actual_remote_log_review": {
+    "run_id": 43142271189,
+    "job_id": 130931810657,
+    "logical_pr_head": "a2ae42ce474468a3fade1d2c66ff018731d58c99",
+    "actual_checkout": "a05e4ecc4b33fd78f78944fb8af60a0dd82ddae1",
+    "source": "E directly fetched the current GitHub job log, not merely a parent report.",
+    "observed": [
+      "check_handoff.py pass with78files and complete journal checker",
+      "new selected fixed-profile native assessment pass",
+      "existing optimizer CONVERGED fit1.4321823225436936e-13 and holdout3.291180473817548e-14",
+      "cold reference checks exit0 and separate NEML exit20",
+      "artifact13910715462 uploaded with2286882bytes"
+    ],
+    "older_receipt": "d23a2502e8ea98ece683766a72dd8a436a8c475e correctly distinguishes earlier logical head98be90 and actual merge checkoutf975d441; it is not silently a receipt for this later job.",
+    "limits": [
+      "No independent recomputation of newly archived native CSV",
+      "No new D native/converter/checker, Ka0/DOP853, GEOS, general XBP or compiled NEML pass",
+      "No new product service/Qt/live provider/Prep multi-Apply/RP fork/Windows/real-material acceptance",
+      "The corrected USER_PROGRESS blob and any next receipt additions were not in this reviewed CI checkout"
+    ]
+  },
+  "final_integration_requirements": [
+    "Include the exact verified USER_PROGRESS replacement and refresh recovery-assets.json.",
+    "Keep all approved normative/report/journal bytes immutable.",
+    "Run applicable final integrity checks on the resulting integrated commit; this review does not pre-certify unseen bytes."
+  ],
+  "limitations": [
+    "Original full17-entry journal and316-file historical package are not recovered by this review.",
+    "No hidden model identity/private inference counts are inferred.",
+    "No new product code or other author's file was edited by E."
+  ]
+}

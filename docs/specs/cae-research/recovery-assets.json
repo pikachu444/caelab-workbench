@@ -79,7 +79,7 @@
     },
     {
       "path": "docs/specs/cae-research/USER_PROGRESS_ko.md",
-      "blob_sha": "872c62a635d1c953f0e89a5eb06976bca218f589",
+      "blob_sha": "506aac35a46acb68b61e075936e960b4a3785e11",
       "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
@@ -434,6 +434,11 @@
       "path": "docs/specs/cae-research/evidence/F/recovery_B_source_check.json",
       "blob_sha": "c569c56ab3cbfcd19e843c90baa63fd86376588c",
       "provenance": "independent actual11source/8notice UTF8/SHA256/pinnedmanifest check"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/E/final-packaging-check.json",
+      "blob_sha": "3b4b9e3ea90bdf5e2aab45ad47dad23113bae812",
+      "provenance": "independent complete78-file byte/link/DAG/journal packaging QA at a2ae42 plus exact user-report wording fix506; no future-commit self-certification"
     }
   ]
 }

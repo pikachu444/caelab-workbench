@@ -33,7 +33,7 @@ J2/선형탄성은기초회귀/확장성시험일뿐최종범위가아닙니다.
 ## 실제 토의·검증에서 바꾼 내용
 
 - 원답변전체를검토하지않고선택한claims만검토해통과하는문제를막았습니다. 새strictparser의prototype/상속citation/비RFC공백/UTF8budget우회도독립검토자가발견·재실행·수정확인했습니다.
-- 고오차finiteobjective,유효한물리제약위반(INFEASIBLE),계산/필수출력실패(nullobjective)를분리했습니다. 학습실패/holdout/진단실패가목적함수분모를바꾸지않습니다.
+- 고오차finiteobjective,유효한물리제약위반(INFEASIBLE),계산/필수출력실패(objective.eligible=false,objective.fit_loss=null)를분리했습니다. 학습실패/holdout/진단실패가목적함수분모를바꾸지않습니다.
 - 문서bytesrevision과계산contentrevision,읽기전용SaveAs/목적지lease/외부변경CAS/부모연결충돌복구를구체화했습니다.
 - 실제native실행으로LAW1NIP5강제변경,실제TIME,THconverter파일출력,현재VOL·density,layer/ID/축·측도추정문제를확인했습니다.
 - 최종재구성자료의잘못된질문판본/solverfacet과서로다른답변의reviewcoverage를독립검토자가발견해실물과검증코드를고쳤습니다.
