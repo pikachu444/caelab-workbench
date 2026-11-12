@@ -1,125 +1,131 @@
-# F independent engineering QA of the reconstructed implementation handoff
+# F 독립 공학 검토 — 재구성한 구현 인계 문서
 
-Review date: 2026-11-12. Reviewer: F, an independent agent role, not a human certification authority.
+이 문서는 기존 검토 결과의 한국어 편집본이며, 당시 검토 대상과 결론을 보존합니다. 검토일은 2026-11-12입니다. F는 독립 검토를 맡은 에이전트 역할이며 사람인 인증 기관이 아닙니다.
 
-The corrected documents are acceptable as a concrete implementation specification within the explicitly selected profiles. No remaining F-owned static blocker was found in the exact document set below. This does not certify a finished product, recovered historical raw results, arbitrary native-model support, an arbitrary material model, or physical material adequacy. Current execution receipts and the final integrated tree remain separate acceptance evidence.
+수정된 문서는 명시적으로 선택한 모델별 범위에서 구체적인 구현 명세로 사용할 수 있습니다. 아래의 정확한 문서 묶음에는 F가 제기한 정적 검토의 미해결 차단 문제가 없습니다. 이는 완성 제품, 과거 원실행 결과의 복구, 임의의 솔버 모델·재료 모델 지원, 실제 재료에 대한 물리적 타당성을 인증한 것이 아닙니다. 현재 실행기록과 최종 통합 파일의 확인은 별도의 완료 근거입니다.
 
-## Exact reviewed material
+## 실제로 읽은 대상
 
-Repository: pikachu444/caelab-workbench. I read the actual cloud blobs and then the actual recursive Git tree of assembled, unreferenced commit 98be90bfe1d8d02ae099bc0aecf84d1d11110218. The tree binds the following read documents and selected assets except the explicitly noted later B documentation/source update; this is not a claim to have executed or reviewed every baseline repository file. B's later annex f5e122220fb6f6c5706dcb4906832c0d80fded2b was separately read/diffed: only common-core section references and failed-Jacobian/SVD not_computed reporting changed. The executed tree contains its prior annex7c2087cfb92cf3411cb807a94546645982253ecc; no new numerical code is implied by the documentation update.
+저장소는 `pikachu444/caelab-workbench`입니다. F는 클라우드의 실제 Git blob과, 조립했지만 아직 브랜치에서 참조하지 않은 커밋 `98be90bfe1d8d02ae099bc0aecf84d1d11110218`의 실제 재귀 Git 트리를 읽었습니다. 아래에서 별도로 밝힌 B의 후속 문서·소스 갱신 외에는 그 트리가 읽은 문서와 선택 자산을 묶습니다. 기준 저장소의 모든 파일을 실행하거나 검토했다는 뜻은 아닙니다.
 
-| Document or asset | Git blob |
+B의 후속 부속 명세 `f5e122220fb6f6c5706dcb4906832c0d80fded2b`도 별도로 읽고 차이를 확인했습니다. 변경은 공통 구현 규칙의 절 참조와, 야코비안·특잇값 분해(SVD) 실패를 `not_computed`로 보고하는 부분뿐입니다. 실제 실행된 트리에는 이전 부속 명세 `7c2087cfb92cf3411cb807a94546645982253ecc`가 있습니다. 문서 갱신으로 새 수치 코드가 실행됐다는 뜻은 아닙니다.
+
+| 문서·자산 | Git blob |
 |---|---|
-| Integrated master | 0a84d2e009dbd891d3115d1fcb036e644628ba9a |
-| Common core | b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac |
-| A pressure/foam/orthotropy/derived XBP | 1f8fb280e3a0f8413721d9c4eed9f7596a163f4d |
-| B finite strain/history/state profiles, latest static revision | f5e122220fb6f6c5706dcb4906832c0d80fded2b |
-| C expert implementation | 035b6e431f34e94bac33e29f2f0cc1e796995438 |
-| D post implementation | 279e81037d279f0852a40577d32ec4188bfcc599 |
-| B typed scalar/constraint contract | 06371aa820c456dec054c1b2d40cb07ca0f25665 |
-| B finite-domain equilibrium reference | 7b8b90ae788eb06b388b1b14c4854925dcc2ab0d |
-| B synthetic reference generator | 17362315bbdb945aa2d63888088f8a180196930c |
-| B expected arithmetic | 922313cc9daba73ace9b1ec40f557d2b5de8d57a |
-| B source manifest | 9aa662051395deddf08659513df4e3b91183d3f0 |
-| B newly reacquired11-source/8-notice bundle, later addition | b95d68052eb52097fcc0a2f23527edd836c0b108 |
-| New F independent B source-integrity check | c569c56ab3cbfcd19e843c90baa63fd86376588c |
-| Current F direct remote-CI review receipt | 57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f |
-| C real source/license/span bundle | 38c12bf87cc38d4184d4f49213b52654d91d6b3c |
-| C corrected development/evaluation questions | 93881aa4a70fc749e9d9c65995398b37a776e902 |
-| D reconstructed native checker | 951bc556718bc4388ddcc01a77c998c0363a8b5c |
-| D reconstructed checker policy | 2b06f6406a2c5a4d83231db3e2daac1d18e80e1c |
-| A reconstructed arithmetic generator | e74ff030057030e1f20edf9bb8890de68abd89ca |
-| A reconstructed Ka1 native checker | 81aee286020ac529f4408503caa1ea2cfc281f0c |
-| A reconstructed native runner | 37c930034a9f307aa7d98e50c7f464441da555a7 |
-| New F source/label semantic review | 16ff7b27ccda91389b81ee34fc3f4aaba1dd024d |
+| 통합 본문 | 0a84d2e009dbd891d3115d1fcb036e644628ba9a |
+| 공통 구현 규칙 | b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac |
+| A 압력·폼·직교이방성·파생 XBP | 1f8fb280e3a0f8413721d9c4eed9f7596a163f4d |
+| B 유한변형·이력·상태 모델별 범위, 최신 정적 수정본 | f5e122220fb6f6c5706dcb4906832c0d80fded2b |
+| C 전문가 기능 구현 명세 | 035b6e431f34e94bac33e29f2f0cc1e796995438 |
+| D 후처리 구현 명세 | 279e81037d279f0852a40577d32ec4188bfcc599 |
+| B 형식 지정 단일 값·제약 규칙 | 06371aa820c456dec054c1b2d40cb07ca0f25665 |
+| B 유한 영역 평형 기준 계산 | 7b8b90ae788eb06b388b1b14c4854925dcc2ab0d |
+| B 합성 기준 자료 생성기 | 17362315bbdb945aa2d63888088f8a180196930c |
+| B 산술 기대값 | 922313cc9daba73ace9b1ec40f557d2b5de8d57a |
+| B 소스 목록 | 9aa662051395deddf08659513df4e3b91183d3f0 |
+| B 새로 재취득한 소스 11개·고지 8개의 묶음, 후속 추가 | b95d68052eb52097fcc0a2f23527edd836c0b108 |
+| F가 새로 수행한 B 소스 무결성 검사 | c569c56ab3cbfcd19e843c90baa63fd86376588c |
+| F의 현재 원격 자동 검사 직접 검토기록 | 57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f |
+| C 실제 소스·라이선스·인용 범위 묶음 | 38c12bf87cc38d4184d4f49213b52654d91d6b3c |
+| C 수정된 개발·평가 질문 | 93881aa4a70fc749e9d9c65995398b37a776e902 |
+| D 재구성한 솔버 결과 검사기 | 951bc556718bc4388ddcc01a77c998c0363a8b5c |
+| D 재구성한 검사 판정 규칙 | 2b06f6406a2c5a4d83231db3e2daac1d18e80e1c |
+| A 재구성한 산술 생성기 | e74ff030057030e1f20edf9bb8890de68abd89ca |
+| A 재구성한 Ka1 솔버 결과 검사기 | 81aee286020ac529f4408503caa1ea2cfc281f0c |
+| A 재구성한 솔버 실행기 | 37c930034a9f307aa7d98e50c7f464441da555a7 |
+| F의 새 소스·정답 주석 의미 검토 | 16ff7b27ccda91389b81ee34fc3f4aaba1dd024d |
 
-F independently appended recovery journal seq3 to the actual E seq2 blob, producing b50b74535102360d18ad367538f1196f0d868003. It is a new authored entry. Original historical F19 was never posted before the outage and is not restored here. The original full 17-entry journal and the original 316-file package are not reconstructed by this report.
+F는 실제 E의 순번 2 기록 뒤에 복구 일지 순번 3을 독립적으로 추가해 `b50b74535102360d18ad367538f1196f0d868003`을 만들었습니다. 새로 작성한 기록입니다. 과거 원래의 F19는 환경 단절 전에 게시되지 않았으며 여기서 복원하지 않았습니다. 이 보고서는 원래의 전체 17항목 일지나 316파일 묶음을 재구성하지 않습니다.
 
-## Corrections caused by current F review
+## 이번 F 검토로 고친 문제
 
-1. A's first recovered XBP equation wrote e=Se+ep. I required e=S*s+ep, with stress s and the engineering-strain/plastic-strain convention retained. The actual replacement was read. This fixes the written equation; it does not turn the explicitly derived GMN2012/tensor-norm variant into original Xia2002.
-2. A's energy-ratio denominator was ambiguous because BRIC IE is an energy density, while GLOBAL INTERNAL ENERGY, KINETIC ENERGY and HOURGLASS ENERGY are total energies. The actual text now names those three GLOBAL columns, their Mg*mm^2/s^2=0.001 J unit, excludes BRIC IE as the ratio denominator, and declares the small-denominator floor/not_assessed policy. Ratios are dimensionally meaningful.
-3. The recovered core's blanket pass/fail/not_assessed sentence contradicted uncertainty, identifiability and constraint enums. The actual core now enumerates each field, uses the exact registered lateral_min_log_slope_over_mu ID and the empty dimensionless unit string. C initially conflated finite high fit error with INFEASIBLE and then shortened an invalid objective to objective=null. The actual final C text preserves the objective object {eligible:false,fit_loss:null,reason_codes:[CONSTRAINT_RESPONSE_INVALID]}; high error and physical infeasibility are independent.
-4. The new evaluation question41 asked for DOLFINx0.11.0 but its gold facet said v0.10.0. Five explicit Radioss/CalculiX queries also lost their solver facet, including CalculiX2.23. I rejected the labels. In actual corrected blob93881aa4, all six facets preserve the question's solver/version and include exact source spans.
-5. The first recovered development questions25-36 were one birthday-party question with different case numbers;13-24 were topic-ID templates with mismatched specific obligations. I rejected semantic-diversity claims from literal-string uniqueness. The author supplied12 distinct non-CAE topics and12 explicit engineering missing-source/data questions. I read each changed question/obligation and accepted only this revised fixture scope.
+1. A의 첫 복구본은 XBP 식을 `e=Se+ep`로 썼습니다. F는 응력을 `s`로 두고 공학변형률·소성변형률의 정의를 유지하는 `e=S*s+ep`를 요구했습니다. 실제 교체된 문장을 읽었습니다. 식을 바로잡은 것이며, 명시적으로 파생한 GMN2012·텐서 노름 변형을 원래 Xia2002로 바꾼 것은 아닙니다.
+2. A의 에너지 비율은 분모가 모호했습니다. BRIC IE는 에너지 밀도이고 GLOBAL INTERNAL ENERGY, KINETIC ENERGY, HOURGLASS ENERGY는 총에너지입니다. 수정문은 이 세 GLOBAL 열과 단위 `Mg*mm^2/s^2=0.001 J`를 명시하고 BRIC IE를 분모에서 제외합니다. 분모가 작을 때의 하한과 미평가(`not_assessed`) 규칙도 정했습니다. 따라서 비율의 차원이 맞습니다.
+3. 복구한 공통 문서의 일괄 `pass/fail/not_assessed` 문장은 불확실성·식별성·제약의 상태값과 충돌했습니다. 수정본은 필드마다 정확한 상태값을 열거하고, 등록 ID `lateral_min_log_slope_over_mu`와 무차원 단위의 빈 문자열을 사용합니다. C는 처음에 유한한 큰 적합 오차를 `INFEASIBLE`과 혼동했고, 이후 잘못된 목적함수를 `objective=null`로 축약했습니다. 최종 C는 목적함수 객체 `{eligible:false,fit_loss:null,reason_codes:[CONSTRAINT_RESPONSE_INVALID]}`를 보존합니다. 큰 오차와 물리적 제약 위반은 독립입니다.
+4. 새 평가 질문 41은 DOLFINx0.11.0을 물었지만 기준 정답의 조건은 v0.10.0이었습니다. 명시적으로 Radioss·CalculiX를 묻는 5개 질문도 CalculiX2.23을 포함한 솔버 조건을 잃었습니다. F는 이 정답 주석을 거부했습니다. 실제 수정 blob `93881aa4`에서 6개 모두 질문의 솔버·판본과 정확한 소스 범위를 보존했습니다.
+5. 첫 복구본의 개발 질문 25–36은 사례 번호만 다른 생일 파티 질문이었고, 13–24는 주제 ID를 끼운 틀에 구체적 의무가 맞지 않았습니다. F는 문자열이 다르다는 이유만으로 의미도 다양하다는 주장을 거부했습니다. 작성자는 서로 다른 비 CAE 주제 12개와, 공학 소스·자료가 없다는 점을 구체적으로 묻는 12개 질문을 제출했습니다. F는 변경된 질문과 요구사항을 각각 읽고 이 수정된 시험자료의 범위만 승인했습니다.
 
-I requested actual author edits and re-read the changed bytes; these findings were not closed from promises. The common EvidenceEnvelope strict union and legacy mapping, parent/child lease rules and full-answer review defects are E-owned integration findings. I read their resulting common/annex changes for F-domain consistency, but E owns the independent closure of those objections.
+F는 실제 저자 수정을 요구하고 변경된 바이트를 다시 읽었습니다. 약속만으로 지적을 닫지 않았습니다. 공통 `EvidenceEnvelope`의 엄격한 선택 형식과 과거 형식 매핑, 부모·자식 저장 잠금 규칙, 전체 답변 검토의 결함은 E가 제기한 통합 문제입니다. F는 관련 수정이 자신의 공학 검토와 일치하는지 읽었으나, 해당 이견의 독립적인 종결 책임은 E에게 있습니다.
 
-## Original F01-F11 disposition in the new specification
+## 원래 F01–F11 지적의 처리 결과
 
-| ID | Concrete decision retained | What remains outside approval |
+| ID | 수정 명세에 유지한 결정 | 승인에 포함되지 않는 범위 |
 |---|---|---|
-| F01 DP | GEOS smooth-cone compression axisymmetry only; tensile/apex requests rejected; q, finite state, radial stress, consistency and plastic multiplier checked. The failed arbitrary radial bracket was replaced by the exact mixed-control2x2 consistency update. | No apex/tension/general loading claim. GEOS native execution is a separate backend gate; Windows gets the stated independent analytic peer, not an unverified WSL transport. |
-| F02 orthotropy/XBP | Reciprocal plane-stress compliance/SPD, material axes and work-conjugate shear are explicit. GMN2012-derived current tensor plastic norm is named, not accumulated history. n=0.2 normal/shear/rotation references supplement easy elastic/perfect-plastic limits. | Full original Xia2002/27-parameter law and general return-map runtime are not established; reverse plasticity is outside the selected profile. |
-| F03 LAW33 | Ka0/Ka1 source branches and CURRENT air-pressure update order are fixed; rate, viscosity, strain/J and energy units are explicit. /DTIX(initial,max) and separate capped baseline/half-step records are preserved. Frozen91-time grid uses actual-time interpolation, no extrapolation, absolute+relative tolerances. | Historical short affine native runs are not long rate/hold/shear campaigns or experimental foam identification. The current remoteCI supplied a new selected Ka1/Euler-checker receipt; it is not the historical DOP853/Ka0 receipt. |
-| F04 Ogden | INC2-term and COMP1-term are distinct formulation/model revisions. COMP uses isochoric energy plus K/2*(J-1)^2 and an actual lateral equilibrium solve; J=1 data do not identify K. | INC curves cannot be silently reused as finite-K traction-free predictions; native card support is not claimed. |
-| F05 NEML | Exact Chaboche/Voce/RI API and negative internal backstress mapping; fresh candidate/experiment state. Environment variables and package version do not authenticate source correspondence; exit20 unavailable and exit21 numerical-pass/source-unverified remain distinct. | Historical BLAS build failure is not tensor-library success. Actual built extension/source/ABI receipt and Windows installation remain unmet. |
-| F06 visco/JC | pyvisco's angular-frequency/concatenated-output API, Prony equilibrium fraction, reduced time and temperature rules are concrete. Physical fraction bounds and separated tau bands replace unresolved simplex choices. JC uses prescribed local state and tension-positive triaxiality. | A synthetic fit is not measured properties; JC initiation is not an FE deletion/regularization implementation. Single rate/temperature/triaxiality data cannot identify every coefficient. |
-| F07 native/post | Actual converter source checkout is separated from source-file last-change and release identity. Field/history times, layer/family/ID/basis, BRIC energy density and impulse-secant provenance are explicit. | Release CI did not pin Tools; byte-identical historical output is not a compiler/build certificate. Derived force remains unverified for physical reaction fitting. |
-| F08 expert | Current actual8-source/16-span material and corrected36dev/60eval labels have a new F semantic review. Same frozen physical context and exact result identity are retained through tools/review. | Small paired-intent annotation is not measured general retrieval or live-provider engineering quality. E's wire/lifecycle review remains independently owned. |
-| F09 optimizer | Every scalar declaration carries schema_version1. Reserved host fit_loss plus registered finite scalars feed existing optimizer constraints. Mandatory profile constraints cannot be dropped. Finite physical instability keeps finite loss/INFEASIBLE; missing/nonfinite required scalars invalidate the objective. | This is a common-service implementation contract. Historical existing-optimizer probes are not a new material-service execution. |
-| F10 COMP roots | Bounded domain[1e-4,1e4],129log nodes, signed monomial bounds for R and R',64epsilon guard,20subdivision levels, Brent tolerances, root merge, residual test and exactly-one-root/refusal rules are fixed. | Finite-domain numerical screening is not a formal real-arithmetic global uniqueness proof. Tangent/ambiguous/unresolved roots are not silently selected. |
-| F11 layer completeness | Exact required array set, TIME/tensor shapes, ID uniqueness, family/part and node geometry checks replace iteration over merely present arrays. New checker explicitly rejects deletion, renaming, ID-only swaps, shape and time defects; consistent permutation is permitted. | Homogeneous native membrane fields do not prove physical through-thickness placement. The distinct synthetic middle5/upper10 test verifies selection logic only. |
+| F01 DP | GEOS의 매끄러운 원뿔 압축 축대칭만 지원합니다. 인장·꼭짓점 요청을 거부하며 q, 유한 상태, 반경 응력, 일관성 조건, 소성 승수를 검사합니다. 실패한 임의 반경 구간 탐색을 정확한 혼합 제어 2×2 일관성 갱신으로 바꿨습니다. | 꼭짓점·인장·일반 하중은 지원한다고 주장하지 않습니다. GEOS 실제 실행은 별도 통과 조건입니다. Windows에는 미검증 WSL 통신 대신 명시한 독립 해석식 구현을 제공합니다. |
+| F02 직교이방성·XBP | 상호관계를 만족하는 평면응력 컴플라이언스와 대칭 양의 정부호(SPD), 재료축, 일에 짝을 이루는 전단 정의를 명시합니다. GMN2012 기반 현재 텐서의 소성 노름이며 누적 이력이 아님을 밝힙니다. 쉬운 탄성·완전소성 한계 외에 n=0.2의 수직·전단·회전 기준을 추가했습니다. | 원래 Xia2002의 전체 27계수 법칙과 일반 응력 복귀 알고리즘의 실행 구현은 확립되지 않았습니다. 역방향 소성은 선택 범위 밖입니다. |
+| F03 LAW33 | Ka0·Ka1 소스 분기와 CURRENT 공기압 갱신 순서를 고정했습니다. 속도·점성·변형률/J·에너지 단위를 명시하고 `/DTIX(initial,max)`와 시간간격 상한을 둔 기준·절반 간격 기록을 구분합니다. 고정된 91시점 격자는 실제 시간으로 보간하며 외삽하지 않고 절대·상대 허용오차를 적용합니다. | 과거의 짧은 아핀 솔버 실행은 장기 속도·유지·전단 시험이나 실제 폼 실험 동정이 아닙니다. 현재 원격 자동 검사는 선택한 Ka1·Euler 검사기의 새 기록이며 과거 DOP853·Ka0 기록이 아닙니다. |
+| F04 Ogden | 비압축성 INC 2항과 압축성 COMP 1항은 서로 다른 식·모델 개정입니다. COMP는 등체적 에너지와 `K/2*(J-1)^2`, 실제 횡방향 평형 풀이를 사용합니다. J=1 자료로 K를 식별할 수는 없습니다. | INC 곡선을 유한 K의 자유 횡면 예측으로 조용히 재사용하지 않습니다. 솔버 카드 지원을 주장하지 않습니다. |
+| F05 NEML | 정확한 Chaboche·Voce·RI API와 내부 배응력의 음수 부호 매핑, 후보·시험마다 새 상태를 고정합니다. 환경변수·패키지 판본만으로 소스 일치를 증명하지 않습니다. 사용 불가인 종료 코드 20과 수치 통과·소스 미확인인 종료 코드 21을 구분합니다. | 과거 BLAS 빌드 실패는 텐서 라이브러리 성공이 아닙니다. 실제 빌드한 확장 모듈·소스·ABI 기록과 Windows 설치는 미충족입니다. |
+| F06 점탄성·JC | pyvisco의 각주파수·연결 출력 API, Prony 평형 분율, 환산 시간·온도 규칙을 구체화했습니다. 미결정인 단체(simplex) 선택 대신 물리적 분율 상·하한과 분리된 tau 구간을 사용합니다. JC는 지정된 국소 상태와 인장 양수 삼축도를 사용합니다. | 합성 자료 적합은 측정 물성이 아닙니다. JC 손상 개시는 FE 요소 삭제·정규화 구현이 아닙니다. 한 속도·온도·삼축도 자료로 모든 계수를 식별할 수 없습니다. |
+| F07 솔버 결과·후처리 | 실제 변환기 소스의 체크아웃을 소스 파일 최종 변경과 릴리스 식별자에서 구분합니다. 장·이력 시간, 층·요소군·ID·기저, BRIC 에너지 밀도, 충격량의 할선으로 산출한 힘의 출처를 명시합니다. | 릴리스 CI는 Tools를 고정하지 않았습니다. 과거 출력이 바이트까지 같아도 컴파일러·빌드의 인증은 아닙니다. 파생 힘은 물리적 반력 적합에 검증되지 않았습니다. |
+| F08 전문가 | 현재 실제 소스 8개·범위 16개와 수정된 개발 36개·평가 60개 정답 주석에는 새 F 의미 검토가 있습니다. 도구·검토 과정에서도 같은 고정 물리 문맥과 정확한 결과 식별자를 유지합니다. | 짝을 이룬 소수 의도의 주석은 일반 검색 성능이나 실제 모델 제공자의 공학 답변 품질 측정이 아닙니다. 통신 형식·수명주기에 대한 E의 독립 검토 책임은 유지됩니다. |
+| F09 최적화 | 모든 단일 값 선언에 `schema_version=1`이 있습니다. 호스트 예약값 `fit_loss`와 등록된 유한 단일 값이 기존 최적화 제약으로 들어갑니다. 모델별 필수 제약을 생략할 수 없습니다. 유한한 물리 불안정은 유한 손실과 `INFEASIBLE`을 유지하며, 필수 단일 값의 누락·비유한 값은 목적함수를 무효화합니다. | 공용 서비스의 구현 규칙입니다. 과거 기존 최적화 도구 시험은 새 재료 서비스의 실행이 아닙니다. |
+| F10 COMP 근 | 유한 영역 [1e-4,1e4], 로그 격자 129개, R·R'의 부호 있는 단항식 경계, 64epsilon 보호 여유, 분할 20단계, Brent 허용오차, 근 병합·잔차 검사, 정확히 하나의 근만 허용하거나 거부하는 규칙을 고정했습니다. | 유한 영역 수치 검사는 실수 연산에서의 전역 유일성 증명이 아닙니다. 접선근·모호한 근·미해결 근을 임의로 선택하지 않습니다. |
+| F11 층 자료 완전성 | 존재하는 배열만 순회하던 방식을 바꿔 정확한 필수 배열 집합, TIME·텐서 형상, ID 유일성, 요소군·부품과 절점 기하를 검사합니다. 새 검사기는 삭제·이름 변경·ID만 교환·형상·시간 결함을 거부하며 일관된 순열은 허용합니다. | 두께 방향 값이 같은 셸의 막응력 결과만으로 실제 두께 방향 위치를 증명할 수 없습니다. 서로 다른 합성 중간층 5·상부층 10 검사는 선택 논리만 확인합니다. |
 
-These closures concern the corrected design decisions. None deletes an unmet backend or physical acceptance gate.
+위 종결은 수정된 설계 결정을 뜻합니다. 충족하지 못한 계산 구현이나 물리적 완료 검사를 없애지 않습니다.
 
-## Source-law and numerical review
+## 소스 법칙과 수치 검토
 
-A's GEOS source is d81a4438f107446f17e33ab70c70358935e473ab, with actual DruckerPrager.hpp blob02e2a44fcf7ad2c53541533dcc126d9f53961cb6 and TriaxialDriver.cpp d266ae01a44380501e6fedcb5dda2339d2f1d8fd. The code has a20-iteration local loop without a final exhaustion throw and no general apex return. The selected restricted branch and independent residual checks therefore matter. Compression-positive reporting must remain a conversion from tensile-positive mean stress, not a sign change inside the source law.
+A의 GEOS 소스는 `d81a4438f107446f17e33ab70c70358935e473ab`이며 실제 `DruckerPrager.hpp` blob은 `02e2a44fcf7ad2c53541533dcc126d9f53961cb6`, `TriaxialDriver.cpp`는 `d266ae01a44380501e6fedcb5dda2339d2f1d8fd`입니다. 코드에는 국소 반복 20회가 있지만 마지막 반복 소진 뒤 예외를 던지지 않으며 일반 꼭짓점 복귀도 없습니다. 따라서 제한된 분기의 선택과 독립 잔차 검사가 필요합니다. 압축 양수 표시는 인장 양수 평균응력으로부터의 변환이어야 하며 소스 법칙 내부의 부호를 바꾸어서는 안 됩니다.
 
-LAW33 source cb760c206e346eff12161a2268b134ef9d48a4ef/sigeps33.F blob62b137d2f62a5b101aced76bdf9d69c41cc33092 uses current air pressure in the source update ordering. Ka1 viscosity has stress*time units and tensor/engineering shear factors differ. The selected independent ODE and exact kinematics are appropriate narrow numerical references. Total-energy diagnostics and BRIC per-reference-volume energy cannot be interchanged.
+LAW33 소스 `cb760c206e346eff12161a2268b134ef9d48a4ef/sigeps33.F`, blob `62b137d2f62a5b101aced76bdf9d69c41cc33092`는 소스의 갱신 순서에서 현재 공기압을 사용합니다. Ka1 점성의 단위는 응력×시간이며 텐서 전단과 공학 전단의 계수는 다릅니다. 선택한 독립 상미분방정식(ODE)과 정확한 운동학은 이 좁은 범위의 수치 기준으로 적절합니다. 총에너지 진단과 BRIC의 기준 체적당 에너지를 서로 바꿔 쓰면 안 됩니다.
 
-B's Ogden2mu/alpha^2 convention is tied to adtzlr/hyperelastic58b036acc389585110f5d74e0457c36fae0cc4f2, not a name-only equivalence. COMP stress is (beta_i-mean(beta))/J+K*(J-1); nominal stress is J*sigma*F^-T. I checked the reconstructed uniaxial/biaxial/planar monomial root expressions against those formulas. The new code is concrete and was statically read, not re-executed here.
+B의 Ogden `2mu/alpha^2` 정의는 이름만 같은 식이 아니라 `adtzlr/hyperelastic58b036acc389585110f5d74e0457c36fae0cc4f2`에 연결됩니다. COMP 응력은 `(beta_i-mean(beta))/J+K*(J-1)`, 공칭응력은 `J*sigma*F^-T`입니다. F는 재구성한 단축·이축·평면 단항식 근 표현을 이 식과 대조했습니다. 새 코드는 구체적으로 작성되어 정적으로 읽었으나, 이 단계에서 다시 실행하지 않았습니다.
 
-The five B scalar declarations and every constraint reference were checked against the actual JSON. Bulk ratio bounds10..1000, normalized acoustic minimum>=1e-6, derivative discrepancy<=1e-3 and normalized minimum lateral log slope>=1e-6 use their stated scales and zero tolerance. These finite physical constraints are separate from numerical inability to compute an equilibrium or required scalar.
+B의 단일 값 선언 5개와 모든 제약 참조를 실제 JSON과 대조했습니다. 체적탄성률 비율 범위 10..1000, 정규화 음향 최솟값 >=1e-6, 미분 불일치 <=1e-3, 정규화 횡방향 로그 기울기 최솟값 >=1e-6은 명시된 척도와 허용오차 0을 사용합니다. 이러한 유한 물리 제약은 평형이나 필수 단일 값을 수치적으로 계산할 수 없는 상태와 구분됩니다.
 
-pyvisco is pinned to b61b5a0c6a2939927c87189972ea5619503bd813. Its actual source spans specify time/tau in seconds, omega in rad/s, storage then loss concatenation and base10 WLF shift. NEML65ab2a648a975e2e9de8e1371be270567f9683ac uses dev(sigma)+X with negative internal evolution; a direct sigma-X external-state substitution would be wrong. B's JC source d791761d9636abaa27e41ebbe271fa9df519287e is intentionally not equated with D's separate cb760c release binary.
+pyvisco는 `b61b5a0c6a2939927c87189972ea5619503bd813`에 고정했습니다. 실제 소스 범위는 시간·tau의 초 단위, omega의 rad/s, 저장 성분 뒤 손실 성분을 연결하는 출력, 밑이 10인 WLF 이동을 정합니다. NEML `65ab2a648a975e2e9de8e1371be270567f9683ac`는 `dev(sigma)+X`와 음수 내부 진화를 사용하므로 외부 상태를 곧바로 `sigma-X`로 치환하면 잘못됩니다. B의 JC 소스 `d791761d9636abaa27e41ebbe271fa9df519287e`는 D의 별도 `cb760c` 릴리스 실행 파일과 의도적으로 구분합니다.
 
-Identifiability is part of acceptance, not a low-loss badge: K atJ=1, WLF constants atTref only, full JC flow at one rate/temperature, and full failure coefficients at one triaxiality/rate/temperature are rank-deficient counterexamples. State initialization, held-out tests, fixed residual scaling, full required coverage, repeated-strain branch/time order, sensitivity step checks and not_computed/not_identifiable reporting are retained.
+식별성은 완료 조건의 일부이며 낮은 손실만으로 충족되지 않습니다. J=1에서 K, Tref만으로 WLF 상수, 한 속도·온도에서 전체 JC 유동 계수, 한 삼축도·속도·온도에서 전체 파괴 계수는 계수들을 구별할 정보가 부족한 반례입니다. 상태 초기화, 적합에서 제외한 시험, 고정 잔차 척도, 모든 필수 범위의 확인, 반복 변형률의 분기·시간 순서, 민감도 간격 검사, 계산 못 함(`not_computed`)·식별 불가(`not_identifiable`) 보고를 유지합니다.
 
-## Current C review actually performed
+## 현재 C에서 실제로 검토한 내용
 
-I read all16 selected source spans and all60 evaluation questions/obligations, then all changed development questions. Current functions-JS checks independently confirmed exact Unicode-codepoint extraction, line endpoints and parent-hash metadata agreement for16/16spans. After correction,96/96question solver/version spans matched their actual text; the96 full question strings are distinct. Development counts are12supported/12insufficient/12non-CAE; evaluation counts24/18/18. The24 covered evaluation items are12paired intents.
+선택 소스 범위 16개, 평가 질문·요구사항 60개, 변경된 개발 질문 전체를 읽었습니다. 현재 functions-JS 검사로 16/16 범위의 정확한 유니코드 코드포인트 추출·행 끝·부모 해시 메타데이터 일치를 독립 확인했습니다. 수정 뒤에는 96/96 질문의 솔버·판본 범위가 실제 질문과 일치했고 전체 질문 문자열 96개가 서로 달랐습니다. 개발 분류는 근거 지원 12개·자료 부족 12개·비 CAE 12개이며 평가 분류는 24/18/18입니다. 근거가 있는 평가 항목 24개는 12개 의도의 한영 쌍입니다.
 
-The source semantics cover Poisson weak-form signs; six rigid modes; Lame conversion; deviatoric von Mises; F/C/J and logarithmic neo-Hookean energy; Cauchy versus energy-gradient stress; GEOS old cohesion/angle conversion; Prony equilibrium/frequency; WLF log shift; and NEML block state/sign. Missing solver defaults, contact law, original Xia, user results and experimental identification are not fabricated. The27Korean-English terms and6language cases are acceptable only as reviewed retrieval projection retaining original text, negation, conditions, numbers and solver/edition tokens. Unverified language coverage and absent source coverage remain different outcomes.
+소스 의미는 포아송 약형의 부호, 강체 모드 6개, Lamé 계수 변환, 편차 von Mises, F/C/J와 로그형 neo-Hookean 에너지, Cauchy 응력과 에너지 미분 응력, GEOS의 옛 점착력·각도 변환, Prony 평형·주파수, WLF 로그 이동, NEML 블록 상태·부호를 다룹니다. 없는 솔버 기본값·접촉법칙·원래 Xia·사용자 결과·실험 동정은 만들어 넣지 않습니다. 한영 용어 27개와 언어 사례 6개는 원문·부정·조건·수치·솔버·판본 토큰을 보존하는 검색용 변환으로 검토한 범위에서만 적절합니다. 언어 지원을 확인하지 못한 경우와 소스 근거가 없는 경우는 구분합니다.
 
-E separately reported current full SHA256/UTF8/source/license/span integrity checks. I do not relabel those E executions as F executions. The new F receipt binds exact blobs, rather than rewriting source or label bytes to pretend the old original review still applies.
+E는 현재의 전체 SHA256·UTF8·소스·라이선스·범위 무결성 검사를 별도 보고했습니다. F는 E의 실행을 자신의 실행으로 바꾸어 부르지 않습니다. 새 F 기록은 정확한 blob을 묶으며, 옛 검토가 그대로 유효한 것처럼 소스나 정답 주석 바이트를 다시 쓰지 않습니다.
 
-## Historical independent observations, not fresh cloud executions
+## 과거 독립 관측 — 현재 클라우드에서 새로 실행한 결과가 아님
 
-Before the environment failure, F independently ran or cross-checked the following. Their numerical values are historical observations. This report does not recreate their original logs/CSV/receipts.
+환경 장애 전에 F가 다음을 독립 실행하거나 교차 확인했습니다. 수치는 과거 관측이며, 이 보고서는 그 원로그·CSV·실행기록을 재생성하지 않습니다.
 
-- Mixed-control DP versus independent piecewise algebra: stress difference below1e-6Pa and strain below1e-13. Foam current-air counterexample, Ka1 exact scalar ODE and n0.2 XBP normal/shear/rotation checks passed their stated narrow references.
-- COMP energy-gradient finite differences at stretches(.8,1.1,1.2): maximum error4.20e-10MPa. Independent visco convolution quadrature versus recurrence:3.47e-18.
-- Actual existing Workbench optimizer with actual pyvisco:146observations, converged synthetic loss1.43218e-13; fixed-WLF held-out temperature loss3.29118e-14. It was neither an implemented material service nor a measured-material validation.
-- Actual short Linux LAW33 output versus F's independent DOP853/projected1D calculation: maximum stress error Ka0 about2.70928e-7MPa, Ka1 about3.37898e-6MPa. Nodal displacement, J/rho/volume, other stress components and added-mass/hourglass checks were also assessed.
-- Actual /DTIX2e-6 and1e-6 capped Ka1 pair, independently verified effective caps and actual times, fixed91-point0..0.045s grid: maximum refinement difference7.56674e-6MPa; absolute+relative oracle/refinement policies passed. This did not replace the original uncapped run.
-- Actual affine TH106columns and source times, independent Hooke transfer, and F-owned corrected D checker passed. The old missing-layer bug was reproduced on actual raw data; corrected7negative cases were rejected and a consistent point permutation was accepted.
-- Historical COMP243-config/reversed-order/four-negative equilibrium probe, existing ConstraintSpec3cases, existing MDO criteria4cases and policy11cases were independently run. Finite high error/finite instability retained objective; missing/NaN required scalar did not.
+- 혼합 제어 DP와 독립 구간별 대수 계산의 차이는 응력 1e-6Pa 미만, 변형률 1e-13 미만이었습니다. 폼의 현재 공기압 반례, Ka1의 정확한 단일 값 ODE, n0.2 XBP의 수직·전단·회전 검사는 명시한 좁은 기준을 통과했습니다.
+- 늘어남 (.8,1.1,1.2)에서 COMP 에너지 미분의 유한차분 최대 오차는 4.20e-10MPa였습니다. 독립 점탄성 합성곱 구적과 점화식의 차이는 3.47e-18이었습니다.
+- 실제 기존 Workbench 최적화 도구와 실제 pyvisco는 후보 계수 조합을 146회 평가해 수렴했고, 합성 손실은 1.43218e-13, WLF를 고정한 미사용 온도의 검증 손실은 3.29118e-14였습니다. 새 재료 서비스 구현이나 실제 재료 검증은 아니었습니다.
+- 실제 짧은 Linux LAW33 출력과 F의 독립 DOP853·투영 1차원 계산의 최대 응력 오차는 Ka0 약 2.70928e-7MPa, Ka1 약 3.37898e-6MPa였습니다. 절점 변위, J/rho/체적, 다른 응력 성분, 추가 질량·아워글라스 검사도 평가했습니다.
+- 실제 `/DTIX2e-6`과 `1e-6` 상한을 둔 Ka1 쌍에서 유효 상한과 실제 시간을 독립 확인했습니다. 고정된 0..0.045s의 91점 격자에서 최대 세분화 차이는 7.56674e-6MPa였고 절대·상대 기준 계산 및 세분화 규칙을 통과했습니다. 원래 상한 없는 실행을 대체하지는 않았습니다.
+- 실제 아핀 TH의 106개 열과 소스 시간, 독립 Hooke 전달, F가 수정한 D 검사기를 통과했습니다. 옛 층 누락 결함을 실제 원자료에서 재현했고, 수정된 실패 사례 7개를 거부하고 일관된 점 순열은 허용했습니다.
+- 과거 COMP 243설정·역순·실패 사례 4개, 기존 `ConstraintSpec` 3사례, 기존 MDO 기준 4사례, 판정 규칙 11사례를 독립 실행했습니다. 유한한 큰 오차·유한한 불안정에서는 목적함수를 유지하고, 필수 단일 값이 누락되거나 NaN이면 유지하지 않았습니다.
 
-The original complete raw package is unavailable. Some input and summary files were separately recovered or reacquired; their existence does not replace all lost native output. The reconstructed A checker now uses a new fixed-step explicit-Euler oracle at1.25e-7 and only the capped Ka1 pair. It must not inherit the historical F DOP853 receipt or imply a new Ka0 run. The reconstructed D checker adds an eighth explicit tensor-shape rejection; historical seven-case results do not certify that new code.
+원래 전체 원자료 묶음은 없습니다. 일부 입력·요약 파일을 별도 회수·재취득했지만, 그것이 사라진 모든 솔버 출력을 대체하지는 않습니다. 재구성한 A 검사기는 이제 간격 1.25e-7의 새 고정 간격 명시적 Euler 기준 계산과 상한을 둔 Ka1 쌍만 사용합니다. 과거 F의 DOP853 기록을 승계하거나 새 Ka0 실행을 뜻해서는 안 됩니다. 재구성한 D 검사기는 텐서 형상을 거부하는 8번째 사례를 추가했으므로, 과거 7사례 결과만으로 이 새 코드를 인증하지 않습니다.
 
-## Current remote execution independently inspected by F
+## F가 직접 확인한 현재 원격 실행
 
-After the static report was drafted, I directly fetched GitHub job130925841559, run43140439077 logs, job/step metadata and artifact metadata. All selected steps concluded success. The raw decoded log has86634characters; stripping only ANSI CSI sequences yields exactly the86480characters of root's saved clean log blob39c9d20285cba77b07eee5ec4f9389e99fc31577. My new inspection receipt is57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f.
+정적 보고서 초안을 작성한 뒤 F는 GitHub 작업 `130925841559`, 실행 `43140439077`의 실제 로그, 작업·단계 메타데이터, 산출물 메타데이터를 직접 가져왔습니다. 선택 단계는 모두 성공했습니다. 디코딩한 원로그는 86634글자이며 ANSI CSI 제어문자만 제거하면 root가 저장한 정리 로그 blob `39c9d20285cba77b07eee5ec4f9389e99fc31577`의 86480글자와 정확히 일치합니다. 새 확인기록은 `57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f`입니다.
 
-The PR head was98be90bfe1d8d02ae099bc0aecf84d1d11110218. The actual checkout was merge commitf975d44142408c491a4fad083f24e7945cb0a086, as printed by checkout/git log. These are different identities and neither is the later final documentation commit.
+PR의 머리 커밋은 `98be90bfe1d8d02ae099bc0aecf84d1d11110218`이었습니다. 실제 체크아웃은 checkout·git log에 출력된 병합 커밋 `f975d44142408c491a4fad083f24e7945cb0a086`입니다. 두 식별자는 다르며 어느 것도 뒤의 최종 문서 커밋이 아닙니다.
 
-Observed new execution scope:
-- A reconstructed arithmetic/deck recipes passed. The explicitly selected official Linux executable hashes were checked, then Ka1 capped2e-6/1e-6 native runs and the newly reconstructed fixed-step Euler checker passed.
-- D reconstructed native-deck generation passed. This workflow did not run D's solver/converter/native-layer checker.
-- B independent arithmetic/reference checks,243finite-domain COMP configurations plus reverse-order/four-negative cases, actual pyvisco2.1.3 source-hash/API checks,19expected numeric checks and17static-asset checks passed.
-- Existing Workbench optimizer plus actual pyvisco converged with146observations, loss1.4321823225436936e-13 and untouched holdout loss3.291180473817548e-14. WLF coefficients were fixed. Existing constraint API three-boundary-case results retained finite0.02loss for high-error stable and finite-instability cases and invalidated a required numerical scalar failure.
-- Relocated cold-copy references/API/optimizer/constraint checks passed with explicit core source/hash/origin checks and denial of original bundle/core reads. NEML returned20, unavailable; this unmet gate was explicitly preserved rather than counted as tensor-backend success.
+새로 관측한 실행 범위는 다음과 같습니다.
 
-Artifact13909436920 is2029916bytes, digestsha256:916e3aedf36533d23dec9d971b699e18ca9026f5cce42150c758b49f21fa18ec. Direct GitHub metadata says it expires2027-02-10T02:18:08Z. Upload logs include the new native outputs and receipts. F inspected the actual log and artifact metadata, not every archived binary/CSV; an independent raw-array revalidation is not claimed.
+- A의 재구성한 산술·덱 생성 절차가 통과했습니다. 명시적으로 선택한 공식 Linux 실행 파일의 해시를 검사한 뒤, Ka1의 2e-6/1e-6 상한 솔버 실행과 새 고정 간격 Euler 검사기를 통과했습니다.
+- D는 재구성한 솔버 입력 덱 생성만 통과했습니다. 이 작업 흐름은 D의 솔버·변환기·실제 층 검사기를 실행하지 않았습니다.
+- B의 독립 산술·기준 계산, 유한 영역 COMP 243설정과 역순·실패 사례 4개, 실제 pyvisco2.1.3 소스 해시·API 검사, 수치 기대값 19개, 정적 자산 검사 17개가 통과했습니다.
+- 기존 Workbench 최적화 도구와 실제 pyvisco는 후보 계수 조합을 146회 평가해 수렴했습니다. 손실은 1.4321823225436936e-13, 손대지 않은 검증 자료의 손실은 3.291180473817548e-14였습니다. WLF 계수는 고정했습니다. 기존 제약 API의 경계 3사례는 큰 오차이나 안정적인 경우와 유한 불안정의 경우에 유한 손실 0.02를 유지했고, 필수 수치 단일 값 계산 실패에서는 목적함수를 무효화했습니다.
+- 위치를 옮긴 독립 복사본의 기준 계산·API·최적화·제약 검사가 통과했습니다. 공통 소스·해시·실제 가져온 위치를 명시적으로 검사하고 원본 묶음·공통 소스의 읽기를 차단했습니다. NEML은 사용 불가인 20을 반환했습니다. 이 미충족 조건을 텐서 계산 성공으로 세지 않았습니다.
 
-This is fresh selected reference evidence. It does not rerun historical Ka0/DOP853 or D native layers, recover original outputs, validate general GEOS/XBP/NEML, or implement the material service/Windows/provider/RP product flows. Newly reacquired B source bundle11files/8notices was separately fetched. F independently implemented SHA256 over UTF8 codepoints, checked known empty/abc vectors, then recomputed all11source and8notice digests in current functions-JS execution. All matched the actual bundled fields; all11source hashes also matched the preexisting fixed source manifest, and all11declared byte lengths matched. Receiptc569c56ab3cbfcd19e843c90baa63fd86376588c records this new integrity check. This later handoff addition is not silently included in the earlier CI checkout, and matching source bytes do not authenticate compiled NEML or solver binaries.
+산출물 `13909436920`은 2029916바이트이며 해시는 `sha256:916e3aedf36533d23dec9d971b699e18ca9026f5cce42150c758b49f21fa18ec`입니다. GitHub 직접 메타데이터의 만료 시각은 `2027-02-10T02:18:08Z`입니다. 업로드 로그에는 새 솔버 출력과 실행기록이 있습니다. F는 실제 로그와 산출물 메타데이터를 확인했으며 압축된 모든 실행 파일·CSV를 읽지는 않았습니다. 원배열의 독립 재검증을 주장하지 않습니다.
 
-## Completion boundary
+이는 선택한 참조 구현의 새로운 실행 근거입니다. 과거 Ka0·DOP853·D 실제 층 검사를 다시 실행하거나, 원출력을 복구하거나, 일반 GEOS·XBP·NEML을 검증하거나, 재료 서비스·Windows·모델 제공자·RP의 제품 동작을 구현한 것이 아닙니다.
 
-The specification preserves the original broad material/expert/post goal. DP/Xia remain examples, and J2 or one easy model cannot stand in for the whole requirement. Concrete adapter decisions now connect parameters, units/state, exact source/API/card scope, experiment protocol, observables, residual/constraints, identifiability, persistence and acceptance. Registering a new law is still not support for its calculation.
+새로 재취득한 B 소스 11파일·고지 8개 묶음을 별도로 가져왔습니다. F는 UTF8 코드포인트를 대상으로 SHA256을 독립 구현하고 알려진 빈 문자열·abc 벡터를 검사한 뒤, 현재 functions-JS 실행에서 소스 11개·고지 8개의 해시를 모두 재계산했습니다. 모두 실제 묶음 필드와 일치했습니다. 소스 해시 11개는 기존 고정 소스 목록과도 일치했고, 선언한 바이트 길이 11개도 모두 일치했습니다. 기록 `c569c56ab3cbfcd19e843c90baa63fd86376588c`가 이 새 무결성 검사를 남깁니다. 뒤에 추가한 이 인계 자료를 이전 CI 체크아웃에 포함됐다고 처리하지 않습니다. 소스 바이트 일치만으로 컴파일된 NEML이나 솔버 실행 파일의 일치를 증명하지도 않습니다.
 
-A reviewable documentation/reference branch can carry this static approval when its paths bind these exact blobs and the new authored review/journal. The new remoteCI log and exact scope below support selected reconstructed reference executions. Python/native execution was not launched in F's unavailable primary runtime; F independently inspected the actual remote job/log/metadata and did not independently reparse all new native raw files. Later integrated documentation/proof/source additions must preserve exact executed code identity or obtain a new applicable execution receipt.
+## 완료 판정의 경계
 
-Product CalibrationStudyService/GUI, actual provider loop and engineering answers, opened-Prep Apply/Undo, exact optional RP fork, Windows process/render/path behavior, actual NEML tensor backend and independent real-material experiments remain explicit implementation/acceptance gates. E-owned final wire/lifecycle findings and the root's final integrated-commit verification must be closed on actual bytes independently of this F report.
+이 명세는 여러 재료·전문가 자문·후처리를 연결한다는 원래 목표를 보존합니다. DP·Xia는 예시이며 J2나 쉬운 모델 하나로 전체 요구를 대신할 수 없습니다. 구체적인 연결 모듈 결정은 계수, 단위·상태, 정확한 소스·API·카드 범위, 시험 절차, 관측값, 잔차·제약, 식별성, 저장·복원, 완료 검사로 이어집니다. 새 법칙의 등록만으로 계산을 지원한다고 판단하지 않습니다.
+
+문서·참조 구현 브랜치가 위 정확한 blob과 새 검토·일지 기록을 연결하면 이 정적 승인을 함께 실을 수 있습니다. 새 원격 자동 검사 로그는 위에 밝힌 선택 참조 실행만 뒷받침합니다. F의 사용 불가능한 주 실행 환경에서 Python·솔버 실행을 시작한 것은 아닙니다. F는 실제 원격 작업·로그·메타데이터를 독립 확인했으며 새 솔버 원파일 전체를 독립적으로 다시 읽지 않았습니다. 이후 통합하는 문서·증거·소스 추가분은 실제 실행한 코드의 식별자를 보존하거나, 새로 적용 가능한 실행기록을 확보해야 합니다.
+
+제품 `CalibrationStudyService`와 GUI, 실제 모델 제공자 호출과 공학 답변, 열린 Prep 문서의 Apply/Undo, 정확한 선택 RP 파생판, Windows 프로세스·렌더링·경로 동작, 실제 NEML 텐서 계산 구현, 독립적인 실제 재료 실험은 여전히 구현·완료 검사 대상입니다. E가 담당한 최종 통신 형식·수명주기 지적과 root의 최종 통합 커밋 검증도 이 F 보고서와 별도로 실제 바이트에서 종결해야 합니다.
+

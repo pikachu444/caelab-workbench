@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "scope": "Complete selected integrated handoff files except this self-describing inventory; not original316-file local commit.",
+  "scope": "이 목록 자체를 제외한 현재 전달 파일의 목록입니다. 과거 원자료 전체를 복구했다는 뜻은 아닙니다.",
   "historical_raw_native_csv_t01_logs_included": false,
   "new_native_outputs": {
     "kind": "new_remote_execution",
@@ -14,48 +14,48 @@
   "files": [
     {
       "path": "docs/specs/spec-cae-research-implementation.md",
-      "blob_sha": "0a84d2e009dbd891d3115d1fcb036e644628ba9a",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "d43f0c186b5270297517f7a66e5854367bffa9b3",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/README.md",
-      "blob_sha": "fe500b07cd70a90f64843540af7fc6c6ca747fcd",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "0f7bb98a6c3d8bcefdad934760b7e8e12af74c0c",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "CURRENT_STATE.md",
-      "blob_sha": "45925cfbb180745808ad346325cc2c24c4e40302",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "e95d8e6e9b857360bb7b6e5226fde5c0c1f5897f",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/review/2026-10-23-codex-improvement-plan.md",
-      "blob_sha": "f2d46b2861dff4a13db762c6b6472ae5662655d9",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "8cce94498dc454e35f4f3628a8a169e966f37241",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/core-implementation.md",
-      "blob_sha": "b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "9d8b7de7bf108331603dde7a9f39374edfd18304",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/material-pressure-orthotropic.md",
-      "blob_sha": "1f8fb280e3a0f8413721d9c4eed9f7596a163f4d",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "03881edb6ed6277518079fe9533726cdc42d5a14",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/material-finite-history.md",
-      "blob_sha": "f5e122220fb6f6c5706dcb4906832c0d80fded2b",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "caba5ba05ee4a0182c787b5507a0df87e777000f",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/expert-implementation.md",
-      "blob_sha": "035b6e431f34e94bac33e29f2f0cc1e796995438",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "dff0769c0d6a91fd9794f643d8d3c7286b75cf32",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/post-implementation.md",
-      "blob_sha": "279e81037d279f0852a40577d32ec4188bfcc599",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "42536804825924b55e68b69d326691fc4c71b945",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/check_handoff.py",
@@ -74,23 +74,23 @@
     },
     {
       "path": "docs/specs/cae-research/implementation-map.json",
-      "blob_sha": "db2a951dc156889508f599c10dbd172324abdff0",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "071d1989ea211afceeb15006379749bd61724f0c",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/USER_PROGRESS_ko.md",
-      "blob_sha": "506aac35a46acb68b61e075936e960b4a3785e11",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "673081654cfb9b62fed525e83892c648417d8239",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/review-E.md",
-      "blob_sha": "cedc0f8a961db7e6c934799b75e790968ff3e3df",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "67d95b727276fc5bb57f0c850c412850523fcd96",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/review-F.md",
-      "blob_sha": "ab47e80c5786709a9fa2b2b03771cc843f1d671f",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "blob_sha": "08493cadd0a247c2d393740eb7f05740006b26f4",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/debate-recovery-ascii.jsonl",
@@ -367,9 +367,9 @@
     },
     {
       "path": "docs/specs/cae-research/evidence/B/README.md",
-      "blob_sha": "b36a6a967f35febbaf71c2ff267ab2bd1f81bfa9",
-      "sha256": "99f153bd0113ab5c4e6fadd5f8b27f26abffc4ffa8e35d2fdecc71b468baf2f9",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "blob_sha": "b385f208b156cc2db17f566fe8e127b6d4711c47",
+      "sha256": "05abd59df561e68a1babf3332979d8ef41e1e8bfca07434c47e7c8b27e1772bc",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/evidence/B/failure_cases.json",
@@ -385,9 +385,9 @@
     },
     {
       "path": "docs/specs/cae-research/evidence/B/asset_manifest.json",
-      "blob_sha": "388e613a7378936378bdd7f3d8a521bab92a0a62",
-      "sha256": "6dd915caca5a2a4519af049db3bcb6d1f56a1e3ba84931949ea423bf8280463c",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "blob_sha": "b0f874b00a88266cb38c17d7dd62a24261c61495",
+      "sha256": "fff08b5e1bacb6e32b2874d7e297ba7a36deee7a91d6f32d732a8f09a47fa1f1",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/evidence/B/upstream_source_bundle.json",
@@ -439,6 +439,33 @@
       "path": "docs/specs/cae-research/evidence/E/final-packaging-check.json",
       "blob_sha": "3b4b9e3ea90bdf5e2aab45ad47dad23113bae812",
       "provenance": "independent complete78-file byte/link/DAG/journal packaging QA at a2ae42 plus exact user-report wording fix506; no future-commit self-certification"
+    },
+    {
+      "path": "docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md",
+      "blob_sha": "00d02249c5a7f94a2cc5c366999dbda6dcb3ced2",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
+    },
+    {
+      "path": "docs/specs/cae-research/DEBATE_ko.md",
+      "blob_sha": "1fc204f29dc9603d1a537327502c8abaa33db5cb",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
+    },
+    {
+      "path": "docs/specs/cae-research/KOREAN_EDIT_REVIEW_ko.md",
+      "blob_sha": "8f65e8039cb94e972106f7623f1391b591301759",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
+    },
+    {
+      "path": "README.md",
+      "blob_sha": "ea294d51a8b67a29cf0afa10a6698365500f2477",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     }
-  ]
+  ],
+  "language_revision": {
+    "date": "2026-11-12",
+    "purpose": "사용자 설명과 명세·작업표·검토 결과를 자연스러운 한국어로 다시 작성했습니다.",
+    "product_code_changed": false,
+    "historical_source_and_debate_bytes_changed": false,
+    "review_document": "docs/specs/cae-research/KOREAN_EDIT_REVIEW_ko.md"
+  }
 }

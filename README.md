@@ -2,6 +2,12 @@
 
 **외부 CAE 프로그램의 입력·실행·결과와 전문가 대화를 프로젝트로 관리하는 Windows용 Qt 워크벤치입니다.** CAD·메시·해석 조건의 정밀 편집은 각 전용 프로그램에서 수행합니다. Workbench는 파일 연결, 실행별 입력 사본·로그·결과의 출처, 저장과 재개를 관리합니다.
 
+## 재료 연구·전문가 자문·후처리 개발 현황
+
+새 기능의 진행상태는 [사용자용 설명](docs/specs/cae-research/USER_PROGRESS_ko.md)에서 확인할 수 있습니다. 어떤 기능은 기존 코드에 있고, 어떤 계산은 별도로 시험했으며, 무엇을 앞으로 구현해야 하는지 구분했습니다.
+
+개발을 맡길 때는 [작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md)와 [상세 명세서 안내](docs/specs/cae-research/README.md)를 이용하세요. 이 문서들은 개발 방법을 설명하며 새 기능 전체의 구현 완료를 뜻하지 않습니다.
+
 ## 현재 지원 범위
 
 - CalculiX 입력 실행·결과 전달, FreeCAD FEM 호환 경로와 FreeCAD CAD → PrePoMax → CalculiX 연결을 제공합니다. PrePoMax Windows GUI부터 솔버까지의 전체 흐름은 미검증입니다.

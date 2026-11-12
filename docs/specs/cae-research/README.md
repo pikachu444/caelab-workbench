@@ -1,45 +1,98 @@
-# CAELab 전체 구현 인계
+# CAELab 재료 연구·전문가 자문·후처리 개발 안내
 
-이 묶음은 사용자 요청에 따라 범용 재료 모델링·최적화, 전문가 자문/독립 검토, 외부 프로그램/native 후처리의 구현을 구체화한 개발 명세와 참조 자산입니다. 새 제품 기능 자체를 구현한 보고서는 아닙니다. DP/Xia는 예시이며 여러 모델군과 backend를 다룹니다.
+이 문서는 이번에 작성한 개발 명세서와 검토 자료를 찾아보기 위한 안내입니다.
 
-## 구현자가 읽을 순서
+**이번 작업에서 마친 것은 조사, 개발 설계, 일부 계산 방법의 시험, 구현 작업의 정리입니다. 새 재료 연구 화면이나 전문가 자문·후처리 연결이 모두 완성됐다는 보고서는 아닙니다.**
 
-| 순서 | 파일 | 고정한 구현 내용 |
+## 먼저 읽을 문서
+
+| 알고 싶은 내용 | 문서 |
+|---|---|
+| 지금 무엇이 있고, 무엇을 개발해야 하는지 | [사용자용 개발 현황](USER_PROGRESS_ko.md) |
+| 개발자에게 어떤 일을 맡기면 되는지 | [12개 개발 작업표](IMPLEMENTATION_TASKS_ko.md) |
+| 토론에서 어떤 문제를 발견하고 무엇을 바꿨는지 | [토론 내용의 한국어 설명](DEBATE_ko.md) |
+| 작성자 외의 검토자가 확인한 내용 | [검토 보고서 E](review-E.md), [검토 보고서 F](review-F.md) |
+| 이번 한국어 편집에서 고치고 확인한 내용 | [한국어 문서 편집 검토 결과](KOREAN_EDIT_REVIEW_ko.md) |
+
+## 상세 구현 명세서
+
+명세서에는 만들 기능뿐 아니라 입력자료, 계산식, 함수와 데이터 항목, 저장 방법, 오류 처리, 검사 기준까지 적었습니다. 아래 순서로 읽으면 공통 동작과 분야별 계산을 연결할 수 있습니다.
+
+| 순서 | 문서 | 설명 |
 |---|---|---|
-| 1 | [통합 계약](../spec-cae-research-implementation.md) | 기존 코드 재사용·공통 DTO·영역 경계 |
-| 2 | [core](core-implementation.md) | 서비스/목적함수·제약·revision/CAS·SaveAs/복구·Windows Qt·열린 Prep IPC/atomic Apply |
-| 3 | [A 재료](material-pressure-orthotropic.md) | DP 두 backend·LAW33Ka0/Ka1·직교이방·명확히 이름 붙인 derived XBP |
-| 4 | [B 재료](material-finite-history.md) | incompressible/compressible Ogden·Prony/TRS·NEML 반복소성·JC prescribed-state |
-| 5 | [전문가](expert-implementation.md) | 일반CAE질문·원문 corpus·검색·read tools·provider loop·全답변/주장 검증·별도 reviewer/재심 |
-| 6 | [후처리](post-implementation.md) | 실제converter·native ID/TIME/층/축/TH·수치 검증·RP별도앱과optional fork |
-| 7 | [자산 목록](recovery-assets.json)·[검토 E](review-E.md)·[검토 F](review-F.md) | 실제 파일 identity·실행/정적검토 범위·해결한 지적 |
-| 8 | [공유 ASCII 토의](debate-recovery-ascii.jsonl) | 지정순서·이전blob참조·각 작성자의 반론/답변/최종 판정 |
+| 1 | [전체 구현 명세](../spec-cae-research-implementation.md) | 기존 프로그램과 코드를 어떻게 재사용하고 각 기능의 책임을 어떻게 나눌지 설명합니다. |
+| 2 | [공통 기능 명세](core-implementation.md) | 시험자료 읽기, 오차 계산, 최적화 제약, 저장·복구, Windows 화면, 열린 Prep 모델에 계수를 반영하는 방법을 정의합니다. |
+| 3 | [DP·발포체·직교이방 재료 명세](material-pressure-orthotropic.md) | 사용할 재료식, 계수와 상태, 계산 프로그램, 필요한 시험과 수치 검사 기준을 설명합니다. |
+| 4 | [초탄성·점탄성·반복 소성 등의 명세](material-finite-history.md) | Ogden, Prony, Chaboche, Johnson–Cook의 구체적인 계산 방법과 지원 한계를 설명합니다. |
+| 5 | [전문가 자문과 검토 명세](expert-implementation.md) | AI가 문헌과 실제 결과를 찾아 답변하고, 별도의 검토 요청으로 근거와 결론을 확인하는 방법을 설명합니다. |
+| 6 | [결과 읽기와 RP 후처리 명세](post-implementation.md) | 솔버 결과를 변환하고 시간·요소·층·좌표계·단위를 확인한 뒤 별도 후처리 프로그램에 전달하는 방법을 설명합니다. |
 
-공통 contracts/서비스/CAS/저장/GUI/IPC는 core가 이전 통합본문보다 우선합니다. 영역별 정확한 law/provider/후처리는 A/B/C/D 정본이 소유합니다. 모델명 분기로 generic service를 늘리지 않습니다. 새모델은 exactlaw/source/license·계수/상태/단위/측도·실제backend API/카드·관측/coverage·독립oracle·실험식별·export/Apply·플랫폼검증을 갖춘 adapter로 추가합니다.
+공통 데이터와 저장·적용 규칙은 공통 기능 명세를 기준으로 구현합니다. 재료별 수식과 전문가·후처리의 세부 동작은 해당 분야의 명세를 기준으로 합니다. 예전 전체 구현 명세와 설명이 다르면 이러한 상세 명세를 우선합니다.
 
-[작업 배정 JSON](implementation-map.json)과 core C11의 파일/선행/인수 표대로 CORE01→CORE02/STORE01을 구현하고 MAT-A/MAT-B·E0–E2·POST01–04를 병렬 진행한 뒤 UI01/PREP01/LINK01과 실제provider/RP/Windows 인수를 닫습니다. API/DTO/오류/취소/잠금/원자저장/수치한계가 해당 정본에 있습니다. 지원binding없는native export/Apply를 만들어내지 않습니다.
+DP와 Xia는 예시입니다. 새 재료 모델을 추가할 때는 모델 이름만 등록하는 것이 아니라, 정확한 식과 출처, 계수와 상태, 계산 프로그램의 호출 방법, 필요한 결과, 시험과 검증 방법, 해석 입력파일에 반영할 수 있는 범위를 함께 갖춰야 합니다.
 
-## 실제 토의와 회수 경계
+기존 최적화 도구와 솔버 실행 관리 기능을 사용합니다. 새 모델마다 공통 기능에 모델 이름을 조건문으로 추가하거나, 별도의 범용 전처리기·데이터베이스·실행 관리기를 새로 만드는 방식으로 진행하지 않습니다.
 
-작성4명(A/B/C/D)과 독립 검토2명(E/F)이 과업 전체를 읽고 서로 다른 관점으로 비판·수정·재확인을 수행했습니다. 요청한 모델설정은 A–D gpt-6.1-sol/high,E–F gpt-6-astra/xhigh였습니다. 실제 숨은 backend모델·추론토큰 수·내부추론 횟수는 관측할 수 없습니다.
+개발자는 [사람이 읽는 작업표](IMPLEMENTATION_TASKS_ko.md)를 먼저 보고, 자동 처리에 필요한 경우 [JSON 작업 목록](implementation-map.json)을 사용할 수 있습니다. 작업 번호, 수정할 파일, 선행 작업과 완료 조건은 두 자료에서 같은 의미로 유지합니다.
 
-환경단절 전 로컬ASCII journal은17항목까지 실제 작성됐으며 마지막SHA256은 6cfd2995c2d1cbf4fb04ab0a40d732b84f4b7bee9b44c53196dd0ba2da71c56f입니다. 원 journal전체bytes와 로컬커밋 전체는 현재 회수하지 못했습니다. 복구journal은 **새 실제 파일기반 토의**입니다. 각 지정작성자가 이전실제blob을 읽고 자기entry만추가하며 root가다른사람의발언을대필하지 않습니다. 원seq18/19를복원했다고주장하지않습니다.
+## 실제로 실행해 확인한 내용
 
-회수manifest는 (a) 원SHA와일치한bytes,(b) pinned공개source를다시실제확보한bytes,(c) 새로재구성한명세/코드/fixture,(d) 과거실행관측만남고raw출력미회수를구분합니다. 잘못된 초기후보blob은최종목록에넣지않습니다. 재구성코드가현재다시실행됐는지는현재검증결과와분리합니다.
+[최종 자동 실행](https://github.com/pikachu444/caelab-workbench/actions/runs/43142981108)에서 다음을 검사했습니다.
 
-## 참조 자산과 실제 결과 범위
+1. 전달한 문서와 자료가 목록에 기록한 파일과 일치하는지 확인했습니다.
+2. 재료 계산 예제와 시험용 입력파일 생성 코드를 실행했습니다.
+3. 공식 Linux용 OpenCourant로 LAW33 Ka1의 작은 발포체 모델을 두 시간간격으로 계산했습니다. 결과가 별도의 계산식과 맞는지, 시간간격을 줄였을 때 결과 차이가 기준 이내인지 확인했습니다.
+4. 초탄성 모델의 수치해 선택, 점탄성 계산, 기존 최적화 도구와의 연결, 제약조건 처리, 파일을 다른 폴더로 옮긴 뒤의 재실행을 검사했습니다.
 
-- evidence/A: exactsource/license,LAW33원덱일부/시간steprefinement입력,원SHA확인된historicalassessment2개,portable생성/실행/검사recipe. 과거 LinuxLAW33Ka0/Ka1과caprefinement의shortaffine검증은실시했지만rawCSV/T01/log전체는이번묶음에없습니다.
-- evidence/B: pinnedsourceidentity와library/API계약,실험/expected/reference/기존optimizer제약probe/finiteKroot/optionalNEML/coldcopyrecipe. 과거 실제pyvisco+기존optimizer fit과독립확인은있으며NEML빌드성공을주장하지않습니다.
-- evidence/C: pinnedraw8·notice10·source span16의실물bundle,36dev/60eval문항,strictschema/golden/referenceJS와tool/providerwire/reviewevent실물. 현재JS실행과독립공격검사통과는strictwire/hostcoverage범위이며semantic정답률/실LLM인수는아닙니다.
-- evidence/D: LAW1N0/LAW2N5nativefixture생성recipe와source/executable/oracle정책. 당시실제nativeconverter/reader검증과새재구성recipe의미실행을구분합니다.
+이 자동 실행과 별도로, 전문가 답변의 데이터 형식과 출처·답변 검토의 연결 관계도 시험했습니다. 실제 AI가 답변하는 전체 과정의 검증과는 구분합니다.
 
-모든referencefit은합성/수치검증범위를명시합니다. 실재료물리검증·새제품service/GUI·liveLLMprovider·새Prep multiApply·RPfork·Windows전체흐름은구현인수작업입니다. 미실시를pass로바꾸지않습니다.
+점탄성 계수 동정에서는 가상 시험곡선에 맞춘 계산곡선과, 계수 동정에 쓰지 않은 별도 곡선의 오차가 모두 작았습니다. 이것은 합성 자료에 대한 계산 시험입니다. 실제 재료의 물리적 타당성을 확인한 결과로 해석하지 않습니다.
 
-## 현재 실제 재실행 결과
+NEML을 이용한 실제 계산은 필요한 실행 환경을 갖추지 못해 완료하지 못했습니다. 후처리 담당은 이번 재실행에서 시험용 입력파일 생성까지만 수행했습니다. 자동 검사 전체가 성공했다는 표시가 이 미실시 항목까지 성공했다는 뜻은 아닙니다.
 
-[Actions43140439077](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077)의새실행이통과했습니다. exactrecoveryasset검사·A참조계산·공식Linuxrelease해시검사·실제LAW33Ka1의2e-6/1e-6cappedpair와새Euleroracle/refinement검사·D덱생성·B수치/유한Kroot·실pyvisco/기존optimizer·제약·coldcopy재생산을수행했습니다. Pronyfit은146observations,loss1.4321823225436936e-13,untouchedholdout3.291180473817548e-14입니다.
+새 재료 연구 기능의 화면, 실제 AI 연결, 열린 Prep 모델의 여러 재료 항목을 함께 바꾸는 기능, RP의 자동 열기, Windows에서의 전체 사용 과정과 실제 재료시험 검증은 앞으로 구현·확인할 작업입니다.
 
-새nativeCSV/로그/수치결과는[현재실행artifact](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077/artifacts/13909436920)와[실행receipt](evidence/M/current-ci-receipt.json)에연결합니다. 이는미회수원raw를복원한것이아니라새실제실행결과입니다. D는새덱생성만실행했고새Dnative/checker/과거DOP853/Ka0native를다시검증한것은아닙니다. NEML은exit20으로backendgate미충족을별도기록했습니다. greenjob을NEMLpass로읽지않습니다. 문서에재구성직후미실행이라고적은referencecode의이후실행상태는이receipt가소유합니다.
+## 코드와 시험자료를 찾아보는 방법
 
-제품service/GUI/실LLMprovider/Prep새multiApply/RPfork/Windows와실재료검증은여전히구현인수입니다. 과거receipt를수정하여새실행처럼보이지않게합니다.
+| 위치 | 들어 있는 자료 | 확인할 점 |
+|---|---|---|
+| `evidence/A` | DP와 발포체 등의 원문 코드, 일부 해석 입력파일, 재료 계산·실행·검사 코드입니다. | 과거 실행 결과와 새로 재구성한 코드를 구분합니다. |
+| `evidence/B` | 초탄성·점탄성·반복 소성 등의 원문 자료, 예상 결과, 계산과 최적화 시험 코드입니다. | NEML 실행 성공을 포함하지 않습니다. [실행 안내](evidence/B/README.md)를 함께 읽습니다. |
+| `evidence/C` | 원문 8개와 저작권·라이선스 안내 10개, 원문 발췌 16개, 개발·평가 질문, 답변과 검토의 데이터 형식 및 시험자료입니다. | 문헌을 준비하고 형식을 검사한 것과 실제 AI 답변의 품질 검증은 별개입니다. |
+| `evidence/D` | 후처리 시험용 입력파일 생성 코드와 원문·실행파일·예상 결과의 확인 기준입니다. | 이번 재실행에서 실제 후처리 계산을 모두 실행한 것은 아닙니다. |
+| `evidence/E`, `evidence/F` | 작성자와 다른 검토자가 수행한 파일·원문·질문·실행 기록 검사 결과입니다. | 각 기록에 적힌 대상 파일과 검사 범위를 확인해야 합니다. |
+| `evidence/M` | 실행 기록과 결과 요약입니다. | 원래 기록과 나중에 다시 실행한 기록을 구분합니다. |
+
+파일별 출처와 식별 정보는 [자료 목록](recovery-assets.json)에 기록했습니다. 파일의 내용이 바뀌었는지 확인하는 값도 이 목록에 들어 있습니다.
+
+## 토론과 검토 기록
+
+앞선 개발 설계에서는 작성 담당 4명과 독립 검토 담당 2명이 서로 다른 관점에서 문제를 지적하고, 수정된 파일을 다시 확인했습니다. 단순히 역할 이름만 바꾼 한 답변을 여러 사람의 검토로 센 것이 아닙니다.
+
+[한국어 토론 설명](DEBATE_ko.md)은 이견과 결정의 의미를 풀어 쓴 문서입니다. 당시 각 담당자가 직접 작성한 원문은 [ASCII 토론 기록](debate-recovery-ascii.jsonl)에 보존합니다. 원문을 읽기 편하게 줄 바꿈한 파일은 [원문 텍스트](debate-readable-ascii.txt)입니다.
+
+기존 원문 기록은 당시의 발언과 파일 식별값을 보여 주므로 한국어 편집을 이유로 바꾸지 않습니다. 설명 문서의 표현을 고쳤다고 과거에 수행하지 않은 검토나 제품 시험을 새로 수행한 것으로 취급하지 않습니다.
+
+당시 요청한 설정은 작성 담당 A–D가 `gpt-6.1-sol/high`, 검토 담당 E–F가 `gpt-6-astra/xhigh`였습니다. 공개되지 않는 내부 모델 정보나 추론 토큰·추론 횟수는 측정하지 못했습니다.
+
+## 예전 작업 기록의 복구 상태
+
+작업 환경이 끊기기 전의 토론 기록 17개와 일부 결과파일은 전체를 회수하지 못했습니다. 지금 제공하는 11개 항목의 토론 파일은 이후에 각 담당자가 실제로 다시 읽고 작성한 별도의 기록입니다.
+
+자료 목록에서는 다음을 구분합니다.
+
+- 이전 기록과 파일 식별값이 같아 원본과 일치함을 확인한 파일입니다.
+- 공개 저장소에서 고정한 버전의 원문을 다시 내려받은 파일입니다.
+- 새로 재구성한 문서와 코드입니다.
+- 과거 실행 사실은 남아 있지만 원래 결과파일 전체를 회수하지 못한 경우입니다.
+- 이후에 다시 실행해 새 결과를 얻은 경우입니다.
+
+과거 토론의 마지막 확인값은 아래와 같습니다. 개발자가 기록을 추적할 때 쓰는 정보입니다.
+
+```text
+원래 토론 항목 수: 17
+마지막 SHA-256:
+6cfd2995c2d1cbf4fb04ab0a40d732b84f4b7bee9b44c53196dd0ba2da71c56f
+```
+
+과거 재실행의 상세 수치는 [원 실행 기록](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077)과 [결과 요약](evidence/M/current-ci-receipt.json)에 보존했습니다. 점탄성 동정 계산은 146회 평가했고, 정규화 오차는 동정에 쓴 곡선에서 `1.4321823225436936e-13`, 따로 확인한 곡선에서 `3.291180473817548e-14`였습니다. [당시 결과파일 묶음](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077/artifacts/13909436920)과 [최종 전달 자료 묶음](https://github.com/pikachu444/caelab-workbench/actions/runs/43142981108/artifacts/13910950687)도 확인할 수 있습니다.

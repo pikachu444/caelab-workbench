@@ -2,45 +2,37 @@
 
 ## 2026-11-12 전체 재료 연구·자문·후처리 구현 명세 갱신
 
-사용자가 요청한 전체 구현 인계는 [통합 명세](docs/specs/spec-cae-research-implementation.md)와 [구현/증거/토의 색인](docs/specs/cae-research/README.md)에 연결한다. 공통 서비스·strict DTO·실험/목적함수/제약·revision/CAS·SaveAs/복구·실제 Windows Qt 창·열린 Prep IPC/atomic Apply, 여러 비선형 재료 profile, 전문가 RAG/도구/별도 검토, native animation/TH 수치 판독과 RP 연결을 파일·API·상태·수치 인수 단위로 구체화했다. DP/Xia/J2만으로 범위를 제한하지 않는다.
+재료 모델링과 계수 동정, 전문가 자문과 별도 검토, OpenCourantRP 후처리를 어떻게 개발할지 정리했다. [사용자용 현황](docs/specs/cae-research/USER_PROGRESS_ko.md)에는 무엇을 했고 무엇이 남았는지 설명하고, [개발 안내](docs/specs/cae-research/README.md)와 [작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md)에는 구현할 파일과 순서, 완료 확인 방법을 연결했다.
 
-새복구코드는 [현재Actions43140439077](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077)에서실제재실행했다. 새LAW33Ka1cappedpair/수치oracle,실pyvisco+기존optimizer/holdout,유한Kroot·제약·coldcopyreference가통과했다. NEML은별도exit20미충족이며제품WindowsGUI/실provider인수는아니다.
+이번에 마친 일은 조사와 개발 명세 작성, 일부 계산 방법의 시험, 계획과 현황의 갱신이다. 새 재료 연구 화면, 실제 AI의 문헌·결과 조회와 답변 검토, 열린 Prep 모델에 여러 계수를 한 번에 적용하는 기능, RP 자동 연결과 Windows 전체 사용 과정을 구현한 상태는 아니다.
 
-이번 변경은 **명세와 참조 자산·계획 갱신**이다. 새 제품 GUI/service/provider loop/RP fork와 Windows 전체 흐름이 구현된 상태는 아니다. 기존 Prep IPC/MCP, Workbench native 실행·MDO가 있다는 사실과 앞으로 연결할 기능을 구분한다. 실제 Linux LAW33/native converter 및 pyvisco·기존 optimizer 참조 검증은 그 좁은 범위의 근거다.
+[실제 재실행](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077)에서는 공식 Linux용 OpenCourant로 LAW33 Ka1의 작은 모델을 두 시간간격으로 계산해 비교했다. 점탄성 계산과 기존 최적화 도구의 연결, 계수 동정에 쓰지 않은 곡선과의 비교, 압축성 초탄성 모델의 수치해와 제약조건 처리도 검사했다. 이 결과가 실제 재료시험이나 전체 제품 사용 과정을 검증한 것은 아니다. NEML을 이용한 계산은 실행 환경을 갖추지 못해 완료하지 못했으며, 종료 코드 `20`을 별도로 기록했다.
 
-작성4명과 독립 검토2명이 실제 반론·수정·재확인을 수행했다. 실행환경 단절 전 원 journal17개 항목의 마지막 해시는 색인에 기록하며, 원 raw 출력/로컬 커밋 전체를 회수했다고 주장하지 않는다. 회수한 원본과 새 재구성본·현재 재검사 범위를 자산별 manifest에서 구분한다.
-
+앞선 명세 작성은 작성자 4명과 독립 검토자 2명이 문제를 지적하고 수정본을 다시 확인하는 방식으로 진행했다. 작업 환경이 끊기기 전의 토론 17개 항목과 결과파일 전체는 회수하지 못했다. 회수한 원본, 새로 작성한 파일, 다시 실행한 결과는 [파일별 자료 목록](docs/specs/cae-research/recovery-assets.json)에서 구분한다. 한국어 편집은 그 기록의 사실과 계산 기준을 바꾸지 않고 설명을 고치는 작업이다.
 
 ## 사용자 기능 점검 — 2026-11-12
 
-**범위 정정:** DP/Xia는 사용자의 예시이며 범용 재료 모델링·동정·최적화가 목표다. 아래 사례의 미구현 상태를 제품 지원 범위의 제한으로 읽지 않는다. 인터페이스·저장·실패 처리·구현 단위는 [통합 구현 계약](docs/specs/spec-cae-research-implementation.md)에 정의한다. 이 문서는 실제 기능 구현 현황을 유지한다.
+DP와 Xia는 사용자가 든 예시다. 목표는 여러 재료 모델에 대해 계수를 정의하고 시험자료로 동정·최적화하는 기능이다. 특정 예제가 미구현이라고 해서 전체 목표를 그 예제에 한정하지 않는다. 정확한 데이터 형식과 함수, 저장·오류 처리, 작업별 완료 기준은 [전체 구현 명세](docs/specs/spec-cae-research-implementation.md)에 정의한다.
 
-점검 기준은 원격 main `1c1cacb85018fd080c42f4d475812669b71cae90`, 연결 대상 Prep은
-`f40bfea307e4c2134cb8c4ae61864b629fda5c60`이다. 아래 날짜별 로컬 구현 기록은 당시
-실행 환경과 실패를 보존한 이력이며 현재 원격 반영 여부는 이 절을 우선한다.
-PR93(CAD 연결), PR95(컨투어·변형 표시), PR99(선택 실행→전문가 창), PR100(SciPy PDE)은
-이미 main에 병합됐다. [해당 main CI](https://github.com/pikachu444/caelab-workbench/actions/runs/42567284741)의
-Product Python 3.11/3.12·실제 CalculiX·실제 OpenCourant 4작업 성공을 확인했다.
-이 Ubuntu CI 성공이 아래 Windows 로컬 회귀의 실패 기록이나 clean Windows 인수 잔여를 해소하지는 않는다.
+아래 코드 점검의 기준은 Workbench main `1c1cacb85018fd080c42f4d475812669b71cae90`와 Prep `f40bfea307e4c2134cb8c4ae61864b629fda5c60`이다. 날짜별 로컬 실행 기록은 당시 환경과 실패를 남긴 이력이며, 원격 반영 여부와 구분해서 읽어야 한다.
 
-| 사용자가 하려는 일 | 현재 사용할 수 있는 범위 | 남은 기능·확인 |
+PR93의 CAD 연결, PR95의 컨투어·변형 표시, PR99의 선택 결과에서 전문가 창으로 질문하는 기능, PR100의 SciPy PDE는 main에 병합됐다. [당시 main 자동 검사](https://github.com/pikachu444/caelab-workbench/actions/runs/42567284741)는 Python 3.11·3.12 제품 검사와 실제 CalculiX·OpenCourant 실행의 4개 작업을 통과했다. Ubuntu에서의 성공이 아래 Windows 실패 기록이나 새 Windows 설치 환경에서 남은 검사를 해소한 것은 아니다.
+
+| 사용자가 하려는 일 | 기존 기능과 확인한 범위 | 남은 기능과 확인 |
 |---|---|---|
-| CAD·전처리·계산·결과 연결 | CAD 편집 문서 연결, Prep RAD 전달, CalculiX/OpenCourant 실행·로그·저장/재열기. CalculiX VTU의 성분·Von Mises·변형 표시 | PrePoMax 전체 Windows 작업, 새 설치 인수, RAD animation 물리 필드의 완전 판독은 미완료 |
-| 재료 상수 탐색·최적화 | MDO Studio의 CalculiX INP 스칼라 토큰·DoE·대리모델·최적화·실제 재평가 경로 | DP/Xia 전용 재료법 편집·다시험 곡선 잔차·OpenCourant 재료 보정 evaluator는 없음. 범용 optimizer 존재를 재료 동정 완료로 세지 않음 |
-| 결과를 전문가와 토론 | 독립 ExpertWindow, 선택 run/frame 질문 초안·명시 첨부, 역할별 근거 제한, 공급자 연결·대화 저장 | 현재 GUI 전송은 선택 근거가 필요. 결과 없이 시작하는 일반 CAE 이론 자문은 별도 진입점 필요. 이번 환경은 공급자 미구성으로 새 LLM 답변을 검증하지 못함 |
-| 문헌 검색·심의 | solver별 로컬 검색, 근거 ID 확인, 제안의 파일·해시 무결성 검사와 사용자 검토 | 기본 자료는 CalculiX 요약 노트 7개. 자료 충분성·주장 지지 심의, 독립 전문가 승인 루프, LLM의 도구 호출은 미구현 |
-| OpenCourantRP 후처리 | 외부 앱을 별도 실행하여 프로젝트 폴더를 수동으로 여는 경로 평가 | RP 전용 프로그램 등록·동일 run 자동 열기·결과 재등록은 없음. native animation 판독의 partial 상태 유지 |
+| CAD·전처리·해석·결과를 연결하기 | CAD 문서를 연결하고 Prep의 RAD 입력파일을 전달하는 기능이 있다. CalculiX·OpenCourant의 실행과 로그, 저장 후 다시 열기, CalculiX VTU 결과의 성분·Von Mises 응력·변형 표시를 지원한다. | PrePoMax의 전체 Windows 작업, 새 설치 환경의 사용 과정, RAD 애니메이션 결과의 물리량을 완전히 읽는 기능은 확인을 마치지 않았다. |
+| 재료 상수를 찾고 최적화하기 | 기존 최적화 창인 MDO Studio에서 CalculiX INP의 스칼라 값을 바꾸고, 실험계획·대리모델·최적화·실제 재계산을 수행하는 경로가 있다. | 선택한 DP·Xia 모델을 편집하고 여러 시험곡선의 오차를 비교하며 OpenCourant 계산으로 계수를 찾는 새 재료 연구 기능은 없다. 기존 최적화 계산 코드가 있다는 사실과 구분한다. |
+| 해석 결과를 바탕으로 전문가와 토론하기 | 독립 전문가 창 `ExpertWindow`가 있다. 선택한 실행과 결과 시점으로 질문 초안을 만들고 자료를 명시적으로 첨부하며, 역할별 자료 제한·AI 연결·대화 저장을 처리한다. | 현재 화면은 선택한 근거자료가 있어야 전송할 수 있다. 결과 없이 시작하는 일반 CAE 이론 질문의 별도 진입점이 필요하다. 이번 검사 환경에는 AI 연결 설정이 없어 새 답변을 검증하지 못했다. |
+| 문헌을 찾고 답변을 검토하기 | 솔버별 로컬 검색, 인용 자료 ID 확인, 제안에 첨부한 파일의 변경 여부 검사와 사용자 검토 기능이 있다. | 기본 자료는 CalculiX 요약 노트 7개다. 근거가 충분한지, 원문이 답변의 주장을 지지하는지, 별도 검토자가 답변을 확인하는지, AI가 직접 자료 조회 도구를 호출하는지는 아직 구현하지 않았다. |
+| OpenCourantRP로 후처리하기 | 외부 앱을 별도로 실행하고 프로젝트 폴더를 수동으로 여는 경로를 평가했다. | RP 등록과 선택한 해석의 자동 열기, 결과 재등록은 없다. 원 애니메이션 결과를 일부만 읽는 상태도 그대로 남겨 둔다. |
 
-과거 Windows A/B에서는 실제 OpenScience의 수렴·재료 답변과 저장/재열기를 확인한 기록이 있다.
-이는 이번 재실행 또는 독립 전문가 심의 완료와 구분한다.
+과거 Windows A/B 시험에는 실제 OpenScience의 수렴·재료 답변을 받고 저장 후 다시 연 기록이 있다. 그 과거 실행을 이번 재실행이나 독립 전문가 검토의 완료로 취급하지 않는다.
 
-검색 실행에서 `calculix`의 Xia 질문 및 무관한 이론 질문에 관련 없는 기본 노트를 `ok`로
-돌려주는 반례를 확인했다. 검색 순위 반환·허용 인용 ID 확인을 근거 충분성이나 공학 승인으로
-표시해서는 안 된다. 전문가 첨부 검증 #45도 **OPEN**이다. PR82/87의 비동기 분리·P2 수정은
-반영됐지만 검증 중 UI 표시·창 닫기 후 늦은 결과 전용 회귀·Windows 확인은 남는다.
+검색에서는 `calculix` 범위의 Xia 질문이나 관련 없는 이론 질문에 기본 노트를 충분한 자료처럼 `ok`로 반환하는 반례를 확인했다. 검색 순위가 나왔거나 인용 ID가 맞는다는 이유만으로 근거가 충분하거나 공학적으로 타당하다고 표시하면 안 된다.
 
-후속 변경의 소유·순서와 수락조건은 [기존 개선 계획의 재료·자문·RP 보완](docs/review/2026-10-23-codex-improvement-plan.md#material-expert-rp-followup)을 따른다.
-이 점검은 상태·계획 변경이며 위 미구현 기능을 구현하거나 전체 제품을 인수한 것이 아니다.
+전문가 첨부 검증 이슈 #45는 여전히 **OPEN**이다. PR82·87의 비동기 처리 분리와 P2 수정은 반영됐지만, 검증 중임을 화면에 표시하는 기능, 닫힌 창에 늦게 도착한 결과의 처리 검사, Windows 확인은 남아 있다.
+
+후속 개발의 담당·순서·완료 조건은 [기존 개선 계획](docs/review/2026-10-23-codex-improvement-plan.md#material-expert-rp-followup)을 따른다. 이 점검으로 위 미구현 기능이나 전체 제품 사용 과정을 완료 처리하지 않는다.
 
 ## TRACK-2 내장 SciPy 2D PDE — 2026-11-09 로컬 구현
 
