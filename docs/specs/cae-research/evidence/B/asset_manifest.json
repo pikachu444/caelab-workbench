@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "revision": "B-RECOVERY-1",
+  "scope": "Reconstructed static-source assets only. Original/generated CSV and receipt bytes are not recovered by this manifest; numerical outputs must be regenerated.",
+  "files": [
+    {
+      "path": "constraint_contract.json",
+      "size": 2655,
+      "sha256": "ddc6df511f716772e01287ff7215d9ff2d25d967ba0f2f6ca579fef6b701eae0"
+    },
+    {
+      "path": "source_manifest.json",
+      "size": 5419,
+      "sha256": "0dd16382598bc3eab7d42d2dff865f843ac03b4cb7e47e7cd2b318156079d1b7"
+    },
+    {
+      "path": "workbench_core_sources.json",
+      "size": 1246,
+      "sha256": "e02f667cfe884e64202ecce84780dad367bad54d0557280aa9851eadcb852ca7"
+    },
+    {
+      "path": "workbench_source.py",
+      "size": 1546,
+      "sha256": "0368d736ad916cd4ffa22de0584aa8abb5a0e7e040eac9d018c433ce332db918"
+    },
+    {
+      "path": "optimizer_probe.py",
+      "size": 3894,
+      "sha256": "e36dc9149801d2f6ab555ca33afc5aa9488d48a11fbe5565f067db8062b10be9"
+    },
+    {
+      "path": "constraint_probe.py",
+      "size": 2101,
+      "sha256": "dd0c1b198ac8f50898dd4ac51e1920dd7110f90195d98dd03dcb5b101fec8c3c"
+    },
+    {
+      "path": "run_pyvisco.py",
+      "size": 1482,
+      "sha256": "813afd088b9dafe251a3f247a855dd8311563ea5ffc637eefc17b900d9d3d6c2"
+    },
+    {
+      "path": "equilibrium_probe.py",
+      "size": 4607,
+      "sha256": "3f7323a87588437119993913c44c1a66b60425df78215209fb1bdce541657c27"
+    },
+    {
+      "path": "reference_probe.py",
+      "size": 11783,
+      "sha256": "7e8f7c6d7359f7b748c85a85bd93f853b311a77f0e6646791c9cc8e73cc53e1a"
+    },
+    {
+      "path": "run_neml.py",
+      "size": 3414,
+      "sha256": "692dce4155368e41f3b99c645ac141b5563512e23a93dd647b4966b87e94f293"
+    },
+    {
+      "path": "expected.json",
+      "size": 1816,
+      "sha256": "433c9d79ea2dcf729da8f03ec49989921d98526364bdc4adf7cfed08e9d1b201"
+    },
+    {
+      "path": "historical_observations.json",
+      "size": 1880,
+      "sha256": "e4d00703fe9cf9121136e9aafcf6a78c35e5694ed8c5eb2fcb868cc8f93f1721"
+    },
+    {
+      "path": "check_assets.py",
+      "size": 1687,
+      "sha256": "2d6b442030c51a55367477595d8846665fe18f36491728dd7a8e041cf0ad22b8"
+    },
+    {
+      "path": "cold_reproduce.py",
+      "size": 3258,
+      "sha256": "6cc4ab424186545896f8fe32d9e997afe7e8d6f4da1c5d7dec4cdffac21837c6"
+    },
+    {
+      "path": "README.md",
+      "size": 3893,
+      "sha256": "99f153bd0113ab5c4e6fadd5f8b27f26abffc4ffa8e35d2fdecc71b468baf2f9"
+    },
+    {
+      "path": "failure_cases.json",
+      "size": 6210,
+      "sha256": "1d4ac397a084ecd0cb8b66ef46b3b59acb8d9983653fd0b564123a3d678941c7"
+    },
+    {
+      "path": "ci_recipe.json",
+      "size": 1377,
+      "sha256": "9de55e3c8cf0a71fd9f8bed7ce28f05c7cbcf2add2bebadf9eb8328b213aeb68"
+    }
+  ]
+}

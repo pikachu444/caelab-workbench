@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "author": "C",
+  "repository": "pikachu444/caelab-workbench",
+  "recovery_notice": "Five current unreferenced blobs form the new reconstituted C specification/evidence pack. No branches, commits, pull requests or main references were changed by C. Old b06a6cdc part bytes were not recovered or claimed identical. Two original authored opening/proposal bodies were recovered with their original SHA256 exactly matching.",
+  "current_files": [
+    {
+      "logical_path": "parts/expert_implementation_recovered.md",
+      "git_blob": "035b6e431f34e94bac33e29f2f0cc1e796995438",
+      "sha256": "4163ebfcc0cf533d5b1e60fcf931c66ca37f9210902b8da7a2e1b9088e9c264d",
+      "format": "utf8-markdown",
+      "role": "Current complete reconstructed implementation specification; latest coreC1 envelope, strict final/reviewer/fullspan/reassessment, exact objective fields and separate context/pack hashes."
+    },
+    {
+      "logical_path": "evidence/C/corpus_recovery_bundle.json",
+      "git_blob": "38c12bf87cc38d4184d4f49213b52654d91d6b3c",
+      "sha256": "6a7764387b0d43c9db87a3baf5188c5bbedee7db41c678ed1453e43378bb1262",
+      "format": "json",
+      "role": "Fresh pinned official raw sources8, license/notices10, exact spans16 and new manifest. Sources[].text are exact raw UTF8; licenses[].text include notices. manifest.files.chunks_sha256 hashes compact JSON.stringify(bundle.chunks) with no final LF, not the pretty bundle's subsection."
+    },
+    {
+      "logical_path": "evidence/C/strict_contract_recovery_bundle.json",
+      "git_blob": "b43ec55993945393838ce95872add96e10dfa4b7",
+      "sha256": "ff833b33adebff8667cbced35ea032b4699dfa77e48886bec7db78b36ff4295a",
+      "format": "json",
+      "role": "Strict schemas/full golden/executable JS binder reference and current JS receipts. Null-prototype parser, own membership, RFC whitespace, UTF8 32768 byte gate, all-answer spans, host binding, reassessment checks. Host UUID/context are fixture-supplied inputs."
+    },
+    {
+      "logical_path": "evidence/C/questions_recovery_bundle.json",
+      "git_blob": "93881aa4a70fc749e9d9c65995398b37a776e902",
+      "sha256": "71dafb4de71523e51343ad3b4280ef752f15cd7ed4db815363c5af818d618d50",
+      "format": "json",
+      "role": "New development36/evaluation60, solver/version source spans, answer obligations, independent source-label review targets, 27 narrow bilingual terms and6 language cases. 24 covered evaluation rows are12 paired intents, not24 independent intents."
+    },
+    {
+      "logical_path": "evidence/C/tools_followup_recovery_bundle.json",
+      "git_blob": "4c6bbb9c274c914ec7976cd5af9d0b59e480bc2b",
+      "sha256": "056443341685ecfde3ffc906578de3a9e3c7f5926cb193370dff2a9e7a0a4c70",
+      "format": "json",
+      "role": "Three read-tool schemas, native/structured wire, exact scalar bytes/artifact hash, newly computed98-codepoint followup answer/spans/claimUUID/hash80nonwhite, separate RequestContext/EvidencePack bytes+hashes, unchanged original review event context,20 runtime acceptance cases."
+    }
+  ],
+  "exact_original_authored_bodies": [
+    {
+      "logical_path": "private/C_R1.txt",
+      "git_blob": "f707058bb37b782bd028de0c5657846c85ef6a6e",
+      "sha256": "892335dfa461d2efe8a99a79c65b378946133eadc74cec0567f287dda85a6f40",
+      "match": "Original independent opening frozen SHA256;1830 Unicode characters."
+    },
+    {
+      "logical_path": "private/C_R2.txt",
+      "git_blob": "6a5a6f192c74e221a7af07e2a88954a835f36fa1",
+      "sha256": "9f7159d2df6ecca9e0c47da860ccd0270e90439f47cb2feab38aa19b9d81607b",
+      "match": "Original proposal body's previously recorded SHA256 exactly matches."
+    }
+  ],
+  "independent_rechecks": [
+    {
+      "reviewer": "E",
+      "proof_blob": "f195445e9ed537d557f309d4023d7f0fcc94ee6c",
+      "scope": "E-RC5 followup exact answer/span/context/pack/event recomputation; E also explicitly closed E02/E03 static contracts and E-RC1 parser/own-key/RFC/UTF8 tests after inspecting current targets.",
+      "target_blobs": [
+        "4c6bbb9c274c914ec7976cd5af9d0b59e480bc2b",
+        "b43ec55993945393838ce95872add96e10dfa4b7",
+        "035b6e431f34e94bac33e29f2f0cc1e796995438"
+      ],
+      "limit": "JS wire/coverage/data/context consistency and static implementation contract; not semantic LLM/HTTP/Windows."
+    },
+    {
+      "reviewer": "F",
+      "proof_blob": "16ff7b27ccda91389b81ee34fc3f4aaba1dd024d",
+      "scope": "Source16 spans and parent hashes,96 explicit solver/version spans0errors, corrected development24/evaluation6facet semantics,27terms/6language narrow projection. F-RC4/5 closed on exact targets.",
+      "target_blobs": [
+        "38c12bf87cc38d4184d4f49213b52654d91d6b3c",
+        "93881aa4a70fc749e9d9c65995398b37a776e902",
+        "035b6e431f34e94bac33e29f2f0cc1e796995438"
+      ],
+      "limit": "Small12 paired-intent source/label review; not retrieval/live answer/product engineering pass."
+    }
+  ],
+  "integration_contract": {
+    "core_blob_read": "b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac",
+    "master_reference": "0a84d2e009dbd891d3115d1fcb036e644628ba9a",
+    "evidence_envelope": "Use coreC1 exactly; kind=native_run|manual|calibration|document_chunk, native ResultRef=payload.derived_result_ref; legacy exactdescriptor bytes readadapter, separate wrapper hash."
+  },
+  "verification_boundaries": {
+    "current_executed": "FunctionsJS source byte/hash/span recovery; strict JSON/coverage/host binding/negative security cases; deterministic new followup context/event consistency. E/F independently re-ran scoped checks.",
+    "historical_only": "Before environment loss: local HTTP2POST mock and Python fixture integrity were observed. Their original execution logs are not regenerated or claimed current by these new bundles.",
+    "not_completed": [
+      "Product runtime implementation",
+      "Product QueryPlan/index integration",
+      "Actual provider native or structured tool support",
+      "Engineering quality of live model answers",
+      "Apply/solver/newrun/end-to-end expert flow",
+      "Windows real UI acceptance",
+      "Original lost full JSONL chain metadata reconstruction"
+    ]
+  },
+  "superseded_do_not_use": [
+    "f3b4e8daae16965da04a8fd90502e1677b49b76a",
+    "cf9a6b3f3bcd241505617022766beed360919e05",
+    "10cb49f80bdf284cef9d5c3abe18571f583a1027",
+    "e58382195d012fee0b21f50231da2446ec3748c2",
+    "ddbf063ab1a35086ad7b5ba1da14de48d3075a11",
+    "379c4948339930ce2846f83535a41b67a407ecbb",
+    "a916f0fc30c7a33dea4cb56f2476ab0a772ee4f2",
+    "bc041f8871d63847dbd3e942edb3cf32d0d98a9e",
+    "813464f33c0363eb5f92d70b944a240e81de90dc"
+  ]
+}

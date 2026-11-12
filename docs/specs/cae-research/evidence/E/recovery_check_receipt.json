@@ -1,0 +1,478 @@
+{
+  "schema_version": 1,
+  "reviewer": "E",
+  "kind": "new_recovery_independent_checks",
+  "not_original_r4": true,
+  "runtime": "functions-js",
+  "scope": "Fresh cloud reads and pure JS checks; no filesystem, Python, solver, HTTP-provider or Windows execution.",
+  "targets": {
+    "corpus": "38c12bf87cc38d4184d4f49213b52654d91d6b3c",
+    "contract_before": "10cb49f80bdf284cef9d5c3abe18571f583a1027",
+    "contract_after": "b43ec55993945393838ce95872add96e10dfa4b7",
+    "Bcore_manifest": "32a43a7d4ad80d128d06f7390139b4cb05678692",
+    "core_source_revision": "104cdd6888a5554eecc8cf965c60ff1bd980b6da"
+  },
+  "source_integrity": {
+    "known": {
+      "empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "abc": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    "sources": [
+      {
+        "id": "dolfinx-poisson",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "dolfinx-elasticity",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "dolfinx-hyperelasticity",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-dp-hpp",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-dp-cpp",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "pyvisco-prony",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "pyvisco-wlf",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "neml-hardening",
+        "hash": true,
+        "bytes": true
+      }
+    ],
+    "licenses": [
+      {
+        "id": "dolfinx-COPYING",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "dolfinx-COPYING.LESSER",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "dolfinx-README",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-LICENSE",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-COPYRIGHT",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-CONTRIBUTORS",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-NOTICE",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "geos-ACKNOWLEDGEMENTS",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "pyvisco-LICENSE",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "neml-LICENSE",
+        "hash": true,
+        "bytes": true
+      }
+    ],
+    "chunks": [
+      {
+        "id": "poisson",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "poisson_impl",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "elastic_modes",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "elastic_law",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "elastic_solve",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "elastic_vm",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "hyper_kinematics",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "hyper_energy",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "hyper_stress",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "geos_dp_yield",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "geos_dp_conversion",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "prony_relax",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "prony_frequency",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "wlf_shift",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "chaboche_state",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      },
+      {
+        "id": "chaboche_evolution",
+        "rawspan": true,
+        "lines": true,
+        "hash": true,
+        "parenthash": true
+      }
+    ]
+  },
+  "original_core_hashes": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/__init__.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/mdo/__init__.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/mdo/variables.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/mdo/optimize.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/mdo/objectives.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/mdo/constraints.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "path": "caelab/mdo/pareto.py",
+        "keys": [
+          "content",
+          "encoding",
+          "sha",
+          "display_url",
+          "display_title"
+        ],
+        "contentType": "string",
+        "match": true
+      }
+    }
+  ],
+  "strict_parser_before": {
+    "base": {
+      "answer": "Finite-node arithmetic mean is 2 mm.\n\nTwo of three nodes are valid; one is missing.",
+      "segments": [
+        {
+          "segment_id": "11111111-1111-5111-8111-111111111111",
+          "start": 0,
+          "end": 36,
+          "text": "Finite-node arithmetic mean is 2 mm."
+        },
+        {
+          "segment_id": "22222222-2222-5222-8222-222222222222",
+          "start": 38,
+          "end": 83,
+          "text": "Two of three nodes are valid; one is missing."
+        }
+      ],
+      "claim_support": "not_assessed"
+    },
+    "extra_proto": {
+      "accepted": true,
+      "result": {
+        "answer": "Finite-node arithmetic mean is 2 mm.\n\nTwo of three nodes are valid; one is missing.",
+        "segments": [
+          {
+            "segment_id": "11111111-1111-5111-8111-111111111111",
+            "start": 0,
+            "end": 36,
+            "text": "Finite-node arithmetic mean is 2 mm."
+          },
+          {
+            "segment_id": "22222222-2222-5222-8222-222222222222",
+            "start": 38,
+            "end": 83,
+            "text": "Two of three nodes are valid; one is missing."
+          }
+        ],
+        "claim_support": "not_assessed"
+      }
+    },
+    "inherited_citation": {
+      "accepted": true,
+      "result": {
+        "answer": "Finite-node arithmetic mean is 2 mm.\n\nTwo of three nodes are valid; one is missing.",
+        "segments": [
+          {
+            "segment_id": "11111111-1111-5111-8111-111111111111",
+            "start": 0,
+            "end": 36,
+            "text": "Finite-node arithmetic mean is 2 mm."
+          },
+          {
+            "segment_id": "22222222-2222-5222-8222-222222222222",
+            "start": 38,
+            "end": 83,
+            "text": "Two of three nodes are valid; one is missing."
+          }
+        ],
+        "claim_support": "not_assessed"
+      }
+    },
+    "review": "pass"
+  },
+  "strict_parser_before_additional": [
+    {
+      "id": "non_json_nbsp",
+      "accepted": true,
+      "jsLength": 126,
+      "utf8Bytes": 127
+    },
+    {
+      "id": "utf8_action_over_32k",
+      "accepted": true,
+      "jsLength": 15040,
+      "utf8Bytes": 45040
+    }
+  ],
+  "strict_parser_after": {
+    "extra_proto": "REJECTED",
+    "inherited_citation": "REJECTED",
+    "non_json_nbsp": "REJECTED",
+    "utf8_over_32k": "REJECTED",
+    "base_final": "not_assessed",
+    "base_review": "pass",
+    "negative_reviews": [
+      {
+        "id": "empty-review",
+        "actual": "insufficient",
+        "expected": "insufficient"
+      },
+      {
+        "id": "missing-paragraph",
+        "actual": "insufficient",
+        "expected": "insufficient"
+      },
+      {
+        "id": "empty-modelchecks",
+        "actual": "insufficient",
+        "expected": "insufficient"
+      },
+      {
+        "id": "unknown-citation",
+        "actual": "invalid_provider_action",
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "forged-context",
+        "actual": "invalid_provider_action",
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "numeric-nonclaim",
+        "actual": "insufficient",
+        "expected": "insufficient"
+      },
+      {
+        "id": "extra-part-key",
+        "actual": "invalid_provider_action",
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "overlap",
+        "actual": "invalid_provider_action",
+        "expected": "invalid_provider_action"
+      }
+    ],
+    "major": "revise",
+    "missing_reassessment": {
+      "code": "REVIEW_CONTEXT_MISMATCH",
+      "details": {
+        "reason": "EVIDENCE_SCOPE_MISMATCH"
+      },
+      "event_appends": 0
+    }
+  },
+  "sha256_reference_js": "function sha256(s){const bytes=Array.from(unescape(encodeURIComponent(s)),x=>x.charCodeAt(0)),bitlen=bytes.length*8;bytes.push(128);while(bytes.length%64!==56)bytes.push(0);for(let i=7;i>=0;i--)bytes.push(i>=4?0:(bitlen>>>(i*8))&255);const primes=[];for(let p=2;primes.length<64;p++){if(!primes.some(q=>q*q<=p&&p%q===0))primes.push(p)}const K=primes.map(p=>(Math.cbrt(p)%1*4294967296)>>>0),H=primes.slice(0,8).map(p=>(Math.sqrt(p)%1*4294967296)>>>0),r=(x,n)=>(x>>>n)|(x<<(32-n));for(let j=0;j<bytes.length;j+=64){const W=[];for(let i=0;i<16;i++)W[i]=(bytes[j+4*i]<<24)|(bytes[j+4*i+1]<<16)|(bytes[j+4*i+2]<<8)|bytes[j+4*i+3];for(let i=16;i<64;i++){const a=W[i-15],b=W[i-2];W[i]=(W[i-16]+(r(a,7)^r(a,18)^(a>>>3))+W[i-7]+(r(b,17)^r(b,19)^(b>>>10)))|0}let[a,b,c,d,e,f,g,h]=H;for(let i=0;i<64;i++){const t1=(h+(r(e,6)^r(e,11)^r(e,25))+((e&f)^(~e&g))+K[i]+W[i])|0,t2=((r(a,2)^r(a,13)^r(a,22))+((a&b)^(a&c)^(b&c)))|0;h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0}const t=[a,b,c,d,e,f,g,h];for(let i=0;i<8;i++)H[i]=(H[i]+t[i])>>>0}return H.map(n=>n.toString(16).padStart(8,\"0\")).join(\"\")}",
+  "execution_limitations": [
+    "A/B native raw artifacts are not reconstructed here.",
+    "B Python cold replay not rerun in this record.",
+    "Corpus count/hash/span checks are not semantic retrieval or engineering-answer quality tests.",
+    "The C reference is fixture code with host identities supplied by the fixture; it is not a product implementation."
+  ]
+}

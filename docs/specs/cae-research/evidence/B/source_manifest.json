@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "B-SRC-HYP",
+      "repository": "adtzlr/hyperelastic",
+      "revision": "58b036acc389585110f5d74e0457c36fae0cc4f2",
+      "path": "src/hyperelastic/models/stretches/_ogden.py",
+      "url": "https://github.com/adtzlr/hyperelastic/blob/58b036acc389585110f5d74e0457c36fae0cc4f2/src/hyperelastic/models/stretches/_ogden.py",
+      "license": "GPL-3.0",
+      "source_bytes_sha256": "bb3b539122de3406ed5f267c7a3a3bf64ef5e1d87b24b5cb4aa2af060d606fb6",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-VIS",
+      "repository": "NatLabRockies/pyvisco",
+      "revision": "b61b5a0c6a2939927c87189972ea5619503bd813",
+      "path": "pyvisco/prony.py",
+      "url": "https://github.com/NatLabRockies/pyvisco/blob/b61b5a0c6a2939927c87189972ea5619503bd813/pyvisco/prony.py",
+      "license": "BSD-3-Clause",
+      "source_bytes_sha256": "641490da54f1d62d5f631c899f3f0ade44d1f9debc98a9e9068fe4f0577795bb",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-WLF",
+      "repository": "NatLabRockies/pyvisco",
+      "revision": "b61b5a0c6a2939927c87189972ea5619503bd813",
+      "path": "pyvisco/shift.py",
+      "url": "https://github.com/NatLabRockies/pyvisco/blob/b61b5a0c6a2939927c87189972ea5619503bd813/pyvisco/shift.py",
+      "license": "BSD-3-Clause",
+      "source_bytes_sha256": "93f143f9789e31aaffebc229fe76b0c3b37ffa0b4937d5b2980b1d524e2503a2",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-CYC",
+      "repository": "Argonne-National-Laboratory/neml",
+      "revision": "65ab2a648a975e2e9de8e1371be270567f9683ac",
+      "path": "src/hardening.cxx",
+      "url": "https://github.com/Argonne-National-Laboratory/neml/blob/65ab2a648a975e2e9de8e1371be270567f9683ac/src/hardening.cxx",
+      "license": "MIT",
+      "source_bytes_sha256": "1575188d63689f68a5b0ac0a28006b582e1a92e7b3d14c56108e73f40892318f",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-CYC-DRIVER",
+      "repository": "Argonne-National-Laboratory/neml",
+      "revision": "65ab2a648a975e2e9de8e1371be270567f9683ac",
+      "path": "neml/drivers.py",
+      "url": "https://github.com/Argonne-National-Laboratory/neml/blob/65ab2a648a975e2e9de8e1371be270567f9683ac/neml/drivers.py",
+      "license": "MIT",
+      "source_bytes_sha256": "ec99f22f655c2e5a8c5ce80aa7fb6eed8fa377e7033ea749d5ccf7621269a134",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-CYC-TEST",
+      "repository": "Argonne-National-Laboratory/neml",
+      "revision": "65ab2a648a975e2e9de8e1371be270567f9683ac",
+      "path": "test/test_hardening.py",
+      "url": "https://github.com/Argonne-National-Laboratory/neml/blob/65ab2a648a975e2e9de8e1371be270567f9683ac/test/test_hardening.py",
+      "license": "MIT",
+      "source_bytes_sha256": "9dfc9371878ac071f2e516ebeb11e9e05190563e989f54357750be62b74cc126",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-JCF",
+      "repository": "OpenCourant/OpenCourant",
+      "revision": "d791761d9636abaa27e41ebbe271fa9df519287e",
+      "path": "engine/source/materials/mat/mat002/m2cplr.F",
+      "url": "https://github.com/OpenCourant/OpenCourant/blob/d791761d9636abaa27e41ebbe271fa9df519287e/engine/source/materials/mat/mat002/m2cplr.F",
+      "license": "AGPL-3.0-or-later",
+      "source_bytes_sha256": "9e671ac4705f63edb1f7ee34034df67bcb165fd1ccaf14f4d3937c03790ebfa4",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-JCD",
+      "repository": "OpenCourant/OpenCourant",
+      "revision": "d791761d9636abaa27e41ebbe271fa9df519287e",
+      "path": "engine/source/materials/fail/johnson_cook/fail_johnson.F",
+      "url": "https://github.com/OpenCourant/OpenCourant/blob/d791761d9636abaa27e41ebbe271fa9df519287e/engine/source/materials/fail/johnson_cook/fail_johnson.F",
+      "license": "AGPL-3.0-or-later",
+      "source_bytes_sha256": "64718c5f9144aa83ca6e15915ddafa38836041f8b25d895aa71e40549d7d0b5b",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-CYC-MODEL",
+      "repository": "Argonne-National-Laboratory/neml",
+      "revision": "65ab2a648a975e2e9de8e1371be270567f9683ac",
+      "path": "src/models.cxx",
+      "url": "https://github.com/Argonne-National-Laboratory/neml/blob/65ab2a648a975e2e9de8e1371be270567f9683ac/src/models.cxx",
+      "license": "MIT",
+      "source_bytes_sha256": "bd1966052a0ae3fbd7fbdb95ba3897de0021807e3c22b554667b8ac73a9eaf53",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-CYC-PYAPI",
+      "repository": "Argonne-National-Laboratory/neml",
+      "revision": "65ab2a648a975e2e9de8e1371be270567f9683ac",
+      "path": "src/models_wrap.cxx",
+      "url": "https://github.com/Argonne-National-Laboratory/neml/blob/65ab2a648a975e2e9de8e1371be270567f9683ac/src/models_wrap.cxx",
+      "license": "MIT",
+      "source_bytes_sha256": "0322ae2a18d6a2e89ed7e6606c98c471fd770bceffcd00e330d1e3b9531485bf",
+      "retrieved": "2026-11-12"
+    },
+    {
+      "id": "B-SRC-CYC-BUILD",
+      "repository": "Argonne-National-Laboratory/neml",
+      "revision": "65ab2a648a975e2e9de8e1371be270567f9683ac",
+      "path": "setup.py",
+      "url": "https://github.com/Argonne-National-Laboratory/neml/blob/65ab2a648a975e2e9de8e1371be270567f9683ac/setup.py",
+      "license": "MIT",
+      "source_bytes_sha256": "d52f0e3bd6e3c64ef11f7798aa4859d6e1757aab5530f31e4ac4d1fb6994c963",
+      "retrieved": "2026-11-12"
+    }
+  ]
+}

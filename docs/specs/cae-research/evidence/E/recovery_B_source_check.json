@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "reviewer": "E",
+  "runtime": "functions-js",
+  "result": {
+    "blob": "b95d68052eb52097fcc0a2f23527edd836c0b108",
+    "scope": "Independent current byte/hash check, not new library execution or legal opinion.",
+    "files": [
+      {
+        "id": "B-SRC-HYP",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-VIS",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-WLF",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-CYC",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-CYC-DRIVER",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-CYC-TEST",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-JCF",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-JCD",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-CYC-MODEL",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-CYC-PYAPI",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "B-SRC-CYC-BUILD",
+        "hash": true,
+        "bytes": true
+      }
+    ],
+    "notices": [
+      {
+        "id": "hyperelastic-license",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "pyvisco-license",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "neml-license",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "neml-rapidxml-license",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "neml-submodule-map",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "pybind11-license",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "opencourant-license",
+        "hash": true,
+        "bytes": true
+      },
+      {
+        "id": "opencourant-copyright",
+        "hash": true,
+        "bytes": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,1011 @@
+{
+  "schema_version": 1,
+  "recovery_notice": "New read-tool wire/scalar/review-storage golden and lifecycle specification, not original lost file bytes. No HTTP/model/native/GUI execution claimed by this blob.",
+  "schemas": {
+    "knowledge.search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query",
+        "solver_scope",
+        "limit"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "solver_scope": {
+          "type": "string",
+          "enum": [
+            "general",
+            "fenicsx",
+            "geos",
+            "pyvisco",
+            "neml",
+            "radioss",
+            "calculix"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
+    },
+    "evidence.describe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "evidence.query_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "field_id",
+        "component_id",
+        "selection_id",
+        "operator",
+        "operator_version",
+        "limit"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "field_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "selection_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "values",
+            "min",
+            "max",
+            "mean",
+            "norm"
+          ]
+        },
+        "operator_version": {
+          "const": "1"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    }
+  },
+  "aliases": {
+    "knowledge.search": "knowledge_search",
+    "evidence.describe": "evidence_describe",
+    "evidence.query_field": "evidence_query_field"
+  },
+  "tool_fixture": {
+    "source_bytes": "{\"ids\":[10,20,30],\"values\":[1.0,null,3.0],\"validity\":[true,false,true]}",
+    "artifact_ref": {
+      "id": "01010101010101010101010101010101",
+      "role": "manual_test_source",
+      "path": "transport_source.json",
+      "sha256": "5e7290127c0a7fad2ee0f746bc09e74299b8e31e2bbd8f554eb4862e384247b5",
+      "size": 71,
+      "format_id": "test-fixture-json-v1",
+      "producer": {
+        "id": "C-recovery-transport-fixture",
+        "version": "1"
+      }
+    },
+    "artifact_owners": {
+      "01010101010101010101010101010101": {
+        "scope": "consumer",
+        "id": "evidence:transport-fixture"
+      }
+    },
+    "context_bytes": "{\"evidence_id\":\"01010101010101010101010101010101\",\"frame_index\":0,\"scope\":\"case_analysis\"}",
+    "call": {
+      "call_id": "call_mean_1",
+      "tool_name": "evidence.query_field",
+      "arguments": {
+        "evidence_id": "01010101010101010101010101010101",
+        "field_id": "DISP",
+        "component_id": "D1",
+        "selection_id": "all",
+        "operator": "mean",
+        "operator_version": "1",
+        "limit": 1000
+      }
+    },
+    "result": {
+      "call_id": "call_mean_1",
+      "status": "partial",
+      "data": {
+        "value": 2,
+        "association": "node",
+        "component": "D1",
+        "statistic": "arithmetic_finite_node_mean",
+        "unit": {
+          "symbol": "mm",
+          "dimension": "length",
+          "status": "declared"
+        },
+        "coverage": {
+          "expected": 3,
+          "valid": 2,
+          "missing": 1
+        }
+      },
+      "error": null,
+      "evidence_refs": [
+        "01010101010101010101010101010101"
+      ],
+      "provenance": {
+        "request_context_hash": "be7e62de03c318ae671d7a4ef2dfdda611c544f09aa51cddf0a825d750c33a77",
+        "corpus_revision": null,
+        "source_hashes": [
+          "5e7290127c0a7fad2ee0f746bc09e74299b8e31e2bbd8f554eb4862e384247b5"
+        ],
+        "run_id": "fixture-run-1",
+        "frame_index": 0,
+        "units": {
+          "length": "mm"
+        },
+        "basis": {
+          "kind": "global",
+          "reference": "fixture-global",
+          "orientation_sha256": null
+        },
+        "measure": "displacement"
+      },
+      "limits": {
+        "truncated": false,
+        "valid_count": 2,
+        "total_count": 3
+      },
+      "elapsed_ms": 0
+    },
+    "boundary": "Manual synthetic scalar fixture only; no native ResultRef eligibility claim."
+  },
+  "provider_wire": {
+    "native_assistant": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_mean_1",
+          "type": "function",
+          "function": {
+            "name": "evidence_query_field",
+            "arguments": "{\"evidence_id\":\"01010101010101010101010101010101\",\"field_id\":\"DISP\",\"component_id\":\"D1\",\"selection_id\":\"all\",\"operator\":\"mean\",\"operator_version\":\"1\",\"limit\":1000}"
+          }
+        }
+      ]
+    },
+    "native_tool": {
+      "role": "tool",
+      "tool_call_id": "call_mean_1",
+      "content": "{\"call_id\":\"call_mean_1\",\"status\":\"partial\",\"data\":{\"value\":2,\"association\":\"node\",\"component\":\"D1\",\"statistic\":\"arithmetic_finite_node_mean\",\"unit\":{\"symbol\":\"mm\",\"dimension\":\"length\",\"status\":\"declared\"},\"coverage\":{\"expected\":3,\"valid\":2,\"missing\":1}},\"error\":null,\"evidence_refs\":[\"01010101010101010101010101010101\"],\"provenance\":{\"request_context_hash\":\"be7e62de03c318ae671d7a4ef2dfdda611c544f09aa51cddf0a825d750c33a77\",\"corpus_revision\":null,\"source_hashes\":[\"5e7290127c0a7fad2ee0f746bc09e74299b8e31e2bbd8f554eb4862e384247b5\"],\"run_id\":\"fixture-run-1\",\"frame_index\":0,\"units\":{\"length\":\"mm\"},\"basis\":{\"kind\":\"global\",\"reference\":\"fixture-global\",\"orientation_sha256\":null},\"measure\":\"displacement\"},\"limits\":{\"truncated\":false,\"valid_count\":2,\"total_count\":3},\"elapsed_ms\":0}"
+    },
+    "native_final": {
+      "role": "assistant",
+      "content": "{\"type\":\"final\",\"answer\":\"Finite-node arithmetic mean is 2 mm; 2/3 valid and one missing.\",\"claims\":[]}"
+    },
+    "structured_action": {
+      "type": "tool_request",
+      "call_id": "call_mean_1",
+      "tool": "evidence.query_field",
+      "arguments": {
+        "evidence_id": "01010101010101010101010101010101",
+        "field_id": "DISP",
+        "component_id": "D1",
+        "selection_id": "all",
+        "operator": "mean",
+        "operator_version": "1",
+        "limit": 1000
+      }
+    },
+    "structured_final": {
+      "type": "final",
+      "answer": "Finite-node arithmetic mean is 2 mm; 2/3 valid and one missing.",
+      "claims": []
+    },
+    "unreviewed_final_support": "not_assessed",
+    "tools_rejection": {
+      "http_status": 400,
+      "body": {
+        "error": {
+          "message": "tools are not supported",
+          "param": "tools",
+          "code": "unsupported_parameter"
+        }
+      },
+      "expected_next_posts": 0,
+      "expected_dispatches": 0
+    }
+  },
+  "review_followup": {
+    "original_review": {
+      "schema_version": 1,
+      "review_id": "66666666-6666-5666-8666-666666666666",
+      "source_turn_id": "77777777-7777-5777-8777-777777777777",
+      "request_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+      "proposer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "proposer-r"
+      },
+      "reviewer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "reviewer-r"
+      },
+      "independence": "separate_request_same_model",
+      "status": "completed",
+      "verdict": "revise",
+      "claim_checks": [
+        {
+          "claim_id": "33333333-3333-5333-8333-333333333333",
+          "text_span": [
+            0,
+            36
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage."
+        },
+        {
+          "claim_id": "44444444-4444-5444-8444-444444444444",
+          "text_span": [
+            38,
+            83
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage."
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "disagreements": [
+        {
+          "item_id": "55555555-5555-5555-8555-555555555555",
+          "claim_id": "33333333-3333-5333-8333-333333333333",
+          "category": "interpretation",
+          "severity": "major",
+          "reason": "Synthetic major test.",
+          "evidence_refs": [
+            "scalar-source"
+          ],
+          "required_action": "Recheck."
+        }
+      ],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ],
+      "reassessment_of": [],
+      "created_at": "2026-11-12T00:00:00Z",
+      "finished_at": "2026-11-12T00:00:01Z",
+      "coverage": {
+        "answer_sha256": "fde75a4c0a57cf5270a989cafc623dde7a64dafd5654af56b94bfc298b15772b",
+        "nonwhitespace_count": 68,
+        "covered_nonwhitespace_count": 68,
+        "segment_count": 2,
+        "checked_segment_count": 2,
+        "claim_count": 2,
+        "complete": true,
+        "nonclaim_policy_id": "cae-nonclaim-v1"
+      }
+    },
+    "responding_turn": {
+      "id": "88888888-8888-5888-8888-888888888888",
+      "responds_to_review_ids": [
+        "66666666-6666-5666-8666-666666666666"
+      ],
+      "question": "Please correct the arithmetic-mean interpretation and address the original review item.",
+      "question_scope": "case_analysis",
+      "reply": "The finite-node arithmetic mean is 2 mm.\n\nOnly two of three nodes are valid; one value is missing.",
+      "reply_sha256": "3cb5f37fe8d0799d75f4ff461bee2106c2ce4dfa43e7973ce28dcdb120ded970",
+      "request_context_hash": "102fd9688f67444ff264ee455abcbefa3e61c84d3de59f450863a890eaf78314",
+      "evidence_pack_hash": "0c84b06a0d89a5ddcb601fbb4ff8c1d7c56ab820f14727d36a597424a3a3b18d"
+    },
+    "completed_reviewer": {
+      "schema_version": 1,
+      "review_id": "99999999-9999-5999-8999-999999999999",
+      "source_turn_id": "88888888-8888-5888-8888-888888888888",
+      "request_context_hash": "102fd9688f67444ff264ee455abcbefa3e61c84d3de59f450863a890eaf78314",
+      "proposer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "proposer-r"
+      },
+      "reviewer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "reviewer-reassessment-r"
+      },
+      "independence": "separate_request_same_model",
+      "status": "completed",
+      "verdict": "pass",
+      "claim_checks": [
+        {
+          "claim_id": "cdcdcdcd-cdcd-5dcd-8dcd-cdcdcdcdcdcd",
+          "text_span": [
+            0,
+            40
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Exact synthetic operation/value/unit/coverage record; restricted to valid nodes."
+        },
+        {
+          "claim_id": "dededede-dede-5ede-8ede-dededededede",
+          "text_span": [
+            42,
+            98
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Exact synthetic operation/value/unit/coverage record; restricted to valid nodes."
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "disagreements": [],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ],
+      "reassessment_of": [
+        {
+          "review_id": "66666666-6666-5666-8666-666666666666",
+          "item_id": "55555555-5555-5555-8555-555555555555",
+          "original_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051"
+        }
+      ],
+      "created_at": "2026-11-12T00:02:30Z",
+      "finished_at": "2026-11-12T00:02:59Z",
+      "coverage": {
+        "answer_sha256": "3cb5f37fe8d0799d75f4ff461bee2106c2ce4dfa43e7973ce28dcdb120ded970",
+        "nonwhitespace_count": 80,
+        "covered_nonwhitespace_count": 80,
+        "segment_count": 2,
+        "checked_segment_count": 2,
+        "claim_count": 2,
+        "complete": true,
+        "nonclaim_policy_id": "cae-nonclaim-v1"
+      }
+    },
+    "actual_user_actions": [
+      {
+        "event_id": "user-action-fixture-1",
+        "action": "keep_review_item",
+        "review_id": "66666666-6666-5666-8666-666666666666",
+        "item_id": "55555555-5555-5555-8555-555555555555"
+      }
+    ],
+    "review_resolution_events": [
+      {
+        "schema_version": 1,
+        "event_id": "aaaaaaaa-aaaa-5aaa-8aaa-aaaaaaaaaaaa",
+        "review_id": "66666666-6666-5666-8666-666666666666",
+        "item_id": "55555555-5555-5555-8555-555555555555",
+        "responding_turn_id": "88888888-8888-5888-8888-888888888888",
+        "decision": "keep",
+        "reason": "Wait for actual separate reviewer reassessment.",
+        "actor": {
+          "kind": "user",
+          "reference_id": "user-action-fixture-1"
+        },
+        "request_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+        "created_at": "2026-11-12T00:02:00Z"
+      },
+      {
+        "schema_version": 1,
+        "event_id": "bbbbbbbb-bbbb-5bbb-8bbb-bbbbbbbbbbbb",
+        "review_id": "66666666-6666-5666-8666-666666666666",
+        "item_id": "55555555-5555-5555-8555-555555555555",
+        "responding_turn_id": "88888888-8888-5888-8888-888888888888",
+        "decision": "resolve",
+        "reason": "Separate completed reviewer fixture resolved the synthetic issue.",
+        "actor": {
+          "kind": "reviewer",
+          "reference_id": "reviewer-reassessment-r"
+        },
+        "request_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+        "created_at": "2026-11-12T00:03:00Z"
+      }
+    ],
+    "expected_computed_status": "resolved",
+    "boundary": "Synthetic complete review/event storage data; not an actual reviewer request.",
+    "new_request_context": {
+      "schema_version": 1,
+      "question": "Please correct the arithmetic-mean interpretation and address the original review item.",
+      "question_scope": "case_analysis",
+      "constraints": [],
+      "evidence_pack_hash": "0c84b06a0d89a5ddcb601fbb4ff8c1d7c56ab820f14727d36a597424a3a3b18d",
+      "corpus_revision": null,
+      "shown_chunks": {
+        "scalar-source": "operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1"
+      },
+      "tool_schema_sha256": "38139a35535c82f6efaa09fd79fdb433b6ac06755aaa1599365c31562b673ba9",
+      "tool_policy_id": "cae-read-v1",
+      "solver_limits": [],
+      "responds_to_review_ids": [
+        "66666666-6666-5666-8666-666666666666"
+      ]
+    },
+    "new_request_context_canonical_bytes": "{\"constraints\":[],\"corpus_revision\":null,\"evidence_pack_hash\":\"0c84b06a0d89a5ddcb601fbb4ff8c1d7c56ab820f14727d36a597424a3a3b18d\",\"question\":\"Please correct the arithmetic-mean interpretation and address the original review item.\",\"question_scope\":\"case_analysis\",\"responds_to_review_ids\":[\"66666666-6666-5666-8666-666666666666\"],\"schema_version\":1,\"shown_chunks\":{\"scalar-source\":\"operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1\"},\"solver_limits\":[],\"tool_policy_id\":\"cae-read-v1\",\"tool_schema_sha256\":\"38139a35535c82f6efaa09fd79fdb433b6ac06755aaa1599365c31562b673ba9\"}",
+    "evidence_pack": {
+      "schema_version": 1,
+      "evidence_ids": [
+        "01010101010101010101010101010101"
+      ],
+      "source_artifacts": [
+        {
+          "id": "01010101010101010101010101010101",
+          "role": "manual_test_source",
+          "path": "transport_source.json",
+          "sha256": "5e7290127c0a7fad2ee0f746bc09e74299b8e31e2bbd8f554eb4862e384247b5",
+          "size": 71,
+          "format_id": "test-fixture-json-v1",
+          "producer": {
+            "id": "C-recovery-transport-fixture",
+            "version": "1"
+          }
+        }
+      ],
+      "shown_chunks": {
+        "scalar-source": "operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1"
+      }
+    },
+    "evidence_pack_canonical_bytes": "{\"evidence_ids\":[\"01010101010101010101010101010101\"],\"schema_version\":1,\"shown_chunks\":{\"scalar-source\":\"operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1\"},\"source_artifacts\":[{\"format_id\":\"test-fixture-json-v1\",\"id\":\"01010101010101010101010101010101\",\"path\":\"transport_source.json\",\"producer\":{\"id\":\"C-recovery-transport-fixture\",\"version\":\"1\"},\"role\":\"manual_test_source\",\"sha256\":\"5e7290127c0a7fad2ee0f746bc09e74299b8e31e2bbd8f554eb4862e384247b5\",\"size\":71}]}",
+    "reviewer_wire": {
+      "type": "answer_review",
+      "segments": [
+        {
+          "segment_id": "abababab-abab-5bab-8bab-abababababab",
+          "parts": [
+            {
+              "start": 0,
+              "end": 40,
+              "kind": "claim",
+              "citation_ids": [
+                "scalar-source"
+              ],
+              "support": "supported",
+              "reason": "Exact synthetic operation/value/unit/coverage record; restricted to valid nodes.",
+              "quoted_spans": [
+                {
+                  "citation_id": "scalar-source",
+                  "start": 0,
+                  "end": 87
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "segment_id": "bcbcbcbc-bcbc-5cbc-8cbc-bcbcbcbcbcbc",
+          "parts": [
+            {
+              "start": 42,
+              "end": 98,
+              "kind": "claim",
+              "citation_ids": [
+                "scalar-source"
+              ],
+              "support": "supported",
+              "reason": "Exact synthetic operation/value/unit/coverage record; restricted to valid nodes.",
+              "quoted_spans": [
+                {
+                  "citation_id": "scalar-source",
+                  "start": 0,
+                  "end": 87
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "items": [],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ]
+    },
+    "host_context": {
+      "answer": "The finite-node arithmetic mean is 2 mm.\n\nOnly two of three nodes are valid; one value is missing.",
+      "answer_sha256": "3cb5f37fe8d0799d75f4ff461bee2106c2ce4dfa43e7973ce28dcdb120ded970",
+      "segment_ids": [
+        "abababab-abab-5bab-8bab-abababababab",
+        "bcbcbcbc-bcbc-5cbc-8cbc-bcbcbcbcbcbc"
+      ],
+      "claim_ids": [
+        "cdcdcdcd-cdcd-5dcd-8dcd-cdcdcdcdcdcd",
+        "dededede-dede-5ede-8ede-dededededede"
+      ],
+      "item_ids": [
+        "efefefef-efef-5fef-8fef-efefefefefef"
+      ],
+      "review_id": "99999999-9999-5999-8999-999999999999",
+      "source_turn_id": "88888888-8888-5888-8888-888888888888",
+      "request_context_hash": "102fd9688f67444ff264ee455abcbefa3e61c84d3de59f450863a890eaf78314",
+      "shown_chunks": {
+        "scalar-source": "operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1"
+      },
+      "proposer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "proposer-r"
+      },
+      "reviewer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "reviewer-reassessment-r"
+      },
+      "independence": "separate_request_same_model",
+      "reassessment_of": [
+        {
+          "review_id": "66666666-6666-5666-8666-666666666666",
+          "item_id": "55555555-5555-5555-8555-555555555555",
+          "original_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051"
+        }
+      ],
+      "created_at": "2026-11-12T00:02:30Z",
+      "finished_at": "2026-11-12T00:02:59Z"
+    },
+    "host_segments": [
+      {
+        "segment_id": "abababab-abab-5bab-8bab-abababababab",
+        "start": 0,
+        "end": 40,
+        "text": "The finite-node arithmetic mean is 2 mm."
+      },
+      {
+        "segment_id": "bcbcbcbc-bcbc-5cbc-8cbc-bcbcbcbcbcbc",
+        "start": 42,
+        "end": 98,
+        "text": "Only two of three nodes are valid; one value is missing."
+      }
+    ],
+    "original_request_context_canonical_bytes": "{\"answer\":\"Finite-node arithmetic mean is 2 mm.\\n\\nTwo of three nodes are valid; one is missing.\",\"source\":\"operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1\"}"
+  },
+  "lifecycle_cases": [
+    {
+      "id": "cancel-before-provider",
+      "given": {
+        "cancel_at": "after_prepare"
+      },
+      "expected": {
+        "provider_posts": 0,
+        "tool_calls": 0,
+        "status": "cancelled",
+        "draft_preserved": true
+      }
+    },
+    {
+      "id": "cancel-after-tool",
+      "given": {
+        "cancel_at": "before_next_round"
+      },
+      "expected": {
+        "provider_posts": 1,
+        "tool_calls": 1,
+        "next_provider_posts": 0,
+        "status": "cancelled"
+      }
+    },
+    {
+      "id": "late-after-close",
+      "given": {
+        "closed": true,
+        "provider_finishes_late": true
+      },
+      "expected": {
+        "turn_promotions": 0,
+        "new_document_mutations": 0
+      }
+    },
+    {
+      "id": "budget-overflow",
+      "given": {
+        "remaining_calls": 1,
+        "response_calls": 2
+      },
+      "expected": {
+        "dispatches": 0,
+        "status": "budget_exhausted"
+      }
+    },
+    {
+      "id": "duplicate-call",
+      "given": {
+        "seen": [
+          "call1"
+        ],
+        "next": "call1"
+      },
+      "expected": {
+        "dispatches": 0,
+        "status": "protocol_error"
+      }
+    },
+    {
+      "id": "source-changed",
+      "given": {
+        "hash_changed": true
+      },
+      "expected": {
+        "status": "integrity_error",
+        "automatic_recapture": false
+      }
+    },
+    {
+      "id": "historical-stale",
+      "given": {
+        "frozen_hash_valid": true,
+        "current_model_changed": true
+      },
+      "expected": {
+        "historical_query": "allowed_as_frozen",
+        "current_design_claim": "not_supported"
+      }
+    },
+    {
+      "id": "corpus-pointer-changed",
+      "given": {
+        "request": "A",
+        "pointer": "B"
+      },
+      "expected": {
+        "request_corpus": "A",
+        "next_request_corpus": "B"
+      }
+    },
+    {
+      "id": "unknown-measure",
+      "given": {
+        "raw_available": true,
+        "measure": "unknown"
+      },
+      "expected": {
+        "raw_query": "diagnostic_only",
+        "fit": false,
+        "physical_claim_pass": false
+      }
+    },
+    {
+      "id": "proposer-self-close",
+      "given": {
+        "actor": {
+          "kind": "reviewer",
+          "reference_id": "proposer-request"
+        }
+      },
+      "expected": {
+        "code": "REVIEW_CONTEXT_MISMATCH",
+        "reason": "EVIDENCE_SCOPE_MISMATCH",
+        "event_appends": 0
+      }
+    },
+    {
+      "id": "new-pack-no-link",
+      "given": {
+        "new_pack": true,
+        "reassessment_of": []
+      },
+      "expected": {
+        "code": "REVIEW_CONTEXT_MISMATCH",
+        "reason": "EVIDENCE_SCOPE_MISMATCH",
+        "event_appends": 0
+      }
+    },
+    {
+      "id": "review-timeout",
+      "given": {
+        "old_item": "unresolved",
+        "reviewer": "timed_out"
+      },
+      "expected": {
+        "old_item": "unresolved",
+        "verdict": "insufficient",
+        "reply_preserved": true
+      }
+    },
+    {
+      "id": "reopen-pending",
+      "given": {
+        "pending": true,
+        "lease_live": false
+      },
+      "expected": {
+        "memory": "interrupted",
+        "provider_posts": 0,
+        "disk_write_until_save": false
+      }
+    },
+    {
+      "id": "migration-write-fails",
+      "given": {
+        "backup_fsync": true,
+        "replace_raises": true
+      },
+      "expected": {
+        "original_v1": "unchanged",
+        "backup": "retained",
+        "v2_success": false
+      }
+    },
+    {
+      "id": "resolution-cas-stale",
+      "given": {
+        "expected_revision": 4,
+        "disk_revision": 5
+      },
+      "expected": {
+        "code": "DiscussionConflict",
+        "event_appends": 0
+      }
+    },
+    {
+      "id": "saveas-active",
+      "given": {
+        "lease_live": true
+      },
+      "expected": {
+        "code": "DiscussionBusy",
+        "copy_active": false
+      }
+    },
+    {
+      "id": "theory-no-evidence",
+      "given": {
+        "scope": "theory",
+        "evidence_id": null
+      },
+      "expected": {
+        "ask": "allowed",
+        "fake_run": false
+      }
+    },
+    {
+      "id": "frame-zero",
+      "given": {
+        "requested": 0,
+        "frames": [
+          0,
+          1
+        ]
+      },
+      "expected": {
+        "default": 0,
+        "additional_approval": false
+      }
+    },
+    {
+      "id": "frame-missing",
+      "given": {
+        "requested": 9,
+        "frames": [
+          0,
+          1
+        ]
+      },
+      "expected": {
+        "default": null,
+        "placeholder": true,
+        "user_selects_actual": true
+      }
+    },
+    {
+      "id": "user-draft-switch",
+      "given": {
+        "draft_origin": "user",
+        "frame_changed": true
+      },
+      "expected": {
+        "draft_bytes": "unchanged",
+        "labels": "distinct",
+        "ask": "allowed_if_attachment_valid"
+      }
+    }
+  ],
+  "verification": {
+    "scalar_bytes_sha256_checked": true,
+    "scalar_mean": 2,
+    "coverage": {
+      "expected": 3,
+      "valid": 2,
+      "missing": 1
+    },
+    "event_original_context_and_link_consistency": true,
+    "lifecycle_cases": 20,
+    "scope": "JS data integrity and synthetic event linkage only; runtime cases unexecuted",
+    "e_rc5": {
+      "status": "pass",
+      "new_answer_codepoints": 98,
+      "new_answer_sha256": "3cb5f37fe8d0799d75f4ff461bee2106c2ce4dfa43e7973ce28dcdb120ded970",
+      "new_context_sha256": "102fd9688f67444ff264ee455abcbefa3e61c84d3de59f450863a890eaf78314",
+      "evidence_pack_sha256": "0c84b06a0d89a5ddcb601fbb4ff8c1d7c56ab820f14727d36a597424a3a3b18d",
+      "context_and_pack_are_distinct": true,
+      "coverage": {
+        "answer_sha256": "3cb5f37fe8d0799d75f4ff461bee2106c2ce4dfa43e7973ce28dcdb120ded970",
+        "nonwhitespace_count": 80,
+        "covered_nonwhitespace_count": 80,
+        "segment_count": 2,
+        "checked_segment_count": 2,
+        "claim_count": 2,
+        "complete": true,
+        "nonclaim_policy_id": "cae-nonclaim-v1"
+      },
+      "old_original_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+      "old_event_context_unchanged": true,
+      "scope": "Fresh deterministic synthetic answer-span/context/event consistency; not real reviewer/semantic acceptance."
+    }
+  }
+}

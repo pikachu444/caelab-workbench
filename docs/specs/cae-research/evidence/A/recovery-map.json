@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "recovery_kind": "A authored remote unreferenced blobs; no branch/main/PR mutation",
+  "original_spec_sha256": "5d913c95bc5a0f8bfd9deeb6faf5dda690b8cd246e1d456f478ea4922b97f5ff",
+  "original_spec_byte_identity_recovered": false,
+  "current_spec_blob": "1f8fb280e3a0f8413721d9c4eed9f7596a163f4d",
+  "sha256_implementation_check": {
+    "known_vector": "abc",
+    "expected": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    "observed": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  "raw_native_csv_th_logs_recovered": false,
+  "new_generators_executed_after_environment_loss": false,
+  "files": [
+    {
+      "path": "parts/material_pressure_orthotropic.md",
+      "blob_sha": "1f8fb280e3a0f8413721d9c4eed9f7596a163f4d",
+      "sha256": "7d1b7fa5af1d24476faf35c4088e2db113c0cfcb7c6ee0125a294334a579cff1",
+      "provenance": "NEW reconstructed complete specification, F reviewed typo/energy corrections; not original SHA identity"
+    },
+    {
+      "path": "evidence/A/recovered_reference.py",
+      "blob_sha": "e74ff030057030e1f20edf9bb8890de68abd89ca",
+      "sha256": "6a47821c5234dfabdf830e1c452a2e5c9a83cfe83cdbadcbc512e8a8c72b5f57",
+      "provenance": "NEW reconstructed stdlib synthetic/native-input generator; not executed after environment loss"
+    },
+    {
+      "path": "evidence/A/recovered_native_runner.py",
+      "blob_sha": "37c930034a9f307aa7d98e50c7f464441da555a7",
+      "sha256": "0027ee6717eca3f65dc35fb78d6733d7ae644da92dd1759a0d42d40080dfc9f5",
+      "provenance": "NEW reconstructed portable optional native rerunner, explicit 3-argument converter/source TITLES/DTIX-before-END; not executed after environment loss"
+    },
+    {
+      "path": "evidence/A/recovered_native_check.py",
+      "blob_sha": "81aee286020ac529f4408503caa1ea2cfc281f0c",
+      "sha256": "766d629952a3d1d7f65e9b463f8d61d853bab9355ee7b8752f2ebc7fdea94368",
+      "provenance": "NEW reconstructed checker; requires actual CSV/listings; not executed after environment loss"
+    },
+    {
+      "path": "evidence/A/foam_native_assessment.json",
+      "blob_sha": "7be37e83f157f0811b3a99e3a2c33181172e5f39",
+      "sha256": "af48c358e29b60d2fe2e5e4c7454d4d9a16a6e5ab752f6f163a733cf88f32cb0",
+      "provenance": "exact original summary bytes: SHA256 matches pre-loss R3 receipt; raw CSV not recovered"
+    },
+    {
+      "path": "evidence/A/foam_ka1_refinement_assessment.json",
+      "blob_sha": "1e8837ebe29b6fc9909616b3fc0b1096321a0af9",
+      "sha256": "475930127be48e26534e19e4f1cbbfe82ecb6a0c200c80755a209012fb9a8da4",
+      "provenance": "exact original summary bytes: SHA256 matches pre-loss R3 receipt; raw CSV not recovered"
+    },
+    {
+      "path": "evidence/A/foam_ka0_0000.rad",
+      "blob_sha": "948d1165619c1937e706a38e89ec23f13e766c70",
+      "sha256": "0fbca9e5ceac3e0aa9e51330b66e644fc3d721695673d2563a0a91637e0de635",
+      "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
+    },
+    {
+      "path": "evidence/A/foam_ka0_0001.rad",
+      "blob_sha": "6919842b199682be8b39b53c15b44785b0ace910",
+      "sha256": "165de1a70a28d9fc95a8ad9bc4bd2daef1ce475cfcd0af54cdfe5314c374fc48",
+      "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
+    },
+    {
+      "path": "evidence/A/foam_ka1_0000.rad",
+      "blob_sha": "a287891828439a86bcde5cf7915bf9446c81b20f",
+      "sha256": "e9e233c5f96b49983387ee9cf89d58765f6150d347e1140c7c7666d00d392ecd",
+      "provenance": "reconstructed file; original byte identity not established"
+    },
+    {
+      "path": "evidence/A/foam_ka1_0001.rad",
+      "blob_sha": "51724cc0b7d6cdcc96f8799406c7b12a80e8d13a",
+      "sha256": "08ea58024829d70819df5c54d0d28b001eed672cf81614cc6fd294535970626b",
+      "provenance": "reconstructed file; original byte identity not established"
+    },
+    {
+      "path": "evidence/A/foam_ka1_dt2e6_0001.rad",
+      "blob_sha": "d0b1c494d3cbde0c1bd2024c3fc6ed402417db37",
+      "sha256": "d5855029ef28f407717ef36762423f74ff2d3f1581766d03d64326cf43673290",
+      "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
+    },
+    {
+      "path": "evidence/A/foam_ka1_dt1e6_0001.rad",
+      "blob_sha": "74c1dd6ae83cf0e9e79cf991073891271148bfe4",
+      "sha256": "5e4e21d8a3e1e53ec2e3d95fb0018196195bc72399f5ff2c5dac8c182299968a",
+      "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
+    },
+    {
+      "path": "evidence/A/dp_geos.xml",
+      "blob_sha": "3233990d2cae001f1f9ce98c98ff91ec41e84373",
+      "sha256": "b6255cc2614a6825a5e8cd459fd4cb71e38a6fb7784e984d478924154090836d",
+      "provenance": "reconstructed file; original byte identity not established"
+    },
+    {
+      "path": "evidence/A/upstream/GEOS_DruckerPrager.hpp",
+      "blob_sha": "02e2a44fcf7ad2c53541533dcc126d9f53961cb6",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/GEOS-DEV/GEOS/blob/d81a4438f107446f17e33ab70c70358935e473ab/src/coreComponents/constitutive/solid/DruckerPrager.hpp"
+    },
+    {
+      "path": "evidence/A/upstream/GEOS_DruckerPrager.cpp",
+      "blob_sha": "a64ae00030cbd75a322b30ae66591d1c0521c9a9",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/GEOS-DEV/GEOS/blob/d81a4438f107446f17e33ab70c70358935e473ab/src/coreComponents/constitutive/solid/DruckerPrager.cpp"
+    },
+    {
+      "path": "evidence/A/upstream/GEOS_TriaxialDriver.cpp",
+      "blob_sha": "d266ae01a44380501e6fedcb5dda2339d2f1d8fd",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/GEOS-DEV/GEOS/blob/d81a4438f107446f17e33ab70c70358935e473ab/src/coreComponents/constitutiveDrivers/solid/TriaxialDriver.cpp"
+    },
+    {
+      "path": "evidence/A/upstream/GEOS_LICENSE",
+      "blob_sha": "8c177f8bedc4a734d40312bb165035be1b22fad4",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/GEOS-DEV/GEOS/blob/d81a4438f107446f17e33ab70c70358935e473ab/LICENSE"
+    },
+    {
+      "path": "evidence/A/upstream/GEOS_DruckerPrager.rst",
+      "blob_sha": "dcb4ccafe49e5165912f4558288e81ff31d55754",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/GEOS-DEV/GEOS/blob/d81a4438f107446f17e33ab70c70358935e473ab/src/coreComponents/constitutive/docs/solid/DruckerPrager.rst"
+    },
+    {
+      "path": "evidence/A/upstream/OC_sigeps33.F",
+      "blob_sha": "62b137d2f62a5b101aced76bdf9d69c41cc33092",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/OpenCourant/OpenCourant/blob/cb760c206e346eff12161a2268b134ef9d48a4ef/engine/source/materials/mat/mat033/sigeps33.F"
+    },
+    {
+      "path": "evidence/A/upstream/OC_hm_read_mat33.F",
+      "blob_sha": "84132a6b22bbd439ff0aec6e5bf427a22ea1f560",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/OpenCourant/OpenCourant/blob/cb760c206e346eff12161a2268b134ef9d48a4ef/starter/source/materials/mat/mat033/hm_read_mat33.F"
+    },
+    {
+      "path": "evidence/A/upstream/OC_LICENSE.md",
+      "blob_sha": "cba6f6a15a4cc3ba212e9e9059f7243e2d171090",
+      "provenance": "exact upstream license bytes, git-blob identity confirmed",
+      "upstream_url": "https://github.com/OpenCourant/OpenCourant/blob/cb760c206e346eff12161a2268b134ef9d48a4ef/LICENSE.md"
+    }
+  ]
+}

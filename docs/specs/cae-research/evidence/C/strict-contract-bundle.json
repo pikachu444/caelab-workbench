@@ -1,0 +1,1979 @@
+{
+  "schema_version": 1,
+  "recovery_notice": "New reconstituted strict wire/coverage fixture and executable JS reference, not lost exact Python files. Executed in functions JS only; no HTTP or live model/native solver/Windows.",
+  "schemas": {
+    "schema_version": 1,
+    "final_native_and_structured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "answer",
+        "claims"
+      ],
+      "properties": {
+        "type": {
+          "const": "final"
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text_span",
+              "citation_ids"
+            ],
+            "properties": {
+              "text_span": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "citation_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reviewer_wire": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "segments",
+        "modeling_checks",
+        "items",
+        "required_evidence",
+        "limitations"
+      ],
+      "properties": {
+        "type": {
+          "const": "answer_review"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "segment_id",
+              "parts"
+            ],
+            "properties": {
+              "segment_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "start",
+                    "end",
+                    "kind",
+                    "citation_ids",
+                    "support",
+                    "reason",
+                    "quoted_spans"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "claim",
+                        "nonclaim"
+                      ]
+                    },
+                    "citation_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "support": {
+                      "type": "string",
+                      "enum": [
+                        "supported",
+                        "contradicted",
+                        "not_assessed",
+                        "not_applicable"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "quoted_spans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "citation_id",
+                          "start",
+                          "end"
+                        ],
+                        "properties": {
+                          "citation_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "start": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "end": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "modeling_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "category",
+              "result",
+              "reason"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "assumptions",
+                  "units",
+                  "measures",
+                  "BC",
+                  "mesh",
+                  "contact",
+                  "convergence",
+                  "interpretation"
+                ]
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "satisfied",
+                  "issue",
+                  "not_assessed",
+                  "not_applicable"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "segment_id",
+              "part_index",
+              "category",
+              "severity",
+              "reason",
+              "evidence_refs",
+              "required_action"
+            ],
+            "properties": {
+              "segment_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "part_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "assumptions",
+                  "units",
+                  "measures",
+                  "BC",
+                  "mesh",
+                  "contact",
+                  "convergence",
+                  "interpretation"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "minor",
+                  "major"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required_action": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "required_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "reassessment_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review_id",
+        "item_id",
+        "original_context_hash"
+      ],
+      "properties": {
+        "review_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "original_context_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  },
+  "golden": {
+    "final": {
+      "type": "final",
+      "answer": "Finite-node arithmetic mean is 2 mm.\n\nTwo of three nodes are valid; one is missing.",
+      "claims": []
+    },
+    "context": {
+      "answer": "Finite-node arithmetic mean is 2 mm.\n\nTwo of three nodes are valid; one is missing.",
+      "answer_sha256": "fde75a4c0a57cf5270a989cafc623dde7a64dafd5654af56b94bfc298b15772b",
+      "segment_ids": [
+        "11111111-1111-5111-8111-111111111111",
+        "22222222-2222-5222-8222-222222222222"
+      ],
+      "claim_ids": [
+        "33333333-3333-5333-8333-333333333333",
+        "44444444-4444-5444-8444-444444444444"
+      ],
+      "item_ids": [
+        "55555555-5555-5555-8555-555555555555"
+      ],
+      "review_id": "66666666-6666-5666-8666-666666666666",
+      "source_turn_id": "77777777-7777-5777-8777-777777777777",
+      "request_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+      "shown_chunks": {
+        "scalar-source": "operation=arithmetic_finite_node_mean; value=2; unit=mm; expected=3; valid=2; missing=1"
+      },
+      "proposer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "proposer-r"
+      },
+      "reviewer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "reviewer-r"
+      },
+      "independence": "separate_request_same_model",
+      "reassessment_of": [],
+      "created_at": "2026-11-12T00:00:00Z",
+      "finished_at": "2026-11-12T00:00:01Z"
+    },
+    "segments": [
+      {
+        "segment_id": "11111111-1111-5111-8111-111111111111",
+        "start": 0,
+        "end": 36,
+        "text": "Finite-node arithmetic mean is 2 mm."
+      },
+      {
+        "segment_id": "22222222-2222-5222-8222-222222222222",
+        "start": 38,
+        "end": 83,
+        "text": "Two of three nodes are valid; one is missing."
+      }
+    ],
+    "reviewer_wire": {
+      "type": "answer_review",
+      "segments": [
+        {
+          "segment_id": "11111111-1111-5111-8111-111111111111",
+          "parts": [
+            {
+              "start": 0,
+              "end": 36,
+              "kind": "claim",
+              "citation_ids": [
+                "scalar-source"
+              ],
+              "support": "supported",
+              "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+              "quoted_spans": [
+                {
+                  "citation_id": "scalar-source",
+                  "start": 0,
+                  "end": 87
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "segment_id": "22222222-2222-5222-8222-222222222222",
+          "parts": [
+            {
+              "start": 38,
+              "end": 83,
+              "kind": "claim",
+              "citation_ids": [
+                "scalar-source"
+              ],
+              "support": "supported",
+              "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+              "quoted_spans": [
+                {
+                  "citation_id": "scalar-source",
+                  "start": 0,
+                  "end": 87
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "items": [],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ]
+    },
+    "expected_host_record": {
+      "schema_version": 1,
+      "review_id": "66666666-6666-5666-8666-666666666666",
+      "source_turn_id": "77777777-7777-5777-8777-777777777777",
+      "request_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+      "proposer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "proposer-r"
+      },
+      "reviewer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "reviewer-r"
+      },
+      "independence": "separate_request_same_model",
+      "status": "completed",
+      "verdict": "pass",
+      "claim_checks": [
+        {
+          "claim_id": "33333333-3333-5333-8333-333333333333",
+          "text_span": [
+            0,
+            36
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage."
+        },
+        {
+          "claim_id": "44444444-4444-5444-8444-444444444444",
+          "text_span": [
+            38,
+            83
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage."
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "disagreements": [],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ],
+      "reassessment_of": [],
+      "created_at": "2026-11-12T00:00:00Z",
+      "finished_at": "2026-11-12T00:00:01Z",
+      "coverage": {
+        "answer_sha256": "fde75a4c0a57cf5270a989cafc623dde7a64dafd5654af56b94bfc298b15772b",
+        "nonwhitespace_count": 68,
+        "covered_nonwhitespace_count": 68,
+        "segment_count": 2,
+        "checked_segment_count": 2,
+        "claim_count": 2,
+        "complete": true,
+        "nonclaim_policy_id": "cae-nonclaim-v1"
+      }
+    },
+    "negative_reviews": [
+      {
+        "id": "empty-review",
+        "wire": {
+          "type": "answer_review",
+          "segments": [],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "insufficient"
+      },
+      {
+        "id": "missing-paragraph",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "insufficient"
+      },
+      {
+        "id": "empty-modelchecks",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "insufficient"
+      },
+      {
+        "id": "unknown-citation",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "made-up"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "forged-context",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ],
+          "request_context_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "numeric-nonclaim",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "nonclaim",
+                  "citation_ids": [],
+                  "support": "not_applicable",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": []
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "insufficient"
+      },
+      {
+        "id": "extra-part-key",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ],
+                  "actor": "forged"
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "overlap",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                },
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "invalid_provider_action"
+      }
+    ],
+    "reassessment_valid": {
+      "review_id": "old-review",
+      "item_id": "old-item",
+      "original_context_hash": "381eb894f35a21e7565ce8e630294bda651dd54e136d6713c2591d302a533261"
+    },
+    "reassessment_missing_or_wrong": {
+      "code": "REVIEW_CONTEXT_MISMATCH",
+      "details": {
+        "reason": "EVIDENCE_SCOPE_MISMATCH"
+      },
+      "event_appends": 0
+    },
+    "major_item_wire": {
+      "type": "answer_review",
+      "segments": [
+        {
+          "segment_id": "11111111-1111-5111-8111-111111111111",
+          "parts": [
+            {
+              "start": 0,
+              "end": 36,
+              "kind": "claim",
+              "citation_ids": [
+                "scalar-source"
+              ],
+              "support": "supported",
+              "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+              "quoted_spans": [
+                {
+                  "citation_id": "scalar-source",
+                  "start": 0,
+                  "end": 87
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "segment_id": "22222222-2222-5222-8222-222222222222",
+          "parts": [
+            {
+              "start": 38,
+              "end": 83,
+              "kind": "claim",
+              "citation_ids": [
+                "scalar-source"
+              ],
+              "support": "supported",
+              "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+              "quoted_spans": [
+                {
+                  "citation_id": "scalar-source",
+                  "start": 0,
+                  "end": 87
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "items": [
+        {
+          "segment_id": "11111111-1111-5111-8111-111111111111",
+          "part_index": 0,
+          "category": "interpretation",
+          "severity": "major",
+          "reason": "Synthetic major test.",
+          "evidence_refs": [
+            "scalar-source"
+          ],
+          "required_action": "Recheck."
+        }
+      ],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ]
+    },
+    "major_item_expected": {
+      "schema_version": 1,
+      "review_id": "66666666-6666-5666-8666-666666666666",
+      "source_turn_id": "77777777-7777-5777-8777-777777777777",
+      "request_context_hash": "9c1505848cea488be84f7bff9cd53d72df10dd4798170c05ddd20d006726d051",
+      "proposer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "proposer-r"
+      },
+      "reviewer": {
+        "provider": "mock",
+        "model": "mock",
+        "request_id": "reviewer-r"
+      },
+      "independence": "separate_request_same_model",
+      "status": "completed",
+      "verdict": "revise",
+      "claim_checks": [
+        {
+          "claim_id": "33333333-3333-5333-8333-333333333333",
+          "text_span": [
+            0,
+            36
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage."
+        },
+        {
+          "claim_id": "44444444-4444-5444-8444-444444444444",
+          "text_span": [
+            38,
+            83
+          ],
+          "citation_ids": [
+            "scalar-source"
+          ],
+          "id_valid": true,
+          "quoted_span_valid": true,
+          "support": "supported",
+          "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage."
+        }
+      ],
+      "modeling_checks": [
+        {
+          "category": "assumptions",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "units",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "measures",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "BC",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "mesh",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "contact",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "convergence",
+          "result": "not_applicable",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        },
+        {
+          "category": "interpretation",
+          "result": "satisfied",
+          "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+        }
+      ],
+      "disagreements": [
+        {
+          "item_id": "55555555-5555-5555-8555-555555555555",
+          "claim_id": "33333333-3333-5333-8333-333333333333",
+          "category": "interpretation",
+          "severity": "major",
+          "reason": "Synthetic major test.",
+          "evidence_refs": [
+            "scalar-source"
+          ],
+          "required_action": "Recheck."
+        }
+      ],
+      "required_evidence": [],
+      "limitations": [
+        "Mock scalar evidence; no physical/LLM/Windows certification."
+      ],
+      "reassessment_of": [],
+      "created_at": "2026-11-12T00:00:00Z",
+      "finished_at": "2026-11-12T00:00:01Z",
+      "coverage": {
+        "answer_sha256": "fde75a4c0a57cf5270a989cafc623dde7a64dafd5654af56b94bfc298b15772b",
+        "nonwhitespace_count": 68,
+        "covered_nonwhitespace_count": 68,
+        "segment_count": 2,
+        "checked_segment_count": 2,
+        "claim_count": 2,
+        "complete": true,
+        "nonclaim_policy_id": "cae-nonclaim-v1"
+      }
+    },
+    "e_rc1_negative_final_cases": [
+      {
+        "id": "prototype-extra-ownkey",
+        "wire": "{\"type\":\"final\",\"answer\":\"Finite-node arithmetic mean is 2 mm.\\n\\nTwo of three nodes are valid; one is missing.\",\"claims\":[],\"__proto__\":{\"forged\":\"x\"}}",
+        "utf8_byte_length": 152,
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "inherited-final-citation",
+        "wire": "{\"type\":\"final\",\"answer\":\"Finite-node arithmetic mean is 2 mm.\\n\\nTwo of three nodes are valid; one is missing.\",\"claims\":[{\"text_span\":[0,3],\"citation_ids\":[\"toString\"]}]}",
+        "utf8_byte_length": 172,
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "non-rfc-whitespace",
+        "wire": " {\"type\":\"final\",\"answer\":\"Finite-node arithmetic mean is 2 mm.\\n\\nTwo of three nodes are valid; one is missing.\",\"claims\":[]}",
+        "utf8_byte_length": 127,
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "utf8-action-byte-overflow",
+        "wire": "{\"type\":\"final\",\"answer\":\"가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가\",\"claims\":[]}",
+        "utf8_byte_length": 45040,
+        "expected": "invalid_provider_action"
+      }
+    ],
+    "e_rc1_negative_review_cases": [
+      {
+        "id": "inherited-segment",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "toString",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "inherited-review-citation",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "constructor"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "prototype-review-key",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ],
+          "__proto__": {
+            "forged": 1
+          }
+        },
+        "expected": "invalid_provider_action"
+      },
+      {
+        "id": "inherited-item-evidence",
+        "wire": {
+          "type": "answer_review",
+          "segments": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "parts": [
+                {
+                  "start": 0,
+                  "end": 36,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "segment_id": "22222222-2222-5222-8222-222222222222",
+              "parts": [
+                {
+                  "start": 38,
+                  "end": 83,
+                  "kind": "claim",
+                  "citation_ids": [
+                    "scalar-source"
+                  ],
+                  "support": "supported",
+                  "reason": "Synthetic frozen scalar record declares operation/value/unit/coverage.",
+                  "quoted_spans": [
+                    {
+                      "citation_id": "scalar-source",
+                      "start": 0,
+                      "end": 87
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "modeling_checks": [
+            {
+              "category": "assumptions",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "units",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "measures",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "BC",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "mesh",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "contact",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "convergence",
+              "result": "not_applicable",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            },
+            {
+              "category": "interpretation",
+              "result": "satisfied",
+              "reason": "Synthetic arithmetic fixture only, no FE modelling claim."
+            }
+          ],
+          "items": [
+            {
+              "segment_id": "11111111-1111-5111-8111-111111111111",
+              "part_index": 0,
+              "category": "interpretation",
+              "severity": "major",
+              "reason": "test",
+              "evidence_refs": [
+                "toString"
+              ],
+              "required_action": "test"
+            }
+          ],
+          "required_evidence": [],
+          "limitations": [
+            "Mock scalar evidence; no physical/LLM/Windows certification."
+          ]
+        },
+        "expected": "invalid_provider_action"
+      }
+    ]
+  },
+  "receipt": {
+    "runtime": "functions-js",
+    "status": "pass",
+    "host_segments": 2,
+    "negative_review_cases": 8,
+    "negative_final_cases": 7,
+    "partial_hint_does_not_remove_segments": true,
+    "missing_or_wrong_reassessment_event_appends": 0,
+    "scope": "Strict JSON/host coverage/context binding only; semantic support not certified.",
+    "host_review_item_exact_storage_shape": true,
+    "e_rc1": {
+      "null_prototype_parser": true,
+      "own_membership_only": true,
+      "rfc_json_whitespace_only": true,
+      "utf8_32768_byte_gate": true,
+      "negative_final_cases": 4,
+      "negative_review_cases": 4,
+      "host_id_underallocation_rejected": true,
+      "status": "pass"
+    }
+  },
+  "reference_js": "function utf8(s){const a=[];for(const ch of s){const c=ch.codePointAt(0);if(c<128)a.push(c);else if(c<2048)a.push(192|(c>>6),128|(c&63));else if(c<65536)a.push(224|(c>>12),128|((c>>6)&63),128|(c&63));else a.push(240|(c>>18),128|((c>>12)&63),128|((c>>6)&63),128|(c&63))}return a}\n\nfunction parseStrict(s){if(typeof s!==\"string\"||utf8(s).length>32768)throw Error(\"invalid_provider_action\");let p=0;const ws=()=>{while(/[ \\t\\r\\n]/.test(s[p]??\"\")&&p<s.length)p++};function str(){const a=p++;let esc=false;while(p<s.length){const c=s[p++];if(c==='\"'&&!esc)return JSON.parse(s.slice(a,p));if(c===\"\\\\\"&&!esc)esc=true;else esc=false}throw Error(\"string\")};function value(d=0){if(d>64)throw Error(\"depth\");ws();if(s[p]==='\"')return str();if(s[p]===\"{\"){p++;ws();const o=Object.create(null),keys=new Set;if(s[p]===\"}\"){p++;return o}while(true){ws();if(s[p]!=='\"')throw Error(\"key\");const k=str();if(keys.has(k))throw Error(\"duplicate key\");keys.add(k);ws();if(s[p++]!==\":\")throw Error(\"colon\");o[k]=value(d+1);ws();if(s[p]===\"}\"){p++;return o}if(s[p++]!==\",\")throw Error(\"comma\")}}if(s[p]===\"[\"){p++;ws();const a=[];if(s[p]===\"]\"){p++;return a}while(true){a.push(value(d+1));ws();if(s[p]===\"]\"){p++;return a}if(s[p++]!==\",\")throw Error(\"comma\")}}for(const [t,v]of [[\"true\",true],[\"false\",false],[\"null\",null]])if(s.slice(p,p+t.length)===t){p+=t.length;return v}const m=s.slice(p).match(/^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?/);if(!m)throw Error(\"value\");p+=m[0].length;const n=Number(m[0]);if(!Number.isFinite(n))throw Error(\"nonfinite\");return n}const v=value();ws();if(p!==s.length)throw Error(\"extra\");return v}\n\nfunction exact(o,keys){if(o===null||typeof o!==\"object\"||Array.isArray(o)||Object.keys(o).sort().join(\"|\")!==[...keys].sort().join(\"|\"))throw Error(\"invalid_provider_action: keys\")}\n\nfunction strings(a){if(!Array.isArray(a)||a.some(v=>typeof v!==\"string\"||!v))throw Error(\"invalid_provider_action: string list\")}\n\nfunction inventory(answer,ids){let offset=0,n=0;const out=[];for(const raw of answer.split(/(\\n[ \\t]*\\n)/)){const len=Array.from(raw).length,left=Array.from(raw).length-Array.from(raw.trimStart()).length,right=Array.from(raw.trimEnd()).length;if(left<right){if(!Array.isArray(ids)||typeof ids[n]!==\"string\"||!ids[n])throw Error(\"host ID allocation incomplete\");out.push({segment_id:ids[n++],start:offset+left,end:offset+right,text:Array.from(answer).slice(offset+left,offset+right).join(\"\")})}offset+=len}return out}\n\nfunction bindFinal(wire,context){const f=parseStrict(wire);exact(f,[\"type\",\"answer\",\"claims\"]);if(f.type!==\"final\"||typeof f.answer!==\"string\"||!f.answer.trim()||Array.from(f.answer).length>20000||!Array.isArray(f.claims))throw Error(\"invalid_provider_action\");for(const h of f.claims){exact(h,[\"text_span\",\"citation_ids\"]);strings(h.citation_ids);if(!Array.isArray(h.text_span)||h.text_span.length!==2||h.text_span.some(v=>!Number.isInteger(v))||h.text_span[0]<0||h.text_span[0]>=h.text_span[1]||h.text_span[1]>Array.from(f.answer).length||h.citation_ids.some(id=>!Object.hasOwn(context.shown_chunks,id)))throw Error(\"invalid_provider_action\")}return {answer:f.answer,segments:inventory(f.answer,context.segment_ids),claim_support:\"not_assessed\"}}\n\nfunction bindReview(wire,context,segments){const x=parseStrict(wire);exact(x,[\"type\",\"segments\",\"modeling_checks\",\"items\",\"required_evidence\",\"limitations\"]);if(x.type!==\"answer_review\"||![x.segments,x.modeling_checks,x.items].every(Array.isArray))throw Error(\"invalid_provider_action\");strings(x.required_evidence);strings(x.limitations);const cats=[\"assumptions\",\"units\",\"measures\",\"BC\",\"mesh\",\"contact\",\"convergence\",\"interpretation\"],hosts=Object.fromEntries(segments.map(s=>[s.segment_id,s])),seen=new Set,covered=new Set,checks=[];let nonclaimValid=true,claims=0;for(const seg of x.segments){exact(seg,[\"segment_id\",\"parts\"]);if(!Object.hasOwn(hosts,seg.segment_id)||seen.has(seg.segment_id)||!Array.isArray(seg.parts))throw Error(\"invalid_provider_action\");seen.add(seg.segment_id);const h=hosts[seg.segment_id],local=new Set;for(const q of seg.parts){exact(q,[\"start\",\"end\",\"kind\",\"citation_ids\",\"support\",\"reason\",\"quoted_spans\"]);strings(q.citation_ids);if(!Number.isInteger(q.start)||!Number.isInteger(q.end)||q.start<h.start||q.start>=q.end||q.end>h.end||![\"claim\",\"nonclaim\"].includes(q.kind)||![\"supported\",\"contradicted\",\"not_assessed\",\"not_applicable\"].includes(q.support)||typeof q.reason!==\"string\"||!q.reason.trim()||!Array.isArray(q.quoted_spans))throw Error(\"invalid_provider_action\");for(let i=q.start;i<q.end;i++){if(local.has(i))throw Error(\"invalid_provider_action: overlap\");local.add(i);covered.add(i)}if(q.citation_ids.some(id=>!Object.hasOwn(context.shown_chunks,id)))throw Error(\"invalid_provider_action: citation\");for(const z of q.quoted_spans){exact(z,[\"citation_id\",\"start\",\"end\"]);if(!q.citation_ids.includes(z.citation_id)||!Number.isInteger(z.start)||!Number.isInteger(z.end)||z.start<0||z.start>=z.end||z.end>Array.from(context.shown_chunks[z.citation_id]).length)throw Error(\"invalid_provider_action: quote\")}let support=q.support;if(q.kind===\"claim\"){claims++;if(q.support===\"not_applicable\")throw Error(\"invalid_provider_action\");if(!q.citation_ids.length||!q.quoted_spans.length)support=\"not_assessed\"}else{const text=Array.from(context.answer).slice(q.start,q.end).join(\"\").replace(/^[ #.!:]+|[ #.!:]+$/g,\"\"),allowed=[\"Summary\",\"Sources\",\"Limitations\",\"Assumptions\",\"Review\",\"Hello\",\"Thanks\",\"요약\",\"참고자료\",\"한계\",\"가정\",\"검토결과\",\"감사합니다\",\"안녕하세요\"];nonclaimValid=nonclaimValid&&allowed.includes(text)&&q.support===\"not_applicable\"&&!q.citation_ids.length&&!q.quoted_spans.length}checks.push({...q,support})}}const mc=new Set;for(const c of x.modeling_checks){exact(c,[\"category\",\"result\",\"reason\"]);if(!cats.includes(c.category)||mc.has(c.category)||![\"satisfied\",\"issue\",\"not_assessed\",\"not_applicable\"].includes(c.result)||typeof c.reason!==\"string\"||!c.reason.trim())throw Error(\"invalid_provider_action\");mc.add(c.category)}for(const it of x.items){exact(it,[\"segment_id\",\"part_index\",\"category\",\"severity\",\"reason\",\"evidence_refs\",\"required_action\"]);strings(it.evidence_refs);const s=x.segments.find(s=>s.segment_id===it.segment_id);if(!s||!Number.isInteger(it.part_index)||it.part_index<0||it.part_index>=s.parts.length||!cats.includes(it.category)||![\"minor\",\"major\"].includes(it.severity)||typeof it.reason!==\"string\"||!it.reason||typeof it.required_action!==\"string\"||!it.required_action||it.evidence_refs.some(id=>!Object.hasOwn(context.shown_chunks,id)))throw Error(\"invalid_provider_action\")}const nonwhite=Array.from(context.answer).map((c,i)=>/\\s/.test(c)?null:i).filter(v=>v!==null),complete=seen.size===segments.length&&nonwhite.every(i=>covered.has(i));let verdict;if(!complete||!nonclaimValid||!claims||mc.size!==8||x.required_evidence.length||checks.some(c=>c.support===\"not_assessed\")||x.modeling_checks.some(c=>c.result===\"not_assessed\"))verdict=\"insufficient\";else if(checks.some(c=>c.support===\"contradicted\")||x.modeling_checks.some(c=>c.result===\"issue\")||x.items.some(c=>c.severity===\"major\"))verdict=\"revise\";else verdict=\"pass\";return {schema_version:1,review_id:context.review_id,source_turn_id:context.source_turn_id,request_context_hash:context.request_context_hash,proposer:context.proposer,reviewer:context.reviewer,independence:context.independence,status:\"completed\",verdict,claim_checks:checks.filter(c=>c.kind===\"claim\").map((c,i)=>({claim_id:context.claim_ids[i],text_span:[c.start,c.end],citation_ids:c.citation_ids,id_valid:true,quoted_span_valid:!!c.quoted_spans.length,support:c.support,reason:c.reason})),modeling_checks:x.modeling_checks,disagreements:x.items.map((it,i)=>{const part=x.segments.find(s=>s.segment_id===it.segment_id).parts[it.part_index],index=checks.filter(c=>c.kind===\"claim\").findIndex(q=>q.start===part.start&&q.end===part.end);return {item_id:context.item_ids[i],claim_id:index<0?null:context.claim_ids[index],category:it.category,severity:it.severity,reason:it.reason,evidence_refs:it.evidence_refs,required_action:it.required_action}}),required_evidence:x.required_evidence,limitations:x.limitations,reassessment_of:context.reassessment_of,created_at:context.created_at,finished_at:context.finished_at,coverage:{answer_sha256:context.answer_sha256,nonwhitespace_count:nonwhite.length,covered_nonwhitespace_count:nonwhite.filter(i=>covered.has(i)).length,segment_count:segments.length,checked_segment_count:seen.size,claim_count:claims,complete,nonclaim_policy_id:\"cae-nonclaim-v1\"}}}\n\nfunction reassessment(link,original){try{exact(link,[\"review_id\",\"item_id\",\"original_context_hash\"]);if(Object.keys(original).some(k=>link[k]!==original[k]))throw Error(\"mismatch\");return {event_appends:1}}catch{return {code:\"REVIEW_CONTEXT_MISMATCH\",details:{reason:\"EVIDENCE_SCOPE_MISMATCH\"},event_appends:0}}}",
+  "reference_scope": "Host UUIDs/context hashes are supplied fixture inputs. This reference checks safe parsing/ownership/span coverage, not production UUID allocation, HTTP transport or engineering truth."
+}

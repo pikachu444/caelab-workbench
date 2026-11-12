@@ -268,6 +268,10 @@ PDE·설치·RAG 코드와 유효한 검사는 보존하고 본선의 결함은 
 [CURRENT_STATE](../../CURRENT_STATE.md#사용자-기능-점검--2026-11-12)를 따른다.
 별도 FE 모델 DB·JobManager·범용 전처리기를 만들지 않고 기존 서비스와 공용 optimizer를 재사용한다. 개발자가 사용할 API·데이터/저장 버전·오류·수치 oracle·파일 소유와 단계별 인수는 [통합 구현 계약](../specs/spec-cae-research-implementation.md)에 고정한다. 이 절은 우선순위만 소유한다.
 
+### 전체 구현 착수 단위 — 2026-11-12 추가 확정
+
+세부 구현 정본은 [통합 명세](../specs/spec-cae-research-implementation.md)와 [공통 core C11](../specs/cae-research/core-implementation.md)이다. CORE01→CORE02 및 STORE01을 우선하고, MAT-A/MAT-B·E0–E2·POST01–04를 담당별 병렬 구현한 뒤 UI01/PREP01/LINK01,실 provider E4/E5,optional RP POST05/06을 실제 사용자 흐름으로 연결한다. 공통 파일 단일 소유·선행/의존·오류·실제 수치/플랫폼 인수는 각 작업표를 따른다. post-only는 projectv3 sidecar,material_study role 첫 저장은 v4/readers1–4다. 문서/참조 검증만으로 제품 기능을 완료 처리하지 않는다.
+
 ### 우선순위와 소유
 
 | 순서·작업 | 변경 소유·사용자 결과 | 수락조건 |
@@ -288,8 +292,8 @@ evaluator 상태/실제 관측·예측/실패·취소·캐시·출처, native ex
 구체 API/JSON 버전·저장 경로·수치 판정과 첫 구현 묶음은 [구현 계약](../specs/spec-cae-research-implementation.md#materials)에서 관리한다.
 
 DP 예시는 LAW10/21/81/102·Abaqus·LS-DYNA의 식/부호·cap/EOS·흐름/경화 차이를 검증하는 사례다.
-Xia 예시는 종이·판지 LAW112의 직교 재료축·방향별 인장/압축/전단과 원지/상세 적층/균질화의
-적용 수준을 검증하는 사례다. J2·점탄성·초탄성·사용자 구성식도 같은 등록 구조의 확장 대상이며
+Xia2002 원모델은 정확한 문헌/source 식별을 따로 유지한다. LAW112와 동일하다고 단정한 이전 문장은 정정한다.
+첫 구체 후보 GMN2012-derived power XBP는 원 Xia와 다른 명칭·상태·한계로 정의한다. 두 Ogden·Prony/TRS·NEML 반복소성·LAW33·DP·직교이방 등도 같은 등록 구조를 사용하며
 각 adapter의 실제 구현/검증 상태를 따로 표시한다. 목록에 추가한 사실을 계산 지원으로 세지 않는다.
 공개 solver의 구성방정식·기존 수치 라이브러리를 우선 활용하며, 모든 모델에 새 자체 재료점 적분기를
 만드는 일을 선행 조건으로 삼지 않는다. RAD 고정폭 카드에 기존 INP 가변길이 치환을 적용하지 않는다.
@@ -320,8 +324,8 @@ Run and Postprocess 앱이다. 현재 CLI에는 `--selftest`만 있고 `--projec
    RP 실행이 `rp_run`을 재작성할 수 있어 덱/상대 INCLUDE·기존 VTK를 별도 post staging으로 준비하고
    원 실행과 해시/계보를 연결한다. 수동 사용의 재실행 가능성과 post 전용 연결의 Run 비활성화를 구별한다.
 2. 동일 run 자동 열기는 **아직 없는 인터페이스**다. upstream은 PR/Issues를 받지 않는다고 명시하므로
-   Discussions 제안에만 의존하지 않는다. AGPL 조건을 확인한 별도 fork의 `--project <dir> --post-only`
-   경로 또는 재현 가능한 외부 adapter 중 한 방법을 선택해 실제 Windows에서 연다. wb JobManager가
+   Discussions 제안에만 의존하지 않는다. AGPL 조건을 확인한 별도 fork의 선택 CLI는 `--post-only --handoff <json> --receipt <json>`이다.
+   [후처리 명세](../specs/cae-research/post-implementation.md)의 exact contract로 구현하고 실제 Windows에서 연다. wb JobManager가
    시작한 solver를 RP가 중복 시작하지 않게 한다. RP의 batch는 정상종료 문구가 없어도 exit 0일 수 있다.
 3. animation→VTK는 실제 converter를 실행하고 geometry/원 node·element·part ID, 실제 시간,
    응력·변형률 성분·shell layer·요소 로컬/전역 축·부호·단위를 독립 수치와 비교한 뒤 결과로 등록한다.

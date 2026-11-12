@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "review_id": "F-CURRENT-CI-43140439077",
+  "reviewer": "F",
+  "job_id": 130925841559,
+  "run_id": 43140439077,
+  "head_commit": "98be90bfe1d8d02ae099bc0aecf84d1d11110218",
+  "actual_checkout_commit": "f975d44142408c491a4fad083f24e7945cb0a086",
+  "log_blob": "39c9d20285cba77b07eee5ec4f9389e99fc31577",
+  "job_status": {
+    "id": 130925841559,
+    "name": "reconstructed-references",
+    "status": "completed",
+    "conclusion": "success",
+    "run_id": 43140439077,
+    "logs_url": null,
+    "steps": [
+      {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+      },
+      {
+        "name": "Run actions/checkout@v4",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+      },
+      {
+        "name": "Run actions/setup-python@v5",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3
+      },
+      {
+        "name": "Verify committed recovery bytes and syntax",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4
+      },
+      {
+        "name": "Install reference dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5
+      },
+      {
+        "name": "Run recovered A arithmetic and deck recipes",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6
+      },
+      {
+        "name": "Fetch pinned native release and record loader dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7
+      },
+      {
+        "name": "Execute new LAW33 cap refinement references",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8
+      },
+      {
+        "name": "Generate recovered D native decks",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9
+      },
+      {
+        "name": "Run recovered B independent numerical and existing optimizer probes",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10
+      },
+      {
+        "name": "Package handoff and current reference outputs",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11
+      },
+      {
+        "name": "Post Run actions/setup-python@v5",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 21
+      },
+      {
+        "name": "Post Run actions/checkout@v4",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 22
+      },
+      {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 23
+      }
+    ]
+  },
+  "artifact_metadata": {
+    "id": 13909436920,
+    "name": "caelab-full-implementation-handoff",
+    "size_in_bytes": 2029916,
+    "url": "https://api.github.com/repos/pikachu444/caelab-workbench/actions/artifacts/13909436920",
+    "archive_download_url": "https://api.github.com/repos/pikachu444/caelab-workbench/actions/artifacts/13909436920/zip",
+    "expired": false,
+    "created_at": "2026-11-12T02:19:18Z",
+    "expires_at": "2027-02-10T02:18:08Z",
+    "updated_at": "2026-11-12T02:19:18Z",
+    "digest": "sha256:916e3aedf36533d23dec9d971b699e18ca9026f5cce42150c758b49f21fa18ec",
+    "workflow_run": {
+      "id": 43140439077,
+      "repository_id": 1427738031,
+      "head_repository_id": 1427738031,
+      "head_branch": "docs/cae-full-spec-20261112-recovery",
+      "head_sha": "98be90bfe1d8d02ae099bc0aecf84d1d11110218"
+    }
+  },
+  "inspection_scope": "Direct GitHub job metadata, logs and artifact metadata independently fetched and actual relevant commands/results read. No independent download/parsing/revalidation of new raw native CSV or binary archive performed by F.",
+  "supported_observations": [
+    "New A arithmetic passed; selected Ka1 capped native pair and fixed-step Euler checker passed.",
+    "D new deck generation passed; no D native execution/checker in this job.",
+    "B 243 finite-domain root cases, reverse order and four failure cases passed; actual pyvisco2.1.3 loaded source hashes matched; existing optimizer146observations converged at fit1.4321823225436936e-13/holdout3.291180473817548e-14; WLF fixed and holdout excluded.",
+    "Existing constraint API three boundary cases preserve finite high-error/instability loss and invalidate required scalar failure; cold replay passed those references with source-origin/hash checks.",
+    "NEML exit20 remains BACKEND_UNAVAILABLE, not part of a backend-pass claim."
+  ],
+  "limitations": [
+    "Fresh selected reference execution is not historical byte recovery, Ka0 rerun, DOP853 rerun, D native layer checker rerun, or a product material-service/Windows/provider acceptance.",
+    "The CI checks head98be90 through merge checkoutf975d44; later documentation/proof/source-bundle additions require exact identity mapping and must not be called this executed checkout.",
+    "Artifact13909436920 expires2027-02-10; durable reproduction or preservation is separately required."
+  ],
+  "log_binding": {
+    "raw_direct_equal_to_clean_saved_blob": false,
+    "normalization": "strip ANSI CSI escape sequences only",
+    "normalized_direct_equal_to_saved_blob": true
+  }
+}

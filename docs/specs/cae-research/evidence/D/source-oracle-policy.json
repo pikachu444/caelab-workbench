@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "recovery_status": "New reconstructed source/expected-policy manifest; no native raw result bytes recovered",
+  "sources": {
+    "workbench": "104cdd6888a5554eecc8cf965c60ff1bd980b6da",
+    "prep": "555af5b3ab2c6e7dc276111609302ef565bb4fc8",
+    "rp": {
+      "repository": "CAMLAB-UChile/OpenCourantRP",
+      "revision": "cec23cbdd4058237e04fdcc7ecb06a3834578cae",
+      "license": "AGPL-3.0-or-later"
+    },
+    "solver": {
+      "repository": "OpenCourant/OpenCourant",
+      "revision": "cb760c206e346eff12161a2268b134ef9d48a4ef",
+      "tag": "latest-20261011",
+      "license": "AGPL source; separate runtime/CFG restrictions"
+    },
+    "converters": {
+      "repository": "OpenCourant/Tools",
+      "actual_checkout": "1b6bb9200ee7dca899e61c18bd982c3fb1c72fd1",
+      "last_source_change": "3fc8c859f30582a1f71e156244987e1a14474d4c",
+      "license": "MIT notice in each converter source",
+      "files": {
+        "output_converters/anim_to_vtk/src/anim_to_vtk.cpp": "fb2c58a90ac90197aa9cf00c9a8954c638fc6ae267d46de20b94e4ef9cde9549",
+        "output_converters/th_to_csv/src/th_to_csv.c": "e680547aec4317db158313e5869f644046e8bbe73b8b0b68be18105c46687304"
+      },
+      "source_build_output_equivalence": "Historical observed identical A005/T01 output; original evidence bytes currently unavailable; not proof of release build source"
+    }
+  },
+  "release": {
+    "url": "https://github.com/OpenCourant/OpenCourant/releases/tag/latest-20261011",
+    "linux_url": "https://github.com/OpenCourant/OpenCourant/releases/download/latest-20261011/OpenCourant_linux64.zip",
+    "linux_zip_sha256": "6cb419677ca36d73acb96218cc0cf5e4f7d50494d9c7812ba27935e3c0f8ec94",
+    "windows_declared_zip_sha256": "6d0ea8b43b68aa12f0a2787b339384a554978cbb65a5d3dbaf1e40598f02e7e6",
+    "windows_execution": "not performed"
+  },
+  "historical_linux_executables": {
+    "starter_linux64_gf": "0bbea37273656b270bea53cf756b115bcd5d9a8875a3c41283922a3b927719d1",
+    "engine_linux64_gf": "54cc9fc2a7cea6f1215afb6da9109d368650ff1fa7985625cb111f47d7e92be4",
+    "anim_to_vtk_linux64_gf": "9c97eee2991f6949d16477831cc684165f53b790f498cbef51b8e8fd67bf28ae",
+    "th_to_csv_linux64_gf": "704d647331ae4befd329d18b991d644f2af930abd117c5d204c23925f75fc8db"
+  },
+  "expected_policy": {
+    "units": {
+      "length": "mm",
+      "mass": "Mg",
+      "time": "s",
+      "stress": "MPa"
+    },
+    "material": {
+      "E_MPa": 1000,
+      "nu": 0.25,
+      "rho_Mg_per_mm3": 7.8e-9
+    },
+    "kinematics": {
+      "left": "x=0 BCS",
+      "right": "vx=1 mm/s plus same initial velocity",
+      "all_nodes": "uy=uz=0",
+      "shell": "all rotations=0",
+      "epsilon_xx": "0.1*t"
+    },
+    "independent_oracle": {
+      "solid_stress_diagonal_MPa": [
+        "120*t",
+        "40*t",
+        "40*t"
+      ],
+      "shell_stress_diagonal_MPa": [
+        "1000/(1-0.25^2)*0.1*t",
+        "1000*0.25/(1-0.25^2)*0.1*t",
+        0
+      ],
+      "U_right_mm": "actual t",
+      "U_left_mm": 0,
+      "V_right_mm_per_s": 1,
+      "V_left_mm_per_s": 0
+    },
+    "tolerances": {
+      "stress": "1e-5 MPa + 0.01*abs(expected)",
+      "displacement": "1e-8 mm + .001*abs(expected)",
+      "velocity": "1e-8 mm/s + .001*abs(expected)",
+      "rho_volume_stretch": "rtol 3e-6 + atol 1e-8"
+    },
+    "required_arrays": {
+      "LAW1_N0": [
+        "2DELEM_Stress_(upper)",
+        "2DELEM_Stress_(lower)",
+        "2DELEM_Stress_(layer__1)_",
+        "3DELEM_Stress"
+      ],
+      "LAW2_N5": [
+        "2DELEM_Stress_(upper)",
+        "2DELEM_Stress_(lower)",
+        "2DELEM_Stress_(layer__1)_",
+        "2DELEM_Stress_(layer__2)_",
+        "2DELEM_Stress_(layer__3)_",
+        "2DELEM_Stress_(layer__4)_",
+        "2DELEM_Stress_(layer__5)_",
+        "3DELEM_Stress"
+      ]
+    },
+    "required_ids": {
+      "node": [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        21,
+        22,
+        23,
+        24
+      ],
+      "element": [
+        101,
+        202
+      ],
+      "part": [
+        10,
+        20
+      ]
+    },
+    "no_inferred_time": true,
+    "no_fallback_layer": true,
+    "no_wrong_family_zero": true
+  },
+  "historical_observations_not_reconstructed_output": {
+    "field_times": [
+      0,
+      0.00251024,
+      0.00502048,
+      0.0075089,
+      0.0100191
+    ],
+    "TH_times": [
+      0,
+      0.002510241,
+      0.005020482,
+      0.007508895
+    ],
+    "TH_shape": [
+      4,
+      106
+    ],
+    "solid_final_sigma_xx_MPa": 1.20136,
+    "LAW2_shell_layer3_final_sigma_xx_MPa": 1.06817,
+    "starter": "0 errors / 0 warnings",
+    "engine": "NORMAL TERMINATION / 460 cycles",
+    "F11_mutations": "7 rejected plus consistent point permutation accepted; original receipts unavailable after environment loss"
+  },
+  "restore_limit": "No raw CSV/VTK/T01/log, original SHA or product runtime acceptance is fabricated by this manifest."
+}

@@ -1,0 +1,3035 @@
+{
+  "schema_version": 1,
+  "recovery_notice": "New question JSON packaging/reconstructed text; not the lost exact question file SHA. Labels await independent review of these bytes. No retrieval/live-answer pass claimed.",
+  "development": {
+    "questions": [
+      {
+        "id": "development-01",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: Where does the Neumann boundary term enter the Poisson weak form?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "weak_form"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "poisson"
+        ],
+        "expected_source_ids": [
+          "dolfinx-poisson"
+        ],
+        "answer_obligations": "L(v) contains +integral_GammaN g*v ds; g=grad(u).n; not automatically outward heat flux.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-02",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: Does three-dimensional elasticity have only three translation rigid modes?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "rigid_modes"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_modes"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "Six modes: three translations and three rotations. Near-nullspace is not a proof of sufficient boundary conditions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-03",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: How are E and nu converted to Lame parameters in small-strain isotropic elasticity?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "lame"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_law"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "mu=E/(2(1+nu)), lambda=E*nu/((1+nu)(1-2nu)); singular at nu=.5; no arbitrary finite-strain equivalence.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-04",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: Is hydrostatic stress retained when computing von Mises stress here?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "von_mises"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_vm"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "Use sigma_dev=sigma-tr(sigma)/3*I and sqrt(3/2 inner(dev,dev)); no structural-safety certification.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-05",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: What log(J) terms appear in this compressible neo-Hookean energy?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "neo_hookean"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "hyper_energy"
+        ],
+        "expected_source_ids": [
+          "dolfinx-hyperelasticity"
+        ],
+        "answer_obligations": "psi=mu/2*(Ic-3)-mu*ln(J)+lambda/2*(lnJ)^2; J>0; distinguish other neo-Hookean conventions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-06",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: Can dpsi/dF itself be called the Cauchy stress here?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "cauchy_stress"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "hyper_stress"
+        ],
+        "expected_source_ids": [
+          "dolfinx-hyperelasticity"
+        ],
+        "answer_obligations": "No: sigma=(1/J)*(dpsi/dF)*F.T; Jacobian is derivative(F_form,u,du).",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-07",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: How does GEOS Drucker-Prager use trial stress invariants and old cohesion in its yield test?",
+        "explicit_facets": {
+          "solver": "geos",
+          "edition": null,
+          "topics": [
+            "drucker_prager"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "geos_dp_yield"
+        ],
+        "expected_source_ids": [
+          "geos-dp-hpp"
+        ],
+        "answer_obligations": "trialQ+friction*trialP-oldCohesion; old hardening state is used in trial test. Preserve this source's pressure/backstress conventions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "geos",
+              "text": "GEOS",
+              "start": 51,
+              "end": 55
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "geos"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-08",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: Must friction angle and dilation angle be forced equal in this GEOS Drucker-Prager implementation?",
+        "explicit_facets": {
+          "solver": "geos",
+          "edition": null,
+          "topics": [
+            "parameter_conversion"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "geos_dp_conversion"
+        ],
+        "expected_source_ids": [
+          "geos-dp-cpp"
+        ],
+        "answer_obligations": "No; nonnegative dilation<=friction; separate F and D; degrees converted to radians, MC triaxial-compression-corner fit.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "geos",
+              "text": "GEOS",
+              "start": 105,
+              "end": 109
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "geos"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-09",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: May the long-time normalized Prony relaxation modulus always be fixed to zero?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "prony"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "prony_relax"
+        ],
+        "expected_source_ids": [
+          "pyvisco-prony"
+        ],
+        "answer_obligations": "No; E_inf/E0=1-sum(alpha), unless sum(alpha)=1. Time/tau are seconds; no fabricated fitted parameters.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-10",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: May frequency in Hz be passed directly to pyvisco E_freq_norm?",
+        "explicit_facets": {
+          "solver": "pyvisco",
+          "edition": null,
+          "topics": [
+            "frequency"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "prony_frequency"
+        ],
+        "expected_source_ids": [
+          "pyvisco-prony"
+        ],
+        "answer_obligations": "No; omega is rad/s, omega=2pi*f is dimensional inference. Output concatenates normalized storage then loss.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "pyvisco",
+              "text": "pyvisco",
+              "start": 84,
+              "end": 91
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "pyvisco"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-11",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: Is the Chaboche internal backstress a single scalar?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "chaboche"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "chaboche_state"
+        ],
+        "expected_source_ids": [
+          "neml-hardening"
+        ],
+        "answer_obligations": "No; q sums six-component history blocks after isotropic part. Do not infer all strain/Voigt conventions from this function alone.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-12",
+        "split": "development",
+        "language": "en",
+        "question": "Explain the pinned source implementation: May the NEML source dev(sigma)+X convention be equated directly with a paper using sigma-X?",
+        "explicit_facets": {
+          "solver": "neml",
+          "edition": null,
+          "topics": [
+            "backstress_sign"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "chaboche_evolution"
+        ],
+        "expected_source_ids": [
+          "neml-hardening"
+        ],
+        "answer_obligations": "No; source adds internal X and uses negative evolution. Require explicit sign mapping; do not declare an external paper wrong without that paper.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "neml",
+              "text": "NEML",
+              "start": 50,
+              "end": 54
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "neml"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-13",
+        "split": "development",
+        "language": "ko",
+        "question": "OpenRadioss LAW36에서 두 온도별 소성 곡선 사이의 보간 규칙을 원문 매뉴얼로 확인해 줘.",
+        "explicit_facets": {
+          "solver": "radioss",
+          "edition": null,
+          "topics": [
+            "radioss_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "The source pack contains no LAW36 manual/card interpolation rule. Request the exact target version/manual; do not infer from another solver.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "radioss",
+              "text": "OpenRadioss",
+              "start": 0,
+              "end": 11
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "radioss"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-14",
+        "split": "development",
+        "language": "en",
+        "question": "In CalculiX 2.23, what happens between two temperature-dependent *PLASTIC tables?",
+        "explicit_facets": {
+          "solver": "calculix",
+          "edition": "2.23",
+          "topics": [
+            "calculix_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No CalculiX2.23 temperature interpolation/default source in this pack. No invented default.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "calculix",
+              "text": "CalculiX",
+              "start": 3,
+              "end": 11
+            }
+          ],
+          "edition_span": {
+            "text": "2.23",
+            "start": 12,
+            "end": 16
+          },
+          "solver_ids": [
+            "calculix"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-15",
+        "split": "development",
+        "language": "ko",
+        "question": "원형 Xia 2002의 항복식과 경화식을 원문 수식과 하나씩 대조해 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "damage_evolution"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "The original Xia full text/variant is not present. A derived implementation or another law cannot substitute for original-equation verification.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-16",
+        "split": "development",
+        "language": "ko",
+        "question": "Radioss TYPE7 접촉의 penalty stiffness 기본값이 이 해석에 적절한지 판단해 줘.",
+        "explicit_facets": {
+          "solver": "radioss",
+          "edition": null,
+          "topics": [
+            "contact_law"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "The exact contact manual/profile and actual model/run are missing. Do not fabricate a penalty default or adequacy judgment.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "radioss",
+              "text": "Radioss",
+              "start": 0,
+              "end": 7
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "radioss"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-17",
+        "split": "development",
+        "language": "ko",
+        "question": "고무 단축 시험 두 점만으로 Ogden N2의 모든 계수가 유일하게 정해지는지 증명해 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "material_identification"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No sufficient independent experimental/identifiability evidence. A kernel/source formula or synthetic fit does not prove unique identification.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-18",
+        "split": "development",
+        "language": "ko",
+        "question": "설계 하중을 올린 보 모델을 보지 않고도 구조적으로 안전하다고 승인할 수 있어?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "safety_certification"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No actual geometry/load/BC/run or safety-assessment evidence. No safety approval.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-19",
+        "split": "development",
+        "language": "en",
+        "question": "Does Radioss LAW10 implement the same compressible neo-Hookean energy as this demo?",
+        "explicit_facets": {
+          "solver": "radioss",
+          "edition": null,
+          "topics": [
+            "radioss_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No LAW10 implementation/manual in this pack. The demo cannot establish cross-solver constitutive equivalence.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "radioss",
+              "text": "Radioss",
+              "start": 5,
+              "end": 12
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "radioss"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-20",
+        "split": "development",
+        "language": "en",
+        "question": "A node has both a displacement constraint and applied load in CalculiX; can its RF be used directly as the support reaction?",
+        "explicit_facets": {
+          "solver": "calculix",
+          "edition": null,
+          "topics": [
+            "calculix_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No exact ccx reaction/loaded-node source or target run evidence. Do not transfer another solver's convention.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "calculix",
+              "text": "CalculiX",
+              "start": 62,
+              "end": 70
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "calculix"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-21",
+        "split": "development",
+        "language": "ko",
+        "question": "내 합금의 시험자료가 없는데 Norton creep의 지수와 계수를 정해 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "creep"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No material test data or relevant creep characterization/source. Do not invent alloy parameters.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-22",
+        "split": "development",
+        "language": "ko",
+        "question": "솔버와 논문을 지정하지 않은 Xia 모델을 직교이방성 foam 모델이라고 가정해도 돼?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "anisotropy"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Xia identity/solver/variant is ambiguous and no direct equivalence source exists. Request the exact reference.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-23",
+        "split": "development",
+        "language": "en",
+        "question": "Does the DOLFINx 0.10.0 elasticity demo provide a measured temperature-dependent E(T)?",
+        "explicit_facets": {
+          "solver": "fenicsx",
+          "edition": "v0.10.0",
+          "topics": [
+            "thermal"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Its constant E does not supply a measured E(T); no temperature data/model evidence.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "fenicsx",
+              "text": "DOLFINx",
+              "start": 9,
+              "end": 16
+            }
+          ],
+          "edition_span": {
+            "text": "0.10.0",
+            "start": 17,
+            "end": 23
+          },
+          "solver_ids": [
+            "fenicsx"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-24",
+        "split": "development",
+        "language": "ko",
+        "question": "이 neo-Hookean 데모에서 긴 hold 동안 이완되는 점성 내부상태의 갱신식은 어디 있어?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "history"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "The stored-energy hyperelastic demo contains no viscous internal-state update. Request a time-dependent constitutive source.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-25",
+        "split": "development",
+        "language": "ko",
+        "question": "내일 부산의 시간대별 날씨를 알려 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-26",
+        "split": "development",
+        "language": "ko",
+        "question": "견과류 없이 만드는 바나나빵 레시피를 써 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-27",
+        "split": "development",
+        "language": "en",
+        "question": "What is today's EUR to KRW exchange rate?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-28",
+        "split": "development",
+        "language": "ko",
+        "question": "이번 주 야구 경기 중계 일정을 찾아 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-29",
+        "split": "development",
+        "language": "en",
+        "question": "Translate this short travel greeting into Spanish.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-30",
+        "split": "development",
+        "language": "ko",
+        "question": "여권 갱신에 필요한 서류를 알려 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-31",
+        "split": "development",
+        "language": "en",
+        "question": "Suggest a quiet cafe for reading near the station.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-32",
+        "split": "development",
+        "language": "en",
+        "question": "Plan a two-day sightseeing itinerary in Kyoto.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-33",
+        "split": "development",
+        "language": "ko",
+        "question": "내 신용카드 이번 달 청구액을 확인해 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-34",
+        "split": "development",
+        "language": "en",
+        "question": "Who is leading the current local election poll?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-35",
+        "split": "development",
+        "language": "ko",
+        "question": "내 은퇴 계좌에 넣을 주식 상품을 추천해 줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "development-36",
+        "split": "development",
+        "language": "en",
+        "question": "Write a short congratulatory toast for a graduation dinner.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "This is an explicitly non-CAE task. The CAE corpus provides no relevant source; do not invoke unrelated account/action tools or fabricate citations.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      }
+    ]
+  },
+  "evaluation": {
+    "questions": [
+      {
+        "id": "evaluation-01",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "푸아송 문제에서 Neumann 경계항이 약형의 어느 쪽에 들어가나?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "weak_form"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "poisson"
+        ],
+        "expected_source_ids": [
+          "dolfinx-poisson"
+        ],
+        "answer_obligations": "L(v) contains +integral_GammaN g*v ds; g=grad(u).n; not automatically outward heat flux.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-02",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Where does the Neumann boundary term enter the Poisson weak form?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "weak_form"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "poisson"
+        ],
+        "expected_source_ids": [
+          "dolfinx-poisson"
+        ],
+        "answer_obligations": "L(v) contains +integral_GammaN g*v ds; g=grad(u).n; not automatically outward heat flux.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-03",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "3차원 탄성의 강체모드는 병진 3개만 있는가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "rigid_modes"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_modes"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "Six modes: three translations and three rotations. Near-nullspace is not a proof of sufficient boundary conditions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-04",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Does three-dimensional elasticity have only three translation rigid modes?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "rigid_modes"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_modes"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "Six modes: three translations and three rotations. Near-nullspace is not a proof of sufficient boundary conditions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-05",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "작은 변형 등방탄성에서 E와 nu를 Lame 계수로 어떻게 바꾸나?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "lame"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_law"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "mu=E/(2(1+nu)), lambda=E*nu/((1+nu)(1-2nu)); singular at nu=.5; no arbitrary finite-strain equivalence.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-06",
+        "split": "evaluation",
+        "language": "en",
+        "question": "How are E and nu converted to Lame parameters in small-strain isotropic elasticity?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "lame"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_law"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "mu=E/(2(1+nu)), lambda=E*nu/((1+nu)(1-2nu)); singular at nu=.5; no arbitrary finite-strain equivalence.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-07",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "Von Mises 응력을 정수압 응력까지 포함해 계산하는가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "von_mises"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_vm"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "Use sigma_dev=sigma-tr(sigma)/3*I and sqrt(3/2 inner(dev,dev)); no structural-safety certification.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-08",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Is hydrostatic stress retained when computing von Mises stress here?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "von_mises"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "elastic_vm"
+        ],
+        "expected_source_ids": [
+          "dolfinx-elasticity"
+        ],
+        "answer_obligations": "Use sigma_dev=sigma-tr(sigma)/3*I and sqrt(3/2 inner(dev,dev)); no structural-safety certification.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-09",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "이 compressible neo-Hookean 에너지에서 log(J) 항은 무엇인가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "neo_hookean"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "hyper_energy"
+        ],
+        "expected_source_ids": [
+          "dolfinx-hyperelasticity"
+        ],
+        "answer_obligations": "psi=mu/2*(Ic-3)-mu*ln(J)+lambda/2*(lnJ)^2; J>0; distinguish other neo-Hookean conventions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-10",
+        "split": "evaluation",
+        "language": "en",
+        "question": "What log(J) terms appear in this compressible neo-Hookean energy?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "neo_hookean"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "hyper_energy"
+        ],
+        "expected_source_ids": [
+          "dolfinx-hyperelasticity"
+        ],
+        "answer_obligations": "psi=mu/2*(Ic-3)-mu*ln(J)+lambda/2*(lnJ)^2; J>0; distinguish other neo-Hookean conventions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-11",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "dpsi/dF를 그대로 Cauchy 응력이라 부르면 맞는가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "cauchy_stress"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "hyper_stress"
+        ],
+        "expected_source_ids": [
+          "dolfinx-hyperelasticity"
+        ],
+        "answer_obligations": "No: sigma=(1/J)*(dpsi/dF)*F.T; Jacobian is derivative(F_form,u,du).",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-12",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Can dpsi/dF itself be called the Cauchy stress here?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "cauchy_stress"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "hyper_stress"
+        ],
+        "expected_source_ids": [
+          "dolfinx-hyperelasticity"
+        ],
+        "answer_obligations": "No: sigma=(1/J)*(dpsi/dF)*F.T; Jacobian is derivative(F_form,u,du).",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-13",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "GEOS Drucker-Prager에서 시험응력의 항복판정과 cohesion 상태는 어떻게 쓰이나?",
+        "explicit_facets": {
+          "solver": "geos",
+          "edition": null,
+          "topics": [
+            "drucker_prager"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "geos_dp_yield"
+        ],
+        "expected_source_ids": [
+          "geos-dp-hpp"
+        ],
+        "answer_obligations": "trialQ+friction*trialP-oldCohesion; old hardening state is used in trial test. Preserve this source's pressure/backstress conventions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "geos",
+              "text": "GEOS",
+              "start": 0,
+              "end": 4
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "geos"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-14",
+        "split": "evaluation",
+        "language": "en",
+        "question": "How does GEOS Drucker-Prager use trial stress invariants and old cohesion in its yield test?",
+        "explicit_facets": {
+          "solver": "geos",
+          "edition": null,
+          "topics": [
+            "drucker_prager"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "geos_dp_yield"
+        ],
+        "expected_source_ids": [
+          "geos-dp-hpp"
+        ],
+        "answer_obligations": "trialQ+friction*trialP-oldCohesion; old hardening state is used in trial test. Preserve this source's pressure/backstress conventions.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "geos",
+              "text": "GEOS",
+              "start": 9,
+              "end": 13
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "geos"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-15",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "friction angle과 dilation angle을 동일한 값으로 강제해야 하는가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "parameter_conversion"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "geos_dp_conversion"
+        ],
+        "expected_source_ids": [
+          "geos-dp-cpp"
+        ],
+        "answer_obligations": "No; nonnegative dilation<=friction; separate F and D; degrees converted to radians, MC triaxial-compression-corner fit.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-16",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Must friction angle and dilation angle be forced equal in this GEOS Drucker-Prager implementation?",
+        "explicit_facets": {
+          "solver": "geos",
+          "edition": null,
+          "topics": [
+            "parameter_conversion"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "geos_dp_conversion"
+        ],
+        "expected_source_ids": [
+          "geos-dp-cpp"
+        ],
+        "answer_obligations": "No; nonnegative dilation<=friction; separate F and D; degrees converted to radians, MC triaxial-compression-corner fit.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "geos",
+              "text": "GEOS",
+              "start": 63,
+              "end": 67
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "geos"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-17",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "Prony 정규화 이완계수에서 장시간 잔류값을 0으로 고정해도 되는가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "prony"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "prony_relax"
+        ],
+        "expected_source_ids": [
+          "pyvisco-prony"
+        ],
+        "answer_obligations": "No; E_inf/E0=1-sum(alpha), unless sum(alpha)=1. Time/tau are seconds; no fabricated fitted parameters.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-18",
+        "split": "evaluation",
+        "language": "en",
+        "question": "May the long-time normalized Prony relaxation modulus always be fixed to zero?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "prony"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "prony_relax"
+        ],
+        "expected_source_ids": [
+          "pyvisco-prony"
+        ],
+        "answer_obligations": "No; E_inf/E0=1-sum(alpha), unless sum(alpha)=1. Time/tau are seconds; no fabricated fitted parameters.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-19",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "주파수 Hz를 pyvisco E_freq_norm에 그대로 넣어도 되는가?",
+        "explicit_facets": {
+          "solver": "pyvisco",
+          "edition": null,
+          "topics": [
+            "frequency"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "prony_frequency"
+        ],
+        "expected_source_ids": [
+          "pyvisco-prony"
+        ],
+        "answer_obligations": "No; omega is rad/s, omega=2pi*f is dimensional inference. Output concatenates normalized storage then loss.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "pyvisco",
+              "text": "pyvisco",
+              "start": 8,
+              "end": 15
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "pyvisco"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-20",
+        "split": "evaluation",
+        "language": "en",
+        "question": "May frequency in Hz be passed directly to pyvisco E_freq_norm?",
+        "explicit_facets": {
+          "solver": "pyvisco",
+          "edition": null,
+          "topics": [
+            "frequency"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "prony_frequency"
+        ],
+        "expected_source_ids": [
+          "pyvisco-prony"
+        ],
+        "answer_obligations": "No; omega is rad/s, omega=2pi*f is dimensional inference. Output concatenates normalized storage then loss.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "pyvisco",
+              "text": "pyvisco",
+              "start": 42,
+              "end": 49
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "pyvisco"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-21",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "Chaboche 내부 backstress 성분은 하나의 scalar인가?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "chaboche"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "chaboche_state"
+        ],
+        "expected_source_ids": [
+          "neml-hardening"
+        ],
+        "answer_obligations": "No; q sums six-component history blocks after isotropic part. Do not infer all strain/Voigt conventions from this function alone.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-22",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Is the Chaboche internal backstress a single scalar?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "chaboche"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "chaboche_state"
+        ],
+        "expected_source_ids": [
+          "neml-hardening"
+        ],
+        "answer_obligations": "No; q sums six-component history blocks after isotropic part. Do not infer all strain/Voigt conventions from this function alone.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-23",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "NEML source가 dev(sigma)+X를 쓰는데 외부 문헌의 sigma-X와 바로 같다고 해도 되는가?",
+        "explicit_facets": {
+          "solver": "neml",
+          "edition": null,
+          "topics": [
+            "backstress_sign"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "chaboche_evolution"
+        ],
+        "expected_source_ids": [
+          "neml-hardening"
+        ],
+        "answer_obligations": "No; source adds internal X and uses negative evolution. Require explicit sign mapping; do not declare an external paper wrong without that paper.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "neml",
+              "text": "NEML",
+              "start": 0,
+              "end": 4
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "neml"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-24",
+        "split": "evaluation",
+        "language": "en",
+        "question": "May the NEML source dev(sigma)+X convention be equated directly with a paper using sigma-X?",
+        "explicit_facets": {
+          "solver": "neml",
+          "edition": null,
+          "topics": [
+            "backstress_sign"
+          ]
+        },
+        "expected_retrieval": "supported",
+        "expected_chunk_ids": [
+          "chaboche_evolution"
+        ],
+        "expected_source_ids": [
+          "neml-hardening"
+        ],
+        "answer_obligations": "No; source adds internal X and uses negative evolution. Require explicit sign mapping; do not declare an external paper wrong without that paper.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "neml",
+              "text": "NEML",
+              "start": 8,
+              "end": 12
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "neml"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-25",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "OpenRadioss LAW36의 기본 plastic strain 곡선 보간법은?",
+        "explicit_facets": {
+          "solver": "radioss",
+          "edition": null,
+          "topics": [
+            "radioss_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No LAW36 card/manual in this corpus. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "radioss",
+              "text": "OpenRadioss",
+              "start": 0,
+              "end": 11
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "radioss"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-26",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "CalculiX 2.23 *PLASTIC의 온도 보간 default는?",
+        "explicit_facets": {
+          "solver": "calculix",
+          "edition": "2.23",
+          "topics": [
+            "calculix_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No ccx2.23 source/manual default evidence. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "calculix",
+              "text": "CalculiX",
+              "start": 0,
+              "end": 8
+            }
+          ],
+          "edition_span": {
+            "text": "2.23",
+            "start": 9,
+            "end": 13
+          },
+          "solver_ids": [
+            "calculix"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-27",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "Xia 손상모델의 정확한 variant와 파라미터를 정해줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "damage_evolution"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Xia variant and original full text not established; do not invent equations/parameters. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-28",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "마찰 접촉 penalty stiffness의 솔버 default를 알려줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "contact_law"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Solver/version and contact-source coverage missing. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-29",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "이 문서만으로 고무 계수의 유일성을 증명해줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "material_identification"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Source implementation is not experimental identifiability evidence. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-30",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "이 계산 결과가 안전함을 승인해줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "safety_certification"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No actual load-case evidence or engineering safety certification. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-31",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Does Radioss LAW10 use this exact neo-Hookean energy?",
+        "explicit_facets": {
+          "solver": "radioss",
+          "edition": null,
+          "topics": [
+            "radioss_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "DOLFINx neo-Hookean implementation does not establish LAW10 equivalence. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "radioss",
+              "text": "Radioss",
+              "start": 5,
+              "end": 12
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "radioss"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-32",
+        "split": "evaluation",
+        "language": "en",
+        "question": "What is the CalculiX RF sign for a loaded constrained node?",
+        "explicit_facets": {
+          "solver": "calculix",
+          "edition": null,
+          "topics": [
+            "calculix_cards"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No ccx reaction/source card evidence; do not transfer another solver's convention. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "calculix",
+              "text": "CalculiX",
+              "start": 12,
+              "end": 20
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "calculix"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-33",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Give the Norton creep exponent for my alloy without test data.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "creep"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No material test data or Norton model source. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-34",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Is the Xia model an orthotropic foam model in my solver?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "anisotropy"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Ambiguous Xia variant/solver; no direct original/source equivalence. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-35",
+        "split": "evaluation",
+        "language": "en",
+        "question": "What is the temperature dependence of E in these demos?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "thermal"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Constants in these demos do not establish E(T). Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-36",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "이 hyperelasticity 데모에서 점성 이력 변수 업데이트는?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "history"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Hyperelastic stored energy demo contains no viscous state update. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-37",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Does this demo validate solver restart state transfer?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "restart"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No restart validation/source fixture. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-38",
+        "split": "evaluation",
+        "language": "en",
+        "question": "What buckling load is certified for my beam?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "buckling"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No beam/run/buckling model evidence. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-39",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Is the raw Radioss strain tensor engineering shear or tensor shear?",
+        "explicit_facets": {
+          "solver": "radioss",
+          "edition": null,
+          "topics": [
+            "measures"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No target result measure/converter profile; do not infer from field name. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "radioss",
+              "text": "Radioss",
+              "start": 11,
+              "end": 18
+            }
+          ],
+          "edition_span": null,
+          "solver_ids": [
+            "radioss"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-40",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Can this source guarantee all-hex meshing for arbitrary CAD?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "mesh_quality"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No such mesher or geometric coverage. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-41",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "DOLFINx 0.11.0에서 LinearProblem의 정확한 API 변경은?",
+        "explicit_facets": {
+          "solver": "fenicsx",
+          "edition": "v0.11.0",
+          "topics": [
+            "edition"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "Pinned corpus is0.10.0, not0.11.0. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [
+            {
+              "solver_id": "fenicsx",
+              "text": "DOLFINx",
+              "start": 0,
+              "end": 7
+            }
+          ],
+          "edition_span": {
+            "text": "0.11.0",
+            "start": 8,
+            "end": 14
+          },
+          "solver_ids": [
+            "fenicsx"
+          ],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-42",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "첨부하지 않은 내 실행의 최대 변위 수치를 알려줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "run_values"
+          ]
+        },
+        "expected_retrieval": "insufficient",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No attached run/result; never fabricate numerical values. Request missing source/data; no fabricated citation/default/value.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-43",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "오늘 서울 날씨 알려줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-44",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "피자 조리법을 알려줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-45",
+        "split": "evaluation",
+        "language": "en",
+        "question": "What is the current Bitcoin price?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-46",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "내일 축구 경기 시간은?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-47",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Translate this love poem.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-48",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "운전면허 갱신 주소 알려줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-49",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Recommend a restaurant.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-50",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Book me a hotel.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-51",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "내 계좌 잔액은?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-52",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Who won the election?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-53",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "주식 매수 종목 추천해줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-54",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Write a wedding toast.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-55",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "내 이메일을 보내줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-56",
+        "split": "evaluation",
+        "language": "en",
+        "question": "What is my password?",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-57",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Schedule a haircut.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-58",
+        "split": "evaluation",
+        "language": "ko",
+        "question": "고양이 이름 추천해줘.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-59",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Explain a chess opening.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      },
+      {
+        "id": "evaluation-60",
+        "split": "evaluation",
+        "language": "en",
+        "question": "Summarize movie reviews.",
+        "explicit_facets": {
+          "solver": "general",
+          "edition": null,
+          "topics": [
+            "non_cae"
+          ]
+        },
+        "expected_retrieval": "out_of_scope",
+        "expected_chunk_ids": [],
+        "expected_source_ids": [],
+        "answer_obligations": "No relevant CAE source or unrelated tool execution.",
+        "annotation_status": "new_recovery_labels_independent_review_pending",
+        "facet_source_spans": {
+          "solver_spans": [],
+          "edition_span": null,
+          "solver_ids": [],
+          "policy": "Copy explicit solver/version tokens from actual question; no edition substitution from corpus."
+        }
+      }
+    ]
+  },
+  "bilingual_terms": {
+    "schema_version": 1,
+    "revision": "recovery-bilingual-terms-v1",
+    "policy": "longest reviewed phrase projection alongside original; preserve all original/negation/comparison/condition/numbers/cards/solver/edition; no deletions",
+    "removed_spans": [],
+    "entries": [
+      {
+        "ko": "약형",
+        "en": "weak form",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "푸아송",
+        "en": "Poisson",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "경계항",
+        "en": "boundary term",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "강체모드",
+        "en": "rigid modes",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "병진",
+        "en": "translation",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "회전",
+        "en": "rotation",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "작은 변형",
+        "en": "small strain",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "등방탄성",
+        "en": "isotropic elasticity",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "응력",
+        "en": "stress",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "변위",
+        "en": "displacement",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "대칭부",
+        "en": "symmetric",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "탄성",
+        "en": "elasticity",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "계수",
+        "en": "parameters",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "기울기",
+        "en": "gradient",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "정수압",
+        "en": "hydrostatic",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "유한변형",
+        "en": "finite deformation",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "체적력",
+        "en": "body force",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "퍼텐셜",
+        "en": "potential",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "항복판정",
+        "en": "yield test",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "이완계수",
+        "en": "relaxation modulus",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "주파수",
+        "en": "frequency",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "장시간",
+        "en": "long-time",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "마찰각",
+        "en": "friction angle",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "팽창각",
+        "en": "dilation angle",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "이력",
+        "en": "history",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "내부",
+        "en": "internal",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      },
+      {
+        "ko": "성분",
+        "en": "component",
+        "reviewer": "C",
+        "status": "recovery_independent_translation_review_pending"
+      }
+    ]
+  },
+  "language_cases": [
+    {
+      "question": "응력이 없는 경우와 아닌 경우를 비교해줘; LAW36, 2.23, 10 MPa는 바꾸지 마.",
+      "language": "ko",
+      "expected": "Preserve every locked term/negation/condition; no source sufficiency inference."
+    },
+    {
+      "question": "正規化緩和係数の長時間極限は？",
+      "language": "ja",
+      "expected": "LANGUAGE_COVERAGE_UNVERIFIED; Prony source may exist, do not relabel SOURCE_MISSING."
+    },
+    {
+      "question": "Comparer sans frottement et avec frottement.",
+      "language": "fr",
+      "expected": "LANGUAGE_COVERAGE_UNVERIFIED; preserve sans. Contact source absence is separate."
+    },
+    {
+      "question": "Xia랑 엮은 뻣뻣함 현상이 아닐 때는?",
+      "language": "ko",
+      "expected": "Unmatched technical phrase remains; language coverage unverified, Xia variant ambiguous; not out_of_scope."
+    },
+    {
+      "question": "If J <= 0, can this log(J) energy be used?",
+      "language": "en",
+      "expected": "Preserve if/J/<=/0; hyper_energy supports explaining invalid logarithm domain."
+    },
+    {
+      "question": "Use CalculiX 2.23, not DOLFINx 0.10.0 defaults.",
+      "language": "en",
+      "expected": "Both solver/edition/negation survive; DOLFINx cannot justify ccx defaults."
+    }
+  ],
+  "verification": {
+    "development": 36,
+    "evaluation": 60,
+    "covered_evaluation": 24,
+    "unique_covered_intents": 12,
+    "insufficient_evaluation": 18,
+    "noncae_evaluation": 18,
+    "expected_chunk_ids_exist": true,
+    "identical_question_text_duplicates": 0,
+    "status": "data_structure_checked_only",
+    "f_explicit_facet_correction": {
+      "status": "pass",
+      "inspected_questions": 96,
+      "changed_records": [
+        {
+          "id": "evaluation-25",
+          "question": "OpenRadioss LAW36의 기본 plastic strain 곡선 보간법은?",
+          "before": {
+            "solver": "general",
+            "edition": null,
+            "topics": [
+              "radioss_cards"
+            ]
+          },
+          "after": {
+            "solver": "radioss",
+            "edition": null,
+            "topics": [
+              "radioss_cards"
+            ]
+          }
+        },
+        {
+          "id": "evaluation-26",
+          "question": "CalculiX 2.23 *PLASTIC의 온도 보간 default는?",
+          "before": {
+            "solver": "general",
+            "edition": null,
+            "topics": [
+              "calculix_cards"
+            ]
+          },
+          "after": {
+            "solver": "calculix",
+            "edition": "2.23",
+            "topics": [
+              "calculix_cards"
+            ]
+          }
+        },
+        {
+          "id": "evaluation-31",
+          "question": "Does Radioss LAW10 use this exact neo-Hookean energy?",
+          "before": {
+            "solver": "general",
+            "edition": null,
+            "topics": [
+              "radioss_cards"
+            ]
+          },
+          "after": {
+            "solver": "radioss",
+            "edition": null,
+            "topics": [
+              "radioss_cards"
+            ]
+          }
+        },
+        {
+          "id": "evaluation-32",
+          "question": "What is the CalculiX RF sign for a loaded constrained node?",
+          "before": {
+            "solver": "general",
+            "edition": null,
+            "topics": [
+              "calculix_cards"
+            ]
+          },
+          "after": {
+            "solver": "calculix",
+            "edition": null,
+            "topics": [
+              "calculix_cards"
+            ]
+          }
+        },
+        {
+          "id": "evaluation-39",
+          "question": "Is the raw Radioss strain tensor engineering shear or tensor shear?",
+          "before": {
+            "solver": "general",
+            "edition": null,
+            "topics": [
+              "measures"
+            ]
+          },
+          "after": {
+            "solver": "radioss",
+            "edition": null,
+            "topics": [
+              "measures"
+            ]
+          }
+        },
+        {
+          "id": "evaluation-41",
+          "question": "DOLFINx 0.11.0에서 LinearProblem의 정확한 API 변경은?",
+          "before": {
+            "solver": "fenicsx",
+            "edition": "v0.10.0",
+            "topics": [
+              "edition"
+            ]
+          },
+          "after": {
+            "solver": "fenicsx",
+            "edition": "v0.11.0",
+            "topics": [
+              "edition"
+            ]
+          }
+        }
+      ],
+      "all_explicit_solver_version_spans_preserved": true,
+      "evaluation_41_edition": "v0.11.0",
+      "evaluation_26_solver": "calculix",
+      "evaluation_26_edition": "2.23",
+      "development_same_edition_bug_count": 0
+    },
+    "development_semantic_revision": {
+      "status": "authored_and_structure_checked_independent_review_pending",
+      "noncae_domain_count": 12,
+      "noncae_domains": [
+        "weather",
+        "recipe",
+        "exchange_rate",
+        "sports_schedule",
+        "translation",
+        "passport",
+        "cafe",
+        "travel",
+        "card_bill",
+        "election_poll",
+        "investment",
+        "toast"
+      ],
+      "insufficient_questions": "Twelve explicit engineering questions aligned with their actual missing-source/data obligations, replacing topic-ID template prompts.",
+      "evaluation_tuning_performance_claims": false
+    }
+  }
+}
