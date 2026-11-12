@@ -1,0 +1,980 @@
+﻿2026-11-12T02:18:11.5834981Z Current runner version: '2.338.2'
+2026-11-12T02:18:11.5859688Z ##[group]Runner Image Provisioner
+2026-11-12T02:18:11.5860693Z Hosted Compute Agent
+2026-11-12T02:18:11.5861365Z Version: 20261028.624
+2026-11-12T02:18:11.5862011Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-12T02:18:11.5862793Z Build Date: 2026-10-28T21:51:42Z
+2026-11-12T02:18:11.5863490Z Worker ID: {05602dc0-57f6-4ae8-bccd-a510dbff2f44}
+2026-11-12T02:18:11.5864179Z Region: westus2
+2026-11-12T02:18:11.5864833Z Cloud: Azure
+2026-11-12T02:18:11.5865375Z ##[endgroup]
+2026-11-12T02:18:11.5867216Z ##[group]Operating System
+2026-11-12T02:18:11.5867922Z Ubuntu
+2026-11-12T02:18:11.5868835Z 24.04.5
+2026-11-12T02:18:11.5869506Z LTS
+2026-11-12T02:18:11.5870038Z ##[endgroup]
+2026-11-12T02:18:11.5870685Z ##[group]Runner Image
+2026-11-12T02:18:11.5871328Z Image: ubuntu-24.04
+2026-11-12T02:18:11.5871906Z Version: 20261101.360.1
+2026-11-12T02:18:11.5873267Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-12T02:18:11.5874862Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+2026-11-12T02:18:11.5875866Z ##[endgroup]
+2026-11-12T02:18:11.5877059Z ##[group]GITHUB_TOKEN Permissions
+2026-11-12T02:18:11.5879172Z Contents: read
+2026-11-12T02:18:11.5879810Z Metadata: read
+2026-11-12T02:18:11.5880476Z ##[endgroup]
+2026-11-12T02:18:11.5882544Z Secret source: Actions
+2026-11-12T02:18:11.5883837Z Cache mode: write
+2026-11-12T02:18:11.5884622Z Prepare workflow directory
+2026-11-12T02:18:11.6268187Z Prepare all required actions
+2026-11-12T02:18:11.6323330Z Getting action download info
+2026-11-12T02:18:11.9738866Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-12T02:18:12.0902615Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-11-12T02:18:12.1795024Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-11-12T02:18:12.3807644Z Complete job name: reconstructed-references
+2026-11-12T02:18:12.4837149Z ##[group]Run actions/checkout@v4
+2026-11-12T02:18:12.4838087Z with:
+2026-11-12T02:18:12.4838970Z   repository: pikachu444/caelab-workbench
+2026-11-12T02:18:12.4842860Z   token: ***
+2026-11-12T02:18:12.4843311Z   ssh-strict: true
+2026-11-12T02:18:12.4843760Z   ssh-user: git
+2026-11-12T02:18:12.4844215Z   persist-credentials: true
+2026-11-12T02:18:12.4844720Z   clean: true
+2026-11-12T02:18:12.4845172Z   sparse-checkout-cone-mode: true
+2026-11-12T02:18:12.4845701Z   fetch-depth: 1
+2026-11-12T02:18:12.4846135Z   fetch-tags: false
+2026-11-12T02:18:12.4846590Z   show-progress: true
+2026-11-12T02:18:12.4847055Z   lfs: false
+2026-11-12T02:18:12.4847473Z   submodules: false
+2026-11-12T02:18:12.4847924Z   set-safe-directory: true
+2026-11-12T02:18:12.4848589Z   allow-unsafe-pr-checkout: false
+2026-11-12T02:18:12.4849431Z ##[endgroup]
+2026-11-12T02:18:12.7528027Z Syncing repository: pikachu444/caelab-workbench
+2026-11-12T02:18:12.7530144Z ##[group]Getting Git version info
+2026-11-12T02:18:12.7531035Z Working directory is '/home/runner/work/caelab-workbench/caelab-workbench'
+2026-11-12T02:18:12.7532185Z [command]/usr/bin/git version
+2026-11-12T02:18:12.7617116Z git version 2.56.0
+2026-11-12T02:18:12.7642171Z ##[endgroup]
+2026-11-12T02:18:12.7667134Z Temporarily overriding HOME='/home/runner/work/_temp/a978be6e-bef9-4894-a709-65df81d1555e' before making global git config changes
+2026-11-12T02:18:12.7669657Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-12T02:18:12.7674051Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/caelab-workbench/caelab-workbench
+2026-11-12T02:18:12.7727000Z Deleting the contents of '/home/runner/work/caelab-workbench/caelab-workbench'
+2026-11-12T02:18:12.7732309Z ##[group]Initializing the repository
+2026-11-12T02:18:12.7757851Z [command]/usr/bin/git init /home/runner/work/caelab-workbench/caelab-workbench
+2026-11-12T02:18:12.7888461Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-12T02:18:12.7890217Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-12T02:18:12.7891888Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-12T02:18:12.7892914Z hint: call:
+2026-11-12T02:18:12.7893340Z hint:
+2026-11-12T02:18:12.7893876Z hint: 	git config --global init.defaultBranch <name>
+2026-11-12T02:18:12.7894490Z hint:
+2026-11-12T02:18:12.7895084Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-12T02:18:12.7896040Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-12T02:18:12.7896799Z hint:
+2026-11-12T02:18:12.7897231Z hint: 	git branch -m <name>
+2026-11-12T02:18:12.7897719Z hint:
+2026-11-12T02:18:12.7898649Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-12T02:18:12.7901503Z Initialized empty Git repository in /home/runner/work/caelab-workbench/caelab-workbench/.git/
+2026-11-12T02:18:12.7915291Z [command]/usr/bin/git remote add origin https://github.com/pikachu444/caelab-workbench
+2026-11-12T02:18:12.7968081Z ##[endgroup]
+2026-11-12T02:18:12.7970040Z ##[group]Disabling automatic garbage collection
+2026-11-12T02:18:12.7972406Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-12T02:18:12.8010343Z ##[endgroup]
+2026-11-12T02:18:12.8011763Z ##[group]Setting up auth
+2026-11-12T02:18:12.8020040Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-12T02:18:12.8061574Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-12T02:18:12.8461835Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-12T02:18:12.8510957Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-12T02:18:12.8760171Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-12T02:18:12.8804802Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-12T02:18:12.9051656Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-12T02:18:12.9109311Z ##[endgroup]
+2026-11-12T02:18:12.9110294Z ##[group]Fetching the repository
+2026-11-12T02:18:12.9122610Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +f975d44142408c491a4fad083f24e7945cb0a086:refs/remotes/pull/103/merge
+2026-11-12T02:18:13.4767949Z From https://github.com/pikachu444/caelab-workbench
+2026-11-12T02:18:13.4770960Z  * [new ref]         f975d44142408c491a4fad083f24e7945cb0a086 -> pull/103/merge
+2026-11-12T02:18:13.4776420Z ##[endgroup]
+2026-11-12T02:18:13.4778871Z ##[group]Determining the checkout info
+2026-11-12T02:18:13.4781441Z ##[endgroup]
+2026-11-12T02:18:13.4785722Z [command]/usr/bin/git sparse-checkout disable
+2026-11-12T02:18:13.4849722Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-12T02:18:13.4887881Z ##[group]Checking out the ref
+2026-11-12T02:18:13.4893411Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/103/merge
+2026-11-12T02:18:13.5248639Z Note: switching to 'refs/remotes/pull/103/merge'.
+2026-11-12T02:18:13.5250007Z 
+2026-11-12T02:18:13.5251208Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-12T02:18:13.5254099Z changes and commit them, and you can discard any commits you make in this
+2026-11-12T02:18:13.5256855Z state without impacting any branches by switching back to a branch.
+2026-11-12T02:18:13.5257996Z 
+2026-11-12T02:18:13.5259129Z If you want to create a new branch to retain commits you create, you may
+2026-11-12T02:18:13.5261820Z do so (now or later) by using -c with the switch command. Example:
+2026-11-12T02:18:13.5262777Z 
+2026-11-12T02:18:13.5263187Z   git switch -c <new-branch-name>
+2026-11-12T02:18:13.5263838Z 
+2026-11-12T02:18:13.5264489Z Or undo this operation with:
+2026-11-12T02:18:13.5265340Z 
+2026-11-12T02:18:13.5265851Z   git switch -
+2026-11-12T02:18:13.5266567Z 
+2026-11-12T02:18:13.5267499Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-12T02:18:13.5269165Z 
+2026-11-12T02:18:13.5270710Z HEAD is now at f975d44 Merge 98be90bfe1d8d02ae099bc0aecf84d1d11110218 into 104cdd6888a5554eecc8cf965c60ff1bd980b6da
+2026-11-12T02:18:13.5275635Z ##[endgroup]
+2026-11-12T02:18:13.5314095Z [command]/usr/bin/git log -1 --format=%H
+2026-11-12T02:18:13.5347694Z f975d44142408c491a4fad083f24e7945cb0a086
+2026-11-12T02:18:13.5766865Z ##[group]Run actions/setup-python@v5
+2026-11-12T02:18:13.5768357Z with:
+2026-11-12T02:18:13.5769319Z   python-version: 3.12
+2026-11-12T02:18:13.5770417Z   check-latest: false
+2026-11-12T02:18:13.5781106Z   token: ***
+2026-11-12T02:18:13.5782108Z   update-environment: true
+2026-11-12T02:18:13.5783274Z   allow-prereleases: false
+2026-11-12T02:18:13.5784419Z   freethreaded: false
+2026-11-12T02:18:13.5785445Z ##[endgroup]
+2026-11-12T02:18:13.7231739Z ##[group]Installed versions
+2026-11-12T02:18:13.7329532Z (node:2835) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-12T02:18:13.7334410Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-12T02:18:13.7337225Z Successfully set up CPython (3.12.16)
+2026-11-12T02:18:13.7340496Z ##[endgroup]
+2026-11-12T02:18:13.7609283Z ##[group]Run python docs/specs/cae-research/check_handoff.py
+2026-11-12T02:18:13.7612266Z python docs/specs/cae-research/check_handoff.py
+2026-11-12T02:18:13.7659548Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:18:13.7660744Z env:
+2026-11-12T02:18:13.7661961Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:13.7665448Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:18:13.7669220Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:13.7672018Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:13.7674850Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:13.7677675Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:18:13.7679530Z ##[endgroup]
+2026-11-12T02:18:14.1882432Z {"status": "pass", "asset_files": 52, "scope": "exact committed file identity, JSON readability, Python syntax; no product/native acceptance"}
+2026-11-12T02:18:14.1996877Z ##[group]Run python -m pip install numpy==2.3.5 scipy==1.17.0 pyvisco==2.1.3 filelock==4.2.10
+2026-11-12T02:18:14.1997620Z python -m pip install numpy==2.3.5 scipy==1.17.0 pyvisco==2.1.3 filelock==4.2.10
+2026-11-12T02:18:14.2019514Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:18:14.2019849Z env:
+2026-11-12T02:18:14.2020182Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:14.2020687Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:18:14.2021190Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:14.2021631Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:14.2022075Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:14.2022532Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:18:14.2022911Z ##[endgroup]
+2026-11-12T02:18:16.2402082Z Collecting numpy==2.3.5
+2026-11-12T02:18:16.3195496Z   Downloading numpy-2.3.5-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+2026-11-12T02:18:16.4823289Z Collecting scipy==1.17.0
+2026-11-12T02:18:16.4919690Z   Downloading scipy-1.17.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+2026-11-12T02:18:16.6064775Z Collecting pyvisco==2.1.3
+2026-11-12T02:18:16.6894393Z   Downloading pyvisco-2.1.3-py3-none-any.whl.metadata (7.5 kB)
+2026-11-12T02:18:16.7191366Z Collecting filelock==4.2.10
+2026-11-12T02:18:16.7287489Z   Downloading filelock-4.2.10-py3-none-any.whl.metadata (2.3 kB)
+2026-11-12T02:18:16.8599383Z Collecting pandas>=2.1 (from pyvisco==2.1.3)
+2026-11-12T02:18:16.8677076Z   Downloading pandas-3.1.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (16 kB)
+2026-11-12T02:18:17.0213251Z Collecting matplotlib>=3.8 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.0303813Z   Downloading matplotlib-3.11.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (80 kB)
+2026-11-12T02:18:17.0869102Z Collecting ipython>=8.20 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.0959416Z   Downloading ipython-9.18.1-py3-none-any.whl.metadata (4.6 kB)
+2026-11-12T02:18:17.1184590Z Collecting markdown>=3.5 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.1260243Z   Downloading markdown-3.11.3-py3-none-any.whl.metadata (5.1 kB)
+2026-11-12T02:18:17.1451510Z Collecting jinja2>=3.1 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.1528443Z   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2026-11-12T02:18:17.1814943Z Collecting ipywidgets>=8.1 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.1901388Z   Downloading ipywidgets-8.1.9-py3-none-any.whl.metadata (2.4 kB)
+2026-11-12T02:18:17.2106706Z Collecting ipympl>=0.9.3 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.2317580Z   Downloading ipympl-0.10.0-py3-none-any.whl.metadata (9.4 kB)
+2026-11-12T02:18:17.2803354Z Collecting notebook>=7.1 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.3223641Z   Downloading notebook-7.6.5-py3-none-any.whl.metadata (10 kB)
+2026-11-12T02:18:17.4276187Z Collecting jupyterlab>=4.1 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.4492342Z   Downloading jupyterlab-4.6.6-py3-none-any.whl.metadata (16 kB)
+2026-11-12T02:18:17.4870773Z Collecting voila>=0.5 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.5324287Z   Downloading voila-0.5.13-py3-none-any.whl.metadata (9.4 kB)
+2026-11-12T02:18:17.5546667Z Collecting openpyxl>=3.1 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.5652092Z   Downloading openpyxl-3.1.5-py2.py3-none-any.whl.metadata (2.5 kB)
+2026-11-12T02:18:17.5806845Z Collecting xlrd>=2.0 (from pyvisco==2.1.3)
+2026-11-12T02:18:17.5885844Z   Downloading xlrd-2.0.2-py2.py3-none-any.whl.metadata (3.5 kB)
+2026-11-12T02:18:17.7783654Z Collecting pillow (from ipympl>=0.9.3->pyvisco==2.1.3)
+2026-11-12T02:18:17.7863163Z   Downloading pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+2026-11-12T02:18:17.8266967Z Collecting traitlets<6 (from ipympl>=0.9.3->pyvisco==2.1.3)
+2026-11-12T02:18:17.8345961Z   Downloading traitlets-5.16.1-py3-none-any.whl.metadata (10 kB)
+2026-11-12T02:18:17.8570079Z Collecting ipython-pygments-lexers>=1.0.0 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:17.8702940Z   Downloading ipython_pygments_lexers-1.1.1-py3-none-any.whl.metadata (1.1 kB)
+2026-11-12T02:18:17.8878440Z Collecting jedi>=0.18.2 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:17.8970431Z   Downloading jedi-0.20.1-py2.py3-none-any.whl.metadata (23 kB)
+2026-11-12T02:18:17.9168220Z Collecting matplotlib-inline>=0.1.6 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:17.9311689Z   Downloading matplotlib_inline-0.2.2-py3-none-any.whl.metadata (2.4 kB)
+2026-11-12T02:18:17.9495845Z Collecting pexpect>4.6 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:17.9588246Z   Downloading pexpect-4.9.0-py2.py3-none-any.whl.metadata (2.5 kB)
+2026-11-12T02:18:17.9941281Z Collecting prompt_toolkit<3.1.0,>=3.0.41 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:18.0030693Z   Downloading prompt_toolkit-3.0.53-py3-none-any.whl.metadata (6.4 kB)
+2026-11-12T02:18:18.0997530Z Collecting psutil>=7 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:18.1079538Z   Downloading psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+2026-11-12T02:18:18.2274979Z Collecting pygments>=2.14.0 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:18.2371978Z   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-11-12T02:18:18.2919812Z Collecting stack_data>=0.6.0 (from ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:18.3087274Z   Downloading stack_data-0.6.3-py3-none-any.whl.metadata (18 kB)
+2026-11-12T02:18:18.3902755Z Collecting comm>=0.1.3 (from ipywidgets>=8.1->pyvisco==2.1.3)
+2026-11-12T02:18:18.4402825Z   Downloading comm-0.2.3-py3-none-any.whl.metadata (3.7 kB)
+2026-11-12T02:18:18.5077916Z Collecting widgetsnbextension~=4.0.16 (from ipywidgets>=8.1->pyvisco==2.1.3)
+2026-11-12T02:18:18.5284238Z   Downloading widgetsnbextension-4.0.16-py3-none-any.whl.metadata (1.6 kB)
+2026-11-12T02:18:18.5672178Z Collecting jupyterlab_widgets~=3.0.17 (from ipywidgets>=8.1->pyvisco==2.1.3)
+2026-11-12T02:18:18.5753365Z   Downloading jupyterlab_widgets-3.0.17-py3-none-any.whl.metadata (20 kB)
+2026-11-12T02:18:18.6959399Z Collecting contourpy>=1.0.1 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:18.7053948Z   Downloading contourpy-1.4.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (3.8 kB)
+2026-11-12T02:18:18.7213355Z Collecting cycler>=0.10 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:18.7319613Z   Downloading cycler-0.12.1-py3-none-any.whl.metadata (3.8 kB)
+2026-11-12T02:18:18.8933738Z Collecting fonttools>=4.28.2 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:18.9026732Z   Downloading fonttools-4.68.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (139 kB)
+2026-11-12T02:18:19.0243323Z Collecting kiwisolver>=1.3.1 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:19.0349686Z   Downloading kiwisolver-1.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (5.2 kB)
+2026-11-12T02:18:19.1033143Z Collecting packaging>=20.0 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:19.1112672Z   Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+2026-11-12T02:18:19.1420324Z Collecting pyparsing>=3 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:19.1501086Z   Downloading pyparsing-3.3.3-py3-none-any.whl.metadata (5.9 kB)
+2026-11-12T02:18:19.1677136Z Collecting python-dateutil>=2.7 (from matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:19.1777802Z   Downloading python_dateutil-4.0.0-py3-none-any.whl.metadata (7.3 kB)
+2026-11-12T02:18:19.2039892Z Collecting wcwidth>=0.1.4 (from prompt_toolkit<3.1.0,>=3.0.41->ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:19.2208818Z   Downloading wcwidth-0.9.4-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (23 kB)
+2026-11-12T02:18:19.2529636Z Collecting parso<0.9.0,>=0.8.7 (from jedi>=0.18.2->ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:19.2818830Z   Downloading parso-0.8.7-py2.py3-none-any.whl.metadata (8.2 kB)
+2026-11-12T02:18:19.3530743Z Collecting MarkupSafe>=2.0 (from jinja2>=3.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.3729848Z   Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2026-11-12T02:18:19.3891295Z Collecting async-lru>=1.0.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.4263185Z   Downloading async_lru-2.4.0-py3-none-any.whl.metadata (10 kB)
+2026-11-12T02:18:19.4509746Z Collecting httpx<1,>=0.25.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.4631169Z   Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+2026-11-12T02:18:19.4946991Z Collecting ipykernel!=6.30.0,>=6.5.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.5197725Z   Downloading ipykernel-7.4.0-py3-none-any.whl.metadata (3.4 kB)
+2026-11-12T02:18:19.5398931Z Collecting jupyter-builder>=1.0.2 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.5510320Z   Downloading jupyter_builder-1.3.0-py3-none-any.whl.metadata (8.5 kB)
+2026-11-12T02:18:19.5757404Z Collecting jupyter-core (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.5944683Z   Downloading jupyter_core-5.9.1-py3-none-any.whl.metadata (1.5 kB)
+2026-11-12T02:18:19.6144726Z Collecting jupyter-lsp>=2.0.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.6235793Z   Downloading jupyter_lsp-2.3.1-py3-none-any.whl.metadata (1.8 kB)
+2026-11-12T02:18:19.6563544Z Collecting jupyter-server<3,>=2.19.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.6726783Z   Downloading jupyter_server-2.21.1-py3-none-any.whl.metadata (8.5 kB)
+2026-11-12T02:18:19.6997520Z Collecting jupyterlab-server<3,>=2.28.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.7197781Z   Downloading jupyterlab_server-2.28.1-py3-none-any.whl.metadata (5.8 kB)
+2026-11-12T02:18:19.7533810Z Collecting notebook-shim>=0.2 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.7641957Z   Downloading notebook_shim-0.2.4-py3-none-any.whl.metadata (4.0 kB)
+2026-11-12T02:18:19.8167391Z Collecting tornado>=6.2.0 (from jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.8245590Z   Downloading tornado-6.6.1-cp311-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (2.6 kB)
+2026-11-12T02:18:19.8501116Z Collecting anyio (from httpx<1,>=0.25.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.8575290Z   Downloading anyio-4.16.0-py3-none-any.whl.metadata (4.7 kB)
+2026-11-12T02:18:19.8818408Z Collecting certifi (from httpx<1,>=0.25.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.8893710Z   Downloading certifi-2026.10.23-py3-none-any.whl.metadata (2.5 kB)
+2026-11-12T02:18:19.9167203Z Collecting httpcore==1.* (from httpx<1,>=0.25.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.9266814Z   Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+2026-11-12T02:18:19.9534572Z Collecting idna (from httpx<1,>=0.25.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.9726170Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+2026-11-12T02:18:19.9888174Z Collecting h11>=0.16 (from httpcore==1.*->httpx<1,>=0.25.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:19.9966032Z   Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+2026-11-12T02:18:20.0332027Z Collecting argon2-cffi>=21.1 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.0403621Z   Downloading argon2_cffi-25.1.0-py3-none-any.whl.metadata (4.1 kB)
+2026-11-12T02:18:20.0701983Z Collecting jupyter-client>=7.4.4 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.0802652Z   Downloading jupyter_client-8.10.0-py3-none-any.whl.metadata (8.5 kB)
+2026-11-12T02:18:20.1020233Z Collecting jupyter-events>=0.11.0 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.1098043Z   Downloading jupyter_events-0.12.1-py3-none-any.whl.metadata (5.8 kB)
+2026-11-12T02:18:20.1455244Z Collecting jupyter-server-terminals>=0.4.4 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.1533558Z   Downloading jupyter_server_terminals-0.5.4-py3-none-any.whl.metadata (5.9 kB)
+2026-11-12T02:18:20.1799178Z Collecting nbconvert>=6.4.4 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.1870684Z   Downloading nbconvert-7.17.2-py3-none-any.whl.metadata (8.4 kB)
+2026-11-12T02:18:20.2127832Z Collecting nbformat>=5.3.0 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.2200938Z   Downloading nbformat-5.11.1-py3-none-any.whl.metadata (3.7 kB)
+2026-11-12T02:18:20.2427091Z Collecting prometheus-client>=0.9 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.2502263Z   Downloading prometheus_client-0.26.0-py3-none-any.whl.metadata (2.1 kB)
+2026-11-12T02:18:20.4811107Z Collecting pyzmq>=24 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.4888506Z   Downloading pyzmq-27.3.0-cp312-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl.metadata (3.8 kB)
+2026-11-12T02:18:20.5105844Z Collecting send2trash>=1.8.2 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.5180158Z   Downloading send2trash-2.2.0-py3-none-any.whl.metadata (4.1 kB)
+2026-11-12T02:18:20.5411440Z Collecting terminado>=0.8.3 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.5488247Z   Downloading terminado-0.18.1-py3-none-any.whl.metadata (5.8 kB)
+2026-11-12T02:18:20.5867477Z Collecting websocket-client>=1.7 (from jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.5983424Z   Downloading websocket_client-1.9.2-py3-none-any.whl.metadata (8.3 kB)
+2026-11-12T02:18:20.6187262Z Collecting babel>=2.10 (from jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.6266567Z   Downloading babel-2.18.0-py3-none-any.whl.metadata (2.2 kB)
+2026-11-12T02:18:20.6521876Z Collecting json5>=0.9.0 (from jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.6731897Z   Downloading json5-0.17.3-py3-none-any.whl.metadata (27 kB)
+2026-11-12T02:18:20.6999797Z Collecting jsonschema>=4.18.0 (from jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.7122366Z   Downloading jsonschema-4.26.0-py3-none-any.whl.metadata (7.6 kB)
+2026-11-12T02:18:20.7428266Z Collecting requests>=2.31 (from jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.7517332Z   Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+2026-11-12T02:18:20.8146209Z Collecting typing_extensions>=4.16.0 (from anyio->httpx<1,>=0.25.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.8230205Z   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-11-12T02:18:20.8433527Z Collecting argon2-cffi-bindings (from argon2-cffi>=21.1->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.8508002Z   Downloading argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl.metadata (7.5 kB)
+2026-11-12T02:18:20.9460882Z Collecting debugpy>=1.6.5 (from ipykernel!=6.30.0,>=6.5.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.9581798Z   Downloading debugpy-1.8.22-cp312-cp312-manylinux_2_34_x86_64.whl.metadata (1.4 kB)
+2026-11-12T02:18:20.9801372Z Collecting nest-asyncio2>=1.7.0 (from ipykernel!=6.30.0,>=6.5.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:20.9875811Z   Downloading nest_asyncio2-1.7.4-py3-none-any.whl.metadata (7.0 kB)
+2026-11-12T02:18:21.0125560Z Collecting attrs>=22.2.0 (from jsonschema>=4.18.0->jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.0203384Z   Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+2026-11-12T02:18:21.0383856Z Collecting jsonschema-specifications>=2023.03.6 (from jsonschema>=4.18.0->jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.0468915Z   Downloading jsonschema_specifications-2025.9.1-py3-none-any.whl.metadata (2.9 kB)
+2026-11-12T02:18:21.0728999Z Collecting referencing>=0.28.4 (from jsonschema>=4.18.0->jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.0807462Z   Downloading referencing-0.37.0-py3-none-any.whl.metadata (2.8 kB)
+2026-11-12T02:18:21.3408827Z Collecting rpds-py>=0.25.0 (from jsonschema>=4.18.0->jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.3489762Z   Downloading rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.1 kB)
+2026-11-12T02:18:21.3850124Z Collecting platformdirs>=2.5 (from jupyter-core->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.4014811Z   Downloading platformdirs-4.14.5-py3-none-any.whl.metadata (5.7 kB)
+2026-11-12T02:18:21.4227687Z Collecting python-json-logger>=2.0.4 (from jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.4328800Z   Downloading python_json_logger-4.2.0-py3-none-any.whl.metadata (2.9 kB)
+2026-11-12T02:18:21.4722560Z Collecting pyyaml>=5.3 (from jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.4798749Z   Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+2026-11-12T02:18:21.4937273Z Collecting rfc3339-validator (from jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.5011798Z   Downloading rfc3339_validator-0.1.4-py2.py3-none-any.whl.metadata (1.5 kB)
+2026-11-12T02:18:21.5148638Z Collecting rfc3986-validator>=0.1.1 (from jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.5229107Z   Downloading rfc3986_validator-0.1.1-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-11-12T02:18:21.5440773Z Collecting fqdn (from jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.5522276Z   Downloading fqdn-1.6.0-py3-none-any.whl.metadata (9.4 kB)
+2026-11-12T02:18:21.5897105Z Collecting isoduration (from jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.5967857Z   Downloading isoduration-20.11.0-py3-none-any.whl.metadata (5.7 kB)
+2026-11-12T02:18:21.6182772Z Collecting jsonpointer>1.13 (from jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.6256304Z   Downloading jsonpointer-3.12-py3-none-any.whl.metadata (2.7 kB)
+2026-11-12T02:18:21.6429724Z Collecting rfc3987-syntax>=1.1.0 (from jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.6501478Z   Downloading rfc3987_syntax-1.1.0-py3-none-any.whl.metadata (7.7 kB)
+2026-11-12T02:18:21.6643575Z Collecting uri-template (from jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.6725010Z   Downloading uri_template-1.3.0-py3-none-any.whl.metadata (8.8 kB)
+2026-11-12T02:18:21.6903571Z Collecting webcolors>=24.6.0 (from jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.6983012Z   Downloading webcolors-25.10.0-py3-none-any.whl.metadata (2.2 kB)
+2026-11-12T02:18:21.7347642Z Collecting beautifulsoup4 (from nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.7424461Z   Downloading beautifulsoup4-4.15.0-py3-none-any.whl.metadata (3.8 kB)
+2026-11-12T02:18:21.7709975Z Collecting bleach!=5.0.0 (from bleach[css]!=5.0.0->nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.7795135Z   Downloading bleach-6.4.0-py3-none-any.whl.metadata (32 kB)
+2026-11-12T02:18:21.7969031Z Collecting defusedxml (from nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.8044280Z   Downloading defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+2026-11-12T02:18:21.8268172Z Collecting jupyterlab-pygments (from nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.8355063Z   Downloading jupyterlab_pygments-0.3.0-py3-none-any.whl.metadata (4.4 kB)
+2026-11-12T02:18:21.8602833Z Collecting mistune<4,>=2.0.3 (from nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.8678593Z   Downloading mistune-3.4.0-py3-none-any.whl.metadata (2.1 kB)
+2026-11-12T02:18:21.8865895Z Collecting nbclient>=0.5.0 (from nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.8942910Z   Downloading nbclient-0.11.0-py3-none-any.whl.metadata (7.3 kB)
+2026-11-12T02:18:21.9119490Z Collecting pandocfilters>=1.4.1 (from nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.9193043Z   Downloading pandocfilters-1.5.1-py2.py3-none-any.whl.metadata (9.0 kB)
+2026-11-12T02:18:21.9382582Z Collecting webencodings (from bleach!=5.0.0->bleach[css]!=5.0.0->nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.9455367Z   Downloading webencodings-0.6.1-py3-none-any.whl.metadata (3.4 kB)
+2026-11-12T02:18:21.9624357Z Collecting tinycss2>=1.1.0 (from bleach[css]!=5.0.0->nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:21.9702746Z   Downloading tinycss2-1.5.1-py3-none-any.whl.metadata (3.0 kB)
+2026-11-12T02:18:21.9964863Z Collecting fastjsonschema>=2.15 (from nbformat>=5.3.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.0041148Z   Downloading fastjsonschema-2.22.3-py3-none-any.whl.metadata (2.1 kB)
+2026-11-12T02:18:22.0333974Z Collecting et-xmlfile (from openpyxl>=3.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.0428017Z   Downloading et_xmlfile-2.0.0-py3-none-any.whl.metadata (2.7 kB)
+2026-11-12T02:18:22.0654322Z Collecting ptyprocess>=0.5 (from pexpect>4.6->ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:22.0731591Z   Downloading ptyprocess-0.7.0-py2.py3-none-any.whl.metadata (1.3 kB)
+2026-11-12T02:18:22.0994841Z Collecting tzdata (from python-dateutil>=2.7->matplotlib>=3.8->pyvisco==2.1.3)
+2026-11-12T02:18:22.1072069Z   Downloading tzdata-2026.6-py2.py3-none-any.whl.metadata (1.4 kB)
+2026-11-12T02:18:22.2407878Z Collecting charset_normalizer<4,>=2 (from requests>=2.31->jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.2491993Z   Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+2026-11-12T02:18:22.2825083Z Collecting urllib3<3,>=1.26 (from requests>=2.31->jupyterlab-server<3,>=2.28.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.2899300Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+2026-11-12T02:18:22.3545179Z Collecting lark>=1.2.2 (from rfc3987-syntax>=1.1.0->jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.3638031Z   Downloading lark-1.3.1-py3-none-any.whl.metadata (1.8 kB)
+2026-11-12T02:18:22.3984473Z Collecting executing>=1.2.0 (from stack_data>=0.6.0->ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:22.4057869Z   Downloading executing-2.3.0-py3-none-any.whl.metadata (9.1 kB)
+2026-11-12T02:18:22.4257150Z Collecting asttokens>=2.1.0 (from stack_data>=0.6.0->ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:22.4336607Z   Downloading asttokens-3.0.2-py3-none-any.whl.metadata (5.7 kB)
+2026-11-12T02:18:22.4510053Z Collecting pure-eval (from stack_data>=0.6.0->ipython>=8.20->pyvisco==2.1.3)
+2026-11-12T02:18:22.4581688Z   Downloading pure_eval-0.2.4-py3-none-any.whl.metadata (6.4 kB)
+2026-11-12T02:18:22.6123939Z Collecting websockets>=9.0 (from voila>=0.5->pyvisco==2.1.3)
+2026-11-12T02:18:22.6201316Z   Downloading websockets-17.4-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (6.3 kB)
+2026-11-12T02:18:22.7439789Z Collecting cffi>=1.0.1 (from argon2-cffi-bindings->argon2-cffi>=21.1->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.7572400Z   Downloading cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+2026-11-12T02:18:22.7740965Z Collecting pycparser (from cffi>=1.0.1->argon2-cffi-bindings->argon2-cffi>=21.1->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.7823113Z   Downloading pycparser-3.12-py3-none-any.whl.metadata (9.7 kB)
+2026-11-12T02:18:22.8064153Z Collecting soupsieve>=1.6.1 (from beautifulsoup4->nbconvert>=6.4.4->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.8136200Z   Downloading soupsieve-4.1-py3-none-any.whl.metadata (4.4 kB)
+2026-11-12T02:18:22.8381190Z Collecting arrow>=0.15.0 (from isoduration->jsonschema[format-nongpl]>=4.18.0->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.8496864Z   Downloading arrow-1.4.0-py3-none-any.whl.metadata (7.7 kB)
+2026-11-12T02:18:22.8736448Z Collecting six (from rfc3339-validator->jupyter-events>=0.11.0->jupyter-server<3,>=2.19.0->jupyterlab>=4.1->pyvisco==2.1.3)
+2026-11-12T02:18:22.8812980Z   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-11-12T02:18:22.8977880Z Downloading numpy-2.3.5-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.6 MB)
+2026-11-12T02:18:23.2013880Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.6/16.6 MB 57.8 MB/s  0:00:00
+2026-11-12T02:18:23.2094842Z Downloading scipy-1.17.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (35.0 MB)
+2026-11-12T02:18:23.5366524Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.0/35.0 MB 107.4 MB/s  0:00:00
+2026-11-12T02:18:23.6184137Z Downloading pyvisco-2.1.3-py3-none-any.whl (44 kB)
+2026-11-12T02:18:23.6288020Z Downloading filelock-4.2.10-py3-none-any.whl (218 kB)
+2026-11-12T02:18:23.6388371Z Downloading ipympl-0.10.0-py3-none-any.whl (519 kB)
+2026-11-12T02:18:23.6537333Z Downloading ipython-9.18.1-py3-none-any.whl (649 kB)
+2026-11-12T02:18:23.6595084Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 649.8/649.8 kB 125.7 MB/s  0:00:00
+2026-11-12T02:18:23.6668698Z Downloading ipywidgets-8.1.9-py3-none-any.whl (140 kB)
+2026-11-12T02:18:23.6790370Z Downloading jupyterlab_widgets-3.0.17-py3-none-any.whl (217 kB)
+2026-11-12T02:18:23.6946676Z Downloading matplotlib-3.11.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (9.9 MB)
+2026-11-12T02:18:23.7650645Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.9/9.9 MB 141.8 MB/s  0:00:00
+2026-11-12T02:18:23.7725497Z Downloading prompt_toolkit-3.0.53-py3-none-any.whl (392 kB)
+2026-11-12T02:18:23.7841283Z Downloading traitlets-5.16.1-py3-none-any.whl (86 kB)
+2026-11-12T02:18:23.7936015Z Downloading widgetsnbextension-4.0.16-py3-none-any.whl (2.2 MB)
+2026-11-12T02:18:23.8051544Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.2/2.2 MB 213.4 MB/s  0:00:00
+2026-11-12T02:18:23.8271229Z Downloading comm-0.2.3-py3-none-any.whl (7.3 kB)
+2026-11-12T02:18:23.8365242Z Downloading contourpy-1.4.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (383 kB)
+2026-11-12T02:18:23.8467391Z Downloading cycler-0.12.1-py3-none-any.whl (8.3 kB)
+2026-11-12T02:18:23.8580045Z Downloading fonttools-4.68.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (5.4 MB)
+2026-11-12T02:18:23.8882992Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.4/5.4 MB 187.8 MB/s  0:00:00
+2026-11-12T02:18:23.9006557Z Downloading ipython_pygments_lexers-1.1.1-py3-none-any.whl (8.1 kB)
+2026-11-12T02:18:23.9107633Z Downloading jedi-0.20.1-py2.py3-none-any.whl (4.9 MB)
+2026-11-12T02:18:23.9310884Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.9/4.9 MB 256.6 MB/s  0:00:00
+2026-11-12T02:18:23.9394178Z Downloading parso-0.8.7-py2.py3-none-any.whl (107 kB)
+2026-11-12T02:18:23.9491139Z Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+2026-11-12T02:18:23.9644509Z Downloading jupyterlab-4.6.6-py3-none-any.whl (17.3 MB)
+2026-11-12T02:18:24.1737042Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 17.3/17.3 MB 82.5 MB/s  0:00:00
+2026-11-12T02:18:24.1893801Z Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-11-12T02:18:24.2159756Z Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-11-12T02:18:24.2440718Z Downloading jupyter_server-2.21.1-py3-none-any.whl (394 kB)
+2026-11-12T02:18:24.2744908Z Downloading jupyterlab_server-2.28.1-py3-none-any.whl (60 kB)
+2026-11-12T02:18:24.2959418Z Downloading anyio-4.16.0-py3-none-any.whl (134 kB)
+2026-11-12T02:18:24.3262538Z Downloading argon2_cffi-25.1.0-py3-none-any.whl (14 kB)
+2026-11-12T02:18:24.3414225Z Downloading async_lru-2.4.0-py3-none-any.whl (10 kB)
+2026-11-12T02:18:24.3527089Z Downloading babel-2.18.0-py3-none-any.whl (10.2 MB)
+2026-11-12T02:18:25.0790355Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.2/10.2 MB 13.7 MB/s  0:00:00
+2026-11-12T02:18:25.0910053Z Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+2026-11-12T02:18:25.1009737Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+2026-11-12T02:18:25.1200884Z Downloading ipykernel-7.4.0-py3-none-any.whl (123 kB)
+2026-11-12T02:18:25.1355202Z Downloading debugpy-1.8.22-cp312-cp312-manylinux_2_34_x86_64.whl (4.0 MB)
+2026-11-12T02:18:25.1960990Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.0/4.0 MB 64.3 MB/s  0:00:00
+2026-11-12T02:18:25.2053799Z Downloading json5-0.17.3-py3-none-any.whl (34 kB)
+2026-11-12T02:18:25.2172340Z Downloading jsonschema-4.26.0-py3-none-any.whl (90 kB)
+2026-11-12T02:18:25.2294461Z Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+2026-11-12T02:18:25.2405705Z Downloading jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+2026-11-12T02:18:25.2507703Z Downloading jupyter_builder-1.3.0-py3-none-any.whl (950 kB)
+2026-11-12T02:18:25.2616919Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 950.3/950.3 kB 88.2 MB/s  0:00:00
+2026-11-12T02:18:25.2693725Z Downloading jupyter_client-8.10.0-py3-none-any.whl (110 kB)
+2026-11-12T02:18:25.2804341Z Downloading jupyter_core-5.9.1-py3-none-any.whl (29 kB)
+2026-11-12T02:18:25.2924989Z Downloading jupyter_events-0.12.1-py3-none-any.whl (19 kB)
+2026-11-12T02:18:25.3048225Z Downloading jsonpointer-3.12-py3-none-any.whl (10 kB)
+2026-11-12T02:18:25.3141568Z Downloading jupyter_lsp-2.3.1-py3-none-any.whl (77 kB)
+2026-11-12T02:18:25.3242563Z Downloading jupyter_server_terminals-0.5.4-py3-none-any.whl (13 kB)
+2026-11-12T02:18:25.3375439Z Downloading kiwisolver-1.5.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.5 MB)
+2026-11-12T02:18:25.4090648Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.5/1.5 MB 18.4 MB/s  0:00:00
+2026-11-12T02:18:25.4203519Z Downloading markdown-3.11.3-py3-none-any.whl (116 kB)
+2026-11-12T02:18:25.4326564Z Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2026-11-12T02:18:25.4455050Z Downloading matplotlib_inline-0.2.2-py3-none-any.whl (9.5 kB)
+2026-11-12T02:18:25.4566302Z Downloading nbconvert-7.17.2-py3-none-any.whl (262 kB)
+2026-11-12T02:18:25.4714285Z Downloading mistune-3.4.0-py3-none-any.whl (70 kB)
+2026-11-12T02:18:25.4846698Z Downloading bleach-6.4.0-py3-none-any.whl (165 kB)
+2026-11-12T02:18:25.4945190Z Downloading nbclient-0.11.0-py3-none-any.whl (25 kB)
+2026-11-12T02:18:25.5036608Z Downloading nbformat-5.11.1-py3-none-any.whl (79 kB)
+2026-11-12T02:18:25.5142561Z Downloading fastjsonschema-2.22.3-py3-none-any.whl (28 kB)
+2026-11-12T02:18:25.5266093Z Downloading nest_asyncio2-1.7.4-py3-none-any.whl (8.5 kB)
+2026-11-12T02:18:25.5362786Z Downloading notebook-7.6.5-py3-none-any.whl (5.6 MB)
+2026-11-12T02:18:25.5580828Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.6/5.6 MB 279.6 MB/s  0:00:00
+2026-11-12T02:18:25.5656842Z Downloading notebook_shim-0.2.4-py3-none-any.whl (13 kB)
+2026-11-12T02:18:25.5756448Z Downloading openpyxl-3.1.5-py2.py3-none-any.whl (250 kB)
+2026-11-12T02:18:25.5859672Z Downloading packaging-26.3-py3-none-any.whl (129 kB)
+2026-11-12T02:18:25.5979352Z Downloading pandas-3.1.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (12.0 MB)
+2026-11-12T02:18:25.6621214Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12.0/12.0 MB 191.0 MB/s  0:00:00
+2026-11-12T02:18:25.6733036Z Downloading pandocfilters-1.5.1-py2.py3-none-any.whl (8.7 kB)
+2026-11-12T02:18:25.6875801Z Downloading pexpect-4.9.0-py2.py3-none-any.whl (63 kB)
+2026-11-12T02:18:25.7017777Z Downloading pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (7.1 MB)
+2026-11-12T02:18:25.7278807Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 7.1/7.1 MB 295.9 MB/s  0:00:00
+2026-11-12T02:18:25.7355545Z Downloading platformdirs-4.14.5-py3-none-any.whl (35 kB)
+2026-11-12T02:18:25.7456365Z Downloading prometheus_client-0.26.0-py3-none-any.whl (64 kB)
+2026-11-12T02:18:25.7558240Z Downloading psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+2026-11-12T02:18:25.7653073Z Downloading ptyprocess-0.7.0-py2.py3-none-any.whl (13 kB)
+2026-11-12T02:18:25.7751279Z Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-11-12T02:18:25.7828955Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 196.1 MB/s  0:00:00
+2026-11-12T02:18:25.7918709Z Downloading pyparsing-3.3.3-py3-none-any.whl (126 kB)
+2026-11-12T02:18:25.8041861Z Downloading python_dateutil-4.0.0-py3-none-any.whl (92 kB)
+2026-11-12T02:18:25.8142649Z Downloading python_json_logger-4.2.0-py3-none-any.whl (14 kB)
+2026-11-12T02:18:25.8250084Z Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+2026-11-12T02:18:25.8312599Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 807.9/807.9 kB 159.5 MB/s  0:00:00
+2026-11-12T02:18:25.8400974Z Downloading pyzmq-27.3.0-cp312-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl (855 kB)
+2026-11-12T02:18:25.8591569Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 855.2/855.2 kB 81.5 MB/s  0:00:00
+2026-11-12T02:18:25.8720359Z Downloading referencing-0.37.0-py3-none-any.whl (26 kB)
+2026-11-12T02:18:25.8810399Z Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+2026-11-12T02:18:25.8906151Z Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (257 kB)
+2026-11-12T02:18:25.9014889Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+2026-11-12T02:18:25.9117518Z Downloading certifi-2026.10.23-py3-none-any.whl (135 kB)
+2026-11-12T02:18:25.9213511Z Downloading rfc3986_validator-0.1.1-py2.py3-none-any.whl (4.2 kB)
+2026-11-12T02:18:25.9309781Z Downloading rfc3987_syntax-1.1.0-py3-none-any.whl (8.0 kB)
+2026-11-12T02:18:25.9405153Z Downloading lark-1.3.1-py3-none-any.whl (113 kB)
+2026-11-12T02:18:25.9500306Z Downloading rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (371 kB)
+2026-11-12T02:18:25.9602669Z Downloading send2trash-2.2.0-py3-none-any.whl (17 kB)
+2026-11-12T02:18:25.9731433Z Downloading stack_data-0.6.3-py3-none-any.whl (24 kB)
+2026-11-12T02:18:25.9826447Z Downloading asttokens-3.0.2-py3-none-any.whl (28 kB)
+2026-11-12T02:18:25.9938055Z Downloading executing-2.3.0-py3-none-any.whl (29 kB)
+2026-11-12T02:18:26.0036889Z Downloading terminado-0.18.1-py3-none-any.whl (14 kB)
+2026-11-12T02:18:26.0142739Z Downloading tinycss2-1.5.1-py3-none-any.whl (28 kB)
+2026-11-12T02:18:26.0258475Z Downloading tornado-6.6.1-cp311-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (534 kB)
+2026-11-12T02:18:26.0445410Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 534.5/534.5 kB 67.5 MB/s  0:00:00
+2026-11-12T02:18:26.0526814Z Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-11-12T02:18:26.0641476Z Downloading voila-0.5.13-py3-none-any.whl (4.6 MB)
+2026-11-12T02:18:26.1025019Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.6/4.6 MB 129.3 MB/s  0:00:00
+2026-11-12T02:18:26.1103410Z Downloading wcwidth-0.9.4-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (785 kB)
+2026-11-12T02:18:26.1158629Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 785.9/785.9 kB 164.0 MB/s  0:00:00
+2026-11-12T02:18:26.1245807Z Downloading webcolors-25.10.0-py3-none-any.whl (14 kB)
+2026-11-12T02:18:26.1342020Z Downloading webencodings-0.6.1-py3-none-any.whl (8.7 kB)
+2026-11-12T02:18:26.1437661Z Downloading websocket_client-1.9.2-py3-none-any.whl (95 kB)
+2026-11-12T02:18:26.1545957Z Downloading websockets-17.4-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (226 kB)
+2026-11-12T02:18:26.1642499Z Downloading xlrd-2.0.2-py2.py3-none-any.whl (96 kB)
+2026-11-12T02:18:26.1757256Z Downloading argon2_cffi_bindings-26.1.0-cp310-abi3-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl (26 kB)
+2026-11-12T02:18:26.1881056Z Downloading cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (221 kB)
+2026-11-12T02:18:26.1990339Z Downloading beautifulsoup4-4.15.0-py3-none-any.whl (109 kB)
+2026-11-12T02:18:26.2087741Z Downloading soupsieve-4.1-py3-none-any.whl (52 kB)
+2026-11-12T02:18:26.2189999Z Downloading defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+2026-11-12T02:18:26.2284219Z Downloading et_xmlfile-2.0.0-py3-none-any.whl (18 kB)
+2026-11-12T02:18:26.2383061Z Downloading fqdn-1.6.0-py3-none-any.whl (12 kB)
+2026-11-12T02:18:26.2477499Z Downloading isoduration-20.11.0-py3-none-any.whl (11 kB)
+2026-11-12T02:18:26.2583790Z Downloading arrow-1.4.0-py3-none-any.whl (68 kB)
+2026-11-12T02:18:26.2695234Z Downloading jupyterlab_pygments-0.3.0-py3-none-any.whl (15 kB)
+2026-11-12T02:18:26.2791334Z Downloading pure_eval-0.2.4-py3-none-any.whl (11 kB)
+2026-11-12T02:18:26.2887363Z Downloading pycparser-3.12-py3-none-any.whl (62 kB)
+2026-11-12T02:18:26.2986665Z Downloading rfc3339_validator-0.1.4-py2.py3-none-any.whl (3.5 kB)
+2026-11-12T02:18:26.3132468Z Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-11-12T02:18:26.3241885Z Downloading tzdata-2026.6-py2.py3-none-any.whl (348 kB)
+2026-11-12T02:18:26.3354251Z Downloading uri_template-1.3.0-py3-none-any.whl (11 kB)
+2026-11-12T02:18:27.1905273Z Installing collected packages: pure-eval, ptyprocess, xlrd, widgetsnbextension, websockets, websocket-client, webencodings, webcolors, wcwidth, urllib3, uri-template, tzdata, typing_extensions, traitlets, tornado, soupsieve, six, send2trash, rpds-py, rfc3986-validator, pyzmq, pyyaml, python-json-logger, pyparsing, pygments, pycparser, psutil, prometheus-client, platformdirs, pillow, pexpect, parso, pandocfilters, packaging, numpy, nest-asyncio2, mistune, MarkupSafe, markdown, lark, kiwisolver, jupyterlab_widgets, jupyterlab-pygments, jsonpointer, json5, idna, h11, fqdn, fonttools, filelock, fastjsonschema, executing, et-xmlfile, defusedxml, debugpy, cycler, comm, charset_normalizer, certifi, babel, attrs, async-lru, asttokens, tinycss2, terminado, stack_data, scipy, rfc3987-syntax, rfc3339-validator, requests, referencing, python-dateutil, prompt_toolkit, openpyxl, matplotlib-inline, jupyter-core, jinja2, jedi, ipython-pygments-lexers, httpcore, contourpy, cffi, bleach, beautifulsoup4, anyio, pandas, matplotlib, jupyter-server-terminals, jupyter-client, jupyter-builder, jsonschema-specifications, ipython, httpx, arrow, argon2-cffi-bindings, jsonschema, isoduration, ipywidgets, ipykernel, argon2-cffi, nbformat, ipympl, nbclient, jupyter-events, nbconvert, jupyter-server, notebook-shim, jupyterlab-server, jupyter-lsp, voila, jupyterlab, notebook, pyvisco
+2026-11-12T02:18:50.4501225Z 
+2026-11-12T02:18:50.4594526Z Successfully installed MarkupSafe-3.0.4 anyio-4.16.0 argon2-cffi-25.1.0 argon2-cffi-bindings-26.1.0 arrow-1.4.0 asttokens-3.0.2 async-lru-2.4.0 attrs-26.1.0 babel-2.18.0 beautifulsoup4-4.15.0 bleach-6.4.0 certifi-2026.10.23 cffi-2.1.1 charset_normalizer-3.5.2 comm-0.2.3 contourpy-1.4.0 cycler-0.12.1 debugpy-1.8.22 defusedxml-0.7.1 et-xmlfile-2.0.0 executing-2.3.0 fastjsonschema-2.22.3 filelock-4.2.10 fonttools-4.68.0 fqdn-1.6.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 ipykernel-7.4.0 ipympl-0.10.0 ipython-9.18.1 ipython-pygments-lexers-1.1.1 ipywidgets-8.1.9 isoduration-20.11.0 jedi-0.20.1 jinja2-3.1.6 json5-0.17.3 jsonpointer-3.12 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 jupyter-builder-1.3.0 jupyter-client-8.10.0 jupyter-core-5.9.1 jupyter-events-0.12.1 jupyter-lsp-2.3.1 jupyter-server-2.21.1 jupyter-server-terminals-0.5.4 jupyterlab-4.6.6 jupyterlab-pygments-0.3.0 jupyterlab-server-2.28.1 jupyterlab_widgets-3.0.17 kiwisolver-1.5.1 lark-1.3.1 markdown-3.11.3 matplotlib-3.11.2 matplotlib-inline-0.2.2 mistune-3.4.0 nbclient-0.11.0 nbconvert-7.17.2 nbformat-5.11.1 nest-asyncio2-1.7.4 notebook-7.6.5 notebook-shim-0.2.4 numpy-2.3.5 openpyxl-3.1.5 packaging-26.3 pandas-3.1.1 pandocfilters-1.5.1 parso-0.8.7 pexpect-4.9.0 pillow-13.0.0 platformdirs-4.14.5 prometheus-client-0.26.0 prompt_toolkit-3.0.53 psutil-7.2.2 ptyprocess-0.7.0 pure-eval-0.2.4 pycparser-3.12 pygments-2.21.0 pyparsing-3.3.3 python-dateutil-4.0.0 python-json-logger-4.2.0 pyvisco-2.1.3 pyyaml-6.0.3 pyzmq-27.3.0 referencing-0.37.0 requests-2.34.2 rfc3339-validator-0.1.4 rfc3986-validator-0.1.1 rfc3987-syntax-1.1.0 rpds-py-2026.9.1 scipy-1.17.0 send2trash-2.2.0 six-1.17.0 soupsieve-4.1 stack_data-0.6.3 terminado-0.18.1 tinycss2-1.5.1 tornado-6.6.1 traitlets-5.16.1 typing_extensions-4.16.0 tzdata-2026.6 uri-template-1.3.0 urllib3-2.8.0 voila-0.5.13 wcwidth-0.9.4 webcolors-25.10.0 webencodings-0.6.1 websocket-client-1.9.2 websockets-17.4 widgetsnbextension-4.0.16 xlrd-2.0.2
+2026-11-12T02:18:50.4609944Z 
+2026-11-12T02:18:50.4610278Z [notice] A new release of pip is available: 26.2.2 -> 26.3
+2026-11-12T02:18:50.4610910Z [notice] To update, run: pip install --upgrade pip
+2026-11-12T02:18:50.7039935Z ##[group]Run python docs/specs/cae-research/evidence/A/recovered_reference.py --output-root "$RUNNER_TEMP/A-reference"
+2026-11-12T02:18:50.7040858Z python docs/specs/cae-research/evidence/A/recovered_reference.py --output-root "$RUNNER_TEMP/A-reference"
+2026-11-12T02:18:50.7062300Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:18:50.7062548Z env:
+2026-11-12T02:18:50.7062812Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7063252Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:18:50.7063677Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7064050Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7064432Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7064809Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:18:50.7065125Z ##[endgroup]
+2026-11-12T02:18:50.7573815Z PASS reconstructed reference arithmetic; no native program/general XBP kernel executed
+2026-11-12T02:18:50.7657776Z ##[group]Run python docs/specs/cae-research/fetch_native_reference.py "$RUNNER_TEMP/OC-release"
+2026-11-12T02:18:50.7658830Z python docs/specs/cae-research/fetch_native_reference.py "$RUNNER_TEMP/OC-release"
+2026-11-12T02:18:50.7680011Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:18:50.7680258Z env:
+2026-11-12T02:18:50.7680527Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7680972Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:18:50.7681405Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7681780Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7682159Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:50.7682538Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:18:50.7682857Z ##[endgroup]
+2026-11-12T02:18:54.5416617Z ##[group]Run python docs/specs/cae-research/evidence/A/recovered_native_runner.py --opencourant-root "$OC_REFERENCE_ROOT" --fixtures "$RUNNER_TEMP/A-reference" --output-root "$RUNNER_TEMP/A-native"
+2026-11-12T02:18:54.5418053Z python docs/specs/cae-research/evidence/A/recovered_native_runner.py --opencourant-root "$OC_REFERENCE_ROOT" --fixtures "$RUNNER_TEMP/A-reference" --output-root "$RUNNER_TEMP/A-native"
+2026-11-12T02:18:54.5419663Z python docs/specs/cae-research/evidence/A/recovered_native_check.py --native-root "$RUNNER_TEMP/A-native" --output "$RUNNER_TEMP/A-native-assessment.json"
+2026-11-12T02:18:54.5440392Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:18:54.5440643Z env:
+2026-11-12T02:18:54.5440911Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:54.5441358Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:18:54.5441789Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:54.5442199Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:54.5442760Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:18:54.5443143Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:18:54.5443580Z   OC_REFERENCE_ROOT: /home/runner/work/_temp/OC-release/unpacked/OpenCourant
+2026-11-12T02:18:54.5443952Z ##[endgroup]
+2026-11-12T02:19:02.1840904Z ka1_dt2e6 completed new reference execution; this is not a product workflow
+2026-11-12T02:19:02.1841851Z ka1_dt1e6 completed new reference execution; this is not a product workflow
+2026-11-12T02:19:03.2724212Z PASS new fixed-profile native assessment
+2026-11-12T02:19:03.2838599Z ##[group]Run python docs/specs/cae-research/evidence/D/generate_native_reference_recovered.py --output "$RUNNER_TEMP/D-reference"
+2026-11-12T02:19:03.2840424Z python docs/specs/cae-research/evidence/D/generate_native_reference_recovered.py --output "$RUNNER_TEMP/D-reference"
+2026-11-12T02:19:03.2871961Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:19:03.2872392Z env:
+2026-11-12T02:19:03.2872878Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.2873681Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:19:03.2874477Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.2875173Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.2875886Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.2876609Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:19:03.2877466Z   OC_REFERENCE_ROOT: /home/runner/work/_temp/OC-release/unpacked/OpenCourant
+2026-11-12T02:19:03.2878445Z ##[endgroup]
+2026-11-12T02:19:03.3238332Z /home/runner/work/_temp/D-reference/affine/affine_0000.rad
+2026-11-12T02:19:03.3239310Z /home/runner/work/_temp/D-reference/affine/affine_0001.rad
+2026-11-12T02:19:03.3240065Z /home/runner/work/_temp/D-reference/layered/layered_0000.rad
+2026-11-12T02:19:03.3240780Z /home/runner/work/_temp/D-reference/layered/layered_0001.rad
+2026-11-12T02:19:03.3320737Z ##[group]Run python "$B/reference_probe.py"
+2026-11-12T02:19:03.3321112Z python "$B/reference_probe.py"
+2026-11-12T02:19:03.3321414Z python "$B/equilibrium_probe.py"
+2026-11-12T02:19:03.3321705Z python "$B/run_pyvisco.py"
+2026-11-12T02:19:03.3322112Z python "$B/optimizer_probe.py" --workbench-root "$GITHUB_WORKSPACE"
+2026-11-12T02:19:03.3322630Z python "$B/constraint_probe.py" --workbench-root "$GITHUB_WORKSPACE"
+2026-11-12T02:19:03.3323030Z python "$B/check_assets.py"
+2026-11-12T02:19:03.3323524Z python "$B/cold_reproduce.py" --workbench-root "$GITHUB_WORKSPACE" --destination "$RUNNER_TEMP/B-cold"
+2026-11-12T02:19:03.3344161Z shell: /usr/bin/bash -e {0}
+2026-11-12T02:19:03.3344408Z env:
+2026-11-12T02:19:03.3344671Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.3345101Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:19:03.3345569Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.3345946Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.3346322Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:03.3346711Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:19:03.3347155Z   OC_REFERENCE_ROOT: /home/runner/work/_temp/OC-release/unpacked/OpenCourant
+2026-11-12T02:19:03.3347558Z   B: docs/specs/cae-research/evidence/B
+2026-11-12T02:19:03.3347818Z ##[endgroup]
+2026-11-12T02:19:05.8338450Z {
+2026-11-12T02:19:05.8338991Z   "status": "passed",
+2026-11-12T02:19:05.8339375Z   "recovery_version": "B-RECOVERY-1",
+2026-11-12T02:19:05.8340539Z   "scope": "newly generated synthetic arithmetic and independent scalar reference; not actual NEML/native/Windows",
+2026-11-12T02:19:05.8341716Z   "python": "3.12.16",
+2026-11-12T02:19:05.8342194Z   "numpy": "2.3.5",
+2026-11-12T02:19:05.8342618Z   "checks": {
+2026-11-12T02:19:05.8343552Z     "HYP_uniaxial": 1.75,
+2026-11-12T02:19:05.8344042Z     "HYP_biaxial": 1.96875,
+2026-11-12T02:19:05.8344527Z     "HYP_planar": 1.875,
+2026-11-12T02:19:05.8345121Z     "HYP_hydro_cauchy_MPa": [
+2026-11-12T02:19:05.8345800Z       2.9999999999999805,
+2026-11-12T02:19:05.8346429Z       2.9999999999999805,
+2026-11-12T02:19:05.8347208Z       2.9999999999999805
+2026-11-12T02:19:05.8347763Z     ],
+2026-11-12T02:19:05.8348663Z     "HYP_energy_gradient_max_error_MPa": 5.308837813799983e-10,
+2026-11-12T02:19:05.8349285Z     "VIS_relax_0": 100.0,
+2026-11-12T02:19:05.8359462Z     "VIS_relax_1": 77.14603053967404,
+2026-11-12T02:19:05.8359778Z     "VIS_dma_omega_1": [
+2026-11-12T02:19:05.8360041Z       79.9009900990099,
+2026-11-12T02:19:05.8360292Z       4.9504950495049505
+2026-11-12T02:19:05.8360556Z     ],
+2026-11-12T02:19:05.8360762Z     "VIS_aT_313p15": 0.14677992676220694,
+2026-11-12T02:19:05.8361034Z     "VIS_ramp_branch_stress": [
+2026-11-12T02:19:05.8361283Z       0.01999909200140475,
+2026-11-12T02:19:05.8361524Z       0.2854877458921213
+2026-11-12T02:19:05.8361731Z     ],
+2026-11-12T02:19:05.8361941Z     "VIS_ramp_total_stress": 0.805486837893526,
+2026-11-12T02:19:05.8362252Z     "CYC_AF_backstress_at_p001": 9.516258196404042,
+2026-11-12T02:19:05.8362603Z     "CYC_AF_reverse_yield_MPa": -240.48374180359596,
+2026-11-12T02:19:05.8362920Z     "CYC_final_coarse_MPa": 355.32878792738694,
+2026-11-12T02:19:05.8363219Z     "CYC_final_refined_MPa": 355.34805998780234,
+2026-11-12T02:19:05.8363537Z     "CYC_ratcheting_final_strain": 0.007664366981880675,
+2026-11-12T02:19:05.8363856Z     "JC_flow_p01_r1_theta0": 426.4911064067352,
+2026-11-12T02:19:05.8364153Z     "JC_failure_eta0_r1_theta0": 0.30000000000000004,
+2026-11-12T02:19:05.8364454Z     "JC_damage_after_p015": 0.4999999999999999,
+2026-11-12T02:19:05.8364727Z     "HYP_J1_K_sensitivity": 0.0,
+2026-11-12T02:19:05.8364980Z     "VIS_Tref_only_shift_rank": 0,
+2026-11-12T02:19:05.8365237Z     "JC_one_rate_T_flow_rank": 3,
+2026-11-12T02:19:05.8365829Z     "JC_one_eta_rate_T_failure_rank": 1,
+2026-11-12T02:19:05.8366181Z     "VIS_synthetic_fit_loss": 4.055520981595235e-33,
+2026-11-12T02:19:05.8366498Z     "VIS_synthetic_fit_physical": [
+2026-11-12T02:19:05.8366745Z       100.0,
+2026-11-12T02:19:05.8366935Z       0.19999999999999996,
+2026-11-12T02:19:05.8367147Z       0.30000000000000004,
+2026-11-12T02:19:05.8367354Z       0.10000000000000002,
+2026-11-12T02:19:05.8367559Z       9.999999999999998
+2026-11-12T02:19:05.8367757Z     ]
+2026-11-12T02:19:05.8367926Z   }
+2026-11-12T02:19:05.8368093Z }
+2026-11-12T02:19:06.6687109Z {
+2026-11-12T02:19:06.6687838Z   "status": "passed",
+2026-11-12T02:19:06.6688509Z   "recovery_version": "B-RECOVERY-1",
+2026-11-12T02:19:06.6689370Z   "scope": "numerical finite-domain root coverage, not formal global proof or product runtime",
+2026-11-12T02:19:06.6690322Z   "case_count": 243,
+2026-11-12T02:19:06.6690700Z   "order_invariance": "exact",
+2026-11-12T02:19:06.6691160Z   "failure_cases": [
+2026-11-12T02:19:06.6691481Z     {
+2026-11-12T02:19:06.6691906Z       "case": "no_root",
+2026-11-12T02:19:06.6692328Z       "reason": "LATERAL_EQUILIBRIUM_NOT_BRACKETED"
+2026-11-12T02:19:06.6692772Z     },
+2026-11-12T02:19:06.6693127Z     {
+2026-11-12T02:19:06.6693430Z       "case": "outside_domain",
+2026-11-12T02:19:06.6693946Z       "reason": "LATERAL_EQUILIBRIUM_NOT_BRACKETED"
+2026-11-12T02:19:06.6694379Z     },
+2026-11-12T02:19:06.6694635Z     {
+2026-11-12T02:19:06.6695003Z       "case": "multiple_roots",
+2026-11-12T02:19:06.6695421Z       "reason": "AMBIGUOUS_EQUILIBRIUM"
+2026-11-12T02:19:06.6695917Z     },
+2026-11-12T02:19:06.6696187Z     {
+2026-11-12T02:19:06.6696535Z       "case": "tangent_uncertified",
+2026-11-12T02:19:06.6696972Z       "reason": "LATERAL_ROOT_UNCERTIFIED"
+2026-11-12T02:19:06.6697365Z     }
+2026-11-12T02:19:06.6697613Z   ]
+2026-11-12T02:19:06.6697875Z }
+2026-11-12T02:19:08.0383828Z {
+2026-11-12T02:19:08.0384417Z   "status": "passed",
+2026-11-12T02:19:08.0384831Z   "actual_library_executed": true,
+2026-11-12T02:19:08.0385239Z   "version": "2.1.3",
+2026-11-12T02:19:08.0385969Z   "loaded_source_checks": [
+2026-11-12T02:19:08.0386378Z     {
+2026-11-12T02:19:08.0386678Z       "source_id": "B-SRC-VIS",
+2026-11-12T02:19:08.0387348Z       "loaded_file_sha256": "641490da54f1d62d5f631c899f3f0ade44d1f9debc98a9e9068fe4f0577795bb",
+2026-11-12T02:19:08.0388071Z       "source_match": true
+2026-11-12T02:19:08.0388708Z     },
+2026-11-12T02:19:08.0388969Z     {
+2026-11-12T02:19:08.0389270Z       "source_id": "B-SRC-WLF",
+2026-11-12T02:19:08.0389914Z       "loaded_file_sha256": "93f143f9789e31aaffebc229fe76b0c3b37ffa0b4937d5b2980b1d524e2503a2",
+2026-11-12T02:19:08.0390637Z       "source_match": true
+2026-11-12T02:19:08.0390975Z     }
+2026-11-12T02:19:08.0391245Z   ],
+2026-11-12T02:19:08.0391536Z   "relaxation_MPa": 77.14603053967404,
+2026-11-12T02:19:08.0391935Z   "storage_loss_MPa": [
+2026-11-12T02:19:08.0392268Z     79.9009900990099,
+2026-11-12T02:19:08.0392586Z     4.9504950495049505
+2026-11-12T02:19:08.0392903Z   ],
+2026-11-12T02:19:08.0393233Z   "WLF_return_log10_aT": -0.8333333333333334,
+2026-11-12T02:19:08.0393951Z   "scope": "actual pinned evaluator source/API; not product/Windows/experimental acceptance"
+2026-11-12T02:19:08.0394647Z }
+2026-11-12T02:19:09.3457192Z {
+2026-11-12T02:19:09.3457595Z   "status": "passed",
+2026-11-12T02:19:09.3457908Z   "recovery_version": "B-RECOVERY-1",
+2026-11-12T02:19:09.3458953Z   "scope": "existing optimizer + actual pyvisco on synthetic spectrum; not materials product runtime",
+2026-11-12T02:19:09.3459545Z   "termination": "CONVERGED",
+2026-11-12T02:19:09.3459833Z   "fit_loss": 1.4321823225436936e-13,
+2026-11-12T02:19:09.3460124Z   "parameters": {
+2026-11-12T02:19:09.3460353Z     "E0": 99.99991157325076,
+2026-11-12T02:19:09.3460606Z     "a1": 0.1999992774712004,
+2026-11-12T02:19:09.3460856Z     "a2": 0.30000013467976866,
+2026-11-12T02:19:09.3461113Z     "tau1": 0.10000070016114923,
+2026-11-12T02:19:09.3461372Z     "tau2": 9.999984037485993
+2026-11-12T02:19:09.3461617Z   },
+2026-11-12T02:19:09.3461825Z   "observations": 146,
+2026-11-12T02:19:09.3462372Z   "holdout_loss": 3.291180473817548e-14,
+2026-11-12T02:19:09.3462681Z   "holdout_used_in_fit": false,
+2026-11-12T02:19:09.3462979Z   "WLF_coefficients": "fixed, not inferred",
+2026-11-12T02:19:09.3463458Z   "data_sha256": "81a1846c63fe5f51b19fc350a02c57f6e230365553c1b7cbfbf76336c90bdf8c",
+2026-11-12T02:19:09.3463923Z   "core_identity": {
+2026-11-12T02:19:09.3464253Z     "baseline_revision": "104cdd6888a5554eecc8cf965c60ff1bd980b6da",
+2026-11-12T02:19:09.3464643Z     "loaded_core": [
+2026-11-12T02:19:09.3464866Z       {
+2026-11-12T02:19:09.3465082Z         "module": "caelab",
+2026-11-12T02:19:09.3465535Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/__init__.py",
+2026-11-12T02:19:09.3466180Z         "sha256": "9a697f29de4653cd7f51f63a15b098a6b9bc3605240a38d464ba26e9fa4e0c92"
+2026-11-12T02:19:09.3466631Z       },
+2026-11-12T02:19:09.3466844Z       {
+2026-11-12T02:19:09.3467054Z         "module": "caelab.mdo",
+2026-11-12T02:19:09.3467537Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/__init__.py",
+2026-11-12T02:19:09.3468439Z         "sha256": "64c29b1eadcf4d4c39faed4d001d94292895f4fb7d474c1cc23d7adf8f263924"
+2026-11-12T02:19:09.3468951Z       },
+2026-11-12T02:19:09.3469148Z       {
+2026-11-12T02:19:09.3469377Z         "module": "caelab.mdo.variables",
+2026-11-12T02:19:09.3469892Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/variables.py",
+2026-11-12T02:19:09.3470550Z         "sha256": "f6dc457dc44437a651e65ee7a771f4343a73c68a8a17cefefba5e686bac36137"
+2026-11-12T02:19:09.3470991Z       },
+2026-11-12T02:19:09.3471190Z       {
+2026-11-12T02:19:09.3471421Z         "module": "caelab.mdo.optimize",
+2026-11-12T02:19:09.3471930Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/optimize.py",
+2026-11-12T02:19:09.3472576Z         "sha256": "2f835d4ddb5487b7884bb1d166f403c52b5fe424891b00ea7b30014e5499cc3f"
+2026-11-12T02:19:09.3473009Z       },
+2026-11-12T02:19:09.3473381Z       {
+2026-11-12T02:19:09.3473602Z         "module": "caelab.mdo.objectives",
+2026-11-12T02:19:09.3474117Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/objectives.py",
+2026-11-12T02:19:09.3474792Z         "sha256": "c1cb9b57ba7d1dd4c26fd93bfaebb8a7219ea947cf0ab50cdd57b8026b9828d7"
+2026-11-12T02:19:09.3475238Z       },
+2026-11-12T02:19:09.3475426Z       {
+2026-11-12T02:19:09.3475647Z         "module": "caelab.mdo.constraints",
+2026-11-12T02:19:09.3476157Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/constraints.py",
+2026-11-12T02:19:09.3476769Z         "sha256": "4efcebb721428f402e49a53159858beaac780721e49bccb6a71170253529a645"
+2026-11-12T02:19:09.3477181Z       },
+2026-11-12T02:19:09.3477356Z       {
+2026-11-12T02:19:09.3477549Z         "module": "caelab.mdo.pareto",
+2026-11-12T02:19:09.3477995Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/pareto.py",
+2026-11-12T02:19:09.3478767Z         "sha256": "a205719e63bcdec49b92198001e787c537ae4a8d9853ce131c5adebb49aa11a4"
+2026-11-12T02:19:09.3479143Z       }
+2026-11-12T02:19:09.3479311Z     ],
+2026-11-12T02:19:09.3479845Z     "identity_scope": "critical existing MDO implementation bytes, not an assertion that all optional imported libraries are from this repository"
+2026-11-12T02:19:09.3480437Z   },
+2026-11-12T02:19:09.3480613Z   "loaded_pyvisco": {
+2026-11-12T02:19:09.3481045Z     "path_audit": "/opt/hostedtoolcache/Python/3.12.16/x64/lib/python3.12/site-packages/pyvisco/prony.py",
+2026-11-12T02:19:09.3481647Z     "sha256": "641490da54f1d62d5f631c899f3f0ade44d1f9debc98a9e9068fe4f0577795bb"
+2026-11-12T02:19:09.3482028Z   }
+2026-11-12T02:19:09.3482190Z }
+2026-11-12T02:19:09.6860127Z {
+2026-11-12T02:19:09.6860784Z   "status": "passed",
+2026-11-12T02:19:09.6861226Z   "recovery_version": "B-RECOVERY-1",
+2026-11-12T02:19:09.6861666Z   "core_identity": {
+2026-11-12T02:19:09.6862141Z     "baseline_revision": "104cdd6888a5554eecc8cf965c60ff1bd980b6da",
+2026-11-12T02:19:09.6863230Z     "loaded_core": [
+2026-11-12T02:19:09.6863573Z       {
+2026-11-12T02:19:09.6863865Z         "module": "caelab",
+2026-11-12T02:19:09.6864506Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/__init__.py",
+2026-11-12T02:19:09.6865408Z         "sha256": "9a697f29de4653cd7f51f63a15b098a6b9bc3605240a38d464ba26e9fa4e0c92"
+2026-11-12T02:19:09.6866025Z       },
+2026-11-12T02:19:09.6866295Z       {
+2026-11-12T02:19:09.6866596Z         "module": "caelab.mdo",
+2026-11-12T02:19:09.6867279Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/__init__.py",
+2026-11-12T02:19:09.6868491Z         "sha256": "64c29b1eadcf4d4c39faed4d001d94292895f4fb7d474c1cc23d7adf8f263924"
+2026-11-12T02:19:09.6869112Z       },
+2026-11-12T02:19:09.6869376Z       {
+2026-11-12T02:19:09.6869673Z         "module": "caelab.mdo.variables",
+2026-11-12T02:19:09.6870399Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/variables.py",
+2026-11-12T02:19:09.6871313Z         "sha256": "f6dc457dc44437a651e65ee7a771f4343a73c68a8a17cefefba5e686bac36137"
+2026-11-12T02:19:09.6871910Z       },
+2026-11-12T02:19:09.6872173Z       {
+2026-11-12T02:19:09.6872469Z         "module": "caelab.mdo.optimize",
+2026-11-12T02:19:09.6873158Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/optimize.py",
+2026-11-12T02:19:09.6874059Z         "sha256": "2f835d4ddb5487b7884bb1d166f403c52b5fe424891b00ea7b30014e5499cc3f"
+2026-11-12T02:19:09.6874644Z       },
+2026-11-12T02:19:09.6874901Z       {
+2026-11-12T02:19:09.6875210Z         "module": "caelab.mdo.objectives",
+2026-11-12T02:19:09.6875942Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/objectives.py",
+2026-11-12T02:19:09.6876848Z         "sha256": "c1cb9b57ba7d1dd4c26fd93bfaebb8a7219ea947cf0ab50cdd57b8026b9828d7"
+2026-11-12T02:19:09.6877455Z       },
+2026-11-12T02:19:09.6877707Z       {
+2026-11-12T02:19:09.6878449Z         "module": "caelab.mdo.constraints",
+2026-11-12T02:19:09.6879183Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/constraints.py",
+2026-11-12T02:19:09.6880124Z         "sha256": "4efcebb721428f402e49a53159858beaac780721e49bccb6a71170253529a645"
+2026-11-12T02:19:09.6880763Z       },
+2026-11-12T02:19:09.6881066Z       {
+2026-11-12T02:19:09.6881365Z         "module": "caelab.mdo.pareto",
+2026-11-12T02:19:09.6882028Z         "path_audit": "/home/runner/work/caelab-workbench/caelab-workbench/caelab/mdo/pareto.py",
+2026-11-12T02:19:09.6882911Z         "sha256": "a205719e63bcdec49b92198001e787c537ae4a8d9853ce131c5adebb49aa11a4"
+2026-11-12T02:19:09.6883523Z       }
+2026-11-12T02:19:09.6883795Z     ],
+2026-11-12T02:19:09.6884711Z     "identity_scope": "critical existing MDO implementation bytes, not an assertion that all optional imported libraries are from this repository"
+2026-11-12T02:19:09.6885756Z   },
+2026-11-12T02:19:09.6886495Z   "scope": "actual existing constraints API and explicit planned assessment mapping; not new materials runtime",
+2026-11-12T02:19:09.6887389Z   "cases": [
+2026-11-12T02:19:09.6887774Z     {
+2026-11-12T02:19:09.6888074Z       "case": "high_error_stable",
+2026-11-12T02:19:09.6888737Z       "existing_constraint_feasibility": "FEASIBLE",
+2026-11-12T02:19:09.6889236Z       "raw_residuals": [
+2026-11-12T02:19:09.6889642Z         -90.0,
+2026-11-12T02:19:09.6889942Z         -900.0,
+2026-11-12T02:19:09.6890235Z         -0.499999,
+2026-11-12T02:19:09.6890516Z         -0.00099,
+2026-11-12T02:19:09.6890808Z         -9.999999
+2026-11-12T02:19:09.6891094Z       ],
+2026-11-12T02:19:09.6891401Z       "planned_objective_eligible": true,
+2026-11-12T02:19:09.6891842Z       "planned_fit_loss": 0.02,
+2026-11-12T02:19:09.6892246Z       "planned_constraint_error": null
+2026-11-12T02:19:09.6892632Z     },
+2026-11-12T02:19:09.6892888Z     {
+2026-11-12T02:19:09.6893180Z       "case": "finite_instability",
+2026-11-12T02:19:09.6893911Z       "existing_constraint_feasibility": "INFEASIBLE",
+2026-11-12T02:19:09.6894398Z       "raw_residuals": [
+2026-11-12T02:19:09.6894732Z         -90.0,
+2026-11-12T02:19:09.6895194Z         -900.0,
+2026-11-12T02:19:09.6895518Z         0.020001,
+2026-11-12T02:19:09.6895805Z         -0.00099,
+2026-11-12T02:19:09.6896082Z         -9.999999
+2026-11-12T02:19:09.6896372Z       ],
+2026-11-12T02:19:09.6896678Z       "planned_objective_eligible": true,
+2026-11-12T02:19:09.6897126Z       "planned_fit_loss": 0.02,
+2026-11-12T02:19:09.6897547Z       "planned_constraint_error": null
+2026-11-12T02:19:09.6897934Z     },
+2026-11-12T02:19:09.6898373Z     {
+2026-11-12T02:19:09.6898682Z       "case": "invalid_numerical_scalar",
+2026-11-12T02:19:09.6899141Z       "existing_constraint_feasibility": null,
+2026-11-12T02:19:09.6899577Z       "raw_residuals": [
+2026-11-12T02:19:09.6899899Z         -90.0,
+2026-11-12T02:19:09.6900179Z         -900.0,
+2026-11-12T02:19:09.6900628Z         -0.00099,
+2026-11-12T02:19:09.6900923Z         -9.999999
+2026-11-12T02:19:09.6901230Z       ],
+2026-11-12T02:19:09.6901563Z       "planned_objective_eligible": false,
+2026-11-12T02:19:09.6902036Z       "planned_fit_loss": null,
+2026-11-12T02:19:09.6902526Z       "planned_constraint_error": "CONSTRAINT_RESPONSE_INVALID"
+2026-11-12T02:19:09.6903025Z     }
+2026-11-12T02:19:09.6903277Z   ]
+2026-11-12T02:19:09.6903530Z }
+2026-11-12T02:19:09.8069978Z {"status": "passed", "recovery_version": "B-RECOVERY-1", "frozen_static_files": 17, "numeric_expected_checks": 19, "scope": "reconstructed asset integrity and fresh numerical reference outputs, not native/product acceptance"}
+2026-11-12T02:19:16.0817903Z {
+2026-11-12T02:19:16.0818937Z   "status": "reference_checks_passed_NEML_backend_or_source_gate_unmet",
+2026-11-12T02:19:16.0819600Z   "recovery_version": "B-RECOVERY-1",
+2026-11-12T02:19:16.0820064Z   "original_bundle_and_core_read_denial": true,
+2026-11-12T02:19:16.0820635Z   "destination_audit": "/home/runner/work/_temp/B-cold",
+2026-11-12T02:19:16.0821411Z   "explicit_dependency_python": "/opt/hostedtoolcache/Python/3.12.16/x64/bin/python",
+2026-11-12T02:19:16.0822517Z   "commands": [
+2026-11-12T02:19:16.0822804Z     {
+2026-11-12T02:19:16.0823101Z       "script": "reference_probe.py",
+2026-11-12T02:19:16.0823498Z       "arguments": [],
+2026-11-12T02:19:16.0823831Z       "exit_code": 0,
+2026-11-12T02:19:16.0824389Z       "stdout_sha256": "778b92acd75adb6d39a2ff67377307dc5317978778cf529dfde9883348f3fcb3",
+2026-11-12T02:19:16.0825277Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0825904Z     },
+2026-11-12T02:19:16.0826166Z     {
+2026-11-12T02:19:16.0826472Z       "script": "equilibrium_probe.py",
+2026-11-12T02:19:16.0826868Z       "arguments": [],
+2026-11-12T02:19:16.0827184Z       "exit_code": 0,
+2026-11-12T02:19:16.0827753Z       "stdout_sha256": "a19e69c5e7abb8d452d8de7ee3d6a41f45a33b5a1137f942655d70fa4194f57e",
+2026-11-12T02:19:16.0828975Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0829696Z     },
+2026-11-12T02:19:16.0829987Z     {
+2026-11-12T02:19:16.0830309Z       "script": "run_pyvisco.py",
+2026-11-12T02:19:16.0830738Z       "arguments": [],
+2026-11-12T02:19:16.0831098Z       "exit_code": 0,
+2026-11-12T02:19:16.0831740Z       "stdout_sha256": "d4c3ce6abb0d951fca84fff4536927c083086ab2a0ff6545196a815e7696fdfa",
+2026-11-12T02:19:16.0832752Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0833466Z     },
+2026-11-12T02:19:16.0833760Z     {
+2026-11-12T02:19:16.0834086Z       "script": "optimizer_probe.py",
+2026-11-12T02:19:16.0834502Z       "arguments": [
+2026-11-12T02:19:16.0834810Z         "--workbench-root",
+2026-11-12T02:19:16.0835198Z         "/home/runner/work/_temp/B-cold/core"
+2026-11-12T02:19:16.0835643Z       ],
+2026-11-12T02:19:16.0835947Z       "exit_code": 0,
+2026-11-12T02:19:16.0836569Z       "stdout_sha256": "4d0ade329ca2d2ecef6f91bcc350e1596d2400d4858b145b1d2696191bc1af30",
+2026-11-12T02:19:16.0837812Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0838786Z     },
+2026-11-12T02:19:16.0839088Z     {
+2026-11-12T02:19:16.0839435Z       "script": "constraint_probe.py",
+2026-11-12T02:19:16.0839901Z       "arguments": [
+2026-11-12T02:19:16.0840279Z         "--workbench-root",
+2026-11-12T02:19:16.0840723Z         "/home/runner/work/_temp/B-cold/core"
+2026-11-12T02:19:16.0841187Z       ],
+2026-11-12T02:19:16.0841490Z       "exit_code": 0,
+2026-11-12T02:19:16.0842108Z       "stdout_sha256": "1a2aa72818293a89042aaaf8d0409f9fab889cf1c8db2abaa42a71a00c547fda",
+2026-11-12T02:19:16.0843157Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0843845Z     },
+2026-11-12T02:19:16.0844121Z     {
+2026-11-12T02:19:16.0844401Z       "script": "check_assets.py",
+2026-11-12T02:19:16.0844810Z       "arguments": [],
+2026-11-12T02:19:16.0845175Z       "exit_code": 0,
+2026-11-12T02:19:16.0845830Z       "stdout_sha256": "9989c167e99cabb64ca6eb86ccec7692665b6e5244fabd5f3bd38b83e22b8aa3",
+2026-11-12T02:19:16.0846861Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0847591Z     },
+2026-11-12T02:19:16.0847870Z     {
+2026-11-12T02:19:16.0848157Z       "script": "run_neml.py",
+2026-11-12T02:19:16.0848734Z       "arguments": [],
+2026-11-12T02:19:16.0849053Z       "exit_code": 20,
+2026-11-12T02:19:16.0849671Z       "stdout_sha256": "dd33aaa21c7113a746d88eac69249a236e6ec3c5ee8324356b4b0b764e3ce9bd",
+2026-11-12T02:19:16.0850659Z       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+2026-11-12T02:19:16.0851339Z     }
+2026-11-12T02:19:16.0851610Z   ],
+2026-11-12T02:19:16.0852131Z   "NEML_gate": "exit20 unavailable or exit21 numerical pass/source unverified",
+2026-11-12T02:19:16.0853053Z   "scope": "fresh cold-copy reference/API execution, not product/Windows acceptance"
+2026-11-12T02:19:16.0853726Z }
+2026-11-12T02:19:16.0979918Z ##[group]Run actions/upload-artifact@v4
+2026-11-12T02:19:16.0980223Z with:
+2026-11-12T02:19:16.0980450Z   name: caelab-full-implementation-handoff
+2026-11-12T02:19:16.0981897Z   path: docs/specs/spec-cae-research-implementation.md
+docs/specs/cae-research/
+/home/runner/work/_temp/A-reference/
+/home/runner/work/_temp/A-native/
+/home/runner/work/_temp/A-native-assessment.json
+/home/runner/work/_temp/OC-release/download_receipt.json
+/home/runner/work/_temp/OC-release/ldd.txt
+/home/runner/work/_temp/B-cold/
+/home/runner/work/_temp/D-reference/
+
+2026-11-12T02:19:16.0983317Z   if-no-files-found: warn
+2026-11-12T02:19:16.0983557Z   compression-level: 6
+2026-11-12T02:19:16.0983777Z   overwrite: false
+2026-11-12T02:19:16.0983998Z   include-hidden-files: false
+2026-11-12T02:19:16.0984366Z env:
+2026-11-12T02:19:16.0984617Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:16.0985045Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib/pkgconfig
+2026-11-12T02:19:16.0985505Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:16.0985898Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:16.0986278Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.16/x64
+2026-11-12T02:19:16.0986665Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.16/x64/lib
+2026-11-12T02:19:16.0987130Z   OC_REFERENCE_ROOT: /home/runner/work/_temp/OC-release/unpacked/OpenCourant
+2026-11-12T02:19:16.0987507Z ##[endgroup]
+2026-11-12T02:19:16.2747093Z (node:3008) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-12T02:19:16.2748670Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-12T02:19:16.3727217Z Multiple search paths detected. Calculating the least common ancestor of all paths
+2026-11-12T02:19:16.3732867Z The least common ancestor is /home/runner/work. This will be the root directory of the artifact
+2026-11-12T02:19:16.3734078Z With the provided path, there will be 288 files uploaded
+2026-11-12T02:19:16.3738583Z Artifact name is valid!
+2026-11-12T02:19:16.3740100Z Root directory input is valid!
+2026-11-12T02:19:16.7535446Z Beginning upload of artifact content to blob storage
+2026-11-12T02:19:17.1543293Z (node:3008) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-11-12T02:19:17.9950363Z Uploaded bytes 2029916
+2026-11-12T02:19:18.0744451Z Finished uploading artifact content to blob storage!
+2026-11-12T02:19:18.0746095Z SHA256 digest of uploaded artifact zip is 916e3aedf36533d23dec9d971b699e18ca9026f5cce42150c758b49f21fa18ec
+2026-11-12T02:19:18.0747906Z Finalizing artifact upload
+2026-11-12T02:19:18.4709301Z Artifact caelab-full-implementation-handoff.zip successfully finalized. Artifact ID 13909436920
+2026-11-12T02:19:18.4711012Z Artifact caelab-full-implementation-handoff has been successfully uploaded! Final size is 2029916 bytes. Artifact ID is 13909436920
+2026-11-12T02:19:18.4717940Z Artifact download URL: https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077/artifacts/13909436920
+2026-11-12T02:19:18.4945698Z Post job cleanup.
+2026-11-12T02:19:18.6189711Z (node:3020) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-12T02:19:18.6191062Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-12T02:19:18.6398849Z Post job cleanup.
+2026-11-12T02:19:18.7327859Z [command]/usr/bin/git version
+2026-11-12T02:19:18.7409626Z git version 2.56.0
+2026-11-12T02:19:18.7456086Z Temporarily overriding HOME='/home/runner/work/_temp/f0245a74-662f-4fc3-814c-0b2957402a36' before making global git config changes
+2026-11-12T02:19:18.7457567Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-12T02:19:18.7463058Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/caelab-workbench/caelab-workbench
+2026-11-12T02:19:18.7512236Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-12T02:19:18.7560872Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-12T02:19:18.7847341Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-12T02:19:18.7879541Z http.https://github.com/.extraheader
+2026-11-12T02:19:18.7893996Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-12T02:19:18.7958839Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-12T02:19:18.8321567Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-12T02:19:18.8394007Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-12T02:19:18.8864337Z Cleaning up orphan processes
+2026-11-12T02:19:18.9287657Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

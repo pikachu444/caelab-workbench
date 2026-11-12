@@ -1,121 +1,106 @@
 {
   "schema_version": 1,
-  "scope": "Actual committed selected recovery files, not the inaccessible original316-file local commit.",
+  "scope": "Complete selected integrated handoff files except this self-describing inventory; not original316-file local commit.",
   "historical_raw_native_csv_t01_logs_included": false,
-  "entries_provenance_required": true,
+  "new_native_outputs": {
+    "kind": "new_remote_execution",
+    "logical_head_sha": "98be90bfe1d8d02ae099bc0aecf84d1d11110218",
+    "actual_merge_checkout_sha": "f975d44142408c491a4fad083f24e7945cb0a086",
+    "run_id": 43140439077,
+    "artifact_id": 13909436920,
+    "digest": "sha256:916e3aedf36533d23dec9d971b699e18ca9026f5cce42150c758b49f21fa18ec",
+    "scope": "newLAW33Ka1cappedpair,new reference outputs; no historical raw recreation"
+  },
   "files": [
     {
-      "path": "docs/specs/cae-research/evidence/B/constraint_contract.json",
-      "blob_sha": "06371aa820c456dec054c1b2d40cb07ca0f25665",
-      "sha256": "ddc6df511f716772e01287ff7215d9ff2d25d967ba0f2f6ca579fef6b701eae0",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/spec-cae-research-implementation.md",
+      "blob_sha": "0a84d2e009dbd891d3115d1fcb036e644628ba9a",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/source_manifest.json",
-      "blob_sha": "9aa662051395deddf08659513df4e3b91183d3f0",
-      "sha256": "0dd16382598bc3eab7d42d2dff865f843ac03b4cb7e47e7cd2b318156079d1b7",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/README.md",
+      "blob_sha": "fe500b07cd70a90f64843540af7fc6c6ca747fcd",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/workbench_core_sources.json",
-      "blob_sha": "32a43a7d4ad80d128d06f7390139b4cb05678692",
-      "sha256": "e02f667cfe884e64202ecce84780dad367bad54d0557280aa9851eadcb852ca7",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "CURRENT_STATE.md",
+      "blob_sha": "45925cfbb180745808ad346325cc2c24c4e40302",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/workbench_source.py",
-      "blob_sha": "fe4e6400011ab772876fdbbca046811242edab8a",
-      "sha256": "0368d736ad916cd4ffa22de0584aa8abb5a0e7e040eac9d018c433ce332db918",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/review/2026-10-23-codex-improvement-plan.md",
+      "blob_sha": "f2d46b2861dff4a13db762c6b6472ae5662655d9",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/optimizer_probe.py",
-      "blob_sha": "baf9973117de87c2a7ca1957f8a57d06082810aa",
-      "sha256": "e36dc9149801d2f6ab555ca33afc5aa9488d48a11fbe5565f067db8062b10be9",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/core-implementation.md",
+      "blob_sha": "b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/constraint_probe.py",
-      "blob_sha": "5651cbcc0862effa271bdbb77ef1bbc01b01bbe2",
-      "sha256": "dd0c1b198ac8f50898dd4ac51e1920dd7110f90195d98dd03dcb5b101fec8c3c",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/material-pressure-orthotropic.md",
+      "blob_sha": "1f8fb280e3a0f8413721d9c4eed9f7596a163f4d",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/run_pyvisco.py",
-      "blob_sha": "d9f49c2ab32638eac67f6369c399e357e578f472",
-      "sha256": "813afd088b9dafe251a3f247a855dd8311563ea5ffc637eefc17b900d9d3d6c2",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/material-finite-history.md",
+      "blob_sha": "f5e122220fb6f6c5706dcb4906832c0d80fded2b",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/equilibrium_probe.py",
-      "blob_sha": "7b8b90ae788eb06b388b1b14c4854925dcc2ab0d",
-      "sha256": "3f7323a87588437119993913c44c1a66b60425df78215209fb1bdce541657c27",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/expert-implementation.md",
+      "blob_sha": "035b6e431f34e94bac33e29f2f0cc1e796995438",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/reference_probe.py",
-      "blob_sha": "17362315bbdb945aa2d63888088f8a180196930c",
-      "sha256": "7e8f7c6d7359f7b748c85a85bd93f853b311a77f0e6646791c9cc8e73cc53e1a",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/post-implementation.md",
+      "blob_sha": "279e81037d279f0852a40577d32ec4188bfcc599",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/run_neml.py",
-      "blob_sha": "7ebdbecf5816488de804bedc46e3f121aba1d1f8",
-      "sha256": "692dce4155368e41f3b99c645ac141b5563512e23a93dd647b4966b87e94f293",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/check_handoff.py",
+      "blob_sha": "6b0ab186df7de01543df2a8e4e706f50214b43b2",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/expected.json",
-      "blob_sha": "922313cc9daba73ace9b1ec40f557d2b5de8d57a",
-      "sha256": "433c9d79ea2dcf729da8f03ec49989921d98526364bdc4adf7cfed08e9d1b201",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/fetch_native_reference.py",
+      "blob_sha": "ee7bf57a9e11f4776f014027bab70d64dfbc54b7",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/historical_observations.json",
-      "blob_sha": "4f1ff2ea456caaa1fd08ea3806b94dc9dc1abc01",
-      "sha256": "e4d00703fe9cf9121136e9aafcf6a78c35e5694ed8c5eb2fcb868cc8f93f1721",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": ".github/workflows/cae-research-handoff.yml",
+      "blob_sha": "aa69ab6562472e28b5919b5ea5f6c354991a2ce2",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/check_assets.py",
-      "blob_sha": "c5aff47f3063e0378995eb83e3aef63f48dce086",
-      "sha256": "2d6b442030c51a55367477595d8846665fe18f36491728dd7a8e041cf0ad22b8",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/implementation-map.json",
+      "blob_sha": "db2a951dc156889508f599c10dbd172324abdff0",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/cold_reproduce.py",
-      "blob_sha": "bd69eab2a85b4c0190a07c1a1e576e6c5d17f734",
-      "sha256": "6cc4ab424186545896f8fe32d9e997afe7e8d6f4da1c5d7dec4cdffac21837c6",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/USER_PROGRESS_ko.md",
+      "blob_sha": "872c62a635d1c953f0e89a5eb06976bca218f589",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/README.md",
-      "blob_sha": "b36a6a967f35febbaf71c2ff267ab2bd1f81bfa9",
-      "sha256": "99f153bd0113ab5c4e6fadd5f8b27f26abffc4ffa8e35d2fdecc71b468baf2f9",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/review-E.md",
+      "blob_sha": "cedc0f8a961db7e6c934799b75e790968ff3e3df",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/failure_cases.json",
-      "blob_sha": "6b8207ad822c7f9311b6f1e0d3f3f72d55ed4cb0",
-      "sha256": "1d4ac397a084ecd0cb8b66ef46b3b59acb8d9983653fd0b564123a3d678941c7",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/review-F.md",
+      "blob_sha": "ab47e80c5786709a9fa2b2b03771cc843f1d671f",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/ci_recipe.json",
-      "blob_sha": "ab93f6bf6138914c5f0ef375ae88eff5ce9aa2ac",
-      "sha256": "9de55e3c8cf0a71fd9f8bed7ce28f05c7cbcf2add2bebadf9eb8328b213aeb68",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
+      "path": "docs/specs/cae-research/debate-recovery-ascii.jsonl",
+      "blob_sha": "4f982da312b10d080e7fd2ea714a4bc3c1ec2450",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/asset_manifest.json",
-      "blob_sha": "388e613a7378936378bdd7f3d8a521bab92a0a62",
-      "sha256": "6dd915caca5a2a4519af049db3bcb6d1f56a1e3ba84931949ea423bf8280463c",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/recovery-map.json",
-      "blob_sha": "7f66e3ba52f723d4b814f866bd3eeb1149e2c037",
-      "provenance": "author recovery inventory"
+      "path": "docs/specs/cae-research/debate-readable-ascii.txt",
+      "blob_sha": "5b7b3d6b0a3c668f5e808ef610186ed5b4b86f08",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
     },
     {
       "path": "docs/specs/cae-research/evidence/C/corpus-source-bundle.json",
@@ -249,49 +234,41 @@
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.hpp",
       "blob_sha": "02e2a44fcf7ad2c53541533dcc126d9f53961cb6",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.cpp",
       "blob_sha": "a64ae00030cbd75a322b30ae66591d1c0521c9a9",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_TriaxialDriver.cpp",
       "blob_sha": "d266ae01a44380501e6fedcb5dda2339d2f1d8fd",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_LICENSE",
       "blob_sha": "8c177f8bedc4a734d40312bb165035be1b22fad4",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.rst",
       "blob_sha": "dcb4ccafe49e5165912f4558288e81ff31d55754",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/OC_sigeps33.F",
       "blob_sha": "62b137d2f62a5b101aced76bdf9d69c41cc33092",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/OC_hm_read_mat33.F",
       "blob_sha": "84132a6b22bbd439ff0aec6e5bf427a22ea1f560",
-      "sha256": null,
       "provenance": "exact upstream bytes, git-blob identity confirmed"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/upstream/OC_LICENSE.md",
       "blob_sha": "cba6f6a15a4cc3ba212e9e9059f7243e2d171090",
-      "sha256": null,
       "provenance": "exact upstream license bytes, git-blob identity confirmed"
     },
     {
@@ -303,6 +280,160 @@
       "path": "docs/specs/cae-research/evidence/E/recovery_followup_check.json",
       "blob_sha": "f195445e9ed537d557f309d4023d7f0fcc94ee6c",
       "provenance": "independent actual JS context/pack/full answer coverage/reassessment check"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/constraint_contract.json",
+      "blob_sha": "06371aa820c456dec054c1b2d40cb07ca0f25665",
+      "sha256": "ddc6df511f716772e01287ff7215d9ff2d25d967ba0f2f6ca579fef6b701eae0",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/source_manifest.json",
+      "blob_sha": "9aa662051395deddf08659513df4e3b91183d3f0",
+      "sha256": "0dd16382598bc3eab7d42d2dff865f843ac03b4cb7e47e7cd2b318156079d1b7",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/workbench_core_sources.json",
+      "blob_sha": "32a43a7d4ad80d128d06f7390139b4cb05678692",
+      "sha256": "e02f667cfe884e64202ecce84780dad367bad54d0557280aa9851eadcb852ca7",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/workbench_source.py",
+      "blob_sha": "fe4e6400011ab772876fdbbca046811242edab8a",
+      "sha256": "0368d736ad916cd4ffa22de0584aa8abb5a0e7e040eac9d018c433ce332db918",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/optimizer_probe.py",
+      "blob_sha": "baf9973117de87c2a7ca1957f8a57d06082810aa",
+      "sha256": "e36dc9149801d2f6ab555ca33afc5aa9488d48a11fbe5565f067db8062b10be9",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/constraint_probe.py",
+      "blob_sha": "5651cbcc0862effa271bdbb77ef1bbc01b01bbe2",
+      "sha256": "dd0c1b198ac8f50898dd4ac51e1920dd7110f90195d98dd03dcb5b101fec8c3c",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/run_pyvisco.py",
+      "blob_sha": "d9f49c2ab32638eac67f6369c399e357e578f472",
+      "sha256": "813afd088b9dafe251a3f247a855dd8311563ea5ffc637eefc17b900d9d3d6c2",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/equilibrium_probe.py",
+      "blob_sha": "7b8b90ae788eb06b388b1b14c4854925dcc2ab0d",
+      "sha256": "3f7323a87588437119993913c44c1a66b60425df78215209fb1bdce541657c27",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/reference_probe.py",
+      "blob_sha": "17362315bbdb945aa2d63888088f8a180196930c",
+      "sha256": "7e8f7c6d7359f7b748c85a85bd93f853b311a77f0e6646791c9cc8e73cc53e1a",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/run_neml.py",
+      "blob_sha": "7ebdbecf5816488de804bedc46e3f121aba1d1f8",
+      "sha256": "692dce4155368e41f3b99c645ac141b5563512e23a93dd647b4966b87e94f293",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/expected.json",
+      "blob_sha": "922313cc9daba73ace9b1ec40f557d2b5de8d57a",
+      "sha256": "433c9d79ea2dcf729da8f03ec49989921d98526364bdc4adf7cfed08e9d1b201",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/historical_observations.json",
+      "blob_sha": "4f1ff2ea456caaa1fd08ea3806b94dc9dc1abc01",
+      "sha256": "e4d00703fe9cf9121136e9aafcf6a78c35e5694ed8c5eb2fcb868cc8f93f1721",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/check_assets.py",
+      "blob_sha": "c5aff47f3063e0378995eb83e3aef63f48dce086",
+      "sha256": "2d6b442030c51a55367477595d8846665fe18f36491728dd7a8e041cf0ad22b8",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/cold_reproduce.py",
+      "blob_sha": "bd69eab2a85b4c0190a07c1a1e576e6c5d17f734",
+      "sha256": "6cc4ab424186545896f8fe32d9e997afe7e8d6f4da1c5d7dec4cdffac21837c6",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/README.md",
+      "blob_sha": "b36a6a967f35febbaf71c2ff267ab2bd1f81bfa9",
+      "sha256": "99f153bd0113ab5c4e6fadd5f8b27f26abffc4ffa8e35d2fdecc71b468baf2f9",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/failure_cases.json",
+      "blob_sha": "6b8207ad822c7f9311b6f1e0d3f3f72d55ed4cb0",
+      "sha256": "1d4ac397a084ecd0cb8b66ef46b3b59acb8d9983653fd0b564123a3d678941c7",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/ci_recipe.json",
+      "blob_sha": "ab93f6bf6138914c5f0ef375ae88eff5ce9aa2ac",
+      "sha256": "9de55e3c8cf0a71fd9f8bed7ce28f05c7cbcf2add2bebadf9eb8328b213aeb68",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/asset_manifest.json",
+      "blob_sha": "388e613a7378936378bdd7f3d8a521bab92a0a62",
+      "sha256": "6dd915caca5a2a4519af049db3bcb6d1f56a1e3ba84931949ea423bf8280463c",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/upstream_source_bundle.json",
+      "blob_sha": "b95d68052eb52097fcc0a2f23527edd836c0b108",
+      "sha256": "8193a3ba08f96bb80624e81a8d57555a2c8ff73201d1fe1937fe8de934f9fac4",
+      "provenance": "fresh_upstream_11_sources_match_recorded_SHA256_with_8_license_notices; standalone_bundle_separate_from_probe_asset_manifest"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/recovery-map.json",
+      "blob_sha": "c98a42d531f550c233ad3440eae5db1b97799244",
+      "provenance": "author latest B source and asset map"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/C/recovery-index.json",
+      "blob_sha": "f07d8514ff0b648993a515fbdd9595ebb6e833b7",
+      "provenance": "authoritative current C recovery index and superseded candidates"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/F/recovery_C_semantic_check.json",
+      "blob_sha": "16ff7b27ccda91389b81ee34fc3f4aaba1dd024d",
+      "provenance": "independent actual16source-span/96question-facet semantic fixture check, not retrieval/provider validation"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/F/current_ci_check.json",
+      "blob_sha": "57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f",
+      "provenance": "independent original GitHub job/log/artifact-metadata inspection, not raw CSV independent revalidation"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/E/recovery_B_source_check.json",
+      "blob_sha": "45d842c60eb50b94a68090fc6ee98c7cb8b7f038",
+      "provenance": "independent actual11source/8notice hash/length check"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/M/current-ci-receipt.json",
+      "blob_sha": "d23a2502e8ea98ece683766a72dd8a436a8c475e",
+      "provenance": "current actual remote reference execution; logical head and actual PR merge checkout separate"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/M/current-ci-log.txt",
+      "blob_sha": "39c9d20285cba77b07eee5ec4f9389e99fc31577",
+      "provenance": "actual current full GitHub job log with only ANSI control sequences removed"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/F/recovery_B_source_check.json",
+      "blob_sha": "c569c56ab3cbfcd19e843c90baa63fd86376588c",
+      "provenance": "independent actual11source/8notice UTF8/SHA256/pinnedmanifest check"
     }
   ]
 }

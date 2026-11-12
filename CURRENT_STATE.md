@@ -4,6 +4,8 @@
 
 사용자가 요청한 전체 구현 인계는 [통합 명세](docs/specs/spec-cae-research-implementation.md)와 [구현/증거/토의 색인](docs/specs/cae-research/README.md)에 연결한다. 공통 서비스·strict DTO·실험/목적함수/제약·revision/CAS·SaveAs/복구·실제 Windows Qt 창·열린 Prep IPC/atomic Apply, 여러 비선형 재료 profile, 전문가 RAG/도구/별도 검토, native animation/TH 수치 판독과 RP 연결을 파일·API·상태·수치 인수 단위로 구체화했다. DP/Xia/J2만으로 범위를 제한하지 않는다.
 
+새복구코드는 [현재Actions43140439077](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077)에서실제재실행했다. 새LAW33Ka1cappedpair/수치oracle,실pyvisco+기존optimizer/holdout,유한Kroot·제약·coldcopyreference가통과했다. NEML은별도exit20미충족이며제품WindowsGUI/실provider인수는아니다.
+
 이번 변경은 **명세와 참조 자산·계획 갱신**이다. 새 제품 GUI/service/provider loop/RP fork와 Windows 전체 흐름이 구현된 상태는 아니다. 기존 Prep IPC/MCP, Workbench native 실행·MDO가 있다는 사실과 앞으로 연결할 기능을 구분한다. 실제 Linux LAW33/native converter 및 pyvisco·기존 optimizer 참조 검증은 그 좁은 범위의 근거다.
 
 작성4명과 독립 검토2명이 실제 반론·수정·재확인을 수행했다. 실행환경 단절 전 원 journal17개 항목의 마지막 해시는 색인에 기록하며, 원 raw 출력/로컬 커밋 전체를 회수했다고 주장하지 않는다. 회수한 원본과 새 재구성본·현재 재검사 범위를 자산별 manifest에서 구분한다.

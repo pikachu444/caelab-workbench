@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "reviewer": "F",
+  "bundle_blob": "b95d68052eb52097fcc0a2f23527edd836c0b108",
+  "manifest_blob": "9aa662051395deddf08659513df4e3b91183d3f0",
+  "method": "Independent SHA256 implementation over UTF8 codepoints; known empty and abc vectors checked. Current functions-JS execution.",
+  "source_checks": [
+    {
+      "id": "B-SRC-HYP",
+      "computed": "bb3b539122de3406ed5f267c7a3a3bf64ef5e1d87b24b5cb4aa2af060d606fb6",
+      "expected": "bb3b539122de3406ed5f267c7a3a3bf64ef5e1d87b24b5cb4aa2af060d606fb6",
+      "byte_length": 2081,
+      "declared_bytes": 2081,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-VIS",
+      "computed": "641490da54f1d62d5f631c899f3f0ade44d1f9debc98a9e9068fe4f0577795bb",
+      "expected": "641490da54f1d62d5f631c899f3f0ade44d1f9debc98a9e9068fe4f0577795bb",
+      "byte_length": 37413,
+      "declared_bytes": 37413,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-WLF",
+      "computed": "93f143f9789e31aaffebc229fe76b0c3b37ffa0b4937d5b2980b1d524e2503a2",
+      "expected": "93f143f9789e31aaffebc229fe76b0c3b37ffa0b4937d5b2980b1d524e2503a2",
+      "byte_length": 9260,
+      "declared_bytes": 9260,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-CYC",
+      "computed": "1575188d63689f68a5b0ac0a28006b582e1a92e7b3d14c56108e73f40892318f",
+      "expected": "1575188d63689f68a5b0ac0a28006b582e1a92e7b3d14c56108e73f40892318f",
+      "byte_length": 33000,
+      "declared_bytes": 33000,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-CYC-DRIVER",
+      "computed": "ec99f22f655c2e5a8c5ce80aa7fb6eed8fa377e7033ea749d5ccf7621269a134",
+      "expected": "ec99f22f655c2e5a8c5ce80aa7fb6eed8fa377e7033ea749d5ccf7621269a134",
+      "byte_length": 52328,
+      "declared_bytes": 52328,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-CYC-TEST",
+      "computed": "9dfc9371878ac071f2e516ebeb11e9e05190563e989f54357750be62b74cc126",
+      "expected": "9dfc9371878ac071f2e516ebeb11e9e05190563e989f54357750be62b74cc126",
+      "byte_length": 17069,
+      "declared_bytes": 17069,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-JCF",
+      "computed": "9e671ac4705f63edb1f7ee34034df67bcb165fd1ccaf14f4d3937c03790ebfa4",
+      "expected": "9e671ac4705f63edb1f7ee34034df67bcb165fd1ccaf14f4d3937c03790ebfa4",
+      "byte_length": 18374,
+      "declared_bytes": 18374,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-JCD",
+      "computed": "64718c5f9144aa83ca6e15915ddafa38836041f8b25d895aa71e40549d7d0b5b",
+      "expected": "64718c5f9144aa83ca6e15915ddafa38836041f8b25d895aa71e40549d7d0b5b",
+      "byte_length": 9307,
+      "declared_bytes": 9307,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-CYC-MODEL",
+      "computed": "bd1966052a0ae3fbd7fbdb95ba3897de0021807e3c22b554667b8ac73a9eaf53",
+      "expected": "bd1966052a0ae3fbd7fbdb95ba3897de0021807e3c22b554667b8ac73a9eaf53",
+      "byte_length": 46922,
+      "declared_bytes": 46922,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-CYC-PYAPI",
+      "computed": "0322ae2a18d6a2e89ed7e6606c98c471fd770bceffcd00e330d1e3b9531485bf",
+      "expected": "0322ae2a18d6a2e89ed7e6606c98c471fd770bceffcd00e330d1e3b9531485bf",
+      "byte_length": 11280,
+      "declared_bytes": 11280,
+      "manifest_match": true
+    },
+    {
+      "id": "B-SRC-CYC-BUILD",
+      "computed": "d52f0e3bd6e3c64ef11f7798aa4859d6e1757aab5530f31e4ac4d1fb6994c963",
+      "expected": "d52f0e3bd6e3c64ef11f7798aa4859d6e1757aab5530f31e4ac4d1fb6994c963",
+      "byte_length": 4303,
+      "declared_bytes": 4303,
+      "manifest_match": true
+    }
+  ],
+  "notice_checks": [
+    {
+      "id": "hyperelastic-license",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "expected": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "id": "pyvisco-license",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "369c00c19c4d0218790994a2c8e662e080977ea052592f345222acf1f7ee8e11",
+      "expected": "369c00c19c4d0218790994a2c8e662e080977ea052592f345222acf1f7ee8e11"
+    },
+    {
+      "id": "neml-license",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "ed91f26585637a8d2750e38c76f086cc5fda3e749b39d4101083c4f91fe3b4b2",
+      "expected": "ed91f26585637a8d2750e38c76f086cc5fda3e749b39d4101083c4f91fe3b4b2"
+    },
+    {
+      "id": "neml-rapidxml-license",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "6094a09542ee0835df4c212203ae0a19c93b47a24d78ccf4951b0282268570ae",
+      "expected": "6094a09542ee0835df4c212203ae0a19c93b47a24d78ccf4951b0282268570ae"
+    },
+    {
+      "id": "neml-submodule-map",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "a44d4e9cede585493ea90ce469b1c75c03766d1e1de15db0d6fb276ae65b28e5",
+      "expected": "a44d4e9cede585493ea90ce469b1c75c03766d1e1de15db0d6fb276ae65b28e5"
+    },
+    {
+      "id": "pybind11-license",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb",
+      "expected": "83965b843b98f670d3a85bd041ed4b372c8ec50d7b4a5995a83ac697ba675dcb"
+    },
+    {
+      "id": "opencourant-license",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "ad858d53cae05eed9531ecd4c467440803acffe34c69de7b88e03affc5b6a1bd",
+      "expected": "ad858d53cae05eed9531ecd4c467440803acffe34c69de7b88e03affc5b6a1bd"
+    },
+    {
+      "id": "opencourant-copyright",
+      "keys": [
+        "id",
+        "repository",
+        "revision",
+        "path",
+        "url",
+        "license_id",
+        "applies_to",
+        "raw_text",
+        "sha256",
+        "bytes",
+        "retrieved"
+      ],
+      "computed": "f58efdc24ccfa676e7cced2c239e963b42270202afa737033ea25c7ae9f44f1f",
+      "expected": "f58efdc24ccfa676e7cced2c239e963b42270202afa737033ea25c7ae9f44f1f"
+    }
+  ],
+  "scope": "Actual bundled source bytes agree with fixed source manifest; this is source-content integrity, not compiled backend/executable correspondence or legal certification."
+}

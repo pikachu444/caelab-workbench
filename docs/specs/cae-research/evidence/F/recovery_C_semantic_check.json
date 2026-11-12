@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "review_id": "F-RECOVERY-C-SEMANTIC-20261112-1",
+  "reviewer": {
+    "role": "F",
+    "kind": "independent_agent_review",
+    "human_approval": false
+  },
+  "evidence_blobs": {
+    "corpus": "38c12bf87cc38d4184d4f49213b52654d91d6b3c",
+    "labels_before": "a916f0fc30c7a33dea4cb56f2476ab0a772ee4f2",
+    "labels_after": "93881aa4a70fc749e9d9c65995398b37a776e902",
+    "annex": "035b6e431f34e94bac33e29f2f0cc1e796995438"
+  },
+  "review_basis": "Actual cloud blob bytes read. This is a new review, not transfer of the lost original F annotation receipt.",
+  "source_span_checks": [
+    {
+      "chunk": "poisson",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "poisson_impl",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "elastic_modes",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "elastic_law",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "elastic_solve",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "elastic_vm",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "hyper_kinematics",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "hyper_energy",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "hyper_stress",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "geos_dp_yield",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "geos_dp_conversion",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "prony_relax",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "prony_frequency",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "wlf_shift",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "chaboche_state",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    },
+    {
+      "chunk": "chaboche_evolution",
+      "exact_text": true,
+      "parent_hash": true,
+      "line_start": true,
+      "line_end": true
+    }
+  ],
+  "label_checks": {
+    "questions": 96,
+    "exact_distinct_questions": 96,
+    "explicit_span_errors": [],
+    "development": {
+      "supported": 12,
+      "insufficient": 12,
+      "out_of_scope": 12
+    },
+    "evaluation": {
+      "supported": 24,
+      "insufficient": 18,
+      "out_of_scope": 18
+    }
+  },
+  "semantic_findings": [
+    {
+      "domain": "Poisson",
+      "chunk_ids": [
+        "poisson",
+        "poisson_impl"
+      ],
+      "finding": "Neumann g=grad(u).n enters positive RHS weak-form boundary integral; outward heat-flux convention is not inferred. Implementation spans identify the actual Dirichlet marker and PETSc LU options."
+    },
+    {
+      "domain": "small_strain_elasticity",
+      "chunk_ids": [
+        "elastic_modes",
+        "elastic_law",
+        "elastic_solve",
+        "elastic_vm"
+      ],
+      "finding": "Six rigid modes, Lame conversion, near-nullspace/PETSc options and deviatoric von Mises expression match the actual spans. Near-nullspace does not certify sufficient BCs; the demo does not prove structural safety."
+    },
+    {
+      "domain": "hyperelasticity",
+      "chunk_ids": [
+        "hyper_kinematics",
+        "hyper_energy",
+        "hyper_stress"
+      ],
+      "finding": "F=I+grad(u), C=F.T*F, J=detF, compressible logarithmic neo-Hookean energy, first variation/Jacobian and sigma=J^-1*dpsi/dF*F.T are preserved. J>0 and stress-measure distinction are appropriate mathematical consequences, not another solver's LAW10 equivalence."
+    },
+    {
+      "domain": "GEOS_DP",
+      "chunk_ids": [
+        "geos_dp_yield",
+        "geos_dp_conversion"
+      ],
+      "finding": "Trial yield uses trialQ+friction*trialP-oldCohesion. Nonnegative dilation<=friction, separate F/D, degree conversion and MC compression-corner fit match source. This span alone is not apex support or general DP equivalence."
+    },
+    {
+      "domain": "pyvisco",
+      "chunk_ids": [
+        "prony_relax",
+        "prony_frequency",
+        "wlf_shift"
+      ],
+      "finding": "Long-time fraction is 1-sum(alpha); omega API is rad/s and output storage then loss; WLF returns decadic log shift. Hz conversion and unrecovered actual package execution remain separate."
+    },
+    {
+      "domain": "NEML",
+      "chunk_ids": [
+        "chaboche_state",
+        "chaboche_evolution"
+      ],
+      "finding": "q sums six-component backstress blocks; h uses dev(sigma)+X and negative evolution. Direct external sigma-X equivalence is rejected without sign mapping; full tensor/shear/API conventions cannot be deduced from q alone."
+    }
+  ],
+  "objections": [
+    {
+      "id": "F-RC4",
+      "before": "evaluation-41 question requests0.11.0 but facet wasv0.10.0; explicit Radioss/CalculiX tokens and2.23 were discarded onfive cases.",
+      "resolution": "New labels retain exact solver/version source spans; independent 96-question codepoint checks pass; eval41 isv0.11.0 and eval26 CalculiX2.23.",
+      "status": "closed_on_exact_after_blob"
+    },
+    {
+      "id": "F-RC5",
+      "before": "Development25-36 differed only by birthday-party case number;13-24 were topic-ID templates with mismatched specific obligations.",
+      "resolution": "Author supplied12 distinct non-CAE topics and12 specific engineering missing-source/data questions. F read every changed question and obligation. All96 full question strings differ; semantic relatedness across development/evaluation remains disclosed.",
+      "status": "closed_on_exact_after_blob"
+    }
+  ],
+  "language_review": {
+    "bilingual_entries": 27,
+    "cases": 6,
+    "accepted_scope": "Limited reviewed Korean-English retrieval projection with original question, negation, conditions, numbers, solver/card/edition retained. Generic terms such as parameters/history do not establish source sufficiency or universal translation. Japanese/French/unmatched Korean remain language_coverage_unverified independent of source absence."
+  },
+  "decision": "Accept these source-span semantics and revised labels for this small frozen engineering retrieval fixture, subject to exact blob/hash binding. Do not alter original source/label bytes or transfer review to later revisions.",
+  "limitations": [
+    "24 covered evaluation questions represent12 paired intents, not24 independent engineering domains; development paraphrases share intended topics and are not an independent accuracy population.",
+    "Expected supported/insufficient/out_of_scope labels are annotation review, not measured BM25/hybrid retrieval or provider-answer quality.",
+    "F independently executed current span/identity metadata and explicit-question facet-span checks; full SHA256 recomputation was separately reported by E, not represented as F execution.",
+    "Eight pinned source files and16 selected spans have narrow solver/formulation coverage. Contact, target solver defaults, original Xia full text, actual user results and experimental identifiability remain absent.",
+    "The F review does not certify engineering safety, actual GUI/provider execution, product implementation, or recovered original17-entry journal/evidence package."
+  ]
+}

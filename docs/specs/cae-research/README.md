@@ -17,7 +17,7 @@
 
 공통 contracts/서비스/CAS/저장/GUI/IPC는 core가 이전 통합본문보다 우선합니다. 영역별 정확한 law/provider/후처리는 A/B/C/D 정본이 소유합니다. 모델명 분기로 generic service를 늘리지 않습니다. 새모델은 exactlaw/source/license·계수/상태/단위/측도·실제backend API/카드·관측/coverage·독립oracle·실험식별·export/Apply·플랫폼검증을 갖춘 adapter로 추가합니다.
 
-core C11의 파일/선행/인수 표대로 CORE01→CORE02/STORE01을 구현하고 MAT-A/MAT-B·E0–E2·POST01–04를 병렬 진행한 뒤 UI01/PREP01/LINK01과 실제provider/RP/Windows 인수를 닫습니다. API/DTO/오류/취소/잠금/원자저장/수치한계가 해당 정본에 있습니다. 지원binding없는native export/Apply를 만들어내지 않습니다.
+[작업 배정 JSON](implementation-map.json)과 core C11의 파일/선행/인수 표대로 CORE01→CORE02/STORE01을 구현하고 MAT-A/MAT-B·E0–E2·POST01–04를 병렬 진행한 뒤 UI01/PREP01/LINK01과 실제provider/RP/Windows 인수를 닫습니다. API/DTO/오류/취소/잠금/원자저장/수치한계가 해당 정본에 있습니다. 지원binding없는native export/Apply를 만들어내지 않습니다.
 
 ## 실제 토의와 회수 경계
 
@@ -36,4 +36,10 @@ core C11의 파일/선행/인수 표대로 CORE01→CORE02/STORE01을 구현하�
 
 모든referencefit은합성/수치검증범위를명시합니다. 실재료물리검증·새제품service/GUI·liveLLMprovider·새Prep multiApply·RPfork·Windows전체흐름은구현인수작업입니다. 미실시를pass로바꾸지않습니다.
 
-GitHubPR검증이추가된경우해당Actions receipt가새복구코드실행범위를소유합니다. 과거receipt를재작성하여새실행처럼보이지않게합니다.
+## 현재 실제 재실행 결과
+
+[Actions43140439077](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077)의새실행이통과했습니다. exactrecoveryasset검사·A참조계산·공식Linuxrelease해시검사·실제LAW33Ka1의2e-6/1e-6cappedpair와새Euleroracle/refinement검사·D덱생성·B수치/유한Kroot·실pyvisco/기존optimizer·제약·coldcopy재생산을수행했습니다. Pronyfit은146observations,loss1.4321823225436936e-13,untouchedholdout3.291180473817548e-14입니다.
+
+새nativeCSV/로그/수치결과는[현재실행artifact](https://github.com/pikachu444/caelab-workbench/actions/runs/43140439077/artifacts/13909436920)와[실행receipt](evidence/M/current-ci-receipt.json)에연결합니다. 이는미회수원raw를복원한것이아니라새실제실행결과입니다. D는새덱생성만실행했고새Dnative/checker/과거DOP853/Ka0native를다시검증한것은아닙니다. NEML은exit20으로backendgate미충족을별도기록했습니다. greenjob을NEMLpass로읽지않습니다. 문서에재구성직후미실행이라고적은referencecode의이후실행상태는이receipt가소유합니다.
+
+제품service/GUI/실LLMprovider/Prep새multiApply/RPfork/Windows와실재료검증은여전히구현인수입니다. 과거receipt를수정하여새실행처럼보이지않게합니다.

@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
-  "recovery_id": "B-RECOVERY-1",
+  "recovery_id": "B-RECOVERY-1-with-upstream-raw",
   "repository": "pikachu444/caelab-workbench",
   "branch_ref_modified": false,
   "original_part_sha256": "f3f1ce4d1d96fa60738268aa0d2dc685232a2e4a2ca6b849d48930f32924c399",
   "original_part_bytes_recovered": false,
   "original_raw_or_CSV_receipt_bytes_recovered": false,
-  "root_core_blob": "f78a335f9d66c07343e9a8456c6e5dd7e03607e7",
+  "root_core_blob": "b3ec806dd6d5e52c5062c75fc98b1e829b2c08ac",
   "entries": [
     {
       "logical_path": "parts/material_finite_history_recovered.md",
-      "blob_sha": "7c2087cfb92cf3411cb807a94546645982253ecc",
-      "sha256": "af40888246438e79cebcb6afebed45d3ca328bae42640181541d1f27edb9611b",
-      "status": "reconstructed_new_bytes_requires_E_F_review"
+      "blob_sha": "f5e122220fb6f6c5706dcb4906832c0d80fded2b",
+      "sha256": "0f0da188c9571d2a26eee897bdfcd7bf7e6268ef35ccbc1b97174ee6edd97487",
+      "status": "reconstructed_new_bytes_common_core_crossrefs_aligned_requires_E_F_review"
     },
     {
       "logical_path": "evidence/B/constraint_contract.json",
@@ -121,6 +121,12 @@
       "blob_sha": "388e613a7378936378bdd7f3d8a521bab92a0a62",
       "sha256": "6dd915caca5a2a4519af049db3bcb6d1f56a1e3ba84931949ea423bf8280463c",
       "status": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "logical_path": "evidence/B/upstream_source_bundle.json",
+      "blob_sha": "b95d68052eb52097fcc0a2f23527edd836c0b108",
+      "sha256": "8193a3ba08f96bb80624e81a8d57555a2c8ff73201d1fe1937fe8de934f9fac4",
+      "status": "fresh_upstream_11_sources_match_recorded_SHA256_with_8_license_notices; standalone_bundle_separate_from_probe_asset_manifest"
     }
   ],
   "verification": "All created as unreferenced blobs. JSON metadata was checked in orchestration; no primary Python/FS runtime is available. Follow ci_recipe.json for actual new-byte tests.",

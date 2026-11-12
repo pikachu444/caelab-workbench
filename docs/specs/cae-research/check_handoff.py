@@ -16,6 +16,22 @@ for p in root.rglob("*.json"):
     json.loads(p.read_text(encoding="utf-8"))
 for p in root.rglob("*.py"):
     ast.parse(p.read_text(encoding="utf-8"),filename=str(p))
+journal=root/"debate-recovery-ascii.jsonl"
+if journal.exists():
+    data=journal.read_bytes()
+    if any(b>127 for b in data): raise ValueError("JOURNAL_NOT_ASCII")
+    lines=data.splitlines(keepends=True)
+    records=[json.loads(x) for x in lines]
+    assert records[0]["seq"]==0 and records[0]["kind"]=="protocol"
+    order=records[0]["writer_order"]
+    prefix=lines[0]
+    for i,record in enumerate(records[1:],1):
+        assert record["seq"]==i and record["writer"]==order[i-1],i
+        if i>1:
+            expected=hashlib.sha1(b"blob "+str(len(prefix)).encode()+b"\0"+prefix).hexdigest()
+            assert record["previous_git_blob"]==expected,("JOURNAL_PREFIX_MISMATCH",i)
+        prefix+=lines[i]
+    assert len(records)==len(order)+1,"INCOMPLETE_JOURNAL"
 for p in root.glob("*.md"):
     text=p.read_text(encoding="utf-8")
     if "\x00" in text: raise ValueError("NUL in document")

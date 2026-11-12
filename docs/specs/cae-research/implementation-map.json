@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "purpose": "Routing index copied from reviewed normative contracts; referenced specifications own all API/equation/schema details.",
+  "product_implementation_claimed": false,
+  "authoring_and_independent_review": "A-D authors, E/F original-critic rechecks; see ASCII journal and reports.",
+  "implementation_rules": [
+    "Read current repository AGENTS.md, DESIGN and this handoff index before editing.",
+    "Use only the existing optimizer, StudyManager, JobManager, RunStore and native document owners.",
+    "Assign one editor for common files; coordinate extension points before parallel edits.",
+    "Do not mark model/backend supported by registry metadata or mock/reference tests alone.",
+    "Use the exact per-task source pin, units, state, observable, failure and acceptance contracts.",
+    "Update current state and obtain independent QA on actual same-commit user paths before closing implementation work."
+  ],
+  "tasks": [
+    {
+      "id": "CORE01",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/artifact_refs.py",
+        "caelab/materials/contracts.py",
+        "caelab/materials/units.py"
+      ],
+      "depends_on": [],
+      "specification": "core-implementation.md",
+      "acceptance_sections": "C1/C3/C6",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "CORE02",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/materials/registry.py",
+        "caelab/materials/experiments.py",
+        "caelab/materials/residuals.py",
+        "caelab/materials/evaluator.py",
+        "caelab/materials/service.py"
+      ],
+      "depends_on": [
+        "CORE01"
+      ],
+      "specification": "core-implementation.md",
+      "acceptance_sections": "C2/C4/C5/C7",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "STORE01",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/materials/service.py",
+        "caelab/project.py",
+        "caelab/native/run_store.py"
+      ],
+      "depends_on": [
+        "CORE02"
+      ],
+      "specification": "core-implementation.md",
+      "acceptance_sections": "C8",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "MAT-A",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/materials/adapters/dp_axisym.py",
+        "caelab/materials/adapters/geos_dp.py",
+        "caelab/materials/adapters/foam33.py",
+        "caelab/materials/adapters/ortho_plane_stress.py",
+        "caelab/materials/adapters/xbp_power.py"
+      ],
+      "depends_on": [
+        "CORE02",
+        "POST01-04"
+      ],
+      "specification": "material-pressure-orthotropic.md",
+      "acceptance_sections": "exact profiles and per-profile arithmetic/native/experimental gates",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "MAT-B",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/materials/adapters/ogden.py",
+        "caelab/materials/adapters/pyvisco.py",
+        "caelab/materials/adapters/neml_chaboche.py",
+        "caelab/materials/adapters/jc_state.py"
+      ],
+      "depends_on": [
+        "CORE02"
+      ],
+      "specification": "material-finite-history.md",
+      "acceptance_sections": "five exact profiles and per-profile backend/oracle/constraint gates",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "UI01",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "apps/workbench_qt/material_study.py"
+      ],
+      "depends_on": [
+        "CORE02",
+        "STORE01"
+      ],
+      "specification": "core-implementation.md",
+      "acceptance_sections": "C9",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "PREP01",
+      "repository": "pikachu444/caelab-prep",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "src/caelab_prep/application/material_binding.py",
+        "existing Prep live dispatcher/typed codec"
+      ],
+      "depends_on": [
+        "CORE01",
+        "CORE02"
+      ],
+      "specification": "core-implementation.md",
+      "acceptance_sections": "C10; Prep dedicated handoff",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "LINK01",
+      "repository": "both coordinated repositories",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "existing Workbench program_catalog/project launcher",
+        "existing Prep shared widget public hosts"
+      ],
+      "depends_on": [
+        "STORE01",
+        "UI01",
+        "PREP01"
+      ],
+      "specification": "core-implementation.md",
+      "acceptance_sections": "C8/C9/C11",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "E0-2",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "existing assist context/discussion and ExpertWindow",
+        "new corpus/index/query policy modules in expert annex"
+      ],
+      "depends_on": [
+        "CORE01"
+      ],
+      "specification": "expert-implementation.md",
+      "acceptance_sections": "context, corpus source/edition/language/relevance and migration gates",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "E3-5",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "existing assist provider/discussion orchestration",
+        "new read-only tools and strict reviewer adapters in expert annex"
+      ],
+      "depends_on": [
+        "E0-2",
+        "POST01-04"
+      ],
+      "specification": "expert-implementation.md",
+      "acceptance_sections": "actual provider wire, host full-answer review, reassessment; Windows/live gates",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "POST01-04",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/native/operations.py",
+        "caelab/native/converters.py",
+        "caelab/native/result_adapters.py",
+        "caelab/result_readers/vtk_fields.py",
+        "caelab/result_readers/opencourant_history.py"
+      ],
+      "depends_on": [
+        "CORE01"
+      ],
+      "specification": "post-implementation.md",
+      "acceptance_sections": "source lifecycle, field/history actual numerical converters and extraction",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    },
+    {
+      "id": "POST05-06",
+      "repository": "pikachu444/caelab-workbench",
+      "specification_state": "reviewed",
+      "product_implementation_state": "planned",
+      "planned_files_or_existing_boundary": [
+        "caelab/native/rp_consumer.py",
+        "optional separate OpenCourantRP fork"
+      ],
+      "depends_on": [
+        "POST01-04"
+      ],
+      "specification": "post-implementation.md",
+      "acceptance_sections": "manual external viewer and selected exact handoff/receipt CLI",
+      "completion_requires": "Actual implementation plus task-specific user/data/error/platform acceptance; reference execution alone is insufficient."
+    }
+  ]
+}
