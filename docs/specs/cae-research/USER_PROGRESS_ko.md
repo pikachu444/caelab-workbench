@@ -1,5 +1,7 @@
 # CAELab 개발 현황 — 사용자용 설명
 
+현재 개발 순서는 [전체 개발 계획](../../review/2026-10-23-codex-improvement-plan.md#execution-order), 실제 맡길 작업은 [전체 실행 목록](IMPLEMENTATION_TASKS_ko.md#whole-backlog)에서 확인합니다. 첫 Prony 동정·저장·재열기 이후 11개 재료 프로필, 실제 자문·별도 심의·RP 및 기존 전처리·플랫폼 잔여까지 계속합니다. 이번 갱신은 개발 순서의 구체화이며 새 제품 기능 구현은 아닙니다.
+
 이번 계획 통합에서 발견한 문제와 수정·검토 방법은 [추가 검토 결과](PLAN_INTEGRATION_REVIEW_ko.md)에 정리했습니다.
 
 작성일: 2026년 11월 12일

@@ -1,5 +1,11 @@
 # 작업 재개
 
+## 지금 이어서 할 구현
+
+첫 코드는 D01(전문가 프레임·검증 상태), D02(공통 참조·단위), D03(Prep 표시 갱신)이며 D37 환경 준비를 병행합니다. 혼자면 D01→D02→D03 뒤 D04/D05로 진행하고, 여럿이면 공유 파일 편집자를 나눠 병렬 진행합니다. 다음 사용자 납품은 실제 CSV로 Prony 2항의 계수 5개를 동정하고 곡선·잔차·별도 시험을 확인해 저장·새 프로세스 재열기까지 연결하는 D02/D04/D05/D06/D07입니다.
+
+[전체 순서](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)와 [전체 실행 작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)의 해당 행을 맡아 구현하십시오. 첫 납품 후 모든 재료 프로필·지원 카드 적용·실제 자문/심의·후처리와 기존 Prep/Workbench 잔여까지 계속합니다. 문서 심의가 끝났다는 사실은 이 코드들이 구현됐다는 뜻이 아닙니다.
+
 [AGENTS](AGENTS.md)의 시작 순서·소유권·검증·게시 규칙을 따릅니다. 제품 판단은 [DESIGN](DESIGN.md), 현재 구현과 미해결 항목은 [CURRENT_STATE](CURRENT_STATE.md)가 정본입니다.
 
 1. 현재 checkout의 미커밋 파일, 브랜치·worktree, 원격 main, 실행 중인 소유 작업을 확인합니다. 기존 파일·자산·실행을 보존합니다.

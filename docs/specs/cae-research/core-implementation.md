@@ -19,6 +19,25 @@ Workbench는 독립 프로그램을 연결하고 시험, 평가, 최적화, 근�
 
 각 동작은 실제 파일, 프로세스와 수치에 연결돼야 한다.
 
+### 이번 구현의 순서와 첫 실제 사용자 흐름
+
+전체 순서는 [개발 계획](../../review/2026-10-23-codex-improvement-plan.md#execution-order), 실제 파일 배정은 [전체 실행 작업표](IMPLEMENTATION_TASKS_ko.md#whole-backlog)를 따른다. 신규 공통 코드 D02와 첫 기존 오류 D01·Prep D03을 분리한다. 첫 새 사용자 납품은 Prony `B-VIS-TRS-1`의 2항·5자유계수이며 C1/C2/Tref는 근거 있는 고정 입력이다. 온도별 DMA+완화의 첫 고정 묶음과 실제 실측 사용자 인수를 구별한다. 실제 pyvisco가 없으면 이 납품은 미충족이며 모의값으로 대체하지 않는다.
+
+호출·저장 순서는 다음과 같다. 이름이 아직 없는 구현은 아래 C1의 신규 모듈에 작성하며 기존 서비스를 모델별로 복사하지 않는다.
+
+1. CSV 바이트를 고정하고 열·단위·Hz/rad/s·측도·온도/위상·시험 제어와 train/validation/holdout 분할을 `ExperimentSpec`으로 검사한다.
+2. 신뢰 등록부에서 정확한 descriptor/adapter를 고르고 계수의 고정·자유·연계와 범위·스케일을 `VariableSpace`에 연결한다.
+3. `CalibrationStudyService.evaluate`가 활성 평가·요청 ID를 먼저 공개하고 어댑터의 `validate→plan→실제 계산→collect`를 실행한다. 라이브러리 결과에 FE 실행 ID를 만들지 않는다.
+4. 호스트 `residuals/evaluator`가 고정 관측 격자·마스크·가중치·제약과 실제 예측을 비교하고 평가 자료를 저장한다.
+5. 서비스가 기존 `optimize/BatchEvaluator/StudyManager`에 ACTUAL 관측을 전달해 여러 시험을 동정한다. 기존 INP/SURROGATE 전용 `MDOStudyService.optimize`를 직접 평가기로 호출하지 않는다.
+6. 탐색 중 Stop은 배정 후보의 필수 시험 경계, Cancel은 즉시 요청 응답 뒤 실제 종료 확인으로 처리한다. 긴 계산 중 상태 잠금을 잡지 않는다.
+7. 후보·항 수·이동식 선택을 먼저 고정한 뒤 `execution_phase=confirmation,cache_policy=refresh`의 새 실제 평가를 실행한다.
+8. 보류 시험 노출 이벤트를 저장한 뒤에만 보류 결과를 화면/전문가에 제공한다. 쓰기 실패면 반환하지 않는다. 같은 자료 내용의 재사용을 파라미터명 변경으로 숨기지 않는다.
+9. 연구·자료 변환·모델/라이브러리 정체성·곡선/잔차·제약·선택 평가를 STORE01에 저장하고 MaterialStudyWindow에서 새 프로세스 재열기·이동/SaveAs를 확인한다.
+10. 다음으로 같은 프로필의 전체 WLF·항수·온도 이력을 D12, 실제 LAW33 FE와 TH를 D13/D11, 지원 카드의 export/prepare/commit을 D19에서 각각 연결한다. 첫 Prony는 native export/Apply를 지원한다고 표시하지 않는다.
+
+제품 Prony 수치 설정은 B3의 SLSQP `ftol=1e-10`, 유한차분 `1e-6`을 따른다. 과거 146회 probe는 좁은 합성 참조이며 그 분할·평균·오차/설정을 새 실측 시험에 강제하지 않는다. 실제 자료 부족·물리 적합성 불합격·소프트웨어 계산 실패를 구분한다. 첫 납품 후 정확한 11프로필·실제 자문/심의·후처리와 기존 두 제품 잔여를 계속한다.
+
 ## C1. 공통 계약의 담당 모듈과 소스 기준
 
 기준 커밋은 Workbench `104cdd6888a5554eecc8cf965c60ff1bd980b6da`, Prep `555af5b3ab2c6e7dc276111609302ef565bb4fc8`, RP `cec23cbdd4058237e04fdcc7ecb06a3834578cae`다. 아래 신규 계약은 앞으로 구현할 API이며 이미 존재하는 API와 구별한다.

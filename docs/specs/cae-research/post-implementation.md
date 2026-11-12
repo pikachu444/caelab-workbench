@@ -382,3 +382,10 @@ Windows에서는 설치 발견, 외부 실행, VTK 판독, 첫 화면 그리기,
 그 파일은 공통 `kind=manual,payload={legacy_evidence_ref:ArtifactRefV1}`로 원바이트와 출처·선언 단위를 보존한다. 독립 전문가의 첨부·설명·문헌 질의는 허용한다. 검증된 판독 프로필이 있으면 실제 파일에서 읽은 허용 요약과 원문 위치가 있는 수동 수치 근거를 제공할 수 있다. 이는 전문가 내부 인용 형식이며 공통 `NumericResultV1/ResultRefV1`을 복제하지 않는다. 프로필이 없거나 값의 의미·단위·위치를 확인할 수 없으면 자료 한계와 판독 실패를 남기고 수치를 만들지 않는다.
 
 초기 `evidence.query_field`는 실제 실행 계보가 있는 등록 `ResultRefV1`만 받으므로, 이 수동 파일에 대한 정밀 조회는 `unsupported`다. `evidence.describe`도 역할별 허용 요약만 반환하며 파일 전체를 우회 제공하지 않는다. [전문가 명세 9절](expert-implementation.md#9-역할별-읽기-권한-실제-수치-인용과-새-질문의-검색-판정)의 실제 원파일 해시·등록 위치·표시 텍스트 검증을 수동 요약에도 적용한다. 직접 파일 경로의 인수는 원실행 전달 검사와 별도로 수행하고 저장·재열기 뒤에도 수동 근거라는 지위를 유지한다.
+
+
+## D11. 지금 구현할 순서와 기존 실행기의 확장 지점
+
+D10은 외부 변환기 담당보다 먼저 기존 `caelab/jobs.py`의 단일 편집자에게 배정한다. 현재 `submit_native`는 NativeRun 전용이고 `launch`는 GUI 시작이므로 그대로 결과 변환 작업으로 취급하지 않는다. 기존 JobManager 안에 operation 실행·소유 프로세스그룹·stdout/stderr·취소/timeout·상태 snapshot의 공통 확장 훅을 구현한다. 공개 서비스는 D2의 `submit_result_conversion/operation_snapshot/cancel_operation`을 유지하고 구현이 그 훅을 호출한다. solver `job.json`과 파생 `operation.json`을 분리하며 새 manager/queue나 reader의 독립 Popen을 만들지 않는다. 기존 소유 프로세스 실행·정리 코드를 추출해 재사용한다.
+
+실행행 D11 중 기존 VTU의 직접 수치 조회는 D02 뒤 독립적으로 구현·확인한다. 외부 변환기를 실행하는 경로만 D10의 작업 소유 코드 뒤에 연결해 원형식 변환과 field/history 판독을 등록한다. 실제 TH부터 LAW33 동정에 연결하고, field가 준비되면 D22 원 RP 수동 표시를 병행할 수 있다. 수동 경로도 실제 결과·TIME/층/필드의 표시 확인까지 수행한다. 선택 자동판은 동일 JobManager 소유 훅과 --post-only 전달·first-render receipt를 별도 인수한다. 수동 표시·실수치·문헌 자문·필수 합동 인수 D36을 선택 자동판 완료에 묶지 않는다.

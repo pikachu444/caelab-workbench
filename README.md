@@ -1,5 +1,7 @@
 # caelab-workbench
 
+**무엇을 어떤 순서로 개발할지는 [전체 개발 계획](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)을 먼저 읽으세요.** 지금 할 세 코드 작업, 첫 Prony 사용자 납품, 기존 미완료를 포함한 전체 실행 목록과 완료 조건을 정리했습니다. [작업별 파일·선행·다음 단계](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)에서 개발을 바로 배정할 수 있습니다.
+
 **외부 CAE 프로그램의 입력·실행·결과와 전문가 대화를 프로젝트로 관리하는 Windows용 Qt 워크벤치입니다.** CAD·메시·해석 조건의 정밀 편집은 각 전용 프로그램에서 수행합니다. Workbench는 파일 연결, 실행별 입력 사본·로그·결과의 출처, 저장과 재개를 관리합니다.
 
 ## 재료 연구·전문가 자문·후처리 개발 현황
