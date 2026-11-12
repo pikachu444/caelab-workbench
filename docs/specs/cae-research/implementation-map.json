@@ -1,8 +1,8 @@
 {
-  "schema_version": 1,
-  "purpose": "작업별로 구현 명세를 찾기 위한 목록입니다. 수식·함수·데이터 항목의 정확한 정의는 각 명세서를 기준으로 합니다.",
+  "schema_version": 2,
+  "purpose": "기존 전체 개발 계획 아래에서 새 12개 작업의 재사용분·추가 개발분·담당 역할·선행 조건·완료 기준을 찾는 목록입니다. 제품 데이터 형식이 아닙니다.",
   "product_implementation_claimed": false,
-  "authoring_and_independent_review": "앞선 설계에서는 A–D가 작성하고 E·F가 독립 검토했습니다. 이번 한국어 편집의 검토는 별도로 기록하며 기존 토론 원문과 검토 대상을 바꾸지 않습니다.",
+  "authoring_and_independent_review": "앞선 작성·독립 검토 이력은 보존합니다. 이번 통합에는 기존 WB·Prep 감사자, 재료 및 전문가/후처리 작성자, 기술 QA·한국어 QA와 앞선 재료/RAG 검토자 2명이 순차 참여합니다. 각자 실제 공유 파일에 토론하고 수정 바이트를 재검토합니다. 기록은 plan-integration-debate-ascii.jsonl에 있습니다.",
   "implementation_rules": [
     "편집하기 전에 현재 저장소의 AGENTS.md와 DESIGN.md, 이 문서 묶음의 안내를 읽습니다.",
     "최적화, 설계점 관리, 실행 관리, 결과 저장과 해석 문서 편집은 기존 코드를 사용합니다.",
@@ -28,7 +28,25 @@
       "completion_requires": "잘못된 형식, 모르는 단위, 누락된 값, 다른 파일을 가리키는 참조를 거부해야 합니다. 온도와 질량 단위도 명세대로 변환해야 합니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "공통 데이터와 단위 처리",
       "purpose_ko": "시험자료와 해석 결과를 여러 기능이 같은 뜻으로 읽도록 데이터 형식과 단위 변환을 정합니다.",
-      "expected_result_ko": "자료 형식·단위·성분·좌표계·출처를 검사하는 공통 코드입니다."
+      "expected_result_ko": "자료 형식·단위·성분·좌표계·출처를 검사하는 공통 코드입니다.",
+      "existing_parent_items": {
+        "workbench": "P1·P3·P4; AC-3/4의 단위·축 계약",
+        "prep_touchpoints": "Prep P1; G1–G3의 단위·참조"
+      },
+      "existing_reuse_ko": "기존 단위 도구, 실행/파일 해시와 원자료 보존",
+      "additional_implementation_ko": "공통 자료·결과·근거 참조, 재료 측도·온도·질량 변환",
+      "owner_role_ko": "공통 계약·서비스 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [],
+      "acceptance_required": [
+        "C1/C3/C6의 엄격한 직렬화·단위·소유자·누락 거절"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "CORE02",
@@ -50,7 +68,29 @@
       "completion_requires": "계수 동정에 필수인 시험에서 계산이나 자료 변환이 실패하거나 필요한 결과가 누락되면 목적값을 만들지 않습니다. 정상 계산의 큰 오차와 별도 검증시험의 불합격은 계산 불능과 구분하고, 유효하게 계산한 동정 오차를 보존합니다. 실패한 시험을 빼고 평균을 낮추거나, 계수 동정에 쓰지 않을 시험자료를 동정에 사용해서는 안 됩니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "시험 비교와 재료 계수 동정",
       "purpose_ko": "계산곡선을 시험곡선과 비교하고 오차를 줄이는 계수를 기존 최적화 도구로 찾습니다.",
-      "expected_result_ko": "시험자료 읽기, 계산 호출, 시험별 오차와 제약조건·결과를 저장하는 공통 기능입니다."
+      "expected_result_ko": "시험자료 읽기, 계산 호출, 시험별 오차와 제약조건·결과를 저장하는 공통 기능입니다.",
+      "existing_parent_items": {
+        "workbench": "P1·P4; 기존 MDO 확장",
+        "prep_touchpoints": "Prep G2/T3·N15의 곡선 소비"
+      },
+      "existing_reuse_ko": "mdo/optimize.py의 optimize·BatchEvaluator, 변수·제약·StudyManager와 기존 JobManager/RunStore",
+      "additional_implementation_ko": "여러 시험·실제 평가·잔차·보류 검증·취소·캐시·최종 재계산",
+      "owner_role_ko": "공통 계약·서비스 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01"
+      ],
+      "acceptance_required": [
+        "실제 등록 어댑터 최소 1개와 독립 기준으로 공통 기능 확인",
+        "MDOStudyService의 INP·SURROGATE 전용 경로를 직접 평가기로 사용하지 않음",
+        "탐색 중 보류 시험 실행/노출 0건; 선택 기록 고정 뒤 최종 확인, 노출 이력 보존"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "STORE01",
@@ -70,7 +110,28 @@
       "completion_requires": "읽기 전용 원본을 바꾸지 않고 복사해야 합니다. 다른 작업의 변경을 덮어쓰지 않아야 하며, 복사 중 실패해도 유효한 원본이나 완료된 복사본을 지워서는 안 됩니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "저장·다른 이름으로 저장·중단 복구",
       "purpose_ko": "자료와 계산 결과의 연결을 보존하고 파일 이동이나 작업 중단 뒤에도 복구합니다.",
-      "expected_result_ko": "저장, 읽기 전용 열기, 다른 이름으로 저장, 파일 재연결과 중단 복구 기능입니다."
+      "expected_result_ko": "저장, 읽기 전용 열기, 다른 이름으로 저장, 파일 재연결과 중단 복구 기능입니다.",
+      "existing_parent_items": {
+        "workbench": "P3·P6; AC-1 저장·재열기",
+        "prep_touchpoints": "Prep 문서 단일 소유; G4 파일 관계"
+      },
+      "existing_reuse_ko": "atomic_json·FileLock·프로젝트 v1–3·RunStore",
+      "additional_implementation_ko": "재료 연구 저장·프로젝트 v4 역할·전체 참조 복사·읽기 전용·복구",
+      "owner_role_ko": "공통 계약·서비스 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "CORE02"
+      ],
+      "acceptance_required": [
+        "v1–4 읽기·이동·SaveAs·잠금·실패 복구·선택 결과 보존"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "MAT-A",
@@ -78,22 +139,54 @@
       "specification_state": "reviewed",
       "product_implementation_state": "planned",
       "planned_files_or_existing_boundary": [
-        "caelab/materials/adapters/dp_axisym.py",
+        "caelab/materials/adapters/dp_axisym_closed.py",
         "caelab/materials/adapters/geos_dp.py",
-        "caelab/materials/adapters/foam33.py",
-        "caelab/materials/adapters/ortho_plane_stress.py",
-        "caelab/materials/adapters/xbp_power.py"
+        "caelab/materials/adapters/opencourant_foam33.py",
+        "caelab/materials/adapters/orthotropic_plane.py",
+        "caelab/materials/adapters/gmn12_xbp.py",
+        "caelab/native/geos_driver.py",
+        "caelab/native/adapter.py",
+        "caelab/connections.py"
       ],
       "depends_on": [
-        "CORE02",
-        "POST01-04"
+        "CORE02"
       ],
       "specification": "material-pressure-orthotropic.md",
       "acceptance_sections": "각 모델의 계산식·실제 실행·시험자료 비교와 완료 조건",
       "completion_requires": "각 모델의 식·부호·경화·소성 흐름·하중 이력·필요 출력이 명세와 같아야 합니다. 독립 계산이나 실제 솔버 결과와 대조하고, 지원하지 않는 조건을 알려야 합니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "DP·발포체·직교이방 재료 계산 연결",
       "purpose_ko": "선정한 DP, LAW33, 직교이방 탄성과 파생 탄소성 모델을 공통 동정 기능에 연결합니다.",
-      "expected_result_ko": "모델별 계수와 상태를 받아 계산하고 필요한 곡선을 반환하는 코드입니다."
+      "expected_result_ko": "모델별 계수와 상태를 받아 계산하고 필요한 곡선을 반환하는 코드입니다.",
+      "existing_parent_items": {
+        "workbench": "P3·P4; 기존 MDO/솔버 확장",
+        "prep_touchpoints": "Prep G1/T2·G2/T3·G3/T6"
+      },
+      "existing_reuse_ko": "공개 구성식과 원덱 실행·기존 수치 최적화",
+      "additional_implementation_ko": "정확한 A 6개 프로필의 계산·동정·독립 검증과 모델별 지원 판정; GEOS 구성식 드라이버의 프로그램 발견·XML 사본·기존 작업 관리자 어댑터 등록",
+      "owner_role_ko": "재료 어댑터 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "CORE02"
+      ],
+      "acceptance_required": [
+        "A 6개 프로필 각각의 계산·최적화·플랫폼 조건",
+        "실제 솔버 유한요소 계산 분기는 실제 원결과 판독과 별도 FE 재평가"
+      ],
+      "conditional_dependencies": [
+        {
+          "context": "LAW33 등 실제 솔버 유한요소 계산의 필요한 출력 수집",
+          "requires": [
+            "POST01-04"
+          ],
+          "scope_ko": "해당 변환기·판독 프로필만 필요합니다. 해석식 DP·직교이방 및 GEOS 구성식 드라이버를 RP 전체 완료에 묶지 않습니다."
+        }
+      ],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "MAT-B",
@@ -102,7 +195,7 @@
       "product_implementation_state": "planned",
       "planned_files_or_existing_boundary": [
         "caelab/materials/adapters/ogden.py",
-        "caelab/materials/adapters/pyvisco.py",
+        "caelab/materials/adapters/prony_trs.py",
         "caelab/materials/adapters/neml_chaboche.py",
         "caelab/materials/adapters/jc_state.py"
       ],
@@ -114,7 +207,29 @@
       "completion_requires": "비압축성·압축성 Ogden을 구분하고 온도·시간·전단 성분·재료 이력을 정확히 처리해야 합니다. 필요한 라이브러리를 실행하지 못한 항목을 성공으로 표시해서는 안 됩니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "초탄성·점탄성·반복 소성 등의 계산 연결",
       "purpose_ko": "Ogden, Prony, Chaboche, Johnson–Cook을 각 계산 범위에 맞게 연결합니다.",
-      "expected_result_ko": "모델별 계산과 라이브러리 호출, 결과 읽기, 최적화 제약조건 처리입니다."
+      "expected_result_ko": "모델별 계산과 라이브러리 호출, 결과 읽기, 최적화 제약조건 처리입니다.",
+      "existing_parent_items": {
+        "workbench": "P4; 기존 MDO 확장",
+        "prep_touchpoints": "Prep G1/T2·G2/T3·G3/T6"
+      },
+      "existing_reuse_ko": "기존 수치 최적화·pyvisco/NEML 등 실제 계산 라이브러리",
+      "additional_implementation_ko": "B 5개 프로필의 계산·제약·이력·독립 검증",
+      "owner_role_ko": "재료 어댑터 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "CORE02"
+      ],
+      "acceptance_required": [
+        "B 5개 프로필 각각의 실제 계산·동정·독립 기준",
+        "NEML·플랫폼 미확인을 성공으로 바꾸지 않음"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "UI01",
@@ -133,7 +248,41 @@
       "completion_requires": "실제 CSV를 읽어 계산하고 중지·취소, 시험별 곡선과 잔차, 검증 결과, 저장 후 다시 열기까지 확인해야 합니다. 실제 Windows 화면의 한글 입력과 화면 배율도 검사해야 합니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "재료 연구 화면",
       "purpose_ko": "사용자가 시험자료를 읽고 계수를 정한 뒤 계산·동정·비교·저장을 수행하는 독립 창을 만듭니다.",
-      "expected_result_ko": "자료·모델·계수·비교·실행·결과를 확인하는 Windows용 Qt 화면입니다."
+      "expected_result_ko": "자료·모델·계수·비교·실행·결과를 확인하는 Windows용 Qt 화면입니다.",
+      "existing_parent_items": {
+        "workbench": "P3·P6·P7; GUI 환경 기준",
+        "prep_touchpoints": "Prep P2/P4·N15; 공용 위젯 연결"
+      },
+      "existing_reuse_ko": "Qt 동작 패턴·NumericEdit·CurveTable·CurvePlot·PropertyEditor",
+      "additional_implementation_ko": "실제 CSV·모델·계수·계산/동정·잔차·보류 시험·저장/재열기 화면",
+      "owner_role_ko": "연구창·프로젝트 연결 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "CORE02",
+        "STORE01"
+      ],
+      "acceptance_required": [
+        "실제 계산 어댑터 최소 1개로 C9의 전체 사용자 작업",
+        "표시하는 각 프로필의 실제 지원/미지원 상태",
+        "Windows C9; 공통 창 틀의 동작 확인과 모든 모델 지원을 구별"
+      ],
+      "conditional_dependencies": [
+        {
+          "context": "실제 계산·동정 버튼의 인수",
+          "requires": [
+            "MAT-A",
+            "MAT-B"
+          ],
+          "mode": "at_least_one_verified_profile",
+          "scope_ko": "두 묶음 전체의 완료가 아니라 검증된 실제 프로필 1개 이상이 필요합니다. 11개 프로필의 완료는 별도입니다."
+        }
+      ],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "PREP01",
@@ -154,7 +303,31 @@
       "label_ko": "동정한 계수를 열린 Prep 모델에 반영",
       "purpose_ko": "사용자가 확인한 계수와 곡선을 현재 열려 있는 Prep 문서에 반영합니다.",
       "expected_result_ko": "변경 미리보기와 적용, 여러 재료 항목을 한 번에 바꾸고 되돌리는 기능입니다.",
-      "related_specification_url": "https://github.com/pikachu444/caelab-prep/blob/main/docs/material-research-implementation-handoff.md"
+      "related_specification_url": "https://github.com/pikachu444/caelab-prep/blob/main/docs/material-research-implementation-handoff.md",
+      "existing_parent_items": {
+        "workbench": "P6; AC-1 변경·stale 접점",
+        "prep_touchpoints": "Prep P6a/b·N16; P8c·N19/20; G1/T2·G2/T3·G3/T6"
+      },
+      "existing_reuse_ko": "기존 LiveClient·형식 지정 명령·execute_many·Undo·코덱",
+      "additional_implementation_ko": "지원 모델의 카드·곡선·축 미리보기/원자 적용·응답 유실 처리",
+      "owner_role_ko": "Prep 카드·문서 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "CORE02",
+        "STORE01"
+      ],
+      "acceptance_required": [
+        "LAW1 E 첫 연결과 여러 시험의 동정값 적용을 별도 판정",
+        "지원 모델의 전체 계수·곡선·축·단위→prepare/commit→Undo/Redo→저장/재열기/native 의미 보존",
+        "STORE01·UI01·LINK01과 합동 확인; Apply 미지원과 내보내기 구현 미지원을 구별"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "LINK01",
@@ -167,15 +340,46 @@
       ],
       "depends_on": [
         "STORE01",
-        "UI01",
-        "PREP01"
+        "UI01"
       ],
       "specification": "core-implementation.md",
       "acceptance_sections": "C8/C9/C11",
       "completion_requires": "프로젝트를 저장하거나 다른 위치로 복사해도 같은 자료와 선택 결과를 열어야 합니다. 재료 연구 문서를 해석 입력파일로 오인해서는 안 됩니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "프로젝트와 독립 프로그램 연결",
       "purpose_ko": "Workbench 프로젝트에서 재료 연구 창을 열고 파일·결과·Prep 문서를 연결합니다.",
-      "expected_result_ko": "프로그램 등록, 프로젝트의 재료 연구 항목과 파일 관계, Prep 공용 위젯의 연결입니다."
+      "expected_result_ko": "프로그램 등록, 프로젝트의 재료 연구 항목과 파일 관계, Prep 공용 위젯의 연결입니다.",
+      "existing_parent_items": {
+        "workbench": "P3·P6; AC-1 일부",
+        "prep_touchpoints": "Prep G4·W1/W2; 재사용 R2/R3/R5"
+      },
+      "existing_reuse_ko": "program_catalog·Workbench 명령·프로젝트 노드·공용 위젯 호스트",
+      "additional_implementation_ko": "독립 연구 역할·상대 참조·프로젝트 v4·이동/SaveAs",
+      "owner_role_ko": "연구창·프로젝트 연결 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "STORE01",
+        "PREP01"
+      ],
+      "acceptance_required": [
+        "독립 진입점과 v1–4 재열기·선택 평가 보존",
+        "Apply 연결은 PREP01과 함께 확인",
+        "전체 연결은 자문·심의·결과·RP의 같은 자료로 합동 확인"
+      ],
+      "conditional_dependencies": [
+        {
+          "context": "열린 Prep 문서 Apply 연결",
+          "requires": [
+            "PREP01"
+          ],
+          "scope_ko": "연구 프로그램 등록·독립 실행 자체는 PREP01 전체 완료를 기다리지 않습니다."
+        }
+      ],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "E0-2",
@@ -194,7 +398,28 @@
       "completion_requires": "관련 없는 문헌을 충분한 근거처럼 제공해서는 안 됩니다. 질문에 명시한 솔버와 버전을 유지하고, 자료가 없거나 오래된 경우를 알려야 합니다. 사용자가 쓰던 질문도 보존해야 합니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "질문·첨부자료·문헌 검색",
       "purpose_ko": "해석 결과 없이도 이론 질문을 시작하고, 질문에 맞는 원문과 첨부 결과를 찾습니다.",
-      "expected_result_ko": "질문과 첨부자료 저장, 문헌 준비와 검색, 판본·출처 확인 기능입니다."
+      "expected_result_ko": "질문과 첨부자료 저장, 문헌 준비와 검색, 판본·출처 확인 기능입니다.",
+      "existing_parent_items": {
+        "workbench": "P5; WBS-4·이슈 #45의 공유 창",
+        "prep_touchpoints": "Prep P8c/N20 읽기 경계"
+      },
+      "existing_reuse_ko": "독립 ExpertWindow·대화/CAS·첨부·기존 검색",
+      "additional_implementation_ko": "결과 없는 이론 질문·원문/판본·문헌 준비/색인·관련성·초안 보존",
+      "owner_role_ko": "전문가·검색 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01"
+      ],
+      "acceptance_required": [
+        "이론 질문·원문/판본·관련성 평가",
+        "이슈 #45의 검증 중 표시·첨부/초안 변경·닫힌 창 지연 응답 잔여를 동일 산출물로 승계"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "E3-5",
@@ -206,15 +431,59 @@
         "전문가 명세의 읽기 도구 및 답변 검토 코드"
       ],
       "depends_on": [
-        "E0-2",
-        "POST01-04"
+        "E0-2"
       ],
       "specification": "expert-implementation.md",
       "acceptance_sections": "실제 AI 호출과 반환, 답변 전체의 근거 검토, 재검토와 Windows 확인",
       "completion_requires": "실제 AI가 요청한 도구 호출과 결과 반환을 확인해야 합니다. 답변 전체를 검토하고 근거 부족·오류·취소를 남겨야 합니다. AI에게 모델 변경이나 솔버 실행 권한을 주지 않습니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "실제 AI 자문·읽기 도구·별도 검토",
       "purpose_ko": "AI가 필요한 자료를 요청해 읽고 답변하며, 별도 검토에서 근거와 가정을 확인하게 합니다.",
-      "expected_result_ko": "실제 AI 연결, 읽기 도구 호출과 반환, 답변 검토·수정·재검토 기록입니다."
+      "expected_result_ko": "실제 AI 연결, 읽기 도구 호출과 반환, 답변 검토·수정·재검토 기록입니다.",
+      "existing_parent_items": {
+        "workbench": "P5; WBS-4·이슈 #45 요청 수명",
+        "prep_touchpoints": "Prep 지원 문서 읽기 전용 조회"
+      },
+      "existing_reuse_ko": "기존 공급자·취소·명시 질문·대화 저장",
+      "additional_implementation_ko": "실제 AI 도구 왕복·모든 주장 검토·수정/재심·요청 구별",
+      "owner_role_ko": "전문가·검색 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "E0-2"
+      ],
+      "acceptance_required": [
+        "실제 공급자의 도구 요청/반환과 독립 요청의 답변 심의",
+        "#45 실제 공급자 취소·지연 응답과 Windows 흐름",
+        "모의 형식 검사·실제 도구 왕복·공학 답변 품질·Windows를 각각 확인",
+        "직접 선택한 파일의 manual 질문·도구 조회·근거 검토·저장/재열기; 실제 실행 참조를 만들지 않음",
+        "기존 역할별 자료/도구 권한·수치 인용의 원자료 대응·실시간 관련성 판단을 별도 인수"
+      ],
+      "conditional_dependencies": [
+        {
+          "context": "native_run 수치 질문",
+          "requires": [
+            "POST01-04"
+          ],
+          "scope_ko": "선택한 결과의 필요한 판독 프로필만 필요합니다."
+        },
+        {
+          "context": "calibration 평가 질문",
+          "requires": [
+            "CORE02"
+          ],
+          "scope_ko": "고정 평가와 시험별 곡선·잔차·정체성이 필요합니다."
+        },
+        {
+          "context": "이론·문헌 질문",
+          "requires": [],
+          "scope_ko": "POST·MAT·Prep Apply 완료가 필요하지 않습니다."
+        }
+      ],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "POST01-04",
@@ -236,7 +505,28 @@
       "completion_requires": "변환 프로그램이 종료됐다는 사실만으로 성공 처리하지 않아야 합니다. 실제 원 ID·시간·필수 출력의 개수와 값, 단위·층·축을 검사하고 다른 계산 기준과 대조해야 합니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "솔버 결과 변환과 수치 읽기",
       "purpose_ko": "결과파일을 변환해 원래 시간·요소·층·좌표계·단위를 보존한 수치로 읽습니다.",
-      "expected_result_ko": "결과 변환 실행, 응력·변위의 공간 분포와 시간 이력 읽기, 원래 해석과의 연결 기록입니다."
+      "expected_result_ko": "결과 변환 실행, 응력·변위의 공간 분포와 시간 이력 읽기, 원래 해석과의 연결 기록입니다.",
+      "existing_parent_items": {
+        "workbench": "P4·P5; WBS-3·AC-3/4 수치 접점",
+        "prep_touchpoints": "Prep G3 출력; N21/W3 불변 실행"
+      },
+      "existing_reuse_ko": "JobManager/RunStore·FRD/VTU/PVD·프레임·원해시",
+      "additional_implementation_ko": "OpenCourant 변환·시간 이력·ID/TIME/층/축/단위·수치 조회",
+      "owner_role_ko": "후처리·RP 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01"
+      ],
+      "acceptance_required": [
+        "실제 변환기와 솔버 원결과·독립 수치 기준",
+        "취소·부분/낡음·이동/SaveAs; 기존 N21 실행 완료와 구별"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     },
     {
       "id": "POST05-06",
@@ -255,7 +545,71 @@
       "completion_requires": "원래 해석 결과를 덮어쓰거나 솔버를 다시 실행하지 않아야 합니다. 자동 연결은 선택한 자료가 실제 표시됐는지 응답으로 확인해야 합니다. 기존 RP를 수동으로 쓰는 경로도 제공합니다. 상세 수치와 추가 조건은 연결된 명세서를 따릅니다.",
       "label_ko": "RP에서 선택한 결과 열기",
       "purpose_ko": "Workbench에서 선택한 결과를 별도 OpenCourantRP에서 확인하도록 연결합니다.",
-      "expected_result_ko": "기존 RP의 수동 열기 안내와, 선택한 결과를 자동으로 여는 별도 수정판 연결입니다."
+      "expected_result_ko": "기존 RP의 수동 열기 안내와, 선택한 결과를 자동으로 여는 별도 수정판 연결입니다.",
+      "existing_parent_items": {
+        "workbench": "P5·P7; 외부 후처리의 RP 확장",
+        "prep_touchpoints": "Prep 원문서/덱/INCLUDE 소유; 재사용 R5"
+      },
+      "existing_reuse_ko": "원 RP 수동 열기·기존 프로그램 실행 경계",
+      "additional_implementation_ko": "수동 열기 안내와 선택 파생판의 정확한 자료 전달·표시 응답",
+      "owner_role_ko": "후처리·RP 담당",
+      "implementation_owner": null,
+      "qa_owner": null,
+      "staffing_state": "unassigned",
+      "planned_start": null,
+      "planned_finish": null,
+      "contract_before_edit": [
+        "CORE01",
+        "POST01-04"
+      ],
+      "acceptance_required": [
+        "원 RP 수동 실제 표시와 선택 수정판 자동 전달/실제 표시를 별도 인수",
+        "원본 불변·중복 솔버 재실행 차단·Windows",
+        "자동 연결을 지원한다고 표시할 때만 선택 수정판 인수 필수"
+      ],
+      "conditional_dependencies": [],
+      "legacy_completion_effect_ko": "새 작업의 근거를 해당 기존 항목의 확장으로 연결합니다. 기존 항목 전체나 다른 잔여를 자동 완료 처리하지 않습니다."
     }
-  ]
+  ],
+  "planning_authorities": {
+    "workbench_plan": "../../review/2026-10-23-codex-improvement-plan.md#plan-integration",
+    "workbench_progress": "../../../CURRENT_STATE.md",
+    "workbench_gui": "../../gui/commercial-cae-gui-spec.md",
+    "prep_plan": "https://github.com/pikachu444/caelab-prep/blob/main/docs/execution-stages.md#research-integration",
+    "prep_progress": "https://github.com/pikachu444/caelab-prep/blob/main/CURRENT_STATE.md#remaining-work",
+    "historical_gantt": {
+      "name": "CAELAB_PROJECT_BIG_PICTURE",
+      "original_obtained": false,
+      "historical_sha256": "b80ca843ad9606f11b3133edd8cca46d6c23ba968fd8cfd6292860c24b0dfeac",
+      "record_url": "https://github.com/pikachu444/caelab-workbench/issues/79#issuecomment-6649326911",
+      "calendar_migration_claimed": false
+    }
+  },
+  "dependency_semantics": {
+    "depends_on": "공개 코드를 실제로 호출할 때 필요한 선행 작업입니다. 계약에 따라 병렬로 작성할 수 있는 부분까지 상대 작업 전체의 완료를 기다리지 않습니다.",
+    "contract_before_edit": "편집 전에 합의할 공통 인터페이스입니다. 상대 작업 전체의 구현 완료를 요구하지 않습니다.",
+    "conditional_dependencies": "선택한 계산 방식·자료 종류에서만 필요한 코드입니다.",
+    "acceptance_required": "해당 사용자 작업의 최종 확인에 필요한 결과입니다. 개발 착수의 강제 선행과 구분합니다."
+  },
+  "progress_policy": [
+    "WB 계획 P1–P7과 Prep 기술 P0–P9는 서로 다른 번호입니다. Prep 제품 요구 R1–R4와 재사용 순서 R0–R5도 구별합니다.",
+    "새 12개 작업을 기존 N01–N26·P/G/WBS에 더해 진행률을 계산하지 않습니다. 기존 완료 근거와 남은 조건은 각 저장소 CURRENT_STATE에서 관리합니다.",
+    "명세 검토, 코드 구현, 실제 사용자 작업, 모델별 지원, Windows 후속을 각각 보고합니다. 문서 수정으로 제품 구현 상태를 올리지 않습니다.",
+    "미래 구현 담당·독립 QA·달력 날짜는 아직 배정되지 않았습니다. 아래 역할은 책임의 구분이며 특정 인물의 수락이 아닙니다."
+  ],
+  "schedule": {
+    "mode": "dependency_stages",
+    "calendar_state": "unscheduled",
+    "planned_start": null,
+    "planned_finish": null,
+    "staffing_state": "unassigned",
+    "stages_ko": [
+      "공통 계약 합의",
+      "분야별 병렬 개발",
+      "실제 모델과 화면·문서 연결",
+      "같은 평가·실행으로 합동 확인",
+      "지원 범위별 실제 환경 인수"
+    ],
+    "calendar_rule_ko": "구현 담당이 기준 코드·편집 파일·작업량·가용 시간을 수락한 뒤 날짜를 정합니다. 과거 배포 목표일이나 메셔 조사 한도를 새 기능 납기로 쓰지 않습니다."
+  }
 }

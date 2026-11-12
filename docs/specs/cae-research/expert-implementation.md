@@ -65,7 +65,7 @@ record_review_resolution(path, review_id, item_id, *, decision, reason,
 
 통합 책임자의 C3에 따라 `DatasetManifest.dataset_kind=field|history`로 구분한다. 이력 자료인 `history`는 `frames=[]`, `series[{series_id,coordinate_ref,row_count,source_row_index_ref,field_ids}]`와 실제 원본 시간 배열을 가진다. 이 경우 `ResultRef.frame_id`에는 등록된 `series_id`를 사용한다. 첫 이력 조회 기능은 `curve_extract`이고 `geometry_state=unknown`이다. 초기 점 조회 도구와 RP 공간장 판독기는 `history`를 거부한다. 애니메이션 순번을 시간으로 대신 넣지 않는다.
 
-요청 맥락 `RequestContext`는 원문 질문, 질문 범위, 제약, 초안의 기준 자료와 실제 첨부의 구별, 고정된 근거 해시, 자료 모음 버전, `QueryPlan`, 실제 표시한 자료 조각과 텍스트 해시, 도구 스키마와 별칭 및 정책 SHA, 솔버, 판본, 모델과 물리량 정의의 한계를 담는다. 이를 정규화한 JSON의 SHA로 고정한다. 답변 작성자가 종료하면 근거 묶음 `EvidencePack`도 고정한다.
+요청 맥락 `RequestContext`는 원문 질문, 질문 범위, 제약, 초안의 기준 자료와 실제 첨부의 구별, 고정된 근거 해시, 자료 모음 버전, `QueryPlan`, 요청을 시작할 때 이미 확정한 초기 자료 조각과 텍스트 해시, 도구 스키마와 별칭 및 정책 SHA, 솔버, 판본, 모델과 물리량 정의의 한계를 담는다. 이를 정규화한 JSON의 SHA로 요청 시작 시 고정한다. 이후 도구가 새 자료 조각이나 수치 인용을 반환해도 `request_context_hash`를 다시 계산하지 않는다. 실제로 보여준 모든 자료 조각, 표시 바이트와 해시, 도구 결과 및 `CitationRecordV1`은 최종 근거 묶음 `EvidencePack`에 누적하고 답변 작성자가 종료할 때 고정한다. `RequestContext`에 최종 근거 묶음 해시를 소급 삽입하지 않으므로, 도구 결과와 인용은 같은 시작 맥락 해시를 안정적으로 참조한다.
 
 `request_context_hash`는 질문, 범위, 제약, 선택 항목, 정책과 근거 지문을 담은 `RequestContext`의 정규화 해시다. `evidence_pack_hash`는 고정된 근거 묶음 바이트의 정규화 해시다. 두 값은 서로 대신할 수 없다. 재검토할 답변 차례에는 정확한 `reply/reply_sha256`와 두 해시를 각각 보존한다. 검토자의 주장 구간과 답변 전체 검토 범위는 그 차례의 실제 `reply`에서 다시 만든다. 원래 해결 이벤트와 `original_context_hash` 연결만 계속 원래 검토 맥락을 가리킨다.
 
@@ -102,7 +102,7 @@ record_review_resolution(path, review_id, item_id, *, decision, reason,
 
 `QueryPlan`의 정본 필드는 `original_text/original_language,queries[{text,language,method,resource_revision}],policy_revision,term_spans,unmatched_spans,removed_spans,warnings`다. 유니코드 NFKC 정규화는 검색용 변형에만 적용하고 원문은 보존한다. 검토된 한영 대응표에서 가장 긴 구를 찾아 원문 구간 옆에 병기하는 방식으로 검색 변형을 추가하며, 원문을 삭제하지 않는다. 숫자, 단위, 솔버, 카드, 모델, 판본, 부정 표현 `not/no/without/않/아닌/없`, 조건과 비교 표현은 변경하지 못하게 한다. `removed_spans=[]`이며 대응하지 못한 구간도 원문에 남긴다. 검토하지 않은 언어나 주요 구에는 `LANGUAGE_COVERAGE_UNVERIFIED`, 안전하게 해석할 수 없는 질의에는 `QUERY_LANGUAGE_UNSUPPORTED` 경고를 기록한다. 이 경고는 관련 자료가 없다는 판단과 구분한다. 공급자에게는 원문 질문을 항상 전달한다.
 
-어휘 일치 범위와 검색 순위는 진단용이다. 이것만으로 후보를 삭제하거나 `out_of_scope`로 분류하거나 주장이 뒷받침되었다고 결정하지 않는다. `RetrievalDecision.status=supported`는 검토한 관련 후보를 제공했다는 뜻이며 주장 검토 통과를 뜻하지 않는다. 필요한 분류 조건이나 실제 추출 자료가 부족하면 `insufficient`와 `missing_evidence`로 기록한다. 솔버 또는 판본 불일치, 원문 누락, 후보 없음과 요구사항 미검증을 구분한다. 알 수 없는 모델은 범위 밖으로 분류하지 않는다. 명백히 CAE와 무관한 질문에만 `out_of_scope`를 사용한다. 질문은 계속 허용하되, 모델의 일반 지식에만 의존하는 `model_general_unverified` 설명을 인용 또는 검토 통과로 승격하지 않는다.
+어휘 일치 범위와 검색 순위는 진단용이다. 이것만으로 후보를 삭제하거나 `out_of_scope`로 분류하거나 주장이 뒷받침되었다고 결정하지 않는다. `RetrievalDecision.status=supported`는 출처 검토와 9.3절의 질문별 관련성 검토를 통과한 관련 후보를 제공했다는 뜻이며 주장 검토 통과를 뜻하지 않는다. 필요한 분류 조건이나 실제 추출 자료가 부족하면 `insufficient`와 `missing_evidence`로 기록한다. 솔버 또는 판본 불일치, 원문 누락, 후보 없음과 요구사항 미검증을 구분한다. 알 수 없는 모델은 범위 밖으로 분류하지 않는다. 명백히 CAE와 무관한 질문에만 `out_of_scope`를 사용한다. 질문은 계속 허용하되, 모델의 일반 지식에만 의존하는 `model_general_unverified` 설명을 인용 또는 검토 통과로 승격하지 않는다.
 
 색인 생성 CLI는 `--manifest/--output/--review-overlay`와 `--verify-only|--build`를 제공한다. 원문, 고지, 해시와 승인된 검토 기록의 대상 해시를 검사한 뒤, 같은 볼륨의 임시 디렉터리에 허용된 원문 사본, 검토, 자료 조각, 벡터와 명세 목록을 쓴다. `fsync`와 해시 검사를 마치면 새 불변 디렉터리 `indexes/<digest>`로 이름을 바꾼다. `current.json`은 임시 파일에 쓰고 `fsync+os.replace`로 교체한다. 비어 있지 않은 디렉터리는 교체하지 않는다. 동일한 다이제스트는 바이트까지 일치할 때만 재사용한다. 실패하거나 취소되면 현재 색인 포인터를 유지하고 자신이 만든 임시 디렉터리만 정리한다. 요청을 시작할 때 색인 버전을 고정한다. 구형 색인은 `legacy_unknown`으로 표시하며 정밀 출처 검사 합격에서 제외한다.
 
@@ -167,7 +167,7 @@ OpenScience의 `structured_action`은 기존 권한 거부와 `tools=false`를 �
 
 모델은 검토 ID, 원답변 차례, 맥락, 행위자, 최종 판정, 상태 또는 시간을 보내지 못한다. 식별 필드를 추가하면 `invalid_provider_action`이다. 호스트가 실제 고정 요청의 답변 작성자, 검토자, 요청 ID, 원답변 차례, 맥락, 독립성, 재검토 연결, 시작 및 완료 시각과 결과를 합쳐 완전한 `AnswerReviewv1`을 저장한다. 주장과 지적 항목 ID도 호스트 UUID로 만든다. `claim_checks`에는 `text_span/citationIDs/id_valid/quoted_span_valid/support/reason`을 기록한다. `items`는 `ReviewItem.item_id/claim_id/category/severity/reason/evidence_refs/required_action`에 대응한다.
 
-호스트는 각 구간이 정확히 한 번 나오는지, 알 수 없는 구간이 없는지, 부분 구간이 해당 범위 안에 있고 서로 겹치지 않는지, 모든 비공백 문자가 검토되었는지 확인한다. 표시한 인용인지, 실제 원문 인용 구간인지도 검사한다. 모델링 검사에는 중복 없이 정확히 8개 범주가 있어야 한다. 이 범주는 가정(`assumptions`), 단위(`units`), 물리량 정의(`measures`), 경계조건(`BC`), 격자(`mesh`), 접촉(`contact`), 수렴(`convergence`), 해석(`interpretation`)이다. `supported` 주장에 실제 인용과 인용 구간이 없으면 `not_assessed`로 처리한다.
+호스트는 각 구간이 정확히 한 번 나오는지, 알 수 없는 구간이 없는지, 부분 구간이 해당 범위 안에 있고 서로 겹치지 않는지, 모든 비공백 문자가 검토되었는지 확인한다. 표시한 인용인지와 정확한 인용 구간인지도 검사한다. 문헌은 실제 원문 구간을, 수치는 9.2절의 호스트 고정 표시 구간과 원수치 위치·해시를 함께 검사한다. 모델링 검사에는 중복 없이 정확히 8개 범주가 있어야 한다. 이 범주는 가정(`assumptions`), 단위(`units`), 물리량 정의(`measures`), 경계조건(`BC`), 격자(`mesh`), 접촉(`contact`), 수렴(`convergence`), 해석(`interpretation`)이다. `supported` 주장에 실제 인용과 인용 구간이 없으면 `not_assessed`로 처리한다.
 
 주장이 아닌 `nonclaim`은 `not_applicable`과 이유를 요구한다. 순수 인사나 정형 제목만 정확한 허용 목록으로 인정한다. 한영 허용 목록은 `Summary/Sources/Limitations/Assumptions/Review/Hello/Thanks`와 `요약/참고자료/한계/가정/검토결과/감사합니다/안녕하세요`다. 수치 또는 기술 명제를 `nonclaim`으로 숨기면 `insufficient`다.
 
@@ -210,7 +210,7 @@ OpenScience의 `structured_action`은 기존 권한 거부와 `tools=false`를 �
 
 `Ask/Cancel`, 검토, 이견 답변, 재검토, `keep/resolve/withdraw`, 저장과 재열기를 같은 서비스 명령에 연결한다. 작업 중인 스레드, 새 창과 닫힌 창의 늦은 결과가 서로 섞이지 않게 한다. GUI 스레드에서는 네트워크, PDF 또는 공간장 자료를 읽지 않는다.
 
-사용자가 제안을 수용하면 Prep 또는 전용 편집기에서 `Apply`를 실행한다. 이때 버전을 검사하고 기존 `JobManager`로 새 해석을 실행한 뒤 새 근거 캡처, 새 답변 차례와 새 검토를 진행한다. 과거 실행의 `pass`를 새 실행으로 복사하지 않는다. 지원하지 않는 변경은 전용 앱을 안내하고 미적용 상태로 둔다.
+사용자가 Prep 또는 전용 편집기에서 `Apply`를 누르면 현재 문서 버전을 검사하고 변경을 적용한다. 이후 사용자가 별도 동작으로 새 해석이나 평가를 시작한 경우에만 기존 실행 관리 경로로 실행하고 새 근거 캡처, 새 답변 차례와 새 검토를 진행한다. 해석 실행은 기존 `JobManager`가 담당하며 적용만으로 실행하지 않는다. 과거 실행의 `pass`를 새 실행으로 복사하지 않는다. 지원하지 않는 변경은 전용 앱을 안내하고 미적용 상태로 둔다.
 
 실행 검증과 완료 판정 기준은 다음 단계로 구분한다.
 
@@ -227,3 +227,164 @@ OpenScience의 `structured_action`은 기존 권한 거부와 `tools=false`를 �
 환경 소실 전 참조 시험에서는 원문 8개, 원문 구간 16개, 개발 36개와 평가 60개, 해시 검사를 수행했다. 로컬호스트에서 POST 2회로 도구를 모사하고 엄격한 최종 응답을 검사했으며, 주장과 검토자에 대한 부정 검사 15개, 부분 힌트의 전체 검토 범위, 누락되거나 잘못된 재검토 연결에서 이벤트가 0개인 결과를 `PASS`로 관측했다. 이 기록은 원로그를 재생성하거나 새 Git 파일 객체로 시험을 실행했다는 주장이 아니다.
 
 재구성본에서는 새 스키마, 기준 정답 자료와 참조 자료를 실제로 만들어 검토하고, 실행 가능한 환경에서 재실행해야 한다. 실제 제품 색인, Qt 화면, 공급자 연결 계층, 실제 LLM 답변의 공학적 품질, 실제 솔버까지 이어지는 전체 흐름과 Windows 검증은 미구현 또는 미실시 상태로 남아 있다.
+
+## 8. 기존 계획에서 이어받는 작업과 질문별 선행조건
+
+이 절은 [기존 개선 계획](../../review/2026-10-23-codex-improvement-plan.md)의 P4, P5, P6에 이 명세를 연결한다. 기존 P5/WBS-4/이슈 #45의 첨부 검증 잔여는 `E0-2`가 이어서 마무리한다. `E3-5`는 같은 실행 틀 위에 실제 AI의 읽기 도구 사용과 독립 답변 검토를 추가한다. 수치 판독을 추가하는 `POST01-04`와 외부 RP 표시를 추가하는 `POST05-06`은 같은 작업의 반복 완료로 세지 않는다. 통합 작업 ID와 의존 관계의 정본은 [구현 작업 연결표](implementation-map.json)다.
+
+| 기존 항목 | 재사용할 부분 | 이 명세에서 추가할 부분과 완료 책임 |
+|---|---|---|
+| P4의 실행 기록과 결과 판독 | 기존 `JobManager/RunStore`, 실행별 입력 사본, 로그, 알려진 결과 판독 | `E0-2`는 선택한 실행과 프레임을 정확히 전달한다. `E3-5`의 수치 조회는 그 결과 형식을 실제로 지원하는 판독 프로필을 사용한다. P4 실행 성공만으로 도구 조회가 완료되었다고 하지 않는다. |
+| P5의 독립 전문가 연결, WBS-4와 #45 | 기존 독립 `ExpertWindow`, 첨부 검증 작업 스레드, 자산 변경 시 재검증과 초안 저장 | `E0-2`가 검증 중 표시, 검증 완료 및 실패 표시, 닫힌 창의 늦은 결과 격리, 실행·프레임 변경 시 초안과 실제 첨부의 구분을 맡는다. #45를 별도 중복 작업으로 다시 배정하지 않는다. |
+| P5의 지식 검색과 역할별 자료 제한 | 기존 검색기와 공급자 인터페이스, 역할별 자료 종류 제한 | `E0-2`는 원문과 판본, 한영 질의, 근거 부족 판단과 평가를 구현한다. `E3-5`는 실제 공급자의 도구 요청·반환과 별도 검토 요청을 확인한다. 역할 이름이나 검색 적중으로 독립 검토 완료를 대신하지 않는다. |
+| P6의 제안 적용과 재실행 | 기존 전용 프로그램 수정 경로, 명시적 사용자 적용과 실행 | `E3-5`는 `E5/E6` 검사에서 현재 문서에 대한 적용, 새 실행, 새 근거와 후속 검토가 이어지는지 확인한다. Prep 적용의 정본은 `PREP01`과 핵심 계약 C10이며, 전문가 도구에 쓰기 권한을 추가하지 않는다. |
+| P6의 저장과 재개 | 기존 대화 파일, 자산 저장, CAS와 원자적 저장 | `E0-2`가 질문·첨부·구형 문서 읽기를, `E3-5`가 도구 추적·검토·반론·세 필드 재검토 연결의 저장과 재개를 확인한다. 프로젝트 연결은 `STORE01/LINK01`과 같은 저장 계약을 사용한다. |
+
+7절의 `E0/E1/E2a/E2b`는 통합 작업표 `E0-2`의 세부 검사다. `E3/E4/E5`는 `E3-5`의 세부 검사이고 `E6`는 실제 공급자와 Windows 및 전체 사용자 흐름을 확인하는 최종 검사다. `E6`라는 이름으로 같은 기능을 한 번 더 개발하거나 별도 완료 수를 늘리지 않는다. #45의 Windows 화면·입력 검사는 이 최종 검사에서 수행하며, `E0-2`가 만든 검증 상태와 늦은 결과 격리를 그대로 대상으로 삼는다. 기존 PR82/87에서 반영한 작업 스레드와 자산 동등성 검사는 재사용하며 같은 기능을 다시 개발하지 않는다. 남은 수정은 `E0-2`와 `E3-5`에 한 번 배정하고 같은 검사 근거를 연결한다. 새 작업의 검사와 원 이슈의 남은 조건을 모두 확인한 뒤 #45 종료를 별도로 판정한다.
+
+### 8.1 이론, 실제 해석 결과와 재료 평가 질문은 선행조건이 다르다
+
+설계 계약 합의, 해당 코드를 구현하는 데 필요한 자료, 최종 사용자 인수에 필요한 연계를 구분한다. 공용 근거 교환 형식은 모두 `CORE01`을 따르지만 모든 질문이 솔버 실행이나 RP 표시를 기다릴 필요는 없다. `E3-5` 전체에 `POST01-04`를 일괄 선행시키지 않는다.
+
+| 질문과 첨부 종류 | 기능을 구현하고 시험할 때 필요한 것 | 해당 분기의 최종 완료 검사 |
+|---|---|---|
+| 결과 없이 하는 일반 CAE 이론 또는 문헌 질문(`theory`) | `CORE01`, `E0-2`의 질문·원문·검색. 결과 실행, 재료 동정, 메셔와 RP는 선행조건이 아니다. | 실제 공급자에게 원문 질문과 실제 표시한 원문 구간을 전달한다. 실제 `knowledge.search` 요청과 반환, 답변, 독립 검토를 확인한다. 관련 자료가 없거나 판본이 다르면 부족 근거를 유지한다. 가짜 `run/frame`을 만들지 않는다. |
+| 실제 실행의 입력·로그·결과를 묻는 질문(`case_analysis`, `kind=native_run`) | 유효한 고정 첨부와 그 결과 형식을 지원하는 판독기. OpenCourant A/T01의 새 수치 조회에는 `POST01-04` 중 해당 `OC-ANIM-1/OC-TH4-1` 프로필이 필요하다. 이미 검증한 VTU 절점 조회에 모든 새 TH·층 프로필을 요구하지 않는다. | 실제 선택 실행·프레임·필드·단위에 대해 `evidence.describe`와 지원되는 `evidence.query_field`의 값 및 추적 해시를 확인한다. 필요한 결과가 없으면 입력·실패 로그로 논의할 수 있지만 없는 수치를 채우거나 수치 검토를 통과시키지 않는다. |
+| 재료 평가·동정 결과를 묻는 질문(`case_analysis`, `kind=calibration`) | `CORE02`가 실제로 생성한 고정 `CalibrationEvaluationArtifact`와 소유 모듈의 판독 기능. native 해석을 사용한 평가는 그 평가를 만들 때 해당 POST 판독기가 필요하지만, 이미 다른 계산기로 평가한 자료를 읽기 위해 POST 전체나 RP를 요구하지 않는다. | `evaluation_ref`, `study_id`, `content_revision`, `evaluation_id`로 고정한 실제 산출물을 읽는다. 시험별 실제값과 예측값, 비교 설정, 잔차, 학습·제외 검증 분할, 제약, 식별성, 부분 실패 및 계산 출처까지 따라갈 수 있어야 한다. 모델이 만든 추정 수치를 평가 결과로 표시하지 않는다. |
+
+재료 근거는 공통 C1의 `payload={evaluation_ref,study_id,content_revision,evaluation_id}` 형식을 사용한다. 이 명세가 별도 평가 DTO를 만들지 않는다. 원자료, 변환 절차, 모델과 매개변수, 실제 계산기 및 소스·라이브러리 식별값, 운영체제와 비교 정책은 평가 참조를 따라 실제 파일까지 검증할 수 있어야 한다. 과거 평가의 `content_revision`, 시험, 단위 또는 하중이 현재 연구와 다르면 과거 근거로 보존하되 현재 평가로 재사용하지 않는다.
+
+혼합 질문에는 실제 사용한 분기의 조건을 각각 적용한다. 자료가 없는 분기가 있다고 다른 이론·문헌 질문까지 막지 않는다. 사용자가 사례 분석을 요청했는데 첨부가 없으면 첨부를 선택하거나 결과가 필요 없는 이론 질문으로 명시적으로 바꿀 수 있게 한다. 자료 부족을 충분한 근거로 바꾸지 않으며 기존 `case_analysis`의 유효 첨부 조건도 없애지 않는다.
+
+독립 전문가 프로그램의 직접 파일 불러오기도 P5의 별도 진입점으로 확인한다. 해석 창이나 내부 FE 모델 없이 입력·로그·결과 파일을 선택할 수 있어야 한다. 실행 기록을 확인할 수 없는 외부 파일에는 가짜 `source_run_id`를 붙이지 않는다. 원문과 가용성을 보존하는 수동 근거로 다루며, 정밀 수치 조회는 공용 소유 관계에 등록되고 해당 판독 프로필을 통과한 결과 참조에만 허용한다. 이 경로의 인수는 수동 근거(`manual evidence`)로 파일 가져오기, 원바이트와 출처·선언 단위 확인, 누락·판독 실패 표시, 관련 문헌 질의와 독립 검토, 저장·종료·새 인스턴스 재열기까지 직접 이어 확인한다. #45의 검증 중 표시와 닫힌 창의 늦은 결과 차단도 이 직접 불러오기 경로에 적용한다. Workbench가 선택 실행을 전달한 검사로 이 별도 인수를 대체하지 않는다.
+
+처음 지원하는 `evidence.query_field`는 4절의 검증된 VTU 절점 스칼라·벡터 성분이다. 셸, 적분점, 층과 이력은 해당 프로필과 도구 계약을 검증하기 전에는 `describe`만 허용하거나 미지원으로 반환한다. POST에서 층 또는 시간 이력을 읽을 수 있다는 사실만으로 초기 점 조회 도구가 그것을 조회할 수 있다고 표시하지 않는다. 지원 확대는 기존 공용 스키마와 연산자 계약을 정한 뒤 별도 검사로 추가한다.
+
+### 8.2 실제 AI와 독립 검토의 완료 증거
+
+다음 네 종류의 증거는 서로 대체할 수 없다.
+
+| 증거 | 확인할 내용과 한계 |
+|---|---|
+| 형식 및 모사 시험 | 엄격한 JSON, 허용 도구, 예산, 취소, 늦은 응답, CAS, 답변 전체 범위와 세 필드 재검토 연결을 검사한다. 고정 응답이나 로컬호스트 POST 2회는 이 단계의 증거다. 실제 AI의 자료 이해나 공학 품질을 입증하지 않는다. |
+| 실제 공급자의 자료 읽기 | 구성한 실제 공급자·모델·통신 방식으로 도구 요청, 호스트의 실제 판독, 같은 요청 ID의 반환, 최종 응답을 관측한다. 4절의 연결 시험과 실제 작업의 추적 기록을 구분한다. 설정 파일이나 `probe_status=passed`만으로 실제 질문 완료를 주장하지 않는다. |
+| 실제 답변의 독립 검토 | 고정한 같은 근거 묶음으로 별도 검토 요청을 실제 실행한다. 원문 인용, 수치, 단위, 부호, 물리량 정의와 가정을 독립적으로 확인하고 이견·부족·수정·재검토를 저장한다. 3절의 독립 질문 평가와 5절의 전체 답변 검토 규칙을 모두 적용한다. 같은 모델의 별도 요청과 다른 모델 요청의 독립성 표시는 그대로 유지한다. |
+| Windows 전체 사용자 인수 | 사용자가 질문을 쓰고 첨부를 선택한 뒤 실제 답변, 도구 추적 요약, 별도 검토와 반론을 보고 저장한다. 새 프로그램 인스턴스로 다시 열어 질문과 결과를 이어 가며 실제 화면·입력·취소를 확인한다. Qt offscreen 통과나 Linux 공급자 실행으로 대체하지 않는다. |
+
+실제 공급자 검사는 DESIGN §10이 요구하는 실제 구독 LLM 연구팀 흐름을 포함한다. OpenScience 구독과 OpenAI 호환 접속은 각각 실제 확인한 범위를 표시한다. 로컬 호환 모델을 확인했다고 OpenScience 구독의 구현 또는 검증까지 통과시키지 않는다. 연결 환경이 없거나 지원 기능이 부족하면 해당 공급자를 미실시 또는 미지원으로 남기되 일반 프로젝트 열기와 다른 질문 분기를 막지 않는다. 기존 실제 A/B 답변 이력은 재사용 가능한 관측 기록이며 이번 새 도구·독립 검토 검사의 실행 결과로 합산하지 않는다. 기본 자동 이중 호출 금지와 명시적 요청별 예산은 6절을 유지한다.
+
+### 8.3 저장 후 이어 가는 전체 사용자 흐름
+
+최종 인수는 질문 분기별로 다음을 실제로 이어 확인한다. 사용자는 이론 질문을 시작하거나 실제 결과·고정 재료 평가를 선택한다. 원문 또는 선택 자료의 출처와 부족한 부분을 확인한 뒤 질문을 전송하고, 실제 읽기 결과와 답변 및 별도 검토를 받는다. 반론에 답하면 기존 반론을 보존한 새 차례와 재검토가 만들어져야 한다.
+
+설계 변경이 필요한 경우에만 사용자가 Prep 또는 전용 편집기에서 적용을 실행하고, 별도 동작으로 새 해석이나 평가를 시작한다. 새 결과는 새 근거로 붙이고 이전 검토 통과를 복사하지 않는다. 적용을 지원하지 않는 제안은 미적용과 전용 프로그램 안내로 남긴다. 사용자 적용 또는 실행 전에는 원본 변경과 새 작업이 0개여야 한다.
+
+프로젝트와 대화를 저장하고 프로그램을 종료한 뒤 새 인스턴스로 다시 연다. 선택 실행과 프레임, 원문 구간, 고정 평가, 질문 초안, 답변, 도구 추적, 검토, 반론과 해결 이벤트가 같은 해시와 관계로 복원되어야 한다. `SaveAs`로 실제 보관한 스냅숏 자료는 원래 루트를 삭제한 뒤에도 보관본만으로 읽을 수 있어야 한다. 외부 문헌이나 결과를 동봉하지 않은 관계는 원래 URL·해시·출처를 보존하고 `source_unavailable/partial/corrupt` 등 실제 상태로 구분한다. 없는 외부 자료까지 재열기 성공으로 세지 않으며 다시 내려받거나 솔버·AI·동정을 자동 실행하지 않는다.
+
+이 절은 계획과 구현할 완료 기준을 보완한다. 문서 연결, 기존 시험 통과 또는 작업표의 상태 변경만으로 실제 공급자, 독립 검토나 Windows 인수가 끝났다고 보고하지 않는다.
+
+## 9. 역할별 읽기 권한, 실제 수치 인용과 새 질문의 검색 판정
+
+이 절은 1절의 기존 `ExpertTemplate.allowed_tools`를 새 조회 도구에 적용하는 계약을 구체화한다. 기존 코드에서 `allowed_tools`는 도구명이 아니라 자료 종류다. 기존 역할의 자료 권한은 유지하고, 도구 이름을 바꾸거나 `describe`로 같은 본문을 읽어 권한을 우회하지 못하게 한다. 다음 API와 레코드는 전문가 내부 계약이며 공통 `EvidenceEnvelopeV1`, `ArtifactRefV1`, `ResultRefV1`을 변경하지 않는다.
+
+### 9.1 역할과 반환 자료를 함께 검사한다
+
+자료 종류는 기존 `result_summary/model_summary/solver_log/knowledge`를 사용한다. 각각 검증된 결과 요약, 입력 모델과 계수 요약, 솔버 로그, 문헌 근거를 뜻한다. `kind=native_run/manual/calibration`만 보고 자료 전체를 허용하지 않는다. 한 파일이나 평가 자료에 여러 자료 종류가 섞여 있을 수 있으므로, 호스트가 등록된 판독 프로필에 따라 반환 필드와 인용마다 출처 분류를 붙인다. 모델이 분류를 지정하거나 바꿀 수 없다.
+
+| 역할 ID와 이름 | 허용하는 기존 자료 종류 | `knowledge.search` | `evidence.describe` | 새 결과 수치 조회 권한 |
+|---|---|---|---|---|
+| `convergence`, 수렴·접촉 진단 | `result_summary,model_summary,solver_log,knowledge` | 허용 | 이 행의 자료만 골라 반환 | 아래 버전 2의 선택 수치 보기만 허용 |
+| `material`, 재료 모델 선택 | `result_summary,model_summary,knowledge` | 허용 | 로그 본문을 제외하고 반환 | 아래 버전 2의 선택 수치 보기만 허용 |
+| `interpretation`, 결과 해석 | `result_summary` | 거부 | 결과 요약만 반환 | 아래 버전 2의 선택 수치 보기만 허용 |
+| `next_test`, 다음 시험 계획 | `result_summary,solver_log` | 거부 | 결과 요약과 로그만 반환 | 아래 버전 2의 선택 수치 보기만 허용 |
+| `theory`, 일반 CAE 이론 자문(신규) | `knowledge` | 허용 | 실행·모델·보정 근거는 거부 | 거부 |
+
+결과 없이 시작하는 `question_scope=theory`의 기본 역할은 새 `template_id='theory'`다. 화면에 선택 역할과 읽을 수 있는 자료를 표시한다. 기존 대화의 역할, 사용자 초안 또는 선택 첨부를 화면 이동만으로 바꾸지 않는다. 사용자가 `interpretation/next_test`를 선택하면 문헌 읽기 불허를 설명하되 질문 자체를 막거나 역할 권한을 몰래 늘리지 않는다. 혼합 질문도 문장 분류만으로 차단하지 않는다. 역할 선택에 별도 확인 클릭을 요구하지 않는다.
+
+원래 `result_summary`를 임의 원배열 전체를 읽는 권한으로 해석하지 않는다. 새 `RoleReadPolicyV1`은 기존 자료 권한과 별도로 `allowed_query_tools`, `allowed_result_projections`, `template_revision`, `policy_id`, `policy_sha256`를 가진다. 기존 요청의 정책 `cae-role-read-v1`에는 새 수치 보기 권한이 없다. 새 요청의 등록 정책 `cae-role-read-v2`는 위 네 기존 역할에 `selected-node-scalar-v1/selected-node-vector-v1`을 명시적으로 부여한다. 이 두 프로필은 4절의 정확한 선택 절점, 필드·성분, 허용 연산, 단위·기저와 마스크를 검증한 값만 반환한다. 수치 결과에는 실제 `projection_id`와 기본 및 요청 `ResultRef` 해시를 표시한다. 이를 과거 `result_summary`로 위장하지 않는다. 이 별도 수치 보기 권한도 기존 자료 권한과 교집합으로 적용한다. 등록 프로필이 결과 값 영역으로 선언한 부분만 읽으며, 원파일에 함께 있는 모델·로그·문헌 영역을 수치 보기라는 이름으로 제공하지 않는다. 새 정책을 적용한 역할 설명과 정책 식별값은 요청 맥락에 고정하며, 과거 요청을 새 권한으로 재해석하지 않는다.
+
+`allowed_query_tools`는 위 표와 결과 보기 권한에서 계산한다. 모든 역할에 도구 세 개를 일괄 제공하지 않는다. `describe`는 맥락에 등록된 근거만 받고, 허용 필드와 가용성만 반환한다. 예를 들어 보정 자료의 오차·잔차·평가 상태는 결과 요약, 모델·계수·시험 설정은 모델 요약, 실행 로그는 솔버 로그, 논문 본문은 문헌이다. `interpretation`에서 보정 자료를 설명해도 숨긴 계수나 로그 또는 참고 논문 본문을 함께 직렬화하지 않는다. 필드 목록도 요청에 등록된 허용 선택 범위만 보이며 임의 원배열 목록을 탐색하는 기능으로 쓰지 않는다.
+
+권한 검사는 도구 목록 제공 전, 요청 맥락 생성, 도구 실행 전, 반환 자료 선택, 인용 생성, 과거 발언 삽입과 검토자 요청 각각에 적용한다. 권한을 벗어난 도구·근거·결과 보기 요청은 `ToolResultV1.status=error,error.code=POLICY_DENIED,retryable=false,data=null,evidence_refs=[]`다. 권한 검사와 거부 응답 생성 함수에서는 해당 자료 본문 읽기와 공급자 호출이 모두 0회다. 이미 도구 요청을 만들기 위해 수행한 공급자 호출을 0회라고 기록하지 않는다. 바깥의 정상 도구 반복은 거부 응답도 같은 `call_id`의 도구 결과로 공급자에게 돌려줄 수 있다. 이때 다음 POST는 기존 반복·시간 예산을 소비하며 실제 호출 수에 포함한다. 거부 처리 함수가 별도 공급자 요청을 시작하거나 예산 밖 재시도를 하지는 않는다. 거부를 감추기 위한 다른 자료·역할·모델로의 자동 재시도는 없다.
+
+역할을 바꿔도 원 대화와 반론은 로컬 기록에 보존한다. 새 공급자 요청에는 출처 분류가 새 역할의 권한 안에 모두 들어오는 과거 발언만 넣는다. 출처 분류가 없는 구형 발언, 실패 설명이나 자동 요약은 안전하다고 추정해 넣지 않는다. 허용된 발언을 요약해 우회 전달하지도 않는다. 사용자가 직접 쓴 질문과 제약은 원문 사용자 주장으로 구분하며 검증된 근거 인용으로 승격하지 않는다. 역할과 정책 변경은 새 요청의 맥락·시각·변경 전후 식별값에 기록한다.
+
+독립 검토는 원답변의 고정 근거 묶음과 원역할의 상한을 유지한다. 검토자 역할이 더 넓어도 그 상한을 넓히지 않는다. 검토자의 권한이 더 좁으면 읽을 수 없는 부분을 부족 근거로 남긴다. 다른 역할의 추가 자료가 필요하면 사용자가 새 답변 차례와 새 검토를 요청해야 한다. 과거 검토를 덮어쓰거나 더 넓은 검토자 역할로 닫지 않는다.
+
+필수 거부 시험은 다음과 같다. `interpretation`의 `knowledge_search`, `material`의 로그 요청, `theory`의 `evidence_query_field`를 도구 목록 제공과 직접 호출 양쪽에서 거부한다. 같은 내용을 `describe`, 보정 JSON 전체, 과거 발언, 자동 요약 또는 검토자 역할 변경으로 읽는 시도도 거부한다. 거부 처리 함수의 대상 본문 읽기 0회와 공급자 호출 0회를 확인한다. 실제 도구 왕복 시험에서는 첫 도구 요청과 거부 결과 뒤의 정상 후속 POST를 각각 계수하고, 두 호출을 거부 처리의 호출 0회와 혼동하지 않는다. 반대로 허용된 자료 요약과 버전 2의 등록 수치 보기는 실제 읽기로 반환하고, 원역할 자료 제한과 수치 보기 권한을 서로 독립적으로 검사한다.
+
+### 9.2 문헌 구간과 실제 수치를 연결하는 인용 정본
+
+5절의 `citation_ids/quoted_spans`는 모델이 만든 설명문을 다시 근거로 삼는 형식이 아니다. 실제 자료를 읽은 호스트가 다음 내부 API로 인용 기록과 표시 텍스트를 만든다.
+
+~~~python
+build_citation_view(source, *, request_context, role_policy, projection_profile,
+                    resolver, check_cancelled=None) -> CitationRecordV1
+resolve_citation(citation_id, *, frozen_pack, request_context_hash,
+                 role_policy, resolver) -> ResolvedCitationV1
+~~~
+
+`CitationRecordV1`의 공통 필드는 `{schema_version:1,citation_id,citation_kind,request_context_hash,role_policy_sha256,source_labels,source,renderer_id,renderer_version,display_ref,text_sha256}`다. 모든 키는 필수이며 `additionalProperties=false`다. `citation_kind`는 전문가 내부의 `document_chunk|numeric_result|calibration_scalar|manual_text|manual_scalar`이고 공통 근거 교환 묶음의 `kind/source_kind`와 혼동하지 않는다. `display_ref`는 호스트가 만든 UTF-8 표시 텍스트의 공용 `ArtifactRefV1`이다. `text_sha256`은 그 정확한 바이트의 SHA256이다. 표시 텍스트에 모델이 만든 요약이나 문장은 넣지 않는다. 표시 생성기 식별값과 버전도 고정한다. `SaveAs`와 재열기에서는 원래 표시 바이트로 인용을 검사하며 새 언어·지역 표시 설정(로캘)이나 생성기로 다시 만들어 대체하지 않는다. 다른 언어의 화면 안내는 별도 표시이며 인용 본문을 바꾸지 않는다.
+
+`source`는 종류별로 다음 한 가지 형식만 가진다. 아래 `locator`는 요청자가 입력한 자유 경로나 JSON 포인터가 아니다. 설치해 등록한 판독 프로필이 정하고 호스트가 검증한 원본 내 위치다.
+
+| 인용 종류 | `source`의 필수 정보와 검증 |
+|---|---|
+| `document_chunk` | 기존 근거 교환 묶음 ID, `source_ref/chunk_ref`, 문서 및 텍스트 해시, 실제 `span`을 기록한다. 표시 텍스트는 해당 원문 구간의 정확한 텍스트다. 문서 판본, 페이지와 줄은 원문 연결 정보로 보존한다. |
+| `numeric_result` | 고정 `ToolResultV1` JSON의 `tool_result_ref`, 실제 `NumericResultV1` JSON의 `numeric_result_ref`, 기본 `source_result_ref:ResultRefV1`, `request_ref_sha256`, `projection_id`, `locator`, 연산자와 버전, 단위·기저·물리량 정의, 유효·전체 개수와 잘림 여부를 기록한다. 두 JSON과 참조된 배열·선택·마스크의 해시를 검증하고 같은 결과인지 확인한다. |
+| `calibration_scalar` | `evaluation_ref,study_id,content_revision,evaluation_id,locator`와 원평가의 유효성·평가 상태 위치를 기록한다. 예를 들어 적합 손실은 실제 `/objective/fit_loss`, 적격성은 `/objective/eligible`를 검증한다. 원본 평가 형식이 다르면 그 형식에 등록한 포인터를 사용하며 임의 문자열 검색으로 값을 찾지 않는다. |
+| `manual_text` | `legacy_evidence_ref`, 원문 `ArtifactRefV1`, 텍스트 추출 프로필과 버전, 추출 기록 참조, 원문 바이트 및 코드 포인트 구간을 기록한다. 추출 텍스트와 원바이트 대응이 확인된 부분만 제공한다. |
+| `manual_scalar` | 위 수동 근거의 원파일 및 추출 기록, 등록된 요약 스칼라의 `locator`, 실제값·단위·마스크를 기록한다. 검증한 원자료와 등록된 연산으로 재현되지 않는 수치는 만들지 않는다. 저장된 요약 문자열에 숫자가 있다는 사실만으로 인용을 만들지 않는다. 검증한 추출 프로필·버전, 원파일 SHA, 정확한 위치, 선언 단위·측도와 필요한 연산의 재현값을 모두 대조한다. 이 증명이 없으면 수치 주장은 `supported`가 될 수 없다. 원실행 계보를 확인할 수 없는 한 `ResultRefV1`이나 `source_run_id`는 넣지 않는다. |
+
+위 표의 `source`를 구현할 때는 다음 종류별 필드를 정확히 사용한다. 모든 필드가 필수이며 필요 없는 값만 등록된 자료형 계약에 따라 `null`을 허용한다. 포인터·참조·단위·상태는 호스트가 원본에서 만들고 모델이 제출하지 않는다.
+
+~~~text
+document_chunk: {envelope_id,source_ref,chunk_ref,document_sha256,text_sha256,span}
+numeric_result: {tool_result_ref,numeric_result_ref,source_result_ref,request_ref_sha256,projection_id,locator,scalar_value,operator,operator_version,unit,dimension,unit_status,basis,measure,counts:{valid,total},truncated}
+calibration_scalar: {evaluation_ref,study_id,content_revision,evaluation_id,locator,eligibility_pointer,assessment_pointer,scalar_value,unit,dimension,unit_status}
+manual_text: {legacy_evidence_ref,source_ref,parser_id,parser_version,parse_receipt_ref,byte_span,codepoint_span}
+manual_scalar: {legacy_evidence_ref,source_ref,parser_id,parser_version,parse_receipt_ref,locator,scalar_value,quantity,component,unit,dimension,unit_status,basis,measure,operator,operator_version,validity}
+~~~
+
+`scalar_value`는 실제 읽은 유한한 숫자이며 불리언을 거부한다. `dimension`은 등록한 물리 차원 또는 `null`, `unit_status`는 `declared|unknown`이다. `validity`는 불리언이다. 위 구조의 모든 파일 참조는 공용 `ArtifactRefV1`, 원실행 참조는 공용 `ResultRefV1`을 사용한다. `span`과 실제 평가·배열의 구조를 해당 소유 모듈의 정본과 대조하며 전문가가 별도 원결과 형식을 만들지 않는다.
+
+수치 `locator`의 정본 형식은 `{artifact_id,json_pointer,index,shape,dtype,mask_ref}`다. JSON 스칼라는 `json_pointer`로 위치를 정하고 `index/shape/dtype/mask_ref`는 해당 자료형 계약이 허용한 `null`로 둔다. 배열은 배열을 보관한 공용 파일 참조와 실제 `index/shape/dtype/mask_ref`를 사용하고 등록 형식에 맞는 `json_pointer` 또는 `null`을 쓴다. JSON 포인터는 RFC6901의 이스케이프와 정확한 키·배열 인덱스를 검증한다. 값 찾기, 수식 평가, 경로 이동, 다른 파일 검색이나 마지막 값 대체는 금지한다. 큰 배열은 원배열 해시와 선택·마스크 및 연산자 입력 범위를 확인한 뒤 고정한 수치 결과의 선택값이나 집계값에 연결한다. 집계는 원래 등록된 연산자 의미와 동일해야 한다.
+
+호스트는 인용할 스칼라를 실제 원값과 대조하고, 불리언·비유한 값·`mask=false`·선택 밖 값·숨겨진 잘린 값을 거부한다. 집계에는 유효·전체 개수, 실제 선택 범위, 연산자와 잘림 한계를 함께 표시한다. 선택 절점의 산술평균을 공간평균으로, 일부 위치의 최댓값을 전체 모델이나 전체 두께 최댓값으로 바꾸지 않는다. `unit=unknown`인 진단 원값으로 물리량 비교나 적합 평가 주장을 통과시키지 않는다. 정규화 손실 `fit_loss`는 공통 계약의 `unit=""`를 유지하면서 내부 인용 메타데이터에 `dimension=dimensionless,unit_status=declared`를 기록한다. 미선언 단위의 빈 표시와 구분한다.
+
+수치 표시 텍스트는 등록된 고정 형식으로 실제 값, 단위, 선택, 연산자, 개수와 원자료 식별값을 손실 없이 적는다. 수치는 왕복 변환해 같은 유한 값을 얻는 JSON 표기를 사용한다. 인용 ID는 호스트가 요청 맥락 해시, 역할 정책 해시, 인용 종류, 원파일 해시와 위치, 표시 텍스트 해시로 UUID5를 만들어 발급한다. 같은 숫자라도 실행, 프레임, 작업, 단위, 선택, 연산자 또는 연구 내용 버전이 다르면 같은 인용으로 재사용할 수 없다. 인용 기록과 표시 텍스트는 근거 묶음에 포함하고 묶음 해시는 바깥에서 계산한다. 기록 안에 자기 자신을 포함한 묶음 해시를 넣는 순환 해시를 만들지 않는다.
+
+답변 작성자와 검토자에게 실제 제공한 표시 텍스트만 `shown_chunks[citation_id]`에 넣는다. 이 이름은 구형 검증기와의 연결명이며 모든 항목이 문헌 조각이라는 뜻이 아니다. 화면과 프롬프트에는 문헌 원문, 실제 수치 조회, 보정 평가 또는 수동 자료의 종류를 표시한다. 5절 `quoted_spans`의 `[start,end)`는 해당 요청에 실제 보여준 이 텍스트의 유니코드 코드 포인트 범위다. 공급자에게 보이지 않은 원배열 값이나 같은 값이 적힌 다른 자료를 뒤늦게 인용 목록에 넣지 않는다.
+
+`resolve_citation`은 요청 맥락과 정책, ID 소속, 표시 바이트·해시, 원파일과 위치, 원값·단위·마스크·선택 및 근거 가용성을 다시 확인한다. 해시·위조 인용 오류는 기존 무결성 또는 `invalid_provider_action` 처리로 남긴다. 실제 자료가 없거나 단위·범위가 부족하면 그 주장은 `not_assessed`이고 검토는 `insufficient`다. 원값이 주장과 다르면 `contradicted`다. 원문 구간과 실제 수치의 기계적 일치는 의미상 주장 전체의 옳음을 보장하지 않으므로 독립 검토자의 `support/reason/modeling_checks`도 필요하다.
+
+다음 세 가지 성공·실패 쌍을 구현 전에 고정하고 실제 호스트 코드에서 검사한다. 현재 문서가 그 실행을 완료했다는 뜻은 아니다.
+
+1. **실제 실행의 스칼라 1개:** 등록된 절점 선택의 실제 값이 2mm인 고정 `NumericResultV1`과 그 `ToolResultV1`을 읽어 인용을 만든다. 2mm라는 한정된 주장은 같은 실행·프레임·선택의 원값, 단위, 마스크와 표시 구간이 모두 일치할 때만 검토할 수 있다. 3mm 주장, 다른 실행·프레임·연산자·선택·단위의 같은 2, 해시 변경, `mask=false`, 잘림으로 감춘 값, 미상 단위와 일부 범위의 전역 최댓값 주장은 거부하거나 반박·미검토로 남긴다.
+2. **고정 평가의 손실 1개:** 실제 평가의 `objective.eligible=true,objective.fit_loss=.25`를 호스트가 읽어 무차원 손실로 표시한다. 문헌 인용으로 위장하지 않는다. 다른 `content_revision/evaluation_id`, `eligible=false`, `fit_loss=null` 또는 수정된 원평가로 같은 인용을 재사용하지 못한다. 낮은 손실이라는 사실만으로 `adequacy_status`나 공학적 안전을 통과시키지 않는다.
+3. **직접 불러온 수동 결과 요약 1개:** 등록 판독 프로필이 원파일에서 실제 추출한 스칼라와 원문 위치를 읽고 수동 근거로 인용한다. 가짜 실행을 만들지 않는다. 원문 숫자 변경, 대응하지 않는 추출 기록, 허용 밖 로그·모델 필드와 프로필이 없는 파일은 수치 인용을 만들지 못한다. 원문 첨부와 자료 한계를 설명하는 질문은 계속 허용한다.
+
+### 9.3 출처 검토와 새 질문의 관련성 검토를 분리한다
+
+문헌 원문·라이선스·해시·추출 품질을 검토한 기록은 출처 검토다. 그 문헌이 지금 질문의 조건을 만족하는지 판단한 기록은 질문별 관련성 검토다. 출처 검토 통과만으로 새 질문을 `supported`로 만들지 않는다. 3절의 개발 36개와 평가 60개 질문 및 정답 표기는 시험 전용이며 제품 실행 때 정답 사전이나 질문 허용 목록으로 읽지 않는다.
+
+~~~python
+assess_retrieval(query_plan, candidates, *, source_review_refs,
+                 assessment_profile, budget, check_cancelled=None,
+                 on_stage=None) -> RetrievalDecisionV1
+~~~
+
+`RetrievalDecisionV1`은 `{schema_version:1,assessment_id,query_plan_sha256,candidate_set_sha256,source_review_refs,assessment_profile_id,assessment_profile_sha256,status,requirements,candidate_checks,missing_evidence,limitations,assessment_trace_ref}`다. 모든 키는 필수이며 임의 키를 허용하지 않는다. `status=supported|insufficient|out_of_scope`다. 하위 정본은 `requirements[{requirement_id,original_span:[start,end],facet,expected,status:verified|unverified,reason}]`, `candidate_checks[{candidate_id,source_sha256,relation:relevant|irrelevant|uncertain,requirement_ids,quoted_spans:[{start,end}],reason}]`다. `facet`은 `topic|solver|edition|model|unit|measure|condition|negation|comparison` 중 하나이고 `expected`는 정확한 원문 문자열 또는 `null`이다. 원문 구간과 후보 구간은 각각 실제 원문 및 실제 후보 텍스트의 코드 포인트 범위다. 요구 ID는 호스트가 `QueryPlan`의 명시 분류와 원문 구간에서 발급한다. 추출하지 못한 의미를 빠뜨리지 않도록 원질문 전체 구간의 `topic` 요구도 반드시 포함한다. 모델이 최종 `status`, 호스트 ID, 원본 해시 또는 출처 승인 기록을 만들어 넣지 못하게 한다.
+
+관련성 판정자가 반환하는 엄격한 형식은 `{type:'retrieval_assessment',checks:[{requirement_id,candidate_ids,relation:satisfied|missing|uncertain,quoted_spans:[{candidate_id,start,end}],reason}],out_of_scope:{is_non_cae,original_spans:[{start,end}],reason},limitations:[]}`다. 모든 키는 필수이며 추가 키를 거부한다. 각 호스트 요구를 정확히 한 번 검사하고 알려지지 않은 ID와 원문 밖 구간을 거부한다. `satisfied`에는 실제 후보와 유효한 원문 구간이 필요하다. `is_non_cae=true`는 원질문의 명백한 비CAE 의도와 원문 구간으로 검토하며 모델명 미지정·검색 실패로 대체하지 않는다. 후보별 판단과 요구 충족 결과를 호스트가 합쳐 위 정본에 저장한다. 구문 해석이나 의미 판단을 확인할 수 없으면 완료된 관련성 검토로 승격하지 않는다.
+
+실행 흐름은 다음과 같다.
+
+1. 원문을 보존한 `QueryPlan`으로 BM25·해시 혼합 검색 후보를 얻는다. 출처 검토, 가용성, 추출 품질과 명시한 솔버·판본 조건을 검사한다. 어휘 점수는 후보 정렬과 진단에만 쓴다.
+2. 등록된 질문 관련성 검토 프로필이 있으면 실제 질문과 후보 원문을 읽는 별도 엄격한 판정 요청을 실행한다. 판정자는 조건과 부정·비교를 보존한 요구 및 후보별 이유·원문 구간만 반환한다. 호스트가 이를 원문과 대조하고 최종 `status`를 계산한다. 이 판정은 답변 주장을 검토하는 `AnswerReviewv1`과 구분하며 새 주장 검토 통과로 세지 않는다.
+3. 출처가 검토되었고 요청별 검토가 실제 완료되었으며, 필수 요구가 모두 확인된 관련 후보가 있을 때만 `supported`다. 명시 조건 불일치, 확인 못 한 요구, 불확실한 관련성, 출처나 구간 누락, 오류·취소·시간 초과는 `insufficient`와 구체적 `missing_evidence`로 남긴다. 명백히 CAE와 무관한 원문 의도가 확인된 경우만 `out_of_scope`다. 알 수 없는 모델, 언어 또는 자료 없음은 범위 밖의 근거가 아니다.
+4. 관련성 검토 프로필이 없거나 추가 요청을 설정하지 않은 기본 경로는 `insufficient`로 두고 후보와 미검토 상태를 구분해 제공한다. 질문은 계속할 수 있지만 문헌으로 충분히 뒷받침되었다고 표시하지 않는다. 원문 읽기와 부족 사유를 바탕으로 한 일반 자문은 `model_general_unverified` 한계를 유지한다.
+
+질문별 관련성 검토는 추가 공급자 호출이다. 등록 프로필을 명시적으로 선택·설정한 경우에만 실행하고 화면의 단계 및 실제 요청 수, 공급자 사용량과 추적 기록에 포함한다. 별도 확인 클릭은 추가하지 않는다. 기존 `cae-read-v1`의 4회 반복, 공급자 합계 60초, 전체 85초 안에 이 호출도 포함하며 별도 숨은 시간이나 재시도 예산을 만들지 않는다. 예산이 부족하면 미검토 `insufficient`로 끝내고 호출 수를 꾸미지 않는다. 기본 자동 답변 작성+독립 검토 이중 호출은 계속 금지한다. 사용자가 그 두 요청을 명시한 경우의 170초·120초·12회 한도도 관련성 검토를 바깥에서 더할 수 있는 예산이 아니다.
+
+프로필은 판정 공급자·모델, 프롬프트·스키마·정책 해시와 실제 요청·응답을 고정한다. 설정만 있고 실제 판정이 없으면 완료로 기록하지 않는다. 역할상 문헌을 읽을 수 없는 요청에는 검색이나 이 판정을 자동 실행하지 않는다. 평가에는 기존 질문의 단순 재조회뿐 아니라 처음 보는 표현, 명시 부정, 다른 판본, 겉보기 어휘만 같은 무관 후보, 일부 요구만 만족하는 후보와 미지원 언어를 포함한다. 평가 결과를 본 뒤 프로필을 바꾸면 새 프로필과 독립 평가 세트를 사용한다. 실제 의미 판정의 오류 가능성은 별도 독립 평가와 답변 검토로 확인하며 기계적 구간 일치만으로 정답을 선언하지 않는다.
