@@ -2,7 +2,7 @@
 
 ## 기존 개발 계획 안에서 읽는 순서 — 2026-11-12 통합
 
-제품 목표는 DESIGN, 구현 순서·담당 역할·완료 조건은 [기존 전체 계획](../review/2026-10-23-codex-improvement-plan.md#plan-integration), 현재 코드/검증/잔여는 각 저장소 CURRENT_STATE를 따른다. [12개 작업표](cae-research/IMPLEMENTATION_TASKS_ko.md)와 [자동 목록 v2](cae-research/implementation-map.json)는 그 전체 계획 아래의 세부 작업이다. 별도 전체 계획이나 별도 진행률이 아니다. Prep 단계·N표와의 연결도 기존 계획에 함께 적었다.
+제품 목표는 DESIGN, 구현 순서·담당 역할·완료 조건은 [기존 전체 계획](../review/2026-10-23-codex-improvement-plan.md#plan-integration), 현재 코드/검증/잔여는 각 저장소 CURRENT_STATE를 따른다. [12개 작업표](cae-research/IMPLEMENTATION_TASKS_ko.md)와 [자동 목록 v3](cae-research/implementation-map.json)는 그 전체 계획 아래의 세부 작업이다. 별도 전체 계획이나 별도 진행률이 아니다. Prep 단계·N표와의 연결도 기존 계획에 함께 적었다.
 
 수식·데이터·API는 이 통합 명세와 [공통 C0–C12](cae-research/core-implementation.md), 각 분야 A/B/C/D를 함께 구현한다. 공통 C11과 작업표는 A/B의 구체 어댑터 파일명을 사용한다. 선행 조건은 편집 전 합의·실제 코드 사용·최종 인수로 나눴다. 기존 수식·과거 실행·원자료의 판정 범위는 보존한다.
 
@@ -30,7 +30,7 @@
 
 각 절은 기존 API와 제안 API를 구별한다. 존재하지 않는 `caelab/mdo/contracts.py`, `study_store.py`, `study.py`를 현재 재사용할 수 있는 모듈로 취급하지 않는다. 실제 최적화 데이터 전달 형식은 `mdo/optimize.py`에 있고 설계점 관리자는 `mdo/study_manager.py`에 있다. 현재 MDO v2 저장은 `mdo/service.py`가 담당한다. 기존 MDO, 프로젝트나 `NativeRun` 저장본을 새 재료 연구로 묵시적으로 이행하지 않는다.
 
-M1/M2/M3, E0–E5와 POST01–06은 이 명세의 분야별 단계명이며 별도 잔여 작업 수가 아니다. 실제 배정은 CORE01/02·STORE01·MAT-A/B·UI01·PREP01·LINK01·E0-2·E3-5·POST01-04·POST05-06의 12개 항목으로만 한다. 편집 전 계약을 합의하면 M1, E0/E1/E2와 POST01/02의 독립 부분부터 병렬 작성할 수 있다. M1은 화면 없는 재료 공통 계약을 구현한다. E0/E1/E2는 첨부 문맥, 질문과 저장, 검색을 구현한다. POST01/02는 결과 참조와 파생 작업의 생성부터 종료까지를 구현한다. 공유 자료 계약을 먼저 확정하고 E3의 저장 VTU 조회와 POST03의 솔버 원본 결과 변환기를 연결한다. M2/M3, E4/E5와 POST04–06에 필요한 화면, 솔버 원본 실행, 실제 공급자와 Windows 조건은 각 절의 의존 관계와 인수 조건을 따른다. 프로그램명이나 모델명을 나열했다고 지원 완료로 세지 않는다.
+M1/M2/M3, E0–E5와 POST01–06은 이 명세의 분야별 단계명이며 별도 잔여 작업 수가 아니다. 새 연구의 상세 계약은 CORE01/02·STORE01·MAT-A/B·UI01·PREP01·LINK01·E0-2·E3-5·POST01-04·POST05-06의 12개 분야로 묶는다. 실제 배정과 순서는 기존 제품 잔여까지 포함한 [전체 실행 목록](cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)을 따른다. 편집 전 계약을 합의하면 M1, E0/E1/E2와 POST01/02의 독립 부분부터 병렬 작성할 수 있다. M1은 화면 없는 재료 공통 계약을 구현한다. E0/E1/E2는 첨부 문맥, 질문과 저장, 검색을 구현한다. POST01/02는 결과 참조와 파생 작업의 생성부터 종료까지를 구현한다. 공유 자료 계약을 먼저 확정하고 E3의 저장 VTU 조회와 POST03의 솔버 원본 결과 변환기를 연결한다. M2/M3, E4/E5와 POST04–06에 필요한 화면, 솔버 원본 실행, 실제 공급자와 Windows 조건은 각 절의 의존 관계와 인수 조건을 따른다. 프로그램명이나 모델명을 나열했다고 지원 완료로 세지 않는다.
 
 ## 공통 자료 참조와 소유 계약
 

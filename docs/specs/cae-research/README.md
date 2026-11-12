@@ -1,10 +1,12 @@
 # CAELab 재료 연구·전문가 자문·후처리 개발 안내
 
+**첫 문서는 [전체 개발 순서](../../review/2026-10-23-codex-improvement-plan.md#execution-order)입니다.** 만들 사용자 기능, 지금 시작할 일, 첫 Prony 납품, 그 뒤 끝까지 남은 일이 순서대로 나옵니다. 구현을 배정할 때는 [전체 실행 목록](IMPLEMENTATION_TASKS_ko.md#whole-backlog)의 파일·선행·산출물·완료 후 다음 작업을 사용합니다. 아래 12개 번호는 새 연구 분야의 세부 계약이며 전체 제품 개발 목록의 전부가 아닙니다.
+
 이번 계획 통합에서 발견한 문제와 수정·검토 방법은 [추가 검토 결과](PLAN_INTEGRATION_REVIEW_ko.md)에 정리했습니다.
 
-기존 전체 계획·진도와의 연결은 [개선 계획의 통합 절](../../review/2026-10-23-codex-improvement-plan.md#plan-integration)과 [12개 세부 작업표](IMPLEMENTATION_TASKS_ko.md)를 먼저 읽습니다. 이 문서 묶음은 별도 전체 일정이나 추가 진행률이 아닙니다. [이번 공유 파일 토론](plan-integration-debate-ascii.jsonl)은 앞선 기록을 덮어쓰지 않은 새 실제 회의입니다.
+기존 전체 계획·진도와의 연결은 [개선 계획의 통합 절](../../review/2026-10-23-codex-improvement-plan.md#plan-integration)과 [전체 실행 작업표와 연구 세부 계약](IMPLEMENTATION_TASKS_ko.md)를 먼저 읽습니다. 이 문서 묶음은 별도 전체 일정이나 추가 진행률이 아닙니다. [앞선 계획 통합 토론](plan-integration-debate-ascii.jsonl)은 앞선 기록을 덮어쓰지 않은 새 실제 회의입니다.
 
-이 문서는 이번에 작성한 개발 명세서와 검토 자료를 찾아보기 위한 안내입니다.
+실행 순서 재심의는 [새 공유 파일 토론](execution-order-debate-ascii.jsonl)에 기록했습니다. 아래는 개발 명세서와 검토 자료를 찾아보기 위한 안내입니다.
 
 **이번 작업에서 마친 것은 조사, 개발 설계, 일부 계산 방법의 시험, 구현 작업의 정리입니다. 새 재료 연구 화면이나 전문가 자문·후처리 연결이 모두 완성됐다는 보고서는 아닙니다.**
 
@@ -13,7 +15,7 @@
 | 알고 싶은 내용 | 문서 |
 |---|---|
 | 지금 무엇이 있고, 무엇을 개발해야 하는지 | [사용자용 개발 현황](USER_PROGRESS_ko.md) |
-| 개발자에게 어떤 일을 맡기면 되는지 | [12개 개발 작업표](IMPLEMENTATION_TASKS_ko.md) |
+| 개발자에게 어떤 일을 맡기면 되는지 | [전체 실행 작업표](IMPLEMENTATION_TASKS_ko.md) |
 | 토론에서 어떤 문제를 발견하고 무엇을 바꿨는지 | [토론 내용의 한국어 설명](DEBATE_ko.md) |
 | 작성자 외의 검토자가 확인한 내용 | [검토 보고서 E](review-E.md), [검토 보고서 F](review-F.md) |
 | 이번 한국어 편집에서 고치고 확인한 내용 | [한국어 문서 편집 검토 결과](KOREAN_EDIT_REVIEW_ko.md) |

@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "purpose": "기존 전체 개발 계획 아래에서 새 12개 작업의 재사용분·추가 개발분·담당 역할·선행 조건·완료 기준을 찾는 목록입니다. 제품 데이터 형식이 아닙니다.",
+  "schema_version": 3,
+  "purpose": "기존 전체 개발 계획의 실행 순서·첫 작업·산출물·완료 후 다음 작업을 찾는 목록입니다. execution_queue는 기존 제품 잔여와 신규를 아우르는 실행행이며, tasks는 새 연구의 12개 분야 계약입니다. 제품 데이터 형식이나 별도 진행률이 아닙니다.",
   "product_implementation_claimed": false,
   "authoring_and_independent_review": "앞선 작성·독립 검토 이력은 보존합니다. 이번 통합에는 기존 WB·Prep 감사자, 재료 및 전문가/후처리 작성자, 기술 QA·한국어 QA와 앞선 재료/RAG 검토자 2명이 순차 참여합니다. 각자 실제 공유 파일에 토론하고 수정 바이트를 재검토합니다. 기록은 plan-integration-debate-ascii.jsonl에 있습니다.",
   "implementation_rules": [
@@ -583,7 +583,8 @@
       "historical_sha256": "b80ca843ad9606f11b3133edd8cca46d6c23ba968fd8cfd6292860c24b0dfeac",
       "record_url": "https://github.com/pikachu444/caelab-workbench/issues/79#issuecomment-6649326911",
       "calendar_migration_claimed": false
-    }
+    },
+    "execution_order": "../../review/2026-10-23-codex-improvement-plan.md#execution-order"
   },
   "dependency_semantics": {
     "depends_on": "공개 코드를 실제로 호출할 때 필요한 선행 작업입니다. 계약에 따라 병렬로 작성할 수 있는 부분까지 상대 작업 전체의 완료를 기다리지 않습니다.",
@@ -604,12 +605,1834 @@
     "planned_finish": null,
     "staffing_state": "unassigned",
     "stages_ko": [
-      "공통 계약 합의",
-      "분야별 병렬 개발",
-      "실제 모델과 화면·문서 연결",
-      "같은 평가·실행으로 합동 확인",
-      "지원 범위별 실제 환경 인수"
+      "기존 오류·공통 기반",
+      "실제계산·검색·판독병렬",
+      "첫사용과프로젝트",
+      "전체모델·전처리확대",
+      "적용·심의·후처리합류",
+      "Windows·새설치",
+      "전체인수"
     ],
     "calendar_rule_ko": "구현 담당이 기준 코드·편집 파일·작업량·가용 시간을 수락한 뒤 날짜를 정합니다. 과거 배포 목표일이나 메셔 조사 한도를 새 기능 납기로 쓰지 않습니다."
-  }
+  },
+  "execution_queue": [
+    {
+      "id": "D01",
+      "stage": 0,
+      "lane": "전문가",
+      "label_ko": "전문가 창의 프레임·검증 상태 수정",
+      "work_kind": "기존 수정",
+      "source_items": [
+        "WB:#45",
+        "WB:P5"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "apps/workbench_qt/expert_window.py",
+        "apps/workbench_qt/native_analysis.py"
+      ],
+      "deliverable_ko": "요청 프레임을 첨부 선택까지 전달하고 검증 중·실패·완료를 표시한다. 기존 토큰·워커를 재사용한다.",
+      "acceptance_ko": "프레임 0, 서로 다른 프레임, 사라진 프레임, 초안·첨부 변경과 닫힌 창에 도착한 늦은 응답을 확인한다. 창을 여는 동작만으로 캡처·AI 호출·해석을 시작하지 않는다.",
+      "next_ko": "같은 파일 담당자가 D08로 이어간다. #45의 Windows 확인은 D33에 남긴다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/expert_window.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/native_analysis.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D02",
+      "stage": 0,
+      "lane": "재료 공통",
+      "label_ko": "시험·결과·단위의 공통 자료 구현",
+      "work_kind": "신규",
+      "source_items": [
+        "CORE01"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "caelab/artifact_refs.py",
+        "caelab/materials/contracts.py",
+        "caelab/materials/units.py"
+      ],
+      "deliverable_ko": "자료·결과·평가의 불변 참조와 명시한 단위·측도 및 변환을 구현한다.",
+      "acceptance_ko": "C1/C3/C6의 엄격한 직렬화, 상대 경로·원자료 해시, 누락·단위 불일치 거절을 확인한다.",
+      "next_ko": "D04/D05/D08/D10의 코드 연결에 사용한다. 계약 합의만으로 첫 사용자 납품을 완료 처리하지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/artifact_refs.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/contracts.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/units.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D03",
+      "stage": 0,
+      "lane": "Prep",
+      "label_ko": "숨김·표시 갱신을 한 번에 처리",
+      "work_kind": "기존 개선",
+      "source_items": [
+        "PREP:N17"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/ui/prep_controller.py",
+        "src/caelab_prep/ui/viewport.py"
+      ],
+      "deliverable_ko": "최종 숨김 집합(hidden)을 한 번에 적용하여 중간에 전체 모델이 표시되는 현상과 중복 렌더링을 제거한다.",
+      "acceptance_ko": "선택·표시·문서·Undo가 유지되는지 확인하고, VTK를 실제로 초기화한 뒤 Render 호출·최종 프레임 확인을 UI 입력 접수와 구별한다. 기존 100만 요소·100 part·20 source에서 고정한 100회 동작으로 숨김·표시(hide/show)의 p95 200 ms와 렌더링 횟수를 측정한다. 목표 미달은 그대로 기록하며 N17 전체 완료와 구분한다.",
+      "next_ko": "D24의 전체 성능 예산과 D23의 기존 편집 작업을 끝까지 확인하는 단계로 이어간다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/prep_controller.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/viewport.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D04",
+      "stage": 1,
+      "lane": "재료 공통",
+      "label_ko": "여러 시험의 실제 계산·동정 서비스",
+      "work_kind": "신규",
+      "source_items": [
+        "CORE02"
+      ],
+      "depends_on": [
+        "D02"
+      ],
+      "entry_files": [
+        "caelab/materials/experiments.py",
+        "caelab/materials/residuals.py",
+        "caelab/materials/registry.py",
+        "caelab/materials/evaluator.py",
+        "caelab/materials/service.py"
+      ],
+      "deliverable_ko": "엄격한 CSV 검사 → 시험 정의 → 등록 어댑터 → 실제 예측 → 잔차·제약 → 기존 optimize/BatchEvaluator의 흐름을 연결한다.",
+      "acceptance_ko": "ACTUAL과 예측의 구분, 후보·시험별 독립 초기화, 고정한 자료 분할·식별성, Stop/Cancel, 캐시 reuse/refresh와 최종 선택 후 보류 시험의 노출 이력을 검사한다.",
+      "next_ko": "D05의 실제 Prony 계산과 합동 확인한 뒤 D06/D07로 연결한다. 모든 후속 모델도 같은 경로에 등록한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/experiments.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/residuals.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/registry.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/evaluator.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/service.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D05",
+      "stage": 1,
+      "lane": "재료 계산",
+      "label_ko": "Prony 점탄성의 첫 실제 동정",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-B"
+      ],
+      "depends_on": [
+        "D02"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/prony_trs.py"
+      ],
+      "deliverable_ko": "B-VIS-TRS-1의 2항 일반화 Maxwell 모델(generalized Maxwell)을 구현한다. E0/a1/a2/tau1/tau2 다섯 계수는 조정하고, 온도 이동 계수는 근거 있는 고정값으로 두어 DMA·완화 자료를 계산·동정한다.",
+      "acceptance_ko": "실제 pyvisco 2.1.3 API·소스 SHA, Hz/rad/s·온도·위상·관측 구간, 독립 기준과 미사용 시험을 확인한다. 합성 WLF 값을 실측 자료의 기본값으로 쓰지 않는다. D04와 실제 합동 동정을 수행한다. 첫 시험 묶음은 B3의 온도별 DMA+완화 유한 묶음이며 제품 SLSQP의 ftol=1e-10/FD=1e-6을 따른다. 과거 146회 probe의 자료 분할·평균값·ftol/FD를 제품 인수에 그대로 복사하지 않는다.",
+      "next_ko": "D07의 첫 사용자 납품으로 연결한다. D12에서 동일 프로필의 전체 TRS 범위를 마친다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/prony_trs.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D06",
+      "stage": 1,
+      "lane": "저장·프로젝트",
+      "label_ko": "연구 저장·이동·복구 구현",
+      "work_kind": "신규",
+      "source_items": [
+        "STORE01"
+      ],
+      "depends_on": [
+        "D04"
+      ],
+      "entry_files": [
+        "caelab/materials/service.py",
+        "caelab/project.py",
+        "caelab/native/run_store.py"
+      ],
+      "deliverable_ko": "재료 연구 v1·프로젝트 v4에 원자료·선택 평가·라이브러리 식별정보와 소유 결과를 저장한다.",
+      "acceptance_ko": "구형 v1–3 프로젝트 읽기, 잠금·원자 저장·읽기 전용·중단 복구·이동/SaveAs, 실행 중 SaveAs와 누락·변조를 확인한다. 기존 MDO v2는 자동 변환하지 않는다.",
+      "next_ko": "D07 연구창과 D18 독립 프로젝트 연결에 사용한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/service.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/project.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/run_store.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D07",
+      "stage": 2,
+      "lane": "연구 화면",
+      "label_ko": "CSV부터 동정·저장·재열기까지 연결",
+      "work_kind": "신규",
+      "source_items": [
+        "UI01"
+      ],
+      "depends_on": [
+        "D04",
+        "D05",
+        "D06"
+      ],
+      "entry_files": [
+        "apps/workbench_qt/material_study.py"
+      ],
+      "deliverable_ko": "실제 CSV 열기, 열·단위 지정, 계수의 고정·자유·연계 및 범위 설정, 실행, 곡선·잔차 확인, 결과 선택·저장과 새 프로세스 재열기를 한 연구창에 연결한다.",
+      "acceptance_ko": "실제 Prony 모델로 캐시를 쓰지 않는 새 확인 평가(refresh), 선택 고정 후 보류 시험 확인, Stop/Cancel·실패 처리와 이전 결과 선택 보존을 수행한다. Windows 사용자 인수는 D33에서 따로 기록한다.",
+      "next_ko": "첫 사용자 납품 이후에도 계속한다. D12–D17의 모든 프로필, D19 적용, D21 수치 자문과 D36 전체 종료까지 확인한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/material_study.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D08",
+      "stage": 1,
+      "lane": "전문가",
+      "label_ko": "결과 없이 이론·문헌 질문하기",
+      "work_kind": "신규",
+      "source_items": [
+        "E0-2"
+      ],
+      "depends_on": [
+        "D01",
+        "D02"
+      ],
+      "entry_files": [
+        "caelab/assist/contracts.py",
+        "caelab/assist/discussions.py",
+        "apps/workbench_qt/expert_window.py"
+      ],
+      "deliverable_ko": "v2 이론 질문·theory 역할, 첨부 없는 요청, 구형 대화 읽기, 최초 저장 시 백업과 초안 보존을 연결한다.",
+      "acceptance_ko": "첨부·실행 결과가 없어도 사용자가 명시적으로 질문하고 저장·재열기를 할 수 있어야 한다. 질문 scope와 실제 실행·직접 파일·재료 평가의 근거를 섞지 않는다.",
+      "next_ko": "D09 검색, D20 실제 도구 연결과 D21 심의로 이어간다. POST·재료·메셔의 전체 완료를 기다리지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/contracts.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/discussions.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/expert_window.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D09",
+      "stage": 1,
+      "lane": "전문가 검색",
+      "label_ko": "실제 원문 확보·한영 검색·관련성 판정",
+      "work_kind": "신규",
+      "source_items": [
+        "E0-2"
+      ],
+      "depends_on": [
+        "D02"
+      ],
+      "entry_files": [
+        "caelab/assist/corpus.py",
+        "caelab/assist/query_language.py",
+        "scripts/build_knowledge_index.py"
+      ],
+      "deliverable_ko": "허용된 원문·판본·출처·고정 구간·원자료 해시, CorpusManifest와 한영 QueryPlan·BM25/혼합 검색을 구현한다. 오프라인 원문·색인 준비와 실제 AI의 관련성 판정을 분리한다.",
+      "acceptance_ko": "원문 미확보/source_unavailable, 추출·chunk·인용 구간의 대응을 확인한다. 독립 질문의 정답으로 검색 재현율·관련성을 확인한다. 실제 의미 판정(semantic)은 D20의 공급자·예산·추적 기록(trace)이 준비된 뒤 인수한다.",
+      "next_ko": "D20과 연결해 실제 문헌 자문을 인수한다. 색인 파일 생성만으로 완료 처리하지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/corpus.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/query_language.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "scripts/build_knowledge_index.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D10",
+      "stage": 1,
+      "lane": "후처리",
+      "label_ko": "기존 실행기에 변환 작업 소유 기능 추가",
+      "work_kind": "신규",
+      "source_items": [
+        "POST01-04"
+      ],
+      "depends_on": [
+        "D02"
+      ],
+      "entry_files": [
+        "caelab/jobs.py",
+        "caelab/native/operations.py",
+        "caelab/native/converters.py"
+      ],
+      "deliverable_ko": "기존 JobManager의 소유 프로세스·취소·시간 제한을 재사용해 submit_result_conversion/operation_snapshot/cancel_operation을 구현한다.",
+      "acceptance_ko": "operation.json을 솔버의 job.json과 구별한다. stdout/stderr·종료 상태·부분 결과·낡은 결과·취소·자식 프로세스 정리·SaveAs를 보존한다. 새 작업 대기열(queue)이나 가짜 솔버 실행을 만들지 않는다.",
+      "next_ko": "D11의 외부 변환기와 D22 선택 RP 자동 연결에 사용한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/jobs.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/operations.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/converters.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D11",
+      "stage": 1,
+      "lane": "후처리",
+      "label_ko": "OpenCourant 공간장·시간 이력 정확히 읽기",
+      "work_kind": "신규",
+      "source_items": [
+        "POST01-04"
+      ],
+      "depends_on": [
+        "D02"
+      ],
+      "entry_files": [
+        "caelab/native/result_adapters.py",
+        "caelab/result_readers/vtk_fields.py",
+        "caelab/result_readers/opencourant_history.py"
+      ],
+      "deliverable_ko": "지원 변환기와 원래 형식의 실제 시간·ID·층·축·단위를 보존해 공간장(field)·시간 이력(history)을 읽고 수치 조회를 제공한다.",
+      "acceptance_ko": "실제 변환기·원결과·독립 수치 기준으로 개수·값·TIME을 대조한다. frame_index를 실제 시간으로 가장하지 않는다. 빈 결과나 부분 결과를 성공으로 게시하지 않는다. 기존 VTU의 수치 조회는 D02 뒤 독립 구현·확인한다. 외부 변환기를 실제 실행하는 경로에만 D10 작업 소유 코드가 필요하다.",
+      "next_ko": "해당 TH 판독부터 D13 LAW33에 연결한다. 공간장(field) 판독이 되면 D22의 기본 RP 연결도 병행한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/result_adapters.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/result_readers/vtk_fields.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/result_readers/opencourant_history.py",
+          "file_state": "planned"
+        }
+      ],
+      "conditional_dependencies": [
+        {
+          "context": "기존 VTU 수치 조회",
+          "requires": []
+        },
+        {
+          "context": "OpenCourant 외부 변환기 관리",
+          "requires": [
+            "D10"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D12",
+      "stage": 3,
+      "lane": "재료 계산",
+      "label_ko": "Prony의 전체 온도·항 수·이력 범위",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-B"
+      ],
+      "depends_on": [
+        "D04",
+        "D05"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/prony_trs.py"
+      ],
+      "deliverable_ko": "B3의 WLF 7개 자유계수, n=1/2/3 선택, 온도 변화 구간(램프)·시간 이력까지 같은 프로필을 확장한다.",
+      "acceptance_ko": "선택에는 train/validation만 사용하고 holdout은 선택을 고정한 뒤 새 확인 평가에서만 노출한다. B3의 모든 수치·위상·경로 순서·초기화와 실패 반례를 확인한다.",
+      "next_ko": "D07 화면에서 전체 프로필의 사용을 인수하고, 다음 D14–D17 모델을 동일 계약으로 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/prony_trs.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D13",
+      "stage": 3,
+      "lane": "재료·솔버",
+      "label_ko": "LAW33 발포체 두 프로필의 실제 솔버 동정",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-A"
+      ],
+      "depends_on": [
+        "D04",
+        "D11"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/opencourant_foam33.py"
+      ],
+      "deliverable_ko": "oc_foam33_ka0_v1/ka1을 계수 → 입력 사본 → 실제 Starter/Engine → TH → 여러 시험의 잔차 → 새 최종 평가로 연결한다.",
+      "acceptance_ko": "Ka0/Ka1 각각의 독립 수치·시간 세분화·에너지/힘 수지·쿠폰 관측·holdout과 입력·출력 원자료의 해시를 확인한다. 기존 참조 실행의 성공을 제품 동정의 성공으로 재사용하지 않는다.",
+      "next_ko": "D19의 네이티브 내보내기·열린 Prep 문서 적용과 D21 수치 심의에 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/opencourant_foam33.py",
+          "file_state": "planned"
+        }
+      ],
+      "prerequisite_scopes": {
+        "D11": [
+          "opencourant_history"
+        ]
+      }
+    },
+    {
+      "id": "D14",
+      "stage": 3,
+      "lane": "재료 계산",
+      "label_ko": "비압축·압축 Ogden 초탄성 두 프로필",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-B"
+      ],
+      "depends_on": [
+        "D04"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/ogden.py"
+      ],
+      "deliverable_ko": "정확한 INC/COMP 두 정식화, 횡방향 평형근, 제약과 독립 시험 동정을 구현한다.",
+      "acceptance_ko": "B2의 평형근(root) 선택·안정성·다중 시험·초기화·실패·holdout을 두 프로필 각각에서 확인하고 D07/D06으로 사용한다.",
+      "next_ko": "D15 압력 의존, D16 방향성, D17 반복·속도·온도 모델로 확대한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/ogden.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D15",
+      "stage": 3,
+      "lane": "재료 계산",
+      "label_ko": "DP 해석식과 GEOS 드라이버 두 경로",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-A"
+      ],
+      "depends_on": [
+        "D04"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/dp_axisym_closed.py",
+        "caelab/materials/adapters/geos_dp.py",
+        "caelab/native/geos_driver.py",
+        "caelab/native/adapter.py",
+        "caelab/connections.py"
+      ],
+      "deliverable_ko": "dp_axisym_closed_v1과 geos_dp_axisym_linear_v1을 별도로 등록하고 GEOS 입력, 프로그램 발견·실행과 텍스트 결과를 연결한다.",
+      "acceptance_ko": "A4의 혼합 제어·탄성/소성 상태·모든 행·드라이버 원자료 해시를 검증한다. GEOS는 material_library이며 FE 필드로 가장하지 않는다. 실제 Linux 확인과 Windows 미지원을 구분한다.",
+      "next_ko": "D16/D17과 함께 전체 11개 프로필의 지원표를 완성한다. GEOS 환경 대기는 해석식·다른 모델의 개발을 막지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/dp_axisym_closed.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/geos_dp.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/geos_driver.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/adapter.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/connections.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D16",
+      "stage": 3,
+      "lane": "재료 계산",
+      "label_ko": "직교이방 탄성과 비선형 XBP 파생 모델",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-A"
+      ],
+      "depends_on": [
+        "D04"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/orthotropic_plane.py",
+        "caelab/materials/adapters/gmn12_xbp.py"
+      ],
+      "deliverable_ko": "ortho_plane_stress_elastic_v1과 gmn12_xbp_power_plane_stress_v1의 방향·평면응력·이력·여러 시험 동정을 구현한다.",
+      "acceptance_ko": "A6/A7의 식·축·파워 법칙·상태/수렴·독립 기준을 각각 검증한다. 파생 XBP를 Xia2002 원모델이나 LAW112 지원으로 표시하지 않는다.",
+      "next_ko": "D19의 모델별 적용 판정과 D21 근거 검토에 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/orthotropic_plane.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/gmn12_xbp.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D17",
+      "stage": 3,
+      "lane": "재료 계산",
+      "label_ko": "Johnson–Cook 상태 모델과 Chaboche 반복 소성",
+      "work_kind": "신규",
+      "source_items": [
+        "MAT-B"
+      ],
+      "depends_on": [
+        "D04"
+      ],
+      "entry_files": [
+        "caelab/materials/adapters/neml_chaboche.py",
+        "caelab/materials/adapters/jc_state.py"
+      ],
+      "deliverable_ko": "B-CYC-AF2-1의 실제 NEML 반복 응력 이력과 B-JC-STATE-1의 측정 소성 상태·속도/온도 유동응력을 별도로 구현한다.",
+      "acceptance_ko": "B4/B5의 전체 독립 기준·소스 대응·상태 초기화·세분화·시험정보·holdout·플랫폼을 각각 확인한다. NEML 미설치나 exit20·21은 미충족이며, JC를 요소 삭제·파괴에너지 모델로 확대하지 않는다.",
+      "next_ko": "D12–D17의 총 11개 프로필을 계산·동정·FE·출력·Apply·플랫폼별로 각각 판정한 뒤 D36에서 재료 범위를 확인한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/neml_chaboche.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/materials/adapters/jc_state.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D18",
+      "stage": 2,
+      "lane": "프로젝트 연결",
+      "label_ko": "독립 연구창·프로젝트·공용 위젯 연결",
+      "work_kind": "신규",
+      "source_items": [
+        "LINK01",
+        "PREP:N19",
+        "PREP:N20",
+        "PREP:N21"
+      ],
+      "depends_on": [
+        "D06",
+        "D07"
+      ],
+      "entry_files": [
+        "caelab/connections.py",
+        "caelab/project.py",
+        "caelab/workbench.py",
+        "apps/workbench_qt/project_window.py"
+      ],
+      "deliverable_ko": "연구 파일 역할·독립 실행·프로젝트 상대 참조·SaveAs와 Prep의 공용 숫자·곡선·속성 위젯을 연결한다.",
+      "acceptance_ko": "기존 v1–3 파일과 MDO·RunStore의 회귀, 독립 창·선택 평가 보존·누락 자료·프로젝트 이동을 확인한다. Prep 문서나 Undo의 소유를 복제하지 않는다.",
+      "next_ko": "D19 적용은 PREP01과 합동 확인하고 D36의 같은 프로젝트 전체 흐름으로 이어간다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/connections.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/project.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/workbench.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/project_window.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D19",
+      "stage": 4,
+      "lane": "Prep 재료 적용",
+      "label_ko": "카드·곡선·축의 지원 확대와 원자 적용",
+      "work_kind": "신규",
+      "source_items": [
+        "PREP01",
+        "PREP:N15",
+        "PREP:N16",
+        "PREP:N19",
+        "PREP:N20"
+      ],
+      "depends_on": [
+        "D02",
+        "D04"
+      ],
+      "entry_files": [
+        "src/caelab_prep/application/material_binding.py",
+        "src/caelab_prep/radioss",
+        "src/caelab_prep/application"
+      ],
+      "deliverable_ko": "기존 document.edit의 LAW1 E 연결을 재사용해 신규 prepare/commit 응답부터 구현한다. 이어 정확한 지원 모델의 전체 계수·곡선·축에 대한 codec·미리보기·적용을 연결한다. material_binding.py는 신규 파일이다.",
+      "acceptance_ko": "단일 E 연결과 전체 동정값 적용을 별도로 판정한다. 최종 확인은 D06/D07/D13/D18과 함께 수행하며 개정 충돌·응답 유실·한 번의 Undo/Redo·저장/재열기·네이티브 의미·실제 FE 재평가를 확인한다. Ka0 curve_id=0 동정만으로 다중 곡선 적용을 완료 처리하지 않는다. 지원 재료+FUNCT101의 별도 transaction과 공유 곡선의 사용처를 확인한다. 축 적용은 방향을 쓰는 지원 모델의 codec으로만 인수하며, 미지원 방향 Apply는 미지원으로 유지한다.",
+      "next_ko": "지원하는 내보내기 구현(exporter)이 있을 때만 네이티브 덱을 제공하고, 미지원이면 보고서만 제공한다. 계산·내보내기·Apply를 각각 표시한 뒤 D36에서 사용자 변경·재해석을 확인한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/material_binding.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/radioss",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D20",
+      "stage": 2,
+      "lane": "전문가",
+      "label_ko": "실제 AI 검색·읽기 도구 왕복",
+      "work_kind": "신규",
+      "source_items": [
+        "E3-5"
+      ],
+      "depends_on": [
+        "D08",
+        "D09"
+      ],
+      "entry_files": [
+        "caelab/assist/query_tools.py",
+        "caelab/assist/provider_steps.py",
+        "caelab/assist/experts.py"
+      ],
+      "deliverable_ko": "구독·로컬 공급자별 실제 도구 요청 → 호스트 읽기 → 반환 → 답변을 연결하고 역할별 자료·도구 권한과 명시한 예산을 검사한다. 실제 관련성 판정 프로필을 GUI에서 선택 → 불변 ref로 저장 → ask API에 전달 → 별도 판정 요청·추적 기록(trace)으로 호출하는 경로를 구현한다. 이 호출도 기존 4회 반복·공급자 60초·전체 85초의 공유 예산과 실제 요청 수에 포함한다.",
+      "acceptance_ko": "실제 문헌 질문과 manual 직접 파일 질문을 각각 수행한다. 설정·모의 응답·목록 등록만으로 실제 호출을 완료했다고 하지 않으며, 없는 실행 ID를 만들지 않는다. 사용자 프로필 미선택·호출 실패·원문 부족을 서로 다른 상태로 표시한다. 문헌 답변의 독립 심의는 D21의 문헌 인용·근거 묶음 구현 뒤 완료 처리한다.",
+      "next_ko": "D21 독립 심의로 연결한다. native 수치 질문에만 D11, calibration 질문에만 D04와 고정 평가가 필요하다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/query_tools.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/provider_steps.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/experts.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D21",
+      "stage": 4,
+      "lane": "전문가 심의",
+      "label_ko": "실제 수치 인용·독립 답변 검토·반론 처리",
+      "work_kind": "신규",
+      "source_items": [
+        "E3-5"
+      ],
+      "depends_on": [
+        "D20"
+      ],
+      "entry_files": [
+        "caelab/assist/answer_review.py",
+        "caelab/assist/discussions.py",
+        "caelab/assist/query_tools.py"
+      ],
+      "deliverable_ko": "먼저 문헌 인용(citation), 실제 표시 내용에 고정한 exact-shown EvidencePack, 별도 검토자(reviewer) 요청과 불변 이벤트(event) 저장을 구현해 theory 답변 전체를 검토한다. 이어 원자료 해시·위치(locator)·단위·실행/평가에 묶인 수치 인용과 반론 → 수정 → 재심을 연결한다.",
+      "acceptance_ko": "실제 이론·수치·재료·manual 질문을 분리해 모든 주장의 근거를 검토한다. native 질문에는 D11, 재료 질문에는 고정 평가와 보류 시험 노출 기록이 필요하다. 원 지적자가 수정 turn·필수 세 필드·이벤트를 재검토한다.",
+      "next_ko": "D36에서 같은 수치·대화·심의·사용자 적용·별도 재해석·재열기를 합동 확인한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/answer_review.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/discussions.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/assist/query_tools.py",
+          "file_state": "planned"
+        }
+      ],
+      "conditional_dependencies": [
+        {
+          "context": "이론·문헌 질문",
+          "requires": []
+        },
+        {
+          "context": "native 수치 질문",
+          "requires": [
+            "D11"
+          ],
+          "scope": "선택 결과에 필요한 판독 프로필만"
+        },
+        {
+          "context": "재료 평가 질문",
+          "requires": [
+            "D04"
+          ],
+          "scope": "고정 평가와 보류 노출 기록"
+        }
+      ]
+    },
+    {
+      "id": "D22",
+      "stage": 4,
+      "lane": "RP 후처리",
+      "label_ko": "원 RP 수동 표시와 선택 자동 연결",
+      "work_kind": "신규",
+      "source_items": [
+        "POST05-06"
+      ],
+      "depends_on": [
+        "D11"
+      ],
+      "entry_files": [
+        "caelab/native/rp_consumer.py",
+        "별도 OpenCourantRP 선택 수정판"
+      ],
+      "deliverable_ko": "먼저 독립적으로 복사한 결과를 원 RP에서 수동으로 열어 표시한다. 자동화는 별도 수정판의 --post-only --handoff/--receipt 경로로 구현한다.",
+      "acceptance_ko": "수동·자동 각각의 실제 선택 자료·TIME·필드·층·첫 화면을 확인한다. 원본을 바꾸지 않으며 솔버 재실행은 0건이어야 한다. 자동 연결은 D10의 소유·취소/timeout, nonce/hash, 지연 응답, Run/Stop/GZIP 차단과 Windows를 별도로 인수한다.",
+      "next_ko": "원 RP 사용은 선택 수정판 전체를 기다리지 않는다. 자동 지원은 선택한 경우에만 완료 선언하고 D36에 결과를 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/rp_consumer.py",
+          "file_state": "planned"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "별도 OpenCourantRP 선택 수정판",
+          "file_state": "external"
+        }
+      ],
+      "prerequisite_scopes": {
+        "D11": [
+          "field"
+        ]
+      },
+      "conditional_dependencies": [
+        {
+          "context": "원 RP 수동 표시",
+          "requires": []
+        },
+        {
+          "context": "선택 RP 자동 연결 수정판",
+          "requires": [
+            "D10"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D23",
+      "stage": 1,
+      "lane": "Prep 기존 편집",
+      "label_ko": "이미 구현한 6종 메시 편집과 연속 작업 확인",
+      "work_kind": "기존 검증·발견결함 수정",
+      "source_items": [
+        "PREP:N18",
+        "PREP:N15"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/ui/mesh_workflow.py",
+        "src/caelab_prep/application/mesh_relations.py",
+        "src/caelab_prep/ui/element_edits.py"
+      ],
+      "deliverable_ko": "절점 이동(node), 명시 병합(merge), 요소 삭제, 셸 법선 변경(shell), 재배정과 크기 변경에 따른 재메시(size)를 재구현하지 않는다. 두 사용자 입력으로 연속 GUI 작업·네이티브 파일·솔버까지 확인한다.",
+      "acceptance_ko": "후보 → 영향 검토 → Apply/취소 → Undo → 저장·새 프로세스 재열기 → Starter/Engine에서 ID·참조·질량/조건을 비교한다. 오류는 같은 행에서 수정한다. Windows 확인은 D33과 공유한다. N11의 별도 CAD·메시 형상·규모 조건은 D38에서 확인한다.",
+      "next_ko": "D25의 실제 미구현 편집 확대와 D26–D30 메셔 연구를 분리한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/mesh_workflow.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/mesh_relations.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/element_edits.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D24",
+      "stage": 3,
+      "lane": "Prep 성능",
+      "label_ko": "100만 요소 전체 성능 목표 달성",
+      "work_kind": "기존 개선",
+      "source_items": [
+        "PREP:N17"
+      ],
+      "depends_on": [
+        "D03"
+      ],
+      "entry_files": [
+        "src/caelab_prep/ui",
+        "src/caelab_prep/cae_core",
+        "tools/benchmark_model.py"
+      ],
+      "deliverable_ko": "N17의 지연 UI·배열 공유·부분 갱신·저장 경로에서 실제 병목을 고정 측정으로 찾아 순서대로 수정한다.",
+      "acceptance_ko": "같은 고정 입력인 100만 요소·100 part·20 source에서 열기/재열기(open/reopen) 45초, 저장(save) 60초, 최대 RSS(peakRSS) 12 GiB/동시 16 GiB를 execution-stages 기준으로 확인한다. 고정한 100회 동작의 p95는 선택(selection) 150 ms/스칼라 편집(scalar edit) 100 ms/Undo 100 ms/표시(visibility) 200 ms다. 취소(cancel) 접수 1초/worker 종료 5초도 확인한다. 최종 후보는 최대 3회 확인하고 원자료·환경·목표 미달과 Windows 실화면 확인을 구분한다.",
+      "next_ko": "D33의 실제 Windows/VTK 확인과 연결하고 N17의 일부 개선·전체 합격을 나눠 기록한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/cae_core",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "tools/benchmark_model.py",
+          "file_state": "planned"
+        }
+      ]
+    },
+    {
+      "id": "D25",
+      "stage": 3,
+      "lane": "Prep 메시 편집",
+      "label_ko": "일반 메시 편집의 후속 연산 구현",
+      "work_kind": "기존 계획 미구현",
+      "source_items": [
+        "PREP:N18"
+      ],
+      "depends_on": [
+        "D23"
+      ],
+      "entry_files": [
+        "src/caelab_prep/application/mesh_edit_candidates.py",
+        "src/caelab_prep/application/native_mesh_edit.py",
+        "src/caelab_prep/ui/element_edits.py",
+        "src/caelab_prep/radioss/modeling.py"
+      ],
+      "deliverable_ko": "모서리 분할(edge split) → 모서리 교환(edge swap) → quad/tri 변환 → 고차 승격 순서로 연산별 지원 요소·경계·집합/조건 영향과 네이티브 codec을 확정해 구현한다. 첫 edge split은 명시적인 선형 삼각 표면부터 선정하고 새 node/cell·네이티브 ID 분배·양측 경계·집합/조건 영향을 계획한다. quad/tri는 family/card·단면 정식화, 고차는 공유 중간 절점(midnode)·곡면 경계·고차 Jacobian을 별도로 구현한다.",
+      "acceptance_ko": "각 연산의 보존량·품질·공유 경계·참조 영향·Preview/취소/한 번의 Undo·재열기/네이티브 재읽기와 실제 솔버를 확인한다. 미지원 배치(unsupported layout)나 뒤틀린 사각형(warpedquad) 등은 명시적으로 거절한다.",
+      "next_ko": "일반 CAD의 자동 조건 복구를 완료 처리하지 않는다. 각 지원 확대는 N18에 따로 근거를 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/mesh_edit_candidates.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/native_mesh_edit.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/element_edits.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/radioss/modeling.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D26",
+      "stage": 3,
+      "lane": "Prep 메셔",
+      "label_ko": "선·beam/truss와 준비된 셸면의 제품 연결",
+      "work_kind": "기존 연구 후속",
+      "source_items": [
+        "PREP:N22"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/application/structured_mesh.py",
+        "src/caelab_prep/application/mesh_candidates.py",
+        "src/caelab_prep/application/session.py",
+        "src/caelab_prep/radioss/modeling.py",
+        "src/caelab_prep/ui/mesh_workflow.py"
+      ],
+      "deliverable_ko": "검증된 제한 SDK를 CAD 곡선/좌표틀(curve/frame), 선 단면·방향, 준비된 셸(shell)의 두께·offset과 공통 채택 경로에 연결한다.",
+      "acceptance_ko": "F0–F2의 정확한 요소군(family)·절점 순서(nodeorder)·두께/축 계약을 정한 뒤 GUI·Undo·저장·네이티브 파일·실제 솔버의 F3–F4를 확인한다.",
+      "next_ko": "D27 중립면과 D28/D29 quad/hex로 확대하되 독립 재료 계산·이론 질문을 막지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/structured_mesh.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/mesh_candidates.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/session.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/radioss/modeling.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/mesh_workflow.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D27",
+      "stage": 3,
+      "lane": "Prep 메셔",
+      "label_ko": "제한 중립면의 형상군 실증·제품 연결",
+      "work_kind": "기존 연구 후속",
+      "source_items": [
+        "PREP:N23"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "scripts/evaluation/midsurface_recipe/paired_offset.py",
+        "docs/mesher-feasibility-roadmap.md"
+      ],
+      "deliverable_ko": "평판·절곡·단순 접합의 쌍 구성/오프셋(pair/offset)·공차·수동 보정과 원 솔리드(solid) 참조를 실증한 뒤 채택 UI로 연결한다.",
+      "acceptance_ko": "얇고 긴 형상·작은 피처·접합부·미사용 형상의 위치/두께·연결 품질·실패를 F0–F4로 검사한다. 임의 형상의 자동 중립면 생성으로 확대하지 않는다.",
+      "next_ko": "실증 실패 시 정확한 no-go 판정과 외부·수동 대안을 평가하고 기능은 미완료로 남긴다. D26과 지원 범위 안에서 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "scripts/evaluation/midsurface_recipe/paired_offset.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/mesher-feasibility-roadmap.md",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D28",
+      "stage": 3,
+      "lane": "Prep 메셔",
+      "label_ko": "quad 지원 형상과 실무 품질 확대",
+      "work_kind": "기존 부분 구현 확대",
+      "source_items": [
+        "PREP:N24"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/application/structured_mesh.py",
+        "src/caelab_prep/application/structured_geometry.py",
+        "src/caelab_prep/ui/mesh_workflow.py"
+      ],
+      "deliverable_ko": "첫 코드는 기존 두 패치(patch)의 생성 설정(recipe)에서 공유 꼭짓점(vertex)을 한 번 편집해 양쪽 패치를 일관되게 갱신하는 기능이다. structured_mesh가 현재 거절하는 patches 편집을 명시한 지원 범위에서 확장한다. 품질값이 양수인지, 원래 recipe가 바뀌지 않는지, 새 후보 생성·Undo·재열기·네이티브 출력을 확인한 뒤 기존 평면 사각형(planar quad)의 재생성·채택을 재사용해 곡면·다중 파트(curved/multipart)의 전체 H-Q 형상군으로 확대한다.",
+      "acceptance_ko": "고정 형상·미사용 형상·얇고 긴 형상·복잡한 피처 형상의 요소 목록(inventory)·연결·품질·네이티브 파일·GUI·솔버를 F0–F4로 확인한다. 몇 가지 평면(planar) 형상의 성공을 전체 합격으로 쓰지 않는다.",
+      "next_ko": "D29 sweep hex로 이어간다. 지원 불가 항목은 외부 메셔·수동 분할 대안을 평가한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/structured_mesh.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/structured_geometry.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/mesh_workflow.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D29",
+      "stage": 3,
+      "lane": "Prep 메셔",
+      "label_ko": "sweep hex 지원 형상과 실무 품질 확대",
+      "work_kind": "기존 부분 구현 확대",
+      "source_items": [
+        "PREP:N25"
+      ],
+      "depends_on": [
+        "D28"
+      ],
+      "entry_files": [
+        "src/caelab_prep/application/structured_mesh.py",
+        "src/caelab_prep/application/structured_geometry.py",
+        "src/caelab_prep/ui/mesh_workflow.py"
+      ],
+      "deliverable_ko": "D28의 복수 패치(multipatch) 편집 경로를 재사용해 스윕 벡터(sweep vector)·층(layer)·공유면(shared face)을 확인하는 것부터 시작한다. 기존의 제한된 Hex8 단면·생성 설정(recipe)을 재사용하고 비틀림·곡면·원통·환형(annulus)·CAD 분할의 H-S/F4를 이어 실증한다.",
+      "acceptance_ko": "절점 순서·Jacobians·품질·전이 경계·얇고 긴 형상·미사용 형상·실제 네이티브 파일/솔버를 확인한다. 지원 불가 형상은 원본을 보호하고 명시적으로 거절한다.",
+      "next_ko": "D30 혼합 전이와 대체 엔진 후보 검증으로 이어가되 범용 all-hex 완료로 확대하지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/structured_mesh.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/structured_geometry.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/mesh_workflow.py",
+          "file_state": "existing"
+        }
+      ],
+      "prerequisite_scopes": {
+        "D28": [
+          "shared_vertex_multipatch_edit"
+        ]
+      }
+    },
+    {
+      "id": "D30",
+      "stage": 3,
+      "lane": "Prep 메셔",
+      "label_ko": "hex/tet/prism/pyramid 전이의 실제 지원 확보",
+      "work_kind": "기존 연구 후속",
+      "source_items": [
+        "PREP:N26"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/radioss/modeling.py",
+        "docs/mesher-feasibility-roadmap.md"
+      ],
+      "deliverable_ko": "공식 입력 생성기(writer)·솔버의 전이 요소 지원을 먼저 확인하고, 경계가 일치하는(conformal) 메셔·라이선스·배포·실제 API 대안을 평가한다.",
+      "acceptance_ko": "원 요소 목록(inventory)·면 연결(face)·비정합 절점(hangingnode)·품질·질량중심·해석 응답을 F0–F4로 확인한다. 요소를 버리거나 반복 절점의 BRICK으로 치환해 손실 없는 지원을 가장하지 않는다.",
+      "next_ko": "no-go는 조사 판정이며 제품 기능 완료가 아니다. 검증된 대체 메셔·혼합 지원 또는 명시적인 미지원 상태를 전체 종료 판정에 남긴다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/radioss/modeling.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/mesher-feasibility-roadmap.md",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D31",
+      "stage": 2,
+      "lane": "Prep 8가지 GUI",
+      "label_ko": "8개 제품별 같은 과업 비교·차이 수정",
+      "work_kind": "기존 검증·UI 보완",
+      "source_items": [
+        "PREP:N03",
+        "PREP:N04",
+        "PREP:N05",
+        "PREP:N06",
+        "PREP:N07",
+        "PREP:N08",
+        "PREP:N09",
+        "PREP:N10"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/ui",
+        "docs/ui-reference-variants.md",
+        "docs/benchmarks/2026-10-30/README.md"
+      ],
+      "deliverable_ko": "HyperMesh → PrePoMax → Naksha → Abaqus/CAE → COMSOL → midasNFX → MeshFree → BeidPrep 순서로 같은 T1–T6 과업의 원제품 버전·대응 작업을 확보해 차이를 수정한다.",
+      "acceptance_ko": "각 제품의 전체 창·모달 창·오류/취소·클릭·키·값·파일을 같은 Prep 구현과 대조한다. 접근하지 못한 항목은 보류하며 제품명·색 변경이나 스크린샷 관찰만으로 완료 처리하지 않는다.",
+      "next_ko": "D23/D33과 같은 증거를 공유하되 N03–N10은 제품별로 따로 종료한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/ui-reference-variants.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/benchmarks/2026-10-30/README.md",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D32",
+      "stage": 4,
+      "lane": "기존 프로그램 연결",
+      "label_ko": "CAD·PrePoMax·MDO·보조 해석의 남은 전체 흐름 확인",
+      "work_kind": "기존 검증·발견결함 수정",
+      "source_items": [
+        "WB:P3",
+        "WB:P4",
+        "WB:P5",
+        "WB:P6",
+        "WB:WBS2",
+        "WB:WBS3"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "caelab/connections.py",
+        "caelab/workbench.py",
+        "caelab/mdo/service.py",
+        "apps/workbench_qt/project_window.py",
+        "docs/tutorials/cad-file-handoff.md"
+      ],
+      "deliverable_ko": "이미 병합된 CAD·프레임 뷰어·전문가 연결(브리지)·MDO·보조 해석을 재구현하지 않는다. 실제 CAD 문서/STEP → PrePoMax PMX/INP → CalculiX → FRD/ParaView의 전체 흐름을 확인한다. 기존 Workbench.open_program/submit_native/open_native_results와 MDOStudyService.confirm/apply/undo/rerun_current/save_as를 실제 사용자 인수의 진입점으로 사용한다.",
+      "acceptance_ko": "원문서·출력·갱신 필요 상태(stale), 선택 실행, 정밀 결과, 명시적 변경·재해석, 저장·재개와 MDO·보조 창의 영구 이력을 확인한다. 독립 외부 입력과 과거 PASS 기록이 충돌하면 원자료로 해결한다. 기존 MDO 명세의 DisciplineGraph·비순환 결합 목표와 현재 단일 CalculiX 구현을 대조해 실제 지원·미지원·후속 범위를 판정한다. 기존 INP 기능 인수로 다분야 결합 전체를 완료 처리하지 않는다.",
+      "next_ko": "환경별 GUI는 D33, 배포는 D34, 전체 독립 입력·검색 평가는 D36에서 종료한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/connections.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/workbench.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/mdo/service.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/project_window.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "docs/tutorials/cad-file-handoff.md",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D33",
+      "stage": 5,
+      "lane": "Windows 통합",
+      "label_ko": "두 앱과 실제 프로그램의 Windows 사용 확인",
+      "work_kind": "기존·신규 최종 검증",
+      "source_items": [
+        "PREP:N12",
+        "PREP:N14",
+        "WB:P7",
+        "WB:WBS4"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "apps/workbench_qt/WINDOWS_CHECK.md",
+        "src/caelab_prep/ui",
+        "apps/workbench_qt"
+      ],
+      "deliverable_ko": "기존 5개 실패(설치 3개·Qt worker 2개)를 고정 환경에서 재현하고 원인을 수정하거나 정확한 환경 차단을 판정한다. 두 앱·각 연결·새 기능을 실제로 조작한다.",
+      "acceptance_ko": "Qt/VTK 실화면, IME, 한글·공백 경로, FHD/4K, DPI·좁은 창, 취소·닫기, 저장·전체 재개와 실제 공급자·솔버·후처리를 구별해 기록한다. 과거 별도 스냅숏의 cp949 읽기·pythonw timeout·RAD 환경 실패도 원자료를 보존하고, 현재 고정 환경에서 해당 증상이 재현되는지와 원인·영향을 판정한다. 다른 스냅숏의 실패 수를 한 실행 결과로 합치지 않는다.",
+      "next_ko": "필요한 기능이 준비될 때마다 확인한다. Windows 대기는 독립적인 Linux 개발을 막지 않는다. D34 새 설치와 D36 최종 묶음에 연결한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/WINDOWS_CHECK.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D34",
+      "stage": 5,
+      "lane": "배포·설치",
+      "label_ko": "새 Windows 설치·portable 배포·업데이트·복구",
+      "work_kind": "기존 배포 잔여",
+      "source_items": [
+        "PREP:N13",
+        "WB:P7"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "scripts/build_windows_bundle.py",
+        "scripts/archive_windows_bundle.py",
+        "scripts/build_windows_installer.py",
+        "apps/workbench_qt/desktop_entry.py",
+        "apps/workbench_qt/bundle_diagnostics.py",
+        "docs/tutorials/windows-installer.md"
+      ],
+      "deliverable_ko": "현재 portable·설치형 준비와 컴파일 증거를 재사용하고, 새 환경의 실행·저장·재열기·솔버·Qt/VTK·설치 실패 복구·업데이트를 검증·수정한다.",
+      "acceptance_ko": "EXE 생성이나 현재 개발 PC에서 초기 창을 관측한 사실을 새 환경 설치(clean) 완료로 세지 않는다. 서명·버전·등록, 산출물 해시(hash), 외부 프로그램 발견과 두 앱의 조합을 정확히 기록한다.",
+      "next_ko": "D33의 실제 기능 확인과 같은 배포 후보를 D36 전체 인수에 사용한다. 과거 11/5·11/8 목표일을 새 납기로 쓰지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "scripts/build_windows_bundle.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "scripts/archive_windows_bundle.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "scripts/build_windows_installer.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/desktop_entry.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "apps/workbench_qt/bundle_diagnostics.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "docs/tutorials/windows-installer.md",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D35",
+      "stage": 4,
+      "lane": "추가 실행 환경",
+      "label_ko": "Code_Aster·FEniCSx의 미구현 연결 처리",
+      "work_kind": "조건부 실행 환경 개발",
+      "source_items": [
+        "WB:P4",
+        "WB:P7"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "caelab/connections.py",
+        "caelab/pde",
+        "caelab/solvers",
+        "caelab/native/code_aster.py",
+        "caelab/pde/scipy_solver.py",
+        "caelab/solvers/pde_solver.py"
+      ],
+      "deliverable_ko": "프로그램별 미지원 경로를 남기고 Code_Aster/FEniCSx·WSL 채택 여부와 Windows 네이티브 우선 원칙을 먼저 확인한다. 채택한 분기만 실행 환경·경로·파일·작업 연결을 구현한다. Code_Aster 현재 판독은 JSON fixture에 한정되므로 채택 시 실제 MED/HDF5 판독·변환과 물리 필드·단위 검증을 구현한다. SciPy2D는 기존 Python API를 재사용하며, 제품 연결을 채택하면 프로그램 등록→작업 소유→VTU 생성→NativeResultView를 구현한다. 3D·시간적분은 별도 범위로 유지한다.",
+      "acceptance_ko": "Code_Aster의 미결정 환경과 FEniCSx의 WSL 미연결은 현재 미지원으로 유지한다. 실제 실행·결과/단위·시간·파일 교환을 프로그램별로 확인하며 PDE 값을 구조 변위·응력으로 표시하지 않는다.",
+      "next_ko": "환경 결정이 필요한 분기만 보류한다. 기존 지원 프로그램의 제품 인수와 구별하고 전체 미완료표에 남긴다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/connections.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/pde",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/solvers",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/native/code_aster.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/pde/scipy_solver.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "caelab/solvers/pde_solver.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D36",
+      "stage": 6,
+      "lane": "전체 인수",
+      "label_ko": "같은 프로젝트로 전체 요구의 완료 판정",
+      "work_kind": "합동 인수",
+      "source_items": [
+        "WB:P1",
+        "WB:P2",
+        "WB:P3",
+        "WB:P4",
+        "WB:P5",
+        "WB:P6",
+        "WB:P7",
+        "PREP:G0",
+        "PREP:G1",
+        "PREP:G2",
+        "PREP:G3",
+        "PREP:G4"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "CURRENT_STATE.md",
+        "docs/review/2026-10-23-codex-improvement-plan.md",
+        "docs/specs/cae-research/implementation-map.json"
+      ],
+      "deliverable_ko": "CAD·Prep·해석·재료 동정·자문/독립 심의·명시적 적용/별도 재해석·RP/ParaView·저장/재열기를 같은 프로젝트·자료로 확인한다.",
+      "acceptance_ko": "D01–D34 중 D22는 원 RP 수동 표시를 필수로, 자동판은 채택한 경우에만 필수로 하여 각 지원 범위의 근거와 미해결 조건을 대조한다. 독립 외부 입력의 비선형·마찰 접촉·혼합 요소, 전체 11개 프로필·8방식·Windows·검색 질문·실물 자료 적합성을 따로 확인한다. D38 대표 연속 과업은 필수이며 D35 미결정 환경·D39 조건부 연구는 채택한 범위에서만 인수한다. 미충족 필수 요구가 있으면 전체 완료가 아니다.",
+      "next_ko": "모든 필수 요구가 충족돼야 전체 완료다. 남은 항목이 있으면 부분 납품과 다음 작업을 같은 정본에 남기고 계속한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "release_requires": [
+        "D01",
+        "D02",
+        "D03",
+        "D04",
+        "D05",
+        "D06",
+        "D07",
+        "D08",
+        "D09",
+        "D10",
+        "D11",
+        "D12",
+        "D13",
+        "D14",
+        "D15",
+        "D16",
+        "D17",
+        "D18",
+        "D19",
+        "D20",
+        "D21",
+        "D23",
+        "D24",
+        "D25",
+        "D26",
+        "D27",
+        "D28",
+        "D29",
+        "D30",
+        "D31",
+        "D32",
+        "D33",
+        "D34",
+        "D38"
+      ],
+      "activation": "release_gate",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "CURRENT_STATE.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "docs/review/2026-10-23-codex-improvement-plan.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "docs/specs/cae-research/implementation-map.json",
+          "file_state": "existing"
+        }
+      ],
+      "release_scoped_requires": [
+        {
+          "task_id": "D22",
+          "subscope": "original_rp_manual_display",
+          "required_when": "always"
+        },
+        {
+          "task_id": "D22",
+          "subscope": "optional_rp_automatic_fork",
+          "required_when": "automatic_support_adopted"
+        },
+        {
+          "task_id": "D35",
+          "subscope": "adopted_execution_environment",
+          "required_when": "execution_environment_branch_adopted"
+        },
+        {
+          "task_id": "D39",
+          "subscope": "adopted_geometry_or_mesh_feature",
+          "required_when": "geometry_or_mesh_feature_adopted"
+        }
+      ]
+    },
+    {
+      "id": "D37",
+      "stage": 0,
+      "lane": "환경 준비",
+      "label_ko": "실제 검증 환경·프로그램·원문 접근 준비",
+      "work_kind": "개발과 병행하는 준비",
+      "source_items": [
+        "WB:P7",
+        "PREP:N03",
+        "PREP:N12",
+        "PREP:N13",
+        "PREP:N14"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "CURRENT_STATE.md",
+        "docs/tutorials/workbench_quickstart.md",
+        "docs/ui-reference-variants.md"
+      ],
+      "deliverable_ko": "사용 가능한 Windows 장비, WB/Prep 고정 버전, 외부 솔버·RP·CAD·원제품, pyvisco/NEML/GEOS, 실제 공급자와 허용 원문·시험자료의 위치·버전·권한·연결 방법을 확인한다.",
+      "acceptance_ko": "각 환경의 확인 결과·준비 작업·막히는 정확한 실행행과 가능한 독립 개발을 기록한다. 유료 구매·계정 가입이나 사용자 자료 보유를 임의로 가정하지 않는다. Windows 본검증은 기존 일괄 후속 방침을 유지한다.",
+      "next_ko": "접근이 갖춰진 분기만 실제로 인수한다. 준비 중에도 D01/D02/D03 등 독립 개발을 진행한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "CURRENT_STATE.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-workbench",
+          "path": "docs/tutorials/workbench_quickstart.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/ui-reference-variants.md",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D38",
+      "stage": 2,
+      "lane": "Prep 연속 과업",
+      "label_ko": "대표 조립의 CAD·메시부터 네이티브 입력까지 연결",
+      "work_kind": "기존 검증·발견결함 수정",
+      "source_items": [
+        "PREP:N11",
+        "PREP:N01",
+        "PREP:N02"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "src/caelab_prep/ui/mesh_workflow.py",
+        "src/caelab_prep/application/mesh_relations.py",
+        "src/caelab_prep/application/session.py"
+      ],
+      "deliverable_ko": "N11의 서로 다른 두 사용자 입력에서 CAD/외부 메시 → 후보 → 채택·재연결 → 재료/단면/파트 → 곡선/집합/조건 → 저장/새 프로세스 재열기 → Starter/Engine을 이어서 확인한다.",
+      "acceptance_ko": "C1의 열린 표면(open surface) 20k–100k·면 국부(face-local) 경로와 C2의 서로 맞닿은 솔리드(touching solids)에 대한 conformal/local-volume/independent 경로를 원문서·ID/참조/조건·실제 솔버와 대조한다. N01의 case와 N02의 tri3/tet4 import는 기존 구현을 재사용한다. D23의 6개 연산 통과만으로 N11 전체를 완료 처리하지 않는다.",
+      "next_ko": "기능 결함은 해당 N행에서 수정한다. 원제품 비교는 D31, 실제 Windows는 D33, 두 앱은 D36에서 같은 자료로 확인한다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/ui/mesh_workflow.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/mesh_relations.py",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "src/caelab_prep/application/session.py",
+          "file_state": "existing"
+        }
+      ]
+    },
+    {
+      "id": "D39",
+      "stage": 3,
+      "lane": "조건부 CAD·메시",
+      "label_ko": "Auto-Tet·형상 정리 등 미진한 연구 후속",
+      "work_kind": "조건부 연구·지원확대",
+      "source_items": [
+        "PREP:Phase3.6",
+        "PREP:Phase3.7",
+        "WB:WBS5"
+      ],
+      "depends_on": [],
+      "entry_files": [
+        "docs/mesher-feasibility-roadmap.md",
+        "docs/execution-stages.md"
+      ],
+      "deliverable_ko": "Phase3.6 Auto-Tet의 과거 품질 미달·no-go와 준비된 Tet10(prepared Tet10)의 제한된 성공을 구별한다. Phase3.7의 와셔(washer)·필렛 억제(fillet)·일괄 처리/정리(batch/cleanup)에 대한 범위·후보 API·라이선스·대표 형상을 먼저 고정한다.",
+      "acceptance_ko": "기존 시제품(prototype)·입력·품질 원자료를 재사용해 F0 → F2 실증 → 지원 범위/영향 계약 → 제품 채택 → 실제 솔버 F3/F4 순서로 판정한다. 얇고 긴 형상·복잡한 피처·공식 형상·미사용 형상을 포함한다. 품질 미달이나 미병합 시제품을 구현 완료로 세지 않는다.",
+      "next_ko": "채택한 기능만 기존 N/단계의 후속으로 구현하고, no-go이면 검증된 외부·수동 대안을 평가한다. 미결정 조건을 전체 실행 대기열에서 삭제하지 않는다.",
+      "implementation_state": "not_closed_by_document_update",
+      "file_targets": [
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/mesher-feasibility-roadmap.md",
+          "file_state": "existing"
+        },
+        {
+          "repository": "pikachu444/caelab-prep",
+          "path": "docs/execution-stages.md",
+          "file_state": "existing"
+        }
+      ]
+    }
+  ],
+  "execution_policy": {
+    "authority": "../../review/2026-10-23-codex-improvement-plan.md#execution-order",
+    "initial_code_tasks": [
+      "D01",
+      "D02",
+      "D03"
+    ],
+    "initial_preparation": [
+      "D37"
+    ],
+    "first_user_delivery": [
+      "D02",
+      "D04",
+      "D05",
+      "D06",
+      "D07"
+    ],
+    "first_material_profile": "B-VIS-TRS-1",
+    "priority_is_not_global_dependency": true,
+    "shared_file_editor": "single owner assigned before edits",
+    "release_task": "D36",
+    "conditional_scope": [
+      "D35",
+      "D39",
+      "D22 optional automatic RP fork"
+    ]
+  },
+  "legacy_coverage": {
+    "N01": [
+      "D38"
+    ],
+    "N02": [
+      "D38"
+    ],
+    "N03": [
+      "D31",
+      "D37"
+    ],
+    "N04": [
+      "D31"
+    ],
+    "N05": [
+      "D31"
+    ],
+    "N06": [
+      "D31"
+    ],
+    "N07": [
+      "D31"
+    ],
+    "N08": [
+      "D31"
+    ],
+    "N09": [
+      "D31"
+    ],
+    "N10": [
+      "D31"
+    ],
+    "N11": [
+      "D38"
+    ],
+    "N12": [
+      "D33",
+      "D37"
+    ],
+    "N13": [
+      "D34",
+      "D37"
+    ],
+    "N14": [
+      "D33",
+      "D37"
+    ],
+    "N15": [
+      "D19",
+      "D23"
+    ],
+    "N16": [
+      "D19"
+    ],
+    "N17": [
+      "D03",
+      "D24"
+    ],
+    "N18": [
+      "D23",
+      "D25"
+    ],
+    "N19": [
+      "D18",
+      "D19"
+    ],
+    "N20": [
+      "D18",
+      "D19"
+    ],
+    "N21": [
+      "D18"
+    ],
+    "N22": [
+      "D26"
+    ],
+    "N23": [
+      "D27"
+    ],
+    "N24": [
+      "D28"
+    ],
+    "N25": [
+      "D29"
+    ],
+    "N26": [
+      "D30"
+    ]
+  },
+  "model_delivery_order": [
+    {
+      "profile_ids": [
+        "B-VIS-TRS-1"
+      ],
+      "execution_rows": [
+        "D05",
+        "D12"
+      ]
+    },
+    {
+      "profile_ids": [
+        "oc_foam33_ka0_v1",
+        "oc_foam33_ka1_v1"
+      ],
+      "execution_rows": [
+        "D13"
+      ]
+    },
+    {
+      "profile_ids": [
+        "B-HYP-INC-1",
+        "B-HYP-COMP-1"
+      ],
+      "execution_rows": [
+        "D14"
+      ]
+    },
+    {
+      "profile_ids": [
+        "dp_axisym_closed_v1",
+        "geos_dp_axisym_linear_v1"
+      ],
+      "execution_rows": [
+        "D15"
+      ]
+    },
+    {
+      "profile_ids": [
+        "ortho_plane_stress_elastic_v1",
+        "gmn12_xbp_power_plane_stress_v1"
+      ],
+      "execution_rows": [
+        "D16"
+      ]
+    },
+    {
+      "profile_ids": [
+        "B-JC-STATE-1",
+        "B-CYC-AF2-1"
+      ],
+      "execution_rows": [
+        "D17"
+      ]
+    }
+  ]
 }

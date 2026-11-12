@@ -13,209 +13,119 @@
   },
   "files": [
     {
-      "path": "docs/specs/spec-cae-research-implementation.md",
-      "blob_sha": "aecbfaf64d4c84bcdf29d441b1a716f1c8af6fa4",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "d43f0c186b5270297517f7a66e5854367bffa9b3",
-      "sha256": "d499358d6dc41667e7be8b21484bd48a7de84fba8080ff42873191b58613ec15"
-    },
-    {
-      "path": "docs/specs/cae-research/README.md",
-      "blob_sha": "4b8ec92c9db40a6c99f2181116453337802e6d4f",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "0f7bb98a6c3d8bcefdad934760b7e8e12af74c0c",
-      "sha256": "8563108e222b347366db0ef5ed0aff41de4e248bd3809270f6d49ac7e85a70cc"
+      "path": ".github/workflows/cae-research-handoff.yml",
+      "blob_sha": "aa69ab6562472e28b5919b5ea5f6c354991a2ce2",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review",
+      "sha256": "70356a0785c3c83efe0a182177bbfe0108978d964f4ca4235652801216419171"
     },
     {
       "path": "CURRENT_STATE.md",
-      "blob_sha": "0f9a12d0e3b32dbcac7bc892e33c79c28ec2f498",
+      "blob_sha": "51bb015394a6fabfeba73f6deecd441a0ced9d09",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
       "plan_integration_baseline_blob_sha": "e95d8e6e9b857360bb7b6e5226fde5c0c1f5897f",
-      "sha256": "b3c9cec32a41a3461ea984506f7ed91990f464249f5fa3b2248a156cddcaf802"
+      "sha256": "10bd9c3ca96b5394c47eaf2f046015cca003cee5eb399655d4e5d23643656a04",
+      "execution_order_baseline_blob_sha": "0f9a12d0e3b32dbcac7bc892e33c79c28ec2f498"
+    },
+    {
+      "path": "NEXT_SESSION.md",
+      "provenance": "전체 실행 순서 재심의에서 추가한 전달 파일입니다. 제품 실행 결과를 의미하지 않습니다.",
+      "execution_order_baseline_blob_sha": "7c78ea9cf540104e28e42a107d03fad227d8a411",
+      "blob_sha": "7ebe48719cae319a03b907c3f30cad6405d2b55e",
+      "sha256": "b335f06ef7e85a4cdf7d40e13617fb1c7351f94b3dc5ddb8d4fd9700751f86c1"
+    },
+    {
+      "path": "README.md",
+      "blob_sha": "76bfb88c1e01893ffd5abba3591b8791c56fcc37",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
+      "execution_order_baseline_blob_sha": "ea294d51a8b67a29cf0afa10a6698365500f2477",
+      "sha256": "753438589530a783b3b2f0263366cc39514d176ac17a2c0a07a38b4dbe359477"
     },
     {
       "path": "docs/review/2026-10-23-codex-improvement-plan.md",
-      "blob_sha": "a179abcf684e2c44db1569f5ddd3437901060a9d",
+      "blob_sha": "b59fd64f564ccb651054819d2ef82720ea3cfbeb",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
       "plan_integration_baseline_blob_sha": "8cce94498dc454e35f4f3628a8a169e966f37241",
-      "sha256": "40e7a374816e486fdc5e9b8aef02334dc4653f8eec9a53eeb318a6f8e5637001"
+      "sha256": "fd270b309afe415e607679adc0aab5d599e175cdf42843fa99bc2e27a6587aaf",
+      "execution_order_baseline_blob_sha": "a179abcf684e2c44db1569f5ddd3437901060a9d"
     },
     {
-      "path": "docs/specs/cae-research/core-implementation.md",
-      "blob_sha": "d25b7cf8693b49cf2394ba3a2b9069bee984590b",
+      "path": "docs/specs/cae-research/DEBATE_ko.md",
+      "blob_sha": "144814397e7d269379e63c862687c8d8ff915f88",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "9d8b7de7bf108331603dde7a9f39374edfd18304",
-      "sha256": "d4c6e6f3d41643bb02282959c5870afb0e8e3545fbbba371e11e20c6d369dab5"
+      "plan_integration_baseline_blob_sha": "1fc204f29dc9603d1a537327502c8abaa33db5cb",
+      "sha256": "b46697c0dd0184b3b8b14ee3bcbebcece77a1a3c9d3950eb3d58fa15c29416bc"
     },
     {
-      "path": "docs/specs/cae-research/material-pressure-orthotropic.md",
-      "blob_sha": "b39d40d076f1975366a05456f2b3e6c3c2436bfb",
+      "path": "docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md",
+      "blob_sha": "29db668705e9306db04b561b8e6d9a28cd678261",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "03881edb6ed6277518079fe9533726cdc42d5a14",
-      "sha256": "51f97573737ec1cb1d588183e6a31b2b951ced60e156eba4ca3589df03a41c1b"
+      "plan_integration_baseline_blob_sha": "00d02249c5a7f94a2cc5c366999dbda6dcb3ced2",
+      "sha256": "d699b812f146aab89adc40ab632b0587533072ab2cd811d6eb3ba0939099b15a",
+      "execution_order_baseline_blob_sha": "397c80ee57f854fe987c9373e84ac2df04966416"
     },
     {
-      "path": "docs/specs/cae-research/material-finite-history.md",
-      "blob_sha": "7449174913bc2d932239efc75f2e57f728ea5dd6",
+      "path": "docs/specs/cae-research/KOREAN_EDIT_REVIEW_ko.md",
+      "blob_sha": "13c410c49068ba652c9b6544a69c4257a76869c7",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "caba5ba05ee4a0182c787b5507a0df87e777000f",
-      "sha256": "57ac41af09f7e9f2dba829fc543679267b0cd909a8e1c071feb25010fa36d437"
+      "plan_integration_baseline_blob_sha": "8f65e8039cb94e972106f7623f1391b591301759",
+      "sha256": "9926059378ed60498f0d29d32706de778e934b1b5f4ee4bbeec46268e4ce5db3"
     },
     {
-      "path": "docs/specs/cae-research/expert-implementation.md",
-      "blob_sha": "9ad8a4db44cd68053e148c7d7bbb083cd6c84165",
+      "path": "docs/specs/cae-research/PLAN_INTEGRATION_REVIEW_ko.md",
+      "provenance": "이번 계획 통합의 실제 작성·검토 기록 또는 문서 검사 파일입니다. 제품 실행의 증거가 아닙니다.",
+      "blob_sha": "4011ef8e9eb116d964527090ce35dc781480355b",
+      "sha256": "2ec19d07f040af09a5737eaa0e32f4c414b658a2744804c9e2f2f671da6792cf",
+      "execution_order_baseline_blob_sha": "18d0b4219f8408511f14f84e3c6bc60155719589"
+    },
+    {
+      "path": "docs/specs/cae-research/README.md",
+      "blob_sha": "ecfc58345abc00d871213ffa58d06a72a9658692",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "dff0769c0d6a91fd9794f643d8d3c7286b75cf32",
-      "sha256": "f603d187ae87e1093c05073c7f910e7d6af029707f82e2bef174dd5767ad1e53"
-    },
-    {
-      "path": "docs/specs/cae-research/post-implementation.md",
-      "blob_sha": "4645906fd61a8e95d556a9ff276356fe8a034f86",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "42536804825924b55e68b69d326691fc4c71b945",
-      "sha256": "314e2c589a215f0e45228562542a167754317e0b727e2a2149dd9e84016dc583"
-    },
-    {
-      "path": "docs/specs/cae-research/check_handoff.py",
-      "blob_sha": "7e0b7e6274457a504ad3aae563f16e904b30e233",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review",
-      "plan_integration_baseline_blob_sha": "6b0ab186df7de01543df2a8e4e706f50214b43b2",
-      "sha256": "285bc5a5604427340b80950398790fe5142daa18aeee7a8a6b747c0e4adc77e2"
-    },
-    {
-      "path": "docs/specs/cae-research/fetch_native_reference.py",
-      "blob_sha": "ee7bf57a9e11f4776f014027bab70d64dfbc54b7",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
-    },
-    {
-      "path": ".github/workflows/cae-research-handoff.yml",
-      "blob_sha": "aa69ab6562472e28b5919b5ea5f6c354991a2ce2",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
-    },
-    {
-      "path": "docs/specs/cae-research/implementation-map.json",
-      "blob_sha": "c2fd040ae654fc27b14cfc865bf05b74c5c9833c",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "071d1989ea211afceeb15006379749bd61724f0c",
-      "sha256": "7d9635e7f3d49fe5e0a4e352eba4ae447cf1c4eba603047dcf103c810c7e5753"
+      "plan_integration_baseline_blob_sha": "0f7bb98a6c3d8bcefdad934760b7e8e12af74c0c",
+      "sha256": "12015a9fd11dcd073a4b5cc3c035965a41c705081ed7377db082b70cc7a99db1",
+      "execution_order_baseline_blob_sha": "4b8ec92c9db40a6c99f2181116453337802e6d4f"
     },
     {
       "path": "docs/specs/cae-research/USER_PROGRESS_ko.md",
-      "blob_sha": "83ffdd0a9661abfe49176e72cd6536e5da9ce625",
+      "blob_sha": "723343ef2754a0350a45af97479ad14d238f4798",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
       "plan_integration_baseline_blob_sha": "673081654cfb9b62fed525e83892c648417d8239",
-      "sha256": "008259066ff780e9471af2ac114b12963537e47fdc5adceb37a9ac387f1c9f12"
+      "sha256": "a948c6b1b423f68c7dfee5546d8cf196bb35f938c15d1bbcd42fd9c06aa5d2d8",
+      "execution_order_baseline_blob_sha": "83ffdd0a9661abfe49176e72cd6536e5da9ce625"
     },
     {
-      "path": "docs/specs/cae-research/review-E.md",
-      "blob_sha": "dd217a54447561b58258783867400f18d24904b1",
+      "path": "docs/specs/cae-research/check_handoff.py",
+      "blob_sha": "e8e405ec544f5000342794a543292fbc20bb630e",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review",
+      "plan_integration_baseline_blob_sha": "6b0ab186df7de01543df2a8e4e706f50214b43b2",
+      "sha256": "c316d6d251ef04da2bdee031885c8421c569f5d070e26f9df5bb86d98dffce81",
+      "execution_order_baseline_blob_sha": "7e0b7e6274457a504ad3aae563f16e904b30e233"
+    },
+    {
+      "path": "docs/specs/cae-research/core-implementation.md",
+      "blob_sha": "5e50d048d2749fa72a064b50dd638a247f18937f",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "67d95b727276fc5bb57f0c850c412850523fcd96",
-      "sha256": "96b0b9012cad631246d5323edf931c363031761d8ef819796524b729f043045e"
-    },
-    {
-      "path": "docs/specs/cae-research/review-F.md",
-      "blob_sha": "3db6fcb01f5f0f7cd4ce9e2ab3aca6822602c3a9",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "08493cadd0a247c2d393740eb7f05740006b26f4",
-      "sha256": "5ecc2c43cbe2b20050e488e1393df155f624792653ed3afd05dd8b6ae22c1bb8"
-    },
-    {
-      "path": "docs/specs/cae-research/debate-recovery-ascii.jsonl",
-      "blob_sha": "4f982da312b10d080e7fd2ea714a4bc3c1ec2450",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "plan_integration_baseline_blob_sha": "9d8b7de7bf108331603dde7a9f39374edfd18304",
+      "sha256": "61af6328f3360ae5a7db9864fc9cd725a0ec1eaa8ecf443045c697f446319777",
+      "execution_order_baseline_blob_sha": "d25b7cf8693b49cf2394ba3a2b9069bee984590b"
     },
     {
       "path": "docs/specs/cae-research/debate-readable-ascii.txt",
       "blob_sha": "5b7b3d6b0a3c668f5e808ef610186ed5b4b86f08",
-      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review"
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review",
+      "sha256": "30ba13bd2e64b0d5f2566b9d43cd5a654c9bf9e1f83c91bee32bf027e2f9bce3"
     },
     {
-      "path": "docs/specs/cae-research/evidence/C/corpus-source-bundle.json",
-      "blob_sha": "38c12bf87cc38d4184d4f49213b52654d91d6b3c",
-      "provenance": "fresh pinned raw sources and notices; newly packaged"
+      "path": "docs/specs/cae-research/debate-recovery-ascii.jsonl",
+      "blob_sha": "4f982da312b10d080e7fd2ea714a4bc3c1ec2450",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review",
+      "sha256": "1bdb62b15bc15a9b6948ec776ca74de0bc9882e09f036245e1744e448a9abcd7"
     },
     {
-      "path": "docs/specs/cae-research/evidence/C/strict-contract-bundle.json",
-      "blob_sha": "b43ec55993945393838ce95872add96e10dfa4b7",
-      "provenance": "new strict schema/golden and JS reference, current orchestrator execution and independent JS adversarial checks"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/C/evaluation-question-bundle.json",
-      "blob_sha": "93881aa4a70fc749e9d9c65995398b37a776e902",
-      "provenance": "new36dev/60eval actual questions and explicit solver/edition facets; F semantic recheck pending"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/C/tool-review-lifecycle-bundle.json",
-      "blob_sha": "4c6bbb9c274c914ec7976cd5af9d0b59e480bc2b",
-      "provenance": "new coherent answer/request/pack/reassessment golden, independent E-RC5 current JS check passed"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/C/original_C_R1.txt",
-      "blob_sha": "f707058bb37b782bd028de0c5657846c85ef6a6e",
-      "sha256": "892335dfa461d2efe8a99a79c65b378946133eadc74cec0567f287dda85a6f40",
-      "provenance": "original frozen body bytes hash matched; original JSONL metadata not recovered"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/C/original_C_R2.txt",
-      "blob_sha": "6a5a6f192c74e221a7af07e2a88954a835f36fa1",
-      "sha256": "9f7159d2df6ecca9e0c47da860ccd0270e90439f47cb2feab38aa19b9d81607b",
-      "provenance": "original frozen body bytes hash matched; original JSONL metadata not recovered"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/D/generate_native_reference_recovered.py",
-      "blob_sha": "31be23d559e54d2d372dc48156db1a2afe6a1c7d",
-      "provenance": "new reconstructed raw-deck generator; no current native execution"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/D/source-oracle-policy.json",
-      "blob_sha": "670baff47b7e99e4cf18f1c2a0d043e45c4366ab",
-      "provenance": "pinned-source/executable identity and historical native oracle policy"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/E/recovery_check_receipt.json",
-      "blob_sha": "f0be6fa69051a2cee38c6187972343b615071ddc",
-      "provenance": "independent current pureJS source/hash/span/strict-wire checks; not Python/Windows acceptance"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/D/check_native_reference_recovered.py",
-      "blob_sha": "951bc556718bc4388ddcc01a77c998c0363a8b5c",
-      "provenance": "new checker defines8reject/oneconsistentpermutation, no current execution"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/D/checker-policy.json",
-      "blob_sha": "2b06f6406a2c5a4d83231db3e2daac1d18e80e1c",
-      "provenance": "new checker acceptance/negative policy; historical7pass distinct"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/recovered_reference.py",
-      "blob_sha": "e74ff030057030e1f20edf9bb8890de68abd89ca",
-      "sha256": "6a47821c5234dfabdf830e1c452a2e5c9a83cfe83cdbadcbc512e8a8c72b5f57",
-      "provenance": "NEW reconstructed stdlib synthetic/native-input generator; not executed after environment loss"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/recovered_native_runner.py",
-      "blob_sha": "37c930034a9f307aa7d98e50c7f464441da555a7",
-      "sha256": "0027ee6717eca3f65dc35fb78d6733d7ae644da92dd1759a0d42d40080dfc9f5",
-      "provenance": "NEW reconstructed portable optional native rerunner, explicit 3-argument converter/source TITLES/DTIX-before-END; not executed after environment loss"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/recovered_native_check.py",
-      "blob_sha": "81aee286020ac529f4408503caa1ea2cfc281f0c",
-      "sha256": "766d629952a3d1d7f65e9b463f8d61d853bab9355ee7b8752f2ebc7fdea94368",
-      "provenance": "NEW reconstructed checker; requires actual CSV/listings; not executed after environment loss"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/foam_native_assessment.json",
-      "blob_sha": "7be37e83f157f0811b3a99e3a2c33181172e5f39",
-      "sha256": "af48c358e29b60d2fe2e5e4c7454d4d9a16a6e5ab752f6f163a733cf88f32cb0",
-      "provenance": "exact original summary bytes: SHA256 matches pre-loss R3 receipt; raw CSV not recovered"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/foam_ka1_refinement_assessment.json",
-      "blob_sha": "1e8837ebe29b6fc9909616b3fc0b1096321a0af9",
-      "sha256": "475930127be48e26534e19e4f1cbbfe82ecb6a0c200c80755a209012fb9a8da4",
-      "provenance": "exact original summary bytes: SHA256 matches pre-loss R3 receipt; raw CSV not recovered"
+      "path": "docs/specs/cae-research/evidence/A/dp_geos.xml",
+      "blob_sha": "3233990d2cae001f1f9ce98c98ff91ec41e84373",
+      "sha256": "b6255cc2614a6825a5e8cd459fd4cb71e38a6fb7784e984d478924154090836d",
+      "provenance": "reconstructed file; original byte identity not established"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/foam_ka0_0000.rad",
@@ -242,101 +152,135 @@
       "provenance": "reconstructed file; original byte identity not established"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/foam_ka1_dt2e6_0001.rad",
-      "blob_sha": "d0b1c494d3cbde0c1bd2024c3fc6ed402417db37",
-      "sha256": "d5855029ef28f407717ef36762423f74ff2d3f1581766d03d64326cf43673290",
-      "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
-    },
-    {
       "path": "docs/specs/cae-research/evidence/A/foam_ka1_dt1e6_0001.rad",
       "blob_sha": "74c1dd6ae83cf0e9e79cf991073891271148bfe4",
       "sha256": "5e4e21d8a3e1e53ec2e3d95fb0018196195bc72399f5ff2c5dac8c182299968a",
       "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/dp_geos.xml",
-      "blob_sha": "3233990d2cae001f1f9ce98c98ff91ec41e84373",
-      "sha256": "b6255cc2614a6825a5e8cd459fd4cb71e38a6fb7784e984d478924154090836d",
-      "provenance": "reconstructed file; original byte identity not established"
+      "path": "docs/specs/cae-research/evidence/A/foam_ka1_dt2e6_0001.rad",
+      "blob_sha": "d0b1c494d3cbde0c1bd2024c3fc6ed402417db37",
+      "sha256": "d5855029ef28f407717ef36762423f74ff2d3f1581766d03d64326cf43673290",
+      "provenance": "exact original bytes: SHA256 matches pre-loss receipt"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.hpp",
-      "blob_sha": "02e2a44fcf7ad2c53541533dcc126d9f53961cb6",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
+      "path": "docs/specs/cae-research/evidence/A/foam_ka1_refinement_assessment.json",
+      "blob_sha": "1e8837ebe29b6fc9909616b3fc0b1096321a0af9",
+      "sha256": "475930127be48e26534e19e4f1cbbfe82ecb6a0c200c80755a209012fb9a8da4",
+      "provenance": "exact original summary bytes: SHA256 matches pre-loss R3 receipt; raw CSV not recovered"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.cpp",
-      "blob_sha": "a64ae00030cbd75a322b30ae66591d1c0521c9a9",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
+      "path": "docs/specs/cae-research/evidence/A/foam_native_assessment.json",
+      "blob_sha": "7be37e83f157f0811b3a99e3a2c33181172e5f39",
+      "sha256": "af48c358e29b60d2fe2e5e4c7454d4d9a16a6e5ab752f6f163a733cf88f32cb0",
+      "provenance": "exact original summary bytes: SHA256 matches pre-loss R3 receipt; raw CSV not recovered"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_TriaxialDriver.cpp",
-      "blob_sha": "d266ae01a44380501e6fedcb5dda2339d2f1d8fd",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
+      "path": "docs/specs/cae-research/evidence/A/recovered_native_check.py",
+      "blob_sha": "81aee286020ac529f4408503caa1ea2cfc281f0c",
+      "sha256": "766d629952a3d1d7f65e9b463f8d61d853bab9355ee7b8752f2ebc7fdea94368",
+      "provenance": "NEW reconstructed checker; requires actual CSV/listings; not executed after environment loss"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_LICENSE",
-      "blob_sha": "8c177f8bedc4a734d40312bb165035be1b22fad4",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
+      "path": "docs/specs/cae-research/evidence/A/recovered_native_runner.py",
+      "blob_sha": "37c930034a9f307aa7d98e50c7f464441da555a7",
+      "sha256": "0027ee6717eca3f65dc35fb78d6733d7ae644da92dd1759a0d42d40080dfc9f5",
+      "provenance": "NEW reconstructed portable optional native rerunner, explicit 3-argument converter/source TITLES/DTIX-before-END; not executed after environment loss"
     },
     {
-      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.rst",
-      "blob_sha": "dcb4ccafe49e5165912f4558288e81ff31d55754",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/upstream/OC_sigeps33.F",
-      "blob_sha": "62b137d2f62a5b101aced76bdf9d69c41cc33092",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/upstream/OC_hm_read_mat33.F",
-      "blob_sha": "84132a6b22bbd439ff0aec6e5bf427a22ea1f560",
-      "provenance": "exact upstream bytes, git-blob identity confirmed"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/A/upstream/OC_LICENSE.md",
-      "blob_sha": "cba6f6a15a4cc3ba212e9e9059f7243e2d171090",
-      "provenance": "exact upstream license bytes, git-blob identity confirmed"
+      "path": "docs/specs/cae-research/evidence/A/recovered_reference.py",
+      "blob_sha": "e74ff030057030e1f20edf9bb8890de68abd89ca",
+      "sha256": "6a47821c5234dfabdf830e1c452a2e5c9a83cfe83cdbadcbc512e8a8c72b5f57",
+      "provenance": "NEW reconstructed stdlib synthetic/native-input generator; not executed after environment loss"
     },
     {
       "path": "docs/specs/cae-research/evidence/A/recovery-map.json",
       "blob_sha": "f7ff3bce614268bbc7d73203e2db0fd5ce25c8c1",
-      "provenance": "latest author recovery inventory"
+      "provenance": "latest author recovery inventory",
+      "sha256": "5f09de648b67a53bc6e2eb946c630594c89b627dd5f962a0e8350883ada7b3ee"
     },
     {
-      "path": "docs/specs/cae-research/evidence/E/recovery_followup_check.json",
-      "blob_sha": "f195445e9ed537d557f309d4023d7f0fcc94ee6c",
-      "provenance": "independent actual JS context/pack/full answer coverage/reassessment check"
+      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.cpp",
+      "blob_sha": "a64ae00030cbd75a322b30ae66591d1c0521c9a9",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "7721706c8fe1b6f27963fbb2d04153ad5056f6d6281f35c2a1b5acaa3ade26f1"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.hpp",
+      "blob_sha": "02e2a44fcf7ad2c53541533dcc126d9f53961cb6",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "3f39cd05f9d3bd2ed498866aa46468346f0b198c4b31d17999ba3b673d9e82cd"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_DruckerPrager.rst",
+      "blob_sha": "dcb4ccafe49e5165912f4558288e81ff31d55754",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "43546d39b6804f662f22ffdaa16fd802005a31d044709dfc4d66904dad6521fa"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_LICENSE",
+      "blob_sha": "8c177f8bedc4a734d40312bb165035be1b22fad4",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "6876b170378d38f65aadd271485f0a5c45beaa043a7d3de5e1636ec927922c83"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/GEOS_TriaxialDriver.cpp",
+      "blob_sha": "d266ae01a44380501e6fedcb5dda2339d2f1d8fd",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "1a16dfeddcd4e14c52a4655e605fd410a69719ddd6686cc84ea9b49d5b6231f4"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/OC_LICENSE.md",
+      "blob_sha": "cba6f6a15a4cc3ba212e9e9059f7243e2d171090",
+      "provenance": "exact upstream license bytes, git-blob identity confirmed",
+      "sha256": "ad858d53cae05eed9531ecd4c467440803acffe34c69de7b88e03affc5b6a1bd"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/OC_hm_read_mat33.F",
+      "blob_sha": "84132a6b22bbd439ff0aec6e5bf427a22ea1f560",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "f036675e2f322a8bac13346107dcf50fdcdda09d31a670504cb731527a0fc13c"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/A/upstream/OC_sigeps33.F",
+      "blob_sha": "62b137d2f62a5b101aced76bdf9d69c41cc33092",
+      "provenance": "exact upstream bytes, git-blob identity confirmed",
+      "sha256": "31bf291745b0d68fcb4af1d9de7425250ed828ee4e4fc7030340186289ce2903"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/README.md",
+      "blob_sha": "b385f208b156cc2db17f566fe8e127b6d4711c47",
+      "sha256": "05abd59df561e68a1babf3332979d8ef41e1e8bfca07434c47e7c8b27e1772bc",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/asset_manifest.json",
+      "blob_sha": "b0f874b00a88266cb38c17d7dd62a24261c61495",
+      "sha256": "fff08b5e1bacb6e32b2874d7e297ba7a36deee7a91d6f32d732a8f09a47fa1f1",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/check_assets.py",
+      "blob_sha": "c5aff47f3063e0378995eb83e3aef63f48dce086",
+      "sha256": "2d6b442030c51a55367477595d8846665fe18f36491728dd7a8e041cf0ad22b8",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/ci_recipe.json",
+      "blob_sha": "ab93f6bf6138914c5f0ef375ae88eff5ce9aa2ac",
+      "sha256": "9de55e3c8cf0a71fd9f8bed7ce28f05c7cbcf2add2bebadf9eb8328b213aeb68",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/cold_reproduce.py",
+      "blob_sha": "bd69eab2a85b4c0190a07c1a1e576e6c5d17f734",
+      "sha256": "6cc4ab424186545896f8fe32d9e997afe7e8d6f4da1c5d7dec4cdffac21837c6",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
     },
     {
       "path": "docs/specs/cae-research/evidence/B/constraint_contract.json",
       "blob_sha": "06371aa820c456dec054c1b2d40cb07ca0f25665",
       "sha256": "ddc6df511f716772e01287ff7215d9ff2d25d967ba0f2f6ca579fef6b701eae0",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/source_manifest.json",
-      "blob_sha": "9aa662051395deddf08659513df4e3b91183d3f0",
-      "sha256": "0dd16382598bc3eab7d42d2dff865f843ac03b4cb7e47e7cd2b318156079d1b7",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/workbench_core_sources.json",
-      "blob_sha": "32a43a7d4ad80d128d06f7390139b4cb05678692",
-      "sha256": "e02f667cfe884e64202ecce84780dad367bad54d0557280aa9851eadcb852ca7",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/workbench_source.py",
-      "blob_sha": "fe4e6400011ab772876fdbbca046811242edab8a",
-      "sha256": "0368d736ad916cd4ffa22de0584aa8abb5a0e7e040eac9d018c433ce332db918",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/optimizer_probe.py",
-      "blob_sha": "baf9973117de87c2a7ca1957f8a57d06082810aa",
-      "sha256": "e36dc9149801d2f6ab555ca33afc5aa9488d48a11fbe5565f067db8062b10be9",
       "provenance": "reconstructed_new_bytes_not_reexecuted"
     },
     {
@@ -346,16 +290,40 @@
       "provenance": "reconstructed_new_bytes_not_reexecuted"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/run_pyvisco.py",
-      "blob_sha": "d9f49c2ab32638eac67f6369c399e357e578f472",
-      "sha256": "813afd088b9dafe251a3f247a855dd8311563ea5ffc637eefc17b900d9d3d6c2",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
       "path": "docs/specs/cae-research/evidence/B/equilibrium_probe.py",
       "blob_sha": "7b8b90ae788eb06b388b1b14c4854925dcc2ab0d",
       "sha256": "3f7323a87588437119993913c44c1a66b60425df78215209fb1bdce541657c27",
       "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/expected.json",
+      "blob_sha": "922313cc9daba73ace9b1ec40f557d2b5de8d57a",
+      "sha256": "433c9d79ea2dcf729da8f03ec49989921d98526364bdc4adf7cfed08e9d1b201",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/failure_cases.json",
+      "blob_sha": "6b8207ad822c7f9311b6f1e0d3f3f72d55ed4cb0",
+      "sha256": "1d4ac397a084ecd0cb8b66ef46b3b59acb8d9983653fd0b564123a3d678941c7",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/historical_observations.json",
+      "blob_sha": "4f1ff2ea456caaa1fd08ea3806b94dc9dc1abc01",
+      "sha256": "e4d00703fe9cf9121136e9aafcf6a78c35e5694ed8c5eb2fcb868cc8f93f1721",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/optimizer_probe.py",
+      "blob_sha": "baf9973117de87c2a7ca1957f8a57d06082810aa",
+      "sha256": "e36dc9149801d2f6ab555ca33afc5aa9488d48a11fbe5565f067db8062b10be9",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/recovery-map.json",
+      "blob_sha": "c98a42d531f550c233ad3440eae5db1b97799244",
+      "provenance": "author latest B source and asset map",
+      "sha256": "2696a12d3f524ccd7bab8e475ca77c4a72d567442f766f6139450a7b997bfdde"
     },
     {
       "path": "docs/specs/cae-research/evidence/B/reference_probe.py",
@@ -370,52 +338,16 @@
       "provenance": "reconstructed_new_bytes_not_reexecuted"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/expected.json",
-      "blob_sha": "922313cc9daba73ace9b1ec40f557d2b5de8d57a",
-      "sha256": "433c9d79ea2dcf729da8f03ec49989921d98526364bdc4adf7cfed08e9d1b201",
+      "path": "docs/specs/cae-research/evidence/B/run_pyvisco.py",
+      "blob_sha": "d9f49c2ab32638eac67f6369c399e357e578f472",
+      "sha256": "813afd088b9dafe251a3f247a855dd8311563ea5ffc637eefc17b900d9d3d6c2",
       "provenance": "reconstructed_new_bytes_not_reexecuted"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/historical_observations.json",
-      "blob_sha": "4f1ff2ea456caaa1fd08ea3806b94dc9dc1abc01",
-      "sha256": "e4d00703fe9cf9121136e9aafcf6a78c35e5694ed8c5eb2fcb868cc8f93f1721",
+      "path": "docs/specs/cae-research/evidence/B/source_manifest.json",
+      "blob_sha": "9aa662051395deddf08659513df4e3b91183d3f0",
+      "sha256": "0dd16382598bc3eab7d42d2dff865f843ac03b4cb7e47e7cd2b318156079d1b7",
       "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/check_assets.py",
-      "blob_sha": "c5aff47f3063e0378995eb83e3aef63f48dce086",
-      "sha256": "2d6b442030c51a55367477595d8846665fe18f36491728dd7a8e041cf0ad22b8",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/cold_reproduce.py",
-      "blob_sha": "bd69eab2a85b4c0190a07c1a1e576e6c5d17f734",
-      "sha256": "6cc4ab424186545896f8fe32d9e997afe7e8d6f4da1c5d7dec4cdffac21837c6",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/README.md",
-      "blob_sha": "b385f208b156cc2db17f566fe8e127b6d4711c47",
-      "sha256": "05abd59df561e68a1babf3332979d8ef41e1e8bfca07434c47e7c8b27e1772bc",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/failure_cases.json",
-      "blob_sha": "6b8207ad822c7f9311b6f1e0d3f3f72d55ed4cb0",
-      "sha256": "1d4ac397a084ecd0cb8b66ef46b3b59acb8d9983653fd0b564123a3d678941c7",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/ci_recipe.json",
-      "blob_sha": "ab93f6bf6138914c5f0ef375ae88eff5ce9aa2ac",
-      "sha256": "9de55e3c8cf0a71fd9f8bed7ce28f05c7cbcf2add2bebadf9eb8328b213aeb68",
-      "provenance": "reconstructed_new_bytes_not_reexecuted"
-    },
-    {
-      "path": "docs/specs/cae-research/evidence/B/asset_manifest.json",
-      "blob_sha": "b0f874b00a88266cb38c17d7dd62a24261c61495",
-      "sha256": "fff08b5e1bacb6e32b2874d7e297ba7a36deee7a91d6f32d732a8f09a47fa1f1",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
     },
     {
       "path": "docs/specs/cae-research/evidence/B/upstream_source_bundle.json",
@@ -424,75 +356,181 @@
       "provenance": "fresh_upstream_11_sources_match_recorded_SHA256_with_8_license_notices; standalone_bundle_separate_from_probe_asset_manifest"
     },
     {
-      "path": "docs/specs/cae-research/evidence/B/recovery-map.json",
-      "blob_sha": "c98a42d531f550c233ad3440eae5db1b97799244",
-      "provenance": "author latest B source and asset map"
+      "path": "docs/specs/cae-research/evidence/B/workbench_core_sources.json",
+      "blob_sha": "32a43a7d4ad80d128d06f7390139b4cb05678692",
+      "sha256": "e02f667cfe884e64202ecce84780dad367bad54d0557280aa9851eadcb852ca7",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/B/workbench_source.py",
+      "blob_sha": "fe4e6400011ab772876fdbbca046811242edab8a",
+      "sha256": "0368d736ad916cd4ffa22de0584aa8abb5a0e7e040eac9d018c433ce332db918",
+      "provenance": "reconstructed_new_bytes_not_reexecuted"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/C/corpus-source-bundle.json",
+      "blob_sha": "38c12bf87cc38d4184d4f49213b52654d91d6b3c",
+      "provenance": "fresh pinned raw sources and notices; newly packaged",
+      "sha256": "6a7764387b0d43c9db87a3baf5188c5bbedee7db41c678ed1453e43378bb1262"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/C/evaluation-question-bundle.json",
+      "blob_sha": "93881aa4a70fc749e9d9c65995398b37a776e902",
+      "provenance": "new36dev/60eval actual questions and explicit solver/edition facets; F semantic recheck pending",
+      "sha256": "71dafb4de71523e51343ad3b4280ef752f15cd7ed4db815363c5af818d618d50"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/C/original_C_R1.txt",
+      "blob_sha": "f707058bb37b782bd028de0c5657846c85ef6a6e",
+      "sha256": "892335dfa461d2efe8a99a79c65b378946133eadc74cec0567f287dda85a6f40",
+      "provenance": "original frozen body bytes hash matched; original JSONL metadata not recovered"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/C/original_C_R2.txt",
+      "blob_sha": "6a5a6f192c74e221a7af07e2a88954a835f36fa1",
+      "sha256": "9f7159d2df6ecca9e0c47da860ccd0270e90439f47cb2feab38aa19b9d81607b",
+      "provenance": "original frozen body bytes hash matched; original JSONL metadata not recovered"
     },
     {
       "path": "docs/specs/cae-research/evidence/C/recovery-index.json",
       "blob_sha": "f07d8514ff0b648993a515fbdd9595ebb6e833b7",
-      "provenance": "authoritative current C recovery index and superseded candidates"
+      "provenance": "authoritative current C recovery index and superseded candidates",
+      "sha256": "b7265491f6d2491f1efa184170a0554e097898e2739a102ffe91a384b4aacaf7"
     },
     {
-      "path": "docs/specs/cae-research/evidence/F/recovery_C_semantic_check.json",
-      "blob_sha": "16ff7b27ccda91389b81ee34fc3f4aaba1dd024d",
-      "provenance": "independent actual16source-span/96question-facet semantic fixture check, not retrieval/provider validation"
+      "path": "docs/specs/cae-research/evidence/C/strict-contract-bundle.json",
+      "blob_sha": "b43ec55993945393838ce95872add96e10dfa4b7",
+      "provenance": "new strict schema/golden and JS reference, current orchestrator execution and independent JS adversarial checks",
+      "sha256": "ff833b33adebff8667cbced35ea032b4699dfa77e48886bec7db78b36ff4295a"
     },
     {
-      "path": "docs/specs/cae-research/evidence/F/current_ci_check.json",
-      "blob_sha": "57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f",
-      "provenance": "independent original GitHub job/log/artifact-metadata inspection, not raw CSV independent revalidation"
+      "path": "docs/specs/cae-research/evidence/C/tool-review-lifecycle-bundle.json",
+      "blob_sha": "4c6bbb9c274c914ec7976cd5af9d0b59e480bc2b",
+      "provenance": "new coherent answer/request/pack/reassessment golden, independent E-RC5 current JS check passed",
+      "sha256": "056443341685ecfde3ffc906578de3a9e3c7f5926cb193370dff2a9e7a0a4c70"
     },
     {
-      "path": "docs/specs/cae-research/evidence/E/recovery_B_source_check.json",
-      "blob_sha": "45d842c60eb50b94a68090fc6ee98c7cb8b7f038",
-      "provenance": "independent actual11source/8notice hash/length check"
+      "path": "docs/specs/cae-research/evidence/D/check_native_reference_recovered.py",
+      "blob_sha": "951bc556718bc4388ddcc01a77c998c0363a8b5c",
+      "provenance": "new checker defines8reject/oneconsistentpermutation, no current execution",
+      "sha256": "8c8b97d8debb9d248f647000e167bea5d0dfc680d2da186e4acff92d46fcf729"
     },
     {
-      "path": "docs/specs/cae-research/evidence/M/current-ci-receipt.json",
-      "blob_sha": "d23a2502e8ea98ece683766a72dd8a436a8c475e",
-      "provenance": "current actual remote reference execution; logical head and actual PR merge checkout separate"
+      "path": "docs/specs/cae-research/evidence/D/checker-policy.json",
+      "blob_sha": "2b06f6406a2c5a4d83231db3e2daac1d18e80e1c",
+      "provenance": "new checker acceptance/negative policy; historical7pass distinct",
+      "sha256": "ff92ad4f783582404d8edab59bae096fd023e3f5df2918a8446aac8fda2fb42e"
     },
     {
-      "path": "docs/specs/cae-research/evidence/M/current-ci-log.txt",
-      "blob_sha": "39c9d20285cba77b07eee5ec4f9389e99fc31577",
-      "provenance": "actual current full GitHub job log with only ANSI control sequences removed"
+      "path": "docs/specs/cae-research/evidence/D/generate_native_reference_recovered.py",
+      "blob_sha": "31be23d559e54d2d372dc48156db1a2afe6a1c7d",
+      "provenance": "new reconstructed raw-deck generator; no current native execution",
+      "sha256": "78fb04be38903c210cd1c56dd5df60499180b3f00bbb80d5cf70fd1475e82bae"
     },
     {
-      "path": "docs/specs/cae-research/evidence/F/recovery_B_source_check.json",
-      "blob_sha": "c569c56ab3cbfcd19e843c90baa63fd86376588c",
-      "provenance": "independent actual11source/8notice UTF8/SHA256/pinnedmanifest check"
+      "path": "docs/specs/cae-research/evidence/D/source-oracle-policy.json",
+      "blob_sha": "670baff47b7e99e4cf18f1c2a0d043e45c4366ab",
+      "provenance": "pinned-source/executable identity and historical native oracle policy",
+      "sha256": "033ff53bbdf79044d1d6b57aadfb6f3bc520898dbb038f91276073faf646b96f"
     },
     {
       "path": "docs/specs/cae-research/evidence/E/final-packaging-check.json",
       "blob_sha": "3b4b9e3ea90bdf5e2aab45ad47dad23113bae812",
-      "provenance": "independent complete78-file byte/link/DAG/journal packaging QA at a2ae42 plus exact user-report wording fix506; no future-commit self-certification"
+      "provenance": "independent complete78-file byte/link/DAG/journal packaging QA at a2ae42 plus exact user-report wording fix506; no future-commit self-certification",
+      "sha256": "5b83deef17183da727b4866f4f92dc482c385579e919587750642aa290d1ad04"
     },
     {
-      "path": "docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md",
-      "blob_sha": "397c80ee57f854fe987c9373e84ac2df04966416",
+      "path": "docs/specs/cae-research/evidence/E/recovery_B_source_check.json",
+      "blob_sha": "45d842c60eb50b94a68090fc6ee98c7cb8b7f038",
+      "provenance": "independent actual11source/8notice hash/length check",
+      "sha256": "388aa8378f0566644adad3a033bcde24c41c021c403b6127a996cf26100a1188"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/E/recovery_check_receipt.json",
+      "blob_sha": "f0be6fa69051a2cee38c6187972343b615071ddc",
+      "provenance": "independent current pureJS source/hash/span/strict-wire checks; not Python/Windows acceptance",
+      "sha256": "3cdb3511dbbe8f04486586e348f49e8a782196c09e41be9fd88f8c60dd29ac94"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/E/recovery_followup_check.json",
+      "blob_sha": "f195445e9ed537d557f309d4023d7f0fcc94ee6c",
+      "provenance": "independent actual JS context/pack/full answer coverage/reassessment check",
+      "sha256": "a226c3a4442574e96f72c06eb35d0d490a11d6e9c2cd44e40f1694742db6564a"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/F/current_ci_check.json",
+      "blob_sha": "57b0974cdfe18e9c8d5fc751074ac2fdd9c1470f",
+      "provenance": "independent original GitHub job/log/artifact-metadata inspection, not raw CSV independent revalidation",
+      "sha256": "de3459e3e2c00244b6db29bca0130e97dda986db48b816a45329f96c9c302d70"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/F/recovery_B_source_check.json",
+      "blob_sha": "c569c56ab3cbfcd19e843c90baa63fd86376588c",
+      "provenance": "independent actual11source/8notice UTF8/SHA256/pinnedmanifest check",
+      "sha256": "722a390800b4d2761f3e981c574bf606b1f3d1dab8a5f8f7c47a1072d93ba1c6"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/F/recovery_C_semantic_check.json",
+      "blob_sha": "16ff7b27ccda91389b81ee34fc3f4aaba1dd024d",
+      "provenance": "independent actual16source-span/96question-facet semantic fixture check, not retrieval/provider validation",
+      "sha256": "96afae137bac6d8c90976f96af85381f006a1a7437fefd83a0a355a2dc02caf8"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/M/current-ci-log.txt",
+      "blob_sha": "39c9d20285cba77b07eee5ec4f9389e99fc31577",
+      "provenance": "actual current full GitHub job log with only ANSI control sequences removed",
+      "sha256": "d0fd0006be60a2f3976b3a63d0335d23eb173c3b6a9a8e50224d96025ca5dd2e"
+    },
+    {
+      "path": "docs/specs/cae-research/evidence/M/current-ci-receipt.json",
+      "blob_sha": "d23a2502e8ea98ece683766a72dd8a436a8c475e",
+      "provenance": "current actual remote reference execution; logical head and actual PR merge checkout separate",
+      "sha256": "5bd5226cdc9211aafaa1817862e5d50e00c026ed89e4ef2085829e26d9bffd84"
+    },
+    {
+      "path": "docs/specs/cae-research/execution-order-debate-ascii.jsonl",
+      "provenance": "전체 실행 순서 재심의에서 추가한 전달 파일입니다. 제품 실행 결과를 의미하지 않습니다.",
+      "execution_order_baseline_blob_sha": null,
+      "blob_sha": "0e67c3c758e7e31fcc2dea887bd4407a54929948",
+      "sha256": "a262b6c10bce4094904e92c76d80cdb0784a4909bf74d0bdedd0b5e804f4a40a"
+    },
+    {
+      "path": "docs/specs/cae-research/expert-implementation.md",
+      "blob_sha": "d7f95e80fbfb8a52704038b402a8849e66393c70",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "00d02249c5a7f94a2cc5c366999dbda6dcb3ced2",
-      "sha256": "ee93ff8b9f6e810e6fac4aee7817cb8de5c4b94b56ae61d9f3c337c39a8cd03b"
+      "plan_integration_baseline_blob_sha": "dff0769c0d6a91fd9794f643d8d3c7286b75cf32",
+      "sha256": "72b1d76890f4bf88655c83bca1377f9ba112df9d2af225eaceb2799d53366a93",
+      "execution_order_baseline_blob_sha": "9ad8a4db44cd68053e148c7d7bbb083cd6c84165"
     },
     {
-      "path": "docs/specs/cae-research/DEBATE_ko.md",
-      "blob_sha": "144814397e7d269379e63c862687c8d8ff915f88",
+      "path": "docs/specs/cae-research/fetch_native_reference.py",
+      "blob_sha": "ee7bf57a9e11f4776f014027bab70d64dfbc54b7",
+      "provenance": "final reviewed specification, integration/index/checker/workflow or directly authored debate/review",
+      "sha256": "471372d1ea6df29a9529008d6a91f91fcf7a790cc90b307977e827d50aa77711"
+    },
+    {
+      "path": "docs/specs/cae-research/implementation-map.json",
+      "blob_sha": "d0421ac96d5e324915db21a69798a2e77abcc168",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "1fc204f29dc9603d1a537327502c8abaa33db5cb",
-      "sha256": "b46697c0dd0184b3b8b14ee3bcbebcece77a1a3c9d3950eb3d58fa15c29416bc"
+      "plan_integration_baseline_blob_sha": "071d1989ea211afceeb15006379749bd61724f0c",
+      "sha256": "83843c6e0c99233720273838095d376fb9970dffd7df05b4a033e3cda4fdc275",
+      "execution_order_baseline_blob_sha": "c2fd040ae654fc27b14cfc865bf05b74c5c9833c"
     },
     {
-      "path": "docs/specs/cae-research/KOREAN_EDIT_REVIEW_ko.md",
-      "blob_sha": "13c410c49068ba652c9b6544a69c4257a76869c7",
+      "path": "docs/specs/cae-research/material-finite-history.md",
+      "blob_sha": "8c34ed26d838075221db7e068394377b588ada81",
       "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
-      "plan_integration_baseline_blob_sha": "8f65e8039cb94e972106f7623f1391b591301759",
-      "sha256": "9926059378ed60498f0d29d32706de778e934b1b5f4ee4bbeec46268e4ce5db3"
+      "plan_integration_baseline_blob_sha": "caba5ba05ee4a0182c787b5507a0df87e777000f",
+      "sha256": "0ce9c8f52e57c595369897110d35237713c2b88f171e6cafc98cae8a8474f839",
+      "execution_order_baseline_blob_sha": "7449174913bc2d932239efc75f2e57f728ea5dd6"
     },
     {
-      "path": "README.md",
-      "blob_sha": "ea294d51a8b67a29cf0afa10a6698365500f2477",
-      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다."
+      "path": "docs/specs/cae-research/material-pressure-orthotropic.md",
+      "blob_sha": "a2fec994bc785a43721ecd3a7f0c4bbd87c453ab",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
+      "plan_integration_baseline_blob_sha": "03881edb6ed6277518079fe9533726cdc42d5a14",
+      "sha256": "32ee6f7934bb67b77d843398e399f3607f7121ecc23dc38dd2b0d0a5331cb31b",
+      "execution_order_baseline_blob_sha": "b39d40d076f1975366a05456f2b3e6c3c2436bfb"
     },
     {
       "path": "docs/specs/cae-research/plan-integration-debate-ascii.jsonl",
@@ -501,10 +539,34 @@
       "sha256": "5ae2953c7c9b40e807cc315683beeedeb69e2e77cf25cdc63041774b983ca04f"
     },
     {
-      "path": "docs/specs/cae-research/PLAN_INTEGRATION_REVIEW_ko.md",
-      "provenance": "이번 계획 통합의 실제 작성·검토 기록 또는 문서 검사 파일입니다. 제품 실행의 증거가 아닙니다.",
-      "blob_sha": "18d0b4219f8408511f14f84e3c6bc60155719589",
-      "sha256": "72abe8d3efaf322518f502acbe862b3a8fd7894619dc8518ec1a146a8e04c93a"
+      "path": "docs/specs/cae-research/post-implementation.md",
+      "blob_sha": "e4f87356ddfb939e61e717561e90f2f4a391861e",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
+      "plan_integration_baseline_blob_sha": "42536804825924b55e68b69d326691fc4c71b945",
+      "sha256": "79dc49f2d52f884d5f0a4515ce70bae69aa59206e8dff7427ccaa4ba82d13ef6",
+      "execution_order_baseline_blob_sha": "4645906fd61a8e95d556a9ff276356fe8a034f86"
+    },
+    {
+      "path": "docs/specs/cae-research/review-E.md",
+      "blob_sha": "dd217a54447561b58258783867400f18d24904b1",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
+      "plan_integration_baseline_blob_sha": "67d95b727276fc5bb57f0c850c412850523fcd96",
+      "sha256": "96b0b9012cad631246d5323edf931c363031761d8ef819796524b729f043045e"
+    },
+    {
+      "path": "docs/specs/cae-research/review-F.md",
+      "blob_sha": "3db6fcb01f5f0f7cd4ce9e2ab3aca6822602c3a9",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
+      "plan_integration_baseline_blob_sha": "08493cadd0a247c2d393740eb7f05740006b26f4",
+      "sha256": "5ecc2c43cbe2b20050e488e1393df155f624792653ed3afd05dd8b6ae22c1bb8"
+    },
+    {
+      "path": "docs/specs/spec-cae-research-implementation.md",
+      "blob_sha": "34a98bcba2b3fdae0bdbba5e96e591fc92dd75e8",
+      "provenance": "한국어 설명을 다시 쓰고 독립 문장·기술 검토를 받은 파일입니다. 기존 식별자와 기술 조건, 과거 검토·실행의 범위는 보존했습니다.",
+      "plan_integration_baseline_blob_sha": "d43f0c186b5270297517f7a66e5854367bffa9b3",
+      "sha256": "ec37661e2de6e04b7eb7a9a09b3183d795a57e97dbefb342b59b244865430333",
+      "execution_order_baseline_blob_sha": "aecbfaf64d4c84bcdf29d441b1a716f1c8af6fa4"
     }
   ],
   "language_revision": {
@@ -523,5 +585,10 @@
     "product_runtime_changed": false,
     "historical_source_and_journal_bytes_changed": false,
     "scope": "기존 계획과 새 구현 명세의 연결 및 추가 원 비판의 수정·재검토입니다. 실제 제품 구현/사용자 인수는 별도입니다."
+  },
+  "execution_order_review": {
+    "baseline": "bcd120d51b23b5118db3e0334fd2fbb095f824f5",
+    "journal": "docs/specs/cae-research/execution-order-debate-ascii.jsonl",
+    "product_implementation_claimed": false
   }
 }
