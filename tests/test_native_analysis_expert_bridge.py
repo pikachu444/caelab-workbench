@@ -216,3 +216,128 @@ def test_standalone_expert_still_closes_its_owned_workbench(app, tmp_path, monke
     assert expert.close()
     assert closed == [True]
     expert.workbench.jobs.close()
+
+
+def test_request_expert_debate_passes_zero_and_nonzero_frame_index_without_capture_or_model(
+        analysis, tmp_path):
+    window, state = analysis
+    run_id = "a" * 32
+    display_run(window, state, tmp_path, name=run_id)
+
+    window.frame_selector.setCurrentIndex(window.frame_selector.findData(0))
+    window.request_expert_debate()
+    expert_zero = window._expert_window
+    assert expert_zero.requested_frame_index == 0
+    assert expert_zero.frame_context_state == "requested"
+    assert "초안 기준: 전달받은 계산 · 프레임 1" in expert_zero.basis.text()
+    assert "이번 질문의 첨부: 선택하지 않음" in expert_zero.basis.text()
+    assert run_id not in expert_zero.basis.text()
+    assert "0.125 mm" in expert_zero.question.toPlainText()
+
+    window.frame_selector.setCurrentIndex(window.frame_selector.findData(1))
+    window.request_expert_debate()
+    expert_one = window._expert_window
+    assert expert_one is not expert_zero
+    assert expert_one.requested_frame_index == 1
+    assert expert_one.frame_context_state == "requested"
+    assert "초안 기준: 전달받은 계산 · 프레임 2" in expert_one.basis.text()
+    assert "이번 질문의 첨부: 선택하지 않음" in expert_one.basis.text()
+    assert run_id not in expert_one.basis.text()
+    assert "9.75 mm" in expert_one.question.toPlainText()
+
+
+def test_request_expert_debate_no_frames_leaves_requested_frame_none(analysis, tmp_path):
+    window, state = analysis
+    run = display_run(window, state, tmp_path, name="no-frames")
+    run.result = {"summary": {}, "frames": []}
+    window.refresh_runs()
+    window.request_expert_debate()
+    expert = window._expert_window
+    assert expert.requested_frame_index is None
+    assert expert.frame_context_state == "none"
+    assert expert.basis.text() == "이번 질문의 첨부: 선택하지 않음"
+
+
+def test_bridge_handoff_zero_frame_capture_run_selects_frame_zero_and_matches(
+        app, tmp_path, monkeypatch):
+    import time
+    from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFileDialog
+    from caelab.native.run_store import RunStore
+    from test_native_evidence import make_run
+
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "ui.ini"))
+    monkeypatch.setenv("CAELAB_EXPERT_SETTINGS_PATH", str(tmp_path / "expert.ini"))
+    wb = Workbench()
+    run = make_run(tmp_path)
+    project = wb.new_native_project("프레임 전달 검증")
+    node = wb.add_program_node(project, "analysis", "calculix")
+    wb.set_node_file(project, node.id, run.input_path, units=run.units, unit_source=run.unit_source)
+    wb.save_native_project(project, tmp_path / "project.json")
+    run.node_id = node.id
+    store = RunStore(project.run_store)
+    store.write(run)
+    store.select(node.id, run.id)
+
+    monkeypatch.setattr(wb, "ask_expert_discussion",
+                        lambda *a, **kw: pytest.fail("Bridge handoff must not call a model"))
+    monkeypatch.setattr(wb, "submit_native",
+                        lambda *a, **kw: pytest.fail("Bridge handoff must not submit solver"))
+    original_capture = wb.capture_expert_run
+    monkeypatch.setattr(wb, "capture_expert_run",
+                        lambda *a, **kw: pytest.fail("Opening ExpertWindow must not capture run"))
+
+    window = NativeAnalysisWindow(project.path, node.id, wb)
+    window.timer.stop()
+    try:
+        window.frame_selector.setCurrentIndex(window.frame_selector.findData(0))
+        window.request_expert_debate()
+        expert = window._expert_window
+        assert expert.requested_frame_index == 0
+        assert expert.frame_context_state == "requested"
+        draft_text = expert.question.toPlainText()
+        assert "1 mm" in draft_text and "5 mm" not in draft_text
+
+        # Now user explicitly clicks capture_run and accepts the pre-selected frame 0.
+        monkeypatch.setattr(wb, "capture_expert_run", original_capture)
+        discussion_file = tmp_path / "bridge_discussion.json"
+        monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                            lambda *a, **kw: (str(discussion_file), ""))
+        observed = {}
+
+        def inspect_and_accept(dialog):
+            runs_box = dialog.findChild(QComboBox, "capture_run_choice")
+            frames_box = dialog.findChild(QComboBox, "capture_frame_choice")
+            ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+            observed["run_id"] = runs_box.currentData().id
+            observed["frame_data"] = frames_box.currentData()
+            observed["state"] = expert.frame_context_state
+            observed["ok_enabled"] = ok_btn.isEnabled()
+            return QDialog.Accepted
+
+        monkeypatch.setattr(QDialog, "exec", inspect_and_accept)
+        expert.capture_run()
+        deadline = time.monotonic() + 5.0
+        while expert._operation and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        expert.wait_for_asset_verification(timeout=3.0)
+
+        assert observed == {
+            "run_id": run.id,
+            "frame_data": 0,
+            "state": "matched",
+            "ok_enabled": True,
+        }
+        attached_id = expert.document["selected_evidence_id"]
+        attached = expert.document["evidences"][attached_id]
+        assert attached["run_id"] == run.id
+        assert attached["frame_index"] == 0
+        assert "초안 기준: 전달받은 계산 · 프레임 1" in expert.basis.text()
+        assert "선택한 첨부와 다름" not in expert.basis.text()
+        assert "프레임 1" in expert.basis.text()
+        assert run.id not in expert.basis.text()
+        assert expert.question.toPlainText() == draft_text
+    finally:
+        window.close()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        wb.jobs.close()

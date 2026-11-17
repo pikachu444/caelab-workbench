@@ -452,7 +452,8 @@ class NativeAnalysisWindow(QMainWindow):
             from .expert_window import ExpertWindow
             self._expert_windows[context] = ExpertWindow(
                 project_path=self.project.path, node_id=self.node_id,
-                run_id=run_id, workbench=self.workbench,
+                run_id=run_id, requested_frame_index=frame_index,
+                workbench=self.workbench,
             )
             self._expert_windows[context].setAttribute(Qt.WA_DeleteOnClose)
             self._expert_windows[context].destroyed.connect(

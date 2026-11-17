@@ -28,7 +28,11 @@ from .expert_chat import ChatBrowser, QuestionEdit, evidence_name, human_text, m
 
 
 def _evidence_name(evidence):
-    return evidence_name(evidence)
+    label = evidence_name(evidence)
+    frame_index = evidence.get('frame_index') if isinstance(evidence, dict) else None
+    if isinstance(frame_index, int) and not isinstance(frame_index, bool):
+        return f"{label} · 프레임 {frame_index + 1}"
+    return label
 
 
 def _view_settings(settings=None):
@@ -42,7 +46,13 @@ def _view_settings(settings=None):
 
 class ExpertWindow(QMainWindow):
     def __init__(self, discussion_path=None, *, project_path=None, node_id=None,
-                 run_id=None, workbench=None, view_settings=None):
+                 run_id=None, requested_frame_index: int | None = None,
+                 workbench=None, view_settings=None):
+        if requested_frame_index is not None and (
+                isinstance(requested_frame_index, bool)
+                or not isinstance(requested_frame_index, int)
+                or requested_frame_index < 0):
+            raise ValueError('요청한 프레임 번호는 0 이상의 정수여야 합니다.')
         super().__init__()
         self._owns_workbench = workbench is None
         self.workbench = workbench or Workbench()
@@ -51,7 +61,11 @@ class ExpertWindow(QMainWindow):
         self.path = None
         self.document = {}
         self.project_path, self.node_id, self.run_id = project_path, node_id, run_id
+        self.requested_frame_index = requested_frame_index
+        self.frame_context_state = 'none' if requested_frame_index is None else 'requested'
         self._operation = None
+        self._op_token = None
+        self._closed = False
         self._mailbox = queue.Queue()
         self._stage_mailbox = queue.Queue()
         self._stage_token = None
@@ -62,6 +76,7 @@ class ExpertWindow(QMainWindow):
         self._asset_mailbox = queue.Queue()
         self._asset_token = None
         self._asset_verifying = False
+        self._asset_warning_tone = 'warning'
         self.setWindowTitle('전문가 논의')
         self.resize(1100, 850)
         self.setMinimumSize(680, 580)
@@ -235,7 +250,9 @@ class ExpertWindow(QMainWindow):
         p = get_palette(resolved)
         self.setStyleSheet(build_stylesheet(resolved))
         self.theme_action.setText(theme_toggle_label(resolved))
-        self.asset_warning.setStyleSheet(status_badge_style('warning', resolved))
+        self.asset_warning.setStyleSheet(
+            status_badge_style(getattr(self, '_asset_warning_tone', 'warning'), resolved)
+        )
         self.status.setStyleSheet(status_badge_style('neutral', resolved))
         self.transcript.document().setDefaultStyleSheet(
             f'body, p, li, td, th {{ font-family: {UI_FONT_STACK}; color: {p["text_primary"]}; }} '
@@ -269,11 +286,23 @@ class ExpertWindow(QMainWindow):
         has_assets = bool(self.document.get('evidences') or self.document.get('proposals'))
         if not has_assets or not self.path:
             self._asset_verifying = False
+            self._asset_warning_tone = 'warning'
+            self.asset_warning.setStyleSheet(
+                status_badge_style('warning', getattr(self, '_theme_mode', None))
+            )
             self.asset_warning.setText('')
             self.asset_warning.setVisible(False)
+            self._set_busy(bool(self._operation))
             return
 
         self._asset_verifying = True
+        self._asset_warning_tone = 'running'
+        self.asset_warning.setStyleSheet(
+            status_badge_style('running', getattr(self, '_theme_mode', None))
+        )
+        self.asset_warning.setText('첨부 자료와 제안의 원본 무결성을 확인하는 중입니다…')
+        self.asset_warning.setVisible(True)
+        self._set_busy(bool(self._operation))
 
         target_path = Path(self.path).resolve()
         target_document = copy.deepcopy(self.document)
@@ -306,6 +335,7 @@ class ExpertWindow(QMainWindow):
         self._save_view_state()
         document = self.workbench.open_expert_discussion(path, create=create)
         self.path, self.document = Path(path).resolve(), document
+        self._op_token = None
         self._pending_message = None
         self.question.setPlainText(document.get('draft_question', ''))
         self._start_asset_verification()
@@ -316,7 +346,10 @@ class ExpertWindow(QMainWindow):
     def _ensure_document(self):
         if self.path:
             return True
+        draft = self.question.toPlainText()
         self.new_document()
+        if self.path is not None and draft and not self.question.toPlainText():
+            self.question.setPlainText(draft)
         return self.path is not None
 
     def new_document(self):
@@ -399,8 +432,24 @@ class ExpertWindow(QMainWindow):
         self.sources.blockSignals(False)
         self.preview_evidence()
         evidence = self.document.get('evidences', {}).get(selected)
-        self.basis.setText('이번 질문의 첨부: ' + (_evidence_name(evidence) if evidence else '선택하지 않음')
-                           + ('\n' + ' · '.join(self._cautions(evidence)) if evidence and self._cautions(evidence) else ''))
+        basis_lines = []
+        if self.requested_frame_index is not None:
+            draft_line = f'초안 기준: 전달받은 계산 · 프레임 {self.requested_frame_index + 1}'
+            if self.frame_context_state == 'missing':
+                draft_line += ' (기록 없음)'
+            if evidence is not None:
+                same_run = self.run_id is None or evidence.get('run_id') == self.run_id
+                same_frame = evidence.get('frame_index') == self.requested_frame_index
+                if not (same_run and same_frame):
+                    draft_line += ' · 선택한 첨부와 다름'
+            basis_lines.append(draft_line)
+        elif self.run_id is not None and evidence is not None and evidence.get('run_id') != self.run_id:
+            basis_lines.append('초안 기준: 전달받은 계산 · 선택한 첨부와 다른 실행')
+        attach_line = '이번 질문의 첨부: ' + (_evidence_name(evidence) if evidence else '선택하지 않음')
+        basis_lines.append(attach_line)
+        if evidence and self._cautions(evidence):
+            basis_lines.append(' · '.join(self._cautions(evidence)))
+        self.basis.setText('\n'.join(basis_lines))
         self.attachments_button.setText(f"첨부 자료 ({self.sources.count()})")
         fragments = []
         labels = {'completed': '', 'pending': '답변을 기다리고 있습니다…', 'failed': '답변을 받지 못했습니다.',
@@ -414,7 +463,14 @@ class ExpertWindow(QMainWindow):
             question = html.escape(human_text(turn.get('question', ''))).replace('\n', '<br>')
             cautions = self._cautions(source)
             source_label = _evidence_name(source)
-            frame_tag = f" · 프레임 {source['frame_index'] + 1}" if isinstance(source.get('frame_index'), int) else ''
+            turn_frame_index = source.get('frame_index')
+            frame_tag = (
+                f" · 프레임 {turn_frame_index + 1}"
+                if isinstance(turn_frame_index, int)
+                and not isinstance(turn_frame_index, bool)
+                and ' · 프레임 ' not in source_label
+                else ''
+            )
             units = source.get('units') or {}
             unit_tag = ' · 단위: ' + ' / '.join(str(v) for v in list(units.values())[:3]) if units else ' · 단위 미확인'
             fragments += [f"<p style='color:{p['text_secondary']}; margin-top:26px'>나 · {html.escape(source_label + frame_tag)}"
@@ -710,23 +766,72 @@ class ExpertWindow(QMainWindow):
             buttons.rejected.connect(dialog.reject)
             layout.addRow(buttons)
 
+            def update_ok_button():
+                cur_run = runs.currentData()
+                cur_frame_data = frames.currentData()
+                is_missing_frame = (
+                    isinstance(cur_frame_data, tuple)
+                    and len(cur_frame_data) > 0
+                    and cur_frame_data[0] == '__missing_frame__'
+                )
+                buttons.button(QDialogButtonBox.Ok).setEnabled(
+                    cur_run is not None and not is_missing_frame
+                )
+
             def update_frames():
                 run = runs.currentData()
+                frames.blockSignals(True)
                 frames.clear()
                 for frame in ((run.result or {}).get('frames', []) if run else []):
-                    frames.addItem(f"단계 {frame.get('step')} / 증분 {frame.get('increment')} / 값 {frame.get('value')}", frame['index'])
+                    frames.addItem(
+                        f"단계 {frame.get('step')} / 증분 {frame.get('increment')} / 값 {frame.get('value')}",
+                        frame['index'],
+                    )
+                is_pinned = (
+                    run is not None
+                    and pinned_run is not None
+                    and getattr(run, 'id', None) == getattr(pinned_run, 'id', None)
+                )
                 if not frames.count():
-                    frames.addItem('판독한 결과 프레임 없음 — 입력과 로그 가져오기', None)
+                    if is_pinned and self.requested_frame_index is not None:
+                        frames.addItem(
+                            f'전달받은 프레임 {self.requested_frame_index + 1} · 기록 없음',
+                            ('__missing_frame__', self.requested_frame_index),
+                        )
+                        frames.addItem('판독한 결과 프레임 없음 — 입력과 로그 가져오기', None)
+                        frames.setCurrentIndex(0)
+                        self.frame_context_state = 'missing'
+                    else:
+                        frames.addItem('판독한 결과 프레임 없음 — 입력과 로그 가져오기', None)
                 elif run:
-                    frames.setCurrentIndex(max(0, frames.findData((run.result or {}).get('summary', {}).get('frame_index'))))
-                buttons.button(QDialogButtonBox.Ok).setEnabled(run is not None)
+                    if is_pinned and self.requested_frame_index is not None:
+                        idx = frames.findData(self.requested_frame_index)
+                        if idx >= 0:
+                            frames.setCurrentIndex(idx)
+                            self.frame_context_state = 'matched'
+                        else:
+                            frames.insertItem(
+                                0,
+                                f'전달받은 프레임 {self.requested_frame_index + 1} · 기록 없음',
+                                ('__missing_frame__', self.requested_frame_index),
+                            )
+                            frames.setCurrentIndex(0)
+                            self.frame_context_state = 'missing'
+                    else:
+                        frames.setCurrentIndex(
+                            max(0, frames.findData((run.result or {}).get('summary', {}).get('frame_index')))
+                        )
+                frames.blockSignals(False)
+                update_ok_button()
 
             runs.currentIndexChanged.connect(update_frames)
+            runs.currentIndexChanged.connect(update_ok_button)
+            frames.currentIndexChanged.connect(update_ok_button)
             update_frames()
             if dialog.exec() != QDialog.Accepted:
                 return
             run, frame_index = runs.currentData(), frames.currentData()
-            if run is None:
+            if run is None or isinstance(frame_index, tuple):
                 return
             assets = self.assets
             self._start('attach', lambda: self.workbench.capture_expert_run(run, assets, frame_index=frame_index))
@@ -760,6 +865,9 @@ class ExpertWindow(QMainWindow):
         if self._operation:
             return
         self._operation = operation
+        op_token = object()
+        self._op_token = op_token
+        target_path = Path(self.path).resolve() if self.path else None
         self._stage_token = stage_token
         self._cancel.clear()
         self._set_busy(True)
@@ -770,9 +878,9 @@ class ExpertWindow(QMainWindow):
             self.transcript.verticalScrollBar().setValue(self.transcript.verticalScrollBar().maximum())
         def work():
             try:
-                self._mailbox.put((True, function()))
+                self._mailbox.put((op_token, target_path, True, function()))
             except Exception as error:
-                self._mailbox.put((False, error))
+                self._mailbox.put((op_token, target_path, False, error))
         threading.Thread(target=work, daemon=True).start()
 
     def cancel_request(self):
@@ -784,6 +892,8 @@ class ExpertWindow(QMainWindow):
         self.render()
 
     def _poll(self):
+        if getattr(self, '_closed', False):
+            return
         labels = {'preparation': '자료 준비 중…', 'provider': '모델 응답을 기다리는 중…'}
         while True:
             try:
@@ -798,57 +908,80 @@ class ExpertWindow(QMainWindow):
                 token, path, rev, target_assets, ok, issues = self._asset_mailbox.get_nowait()
             except queue.Empty:
                 break
-            if token is self._asset_token and self.path and path == Path(self.path).resolve():
+            if (not getattr(self, '_closed', False)
+                    and token is self._asset_token
+                    and self.path
+                    and path == Path(self.path).resolve()):
                 current_assets = (self.document.get('evidences'), self.document.get('proposals'))
                 if rev is None or self.document.get('revision') == rev or current_assets == target_assets:
                     self._asset_verifying = False
                     self._asset_issues = issues
                     problems = self._asset_issues
-                    if problems:
+                    if not ok:
+                        self._asset_warning_tone = 'error'
+                        self.asset_warning.setStyleSheet(
+                            status_badge_style('error', getattr(self, '_theme_mode', None))
+                        )
+                        self.asset_warning.setText(
+                            '첨부 자료 무결성 확인에 실패했습니다. 자료를 다시 확인한 뒤 질문하세요.'
+                        )
+                        self.asset_warning.setVisible(True)
+                    elif problems:
+                        self._asset_warning_tone = 'warning'
+                        self.asset_warning.setStyleSheet(
+                            status_badge_style('warning', getattr(self, '_theme_mode', None))
+                        )
                         self.asset_warning.setText(
                             '보존된 제안의 내용이나 출처를 확인할 수 없습니다. 대화는 읽을 수 있지만 제안은 다시 확인해 주세요.'
                             if any('제안' in problem for problem in problems) else
                             '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.'
                         )
                         self.asset_warning.setVisible(True)
-                        self.render()
                     else:
+                        self._asset_warning_tone = 'warning'
                         self.asset_warning.setText('')
                         self.asset_warning.setVisible(False)
-                        self._set_busy(bool(self._operation))
+                    self._set_busy(bool(self._operation))
+                    self.render()
                 else:
                     self._start_asset_verification()
-        if not self._operation:
-            return
-        try:
-            ok, value = self._mailbox.get_nowait()
-        except queue.Empty:
-            return
-        operation, self._operation = self._operation, None
-        self._stage_token = None
-        try:
-            if not ok:
-                raise value
-            if operation == 'attach':
-                self.document = self.workbench.attach_expert_evidence(
-                    self.path, value, expected_revision=self.document['revision'])
-                self._notice('자료를 첨부했습니다.')
-                self._start_asset_verification()
-            else:
-                self.document = value
-                self._pending_message = None
-                self.question.setPlainText(value.get('draft_question', ''))
-            self.render()
-        except Exception as error:
-            self._error(error)
-            if self._pending_message:
-                self._pending_message.update(status='failed', error=str(error))
-            self.render()
-            self._set_busy(False)
-        self.wait_label.setText('')
-        if self._close_after:
-            self._close_after = False
-            self.close()
+        while True:
+            try:
+                op_token, target_path, ok, value = self._mailbox.get_nowait()
+            except queue.Empty:
+                break
+            if (getattr(self, '_closed', False)
+                    or not self._operation
+                    or op_token is not self._op_token):
+                continue
+            if target_path is not None and (not self.path or Path(self.path).resolve() != target_path):
+                continue
+            operation, self._operation = self._operation, None
+            self._op_token = None
+            self._stage_token = None
+            try:
+                if not ok:
+                    raise value
+                if operation == 'attach':
+                    self.document = self.workbench.attach_expert_evidence(
+                        self.path, value, expected_revision=self.document['revision'])
+                    self._notice('자료를 첨부했습니다.')
+                    self._start_asset_verification()
+                else:
+                    self.document = value
+                    self._pending_message = None
+                    self.question.setPlainText(value.get('draft_question', ''))
+                self.render()
+            except Exception as error:
+                self._error(error)
+                if self._pending_message:
+                    self._pending_message.update(status='failed', error=str(error))
+                self.render()
+                self._set_busy(False)
+            self.wait_label.setText('')
+            if self._close_after:
+                self._close_after = False
+                self.close()
 
     def _view_key(self):
         path = os.path.normcase(str(self.path.resolve()))
@@ -892,8 +1025,6 @@ class ExpertWindow(QMainWindow):
         QTimer.singleShot(0, self._restore_view_state)
 
     def closeEvent(self, event):  # noqa: N802
-        self._asset_token = None
-        self._asset_verifying = False
         if self._operation:
             self._close_after = True
             self.cancel_request()
@@ -907,6 +1038,10 @@ class ExpertWindow(QMainWindow):
             if answer != QMessageBox.Discard:
                 event.ignore()
                 return
+        self._closed = True
+        self._op_token = None
+        self._asset_token = None
+        self._asset_verifying = False
         self.timer.stop()
         if self._owns_workbench:
             self.workbench.close()
@@ -919,11 +1054,18 @@ def main(argv=None):
     parser.add_argument('--project')
     parser.add_argument('--node')
     parser.add_argument('--run-id')
+    parser.add_argument('--frame-index', type=int, default=None)
     args = parser.parse_args(argv)
     app = QApplication(sys.argv[:1])
     app.setStyle('Fusion')
     try:
-        window = ExpertWindow(args.discussion, project_path=args.project, node_id=args.node, run_id=args.run_id)
+        window = ExpertWindow(
+            args.discussion,
+            project_path=args.project,
+            node_id=args.node,
+            run_id=args.run_id,
+            requested_frame_index=args.frame_index,
+        )
     except Exception as error:
         traceback.print_exc()
         QMessageBox.critical(None, '전문가 프로그램을 열지 못했습니다',

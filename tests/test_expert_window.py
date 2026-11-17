@@ -953,3 +953,395 @@ def test_background_asset_verification_completes_when_draft_saved_during_verific
     assert ui._asset_mailbox.empty()
     assert ui._asset_issues == []
     assert not ui.asset_warning.isVisible()
+
+
+@pytest.mark.parametrize('bad_frame', [-1, -5, True, False, '0', 1.5])
+def test_requested_frame_index_validation_rejects_invalid_values(app, tmp_path, bad_frame):
+    wb = Workbench()
+    try:
+        with pytest.raises(ValueError):
+            ExpertWindow(requested_frame_index=bad_frame, workbench=wb)
+    finally:
+        wb.jobs.close()
+
+
+def test_cli_frame_index_argument_and_zero_capture_on_open(app, tmp_path, monkeypatch):
+    from apps.workbench_qt import expert_window as entry
+
+    calls = []
+    created = []
+
+    class App:
+        def __init__(self, args):
+            pass
+
+        def setStyle(self, style):
+            pass
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(entry, 'QApplication', App)
+    monkeypatch.setattr(Workbench, 'capture_expert_run',
+                        lambda *a, **kw: pytest.fail('Opening ExpertWindow must not capture'))
+    monkeypatch.setattr(experts.ExpertProvider, 'discuss',
+                        lambda *a, **kw: pytest.fail('Opening ExpertWindow must not call model'))
+
+    discussion_path = tmp_path / 'cli_discussion.json'
+    original_init = ExpertWindow.__init__
+
+    def spy_init(self, *args, **kwargs):
+        calls.append(kwargs.get('requested_frame_index'))
+        original_init(self, *args, **kwargs)
+        created.append(self)
+
+    monkeypatch.setattr(ExpertWindow, '__init__', spy_init)
+    try:
+        assert entry.main(['--discussion', str(discussion_path), '--frame-index', '0']) == 0
+        assert calls == [0]
+
+        seen_errors = []
+        monkeypatch.setattr(QMessageBox, 'critical', lambda parent, title, text: seen_errors.append(text))
+        assert entry.main(['--discussion', str(discussion_path), '--frame-index', '-1']) == 1
+        assert len(seen_errors) == 1
+    finally:
+        for win in created:
+            win.close()
+
+
+def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox
+    from caelab.native.run_store import RunStore
+    from test_result_delivery import selected_project
+
+    wb, project, analysis, _, expert, run = selected_project(tmp_path)
+    monkeypatch.setattr(experts.ExpertProvider, 'discuss',
+                        lambda *a, **kw: pytest.fail('capture_run tests must not call model'))
+
+    # 1) requested_frame_index == 0 selects frame 0 (even though summary default is 1)
+    ui0 = ExpertWindow(tmp_path / 'd0.json', project_path=project.path,
+                       node_id=expert.id, run_id=run.id, requested_frame_index=0, workbench=wb)
+    assert ui0.requested_frame_index == 0
+    assert ui0.frame_context_state == 'requested'
+    assert '초안 기준: 전달받은 계산 · 프레임 1' in ui0.basis.text()
+
+    def accept_initial(dialog):
+        frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        assert frames_box.currentData() == 0
+        assert ok_btn.isEnabled()
+        assert ui0.frame_context_state == 'matched'
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, 'exec', accept_initial)
+    ui0.capture_run()
+    finish(ui0, app)
+    ev0_id = ui0.document['selected_evidence_id']
+    ev0 = ui0.document['evidences'][ev0_id]
+    assert ev0['frame_index'] == 0
+    assert '프레임 1' in ui0.basis.text()
+    assert '선택한 첨부와 다름' not in ui0.basis.text()
+    assert run.id not in ui0.basis.text()
+    # Transcript turn header shows frame tag exactly once without duplication
+    ui0.document['turns'] = [dict(id='t0', question='결과를 확인해 주세요', reply='응답',
+                                   role='해석', evidence_id=ev0_id, status='completed')]
+    ui0.render()
+    transcript_text = ui0.transcript.toPlainText()
+    assert transcript_text.count('프레임 1') == 1
+    assert '프레임 1 · 프레임 1' not in transcript_text
+    ui0.document['turns'] = []
+    assert ui0.close()
+
+    # 2) requested_frame_index == 1 selects frame 1
+    ui1 = ExpertWindow(tmp_path / 'd1.json', project_path=project.path,
+                       node_id=expert.id, run_id=run.id, requested_frame_index=1, workbench=wb)
+
+    def accept_one(dialog):
+        frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        assert frames_box.currentData() == 1
+        assert ui1.frame_context_state == 'matched'
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, 'exec', accept_one)
+    ui1.capture_run()
+    finish(ui1, app)
+    ev1 = ui1.document['evidences'][ui1.document['selected_evidence_id']]
+    assert ev1['frame_index'] == 1
+    assert '프레임 2' in ui1.basis.text()
+    ui1.close()
+
+    # 3) Missing requested_frame_index == 5 inserts placeholder, disables OK until valid frame chosen, preserves draft
+    ui_missing = ExpertWindow(tmp_path / 'd5.json', project_path=project.path,
+                              node_id=expert.id, run_id=run.id, requested_frame_index=5, workbench=wb)
+    ui_missing.question.setPlainText('사용자가 작성한 질문 초안')
+
+    # Guard check: even if dialog somehow returns Accepted with missing-frame tuple, capture is NOT triggered
+    captured_calls = []
+    real_capture = wb.capture_expert_run
+    monkeypatch.setattr(wb, 'capture_expert_run',
+                        lambda *a, **kw: captured_calls.append((a, kw)) or real_capture(*a, **kw))
+
+    def accept_missing_placeholder(dialog):
+        frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        assert frames_box.currentIndex() == 0
+        assert frames_box.itemText(0) == '전달받은 프레임 6 · 기록 없음'
+        assert frames_box.currentData() == ('__missing_frame__', 5)
+        assert ui_missing.frame_context_state == 'missing'
+        assert not ok_btn.isEnabled()
+        # Toggling to valid frame enables OK, toggling back disables OK
+        frames_box.setCurrentIndex(1)
+        assert frames_box.currentData() == 0
+        assert ok_btn.isEnabled()
+        frames_box.setCurrentIndex(0)
+        assert not ok_btn.isEnabled()
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, 'exec', accept_missing_placeholder)
+    ui_missing.capture_run()
+    assert captured_calls == []
+    assert ui_missing._operation is None
+    assert ui_missing.question.toPlainText() == '사용자가 작성한 질문 초안'
+
+    # Now user explicitly picks valid frame 0 and accepts
+    def choose_valid_frame(dialog):
+        frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        assert not ok_btn.isEnabled()
+        frames_box.setCurrentIndex(frames_box.findData(0))
+        assert ok_btn.isEnabled()
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, 'exec', choose_valid_frame)
+    ui_missing.capture_run()
+    finish(ui_missing, app)
+    assert len(captured_calls) == 1
+    assert ui_missing.question.toPlainText() == '사용자가 작성한 질문 초안'
+    basis = ui_missing.basis.text()
+    assert '초안 기준: 전달받은 계산 · 프레임 6 (기록 없음) · 선택한 첨부와 다름' in basis
+    assert '이번 질문의 첨부:' in basis and '프레임 1' in basis
+    assert run.id not in basis
+    ui_missing.close()
+
+    # 4) Missing requested_frame_index == 5 when run has NO parsed frames
+    empty_run = copy.deepcopy(run)
+    empty_run.id = 'c' * 32
+    empty_run.workdir = project.run_store / empty_run.id
+    shutil.copytree(run.workdir, empty_run.workdir)
+    empty_run.result = {'frames': [], 'summary': {}, 'warnings': []}
+    RunStore(project.run_store).write(empty_run)
+    wb.select_native_run(project, analysis.id, empty_run.id)
+
+    ui_empty = ExpertWindow(tmp_path / 'd_empty.json', project_path=project.path,
+                            node_id=expert.id, run_id=empty_run.id, requested_frame_index=5, workbench=wb)
+    captured_calls.clear()
+
+    def choose_log_only(dialog):
+        frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        assert frames_box.count() == 2
+        assert frames_box.itemText(0) == '전달받은 프레임 6 · 기록 없음'
+        assert frames_box.itemData(0) == ('__missing_frame__', 5)
+        assert frames_box.itemText(1) == '판독한 결과 프레임 없음 — 입력과 로그 가져오기'
+        assert frames_box.itemData(1) is None
+        assert ui_empty.frame_context_state == 'missing'
+        assert not ok_btn.isEnabled()
+        frames_box.setCurrentIndex(1)
+        assert ok_btn.isEnabled()
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, 'exec', choose_log_only)
+    ui_empty.capture_run()
+    finish(ui_empty, app)
+    assert len(captured_calls) == 1
+    assert captured_calls[0][1]['frame_index'] is None
+    assert '초안 기준: 전달받은 계산 · 프레임 6 (기록 없음) · 선택한 첨부와 다름' in ui_empty.basis.text()
+    ui_empty.close()
+    wb.jobs.close()
+
+
+def test_asset_verification_badge_lifecycle_and_theme(window, app, tmp_path, monkeypatch):
+    from apps.workbench_qt.theme import status_badge_style
+
+    ui, provider = window
+    ui.show()
+    app.processEvents()
+    attach(ui, tmp_path, '** badge test input')
+
+    started = threading.Event()
+    release = threading.Event()
+    original_issues = ui.workbench.expert_discussion_issues
+
+    def delayed_issues(path, document):
+        started.set()
+        release.wait(5.0)
+        return []
+
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', delayed_issues)
+    ui.reload_document()
+    assert started.wait(2.0)
+    assert ui._asset_verifying is True
+    assert ui._asset_warning_tone == 'running'
+    assert not ui.asset_warning.isHidden()
+    assert '확인하는 중' in ui.asset_warning.text()
+    assert status_badge_style('running', ui._theme_mode) in ui.asset_warning.styleSheet()
+    assert not ui.ask_button.isEnabled()
+
+    # Toggling theme while verifying preserves running tone
+    ui.theme_action.trigger()
+    assert ui._asset_warning_tone == 'running'
+    assert status_badge_style('running', ui._theme_mode) in ui.asset_warning.styleSheet()
+
+    # Pass -> badge hides, ask button enabled
+    release.set()
+    ui.wait_for_asset_verification(timeout=3.0)
+    assert not ui._asset_verifying
+    assert not ui.asset_warning.isVisible()
+    assert ui.asset_warning.text() == ''
+    assert ui.ask_button.isEnabled()
+
+    # Issues returned -> warning badge visible
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues',
+                        lambda path, doc: ['근거 missing: 보존 파일 누락'])
+    ui.reload_document()
+    ui.wait_for_asset_verification(timeout=3.0)
+    assert not ui._asset_verifying
+    assert ui._asset_warning_tone == 'warning'
+    assert ui.asset_warning.isVisible()
+    assert '누락·변경' in ui.asset_warning.text()
+    assert status_badge_style('warning', ui._theme_mode) in ui.asset_warning.styleSheet()
+
+    # Exception raised -> error badge visible without leaking raw exception details
+    def broken_issues(path, doc):
+        raise RuntimeError('INTERNAL_SECRET_TRACE')
+
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', broken_issues)
+    ui.reload_document()
+    ui.wait_for_asset_verification(timeout=3.0)
+    assert not ui._asset_verifying
+    assert ui._asset_warning_tone == 'error'
+    assert ui.asset_warning.isVisible()
+    assert '무결성 확인에 실패했습니다' in ui.asset_warning.text()
+    assert 'INTERNAL_SECRET_TRACE' not in ui.asset_warning.text()
+    assert status_badge_style('error', ui._theme_mode) in ui.asset_warning.styleSheet()
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', original_issues)
+    assert provider.prompts == []
+
+
+def test_late_responses_ignored_on_switched_document_and_closed_window(window, app, tmp_path, monkeypatch):
+    ui, provider = window
+    attach(ui, tmp_path, '** doc A input')
+    doc_a_path = ui.path
+    doc_a_id = ui.document['id']
+
+    # 1) Switched document ignores late _mailbox and _asset_mailbox messages
+    ask_started = threading.Event()
+    ask_release = threading.Event()
+    fake_doc_a = copy.deepcopy(ui.document)
+    fake_doc_a['title'] = '오염되면 안 되는 A 응답'
+    fake_doc_a['turns'] = [{'id': 'late-a', 'question': 'A', 'reply': '늦은 A 응답',
+                            'role': '재료', 'evidence_id': ui.document['selected_evidence_id'],
+                            'status': 'completed'}]
+
+    def slow_ask(*args, **kwargs):
+        ask_started.set()
+        ask_release.wait(5.0)
+        return fake_doc_a
+
+    monkeypatch.setattr(ui.workbench, 'ask_expert_discussion', slow_ask)
+    ui.question.setPlainText('문서 A 질문')
+    ui.ask()
+    assert ask_started.wait(2.0)
+    old_op_token = ui._op_token
+    old_asset_token = ui._asset_token
+    assert old_op_token is not None
+
+    doc_b_path = tmp_path / 'doc_b.json'
+    ui.workbench.open_expert_discussion(doc_b_path, create=True)
+    ui._load(doc_b_path)
+    assert ui._op_token is None
+    assert ui.path == doc_b_path.resolve()
+    doc_b_id = ui.document['id']
+    assert doc_b_id != doc_a_id
+    ui.question.setPlainText('문서 B 초안')
+
+    # Finish slow ask for doc A AND inject stale asset message for doc A
+    ask_release.set()
+    time.sleep(0.05)
+    ui._asset_mailbox.put((old_asset_token, doc_a_path, 0, ({}, []), False, ['stale error']))
+    # Also simulate an active operation on doc B while stale doc A result arrives
+    ui._operation = 'ask'
+    new_token = object()
+    ui._op_token = new_token
+    ui._mailbox.put((old_op_token, doc_a_path, True, fake_doc_a))
+    ui._poll()
+
+    assert ui.document['id'] == doc_b_id
+    assert ui.document['turns'] == []
+    assert ui.question.toPlainText() == '문서 B 초안'
+    assert ui.asset_warning.isHidden() and not ui.asset_warning.isVisible()
+    assert ui._operation == 'ask' and ui._op_token is new_token
+    ui._operation = None
+    ui._op_token = None
+
+    # 2) Closed window ignores late _asset_mailbox / _mailbox / _stage_mailbox responses
+    closed_path = tmp_path / 'closed_doc.json'
+    closed_win = ExpertWindow(closed_path)
+    attach(closed_win, tmp_path, '** closed doc input')
+    closed_win.question.setPlainText('닫기 전 초안')
+    assert closed_win.save_document()
+    assert closed_win.close()
+    assert closed_win._closed is True
+    assert closed_win._op_token is None
+    assert closed_win._asset_token is None
+    assert not closed_win._asset_verifying
+    assert not closed_win.timer.isActive()
+
+    doc_snapshot = copy.deepcopy(closed_win.document)
+    basis_snapshot = closed_win.basis.text()
+    warning_snapshot = closed_win.asset_warning.text()
+    question_snapshot = closed_win.question.toPlainText()
+
+    closed_win._stage_mailbox.put((object(), 'provider'))
+    closed_win._asset_mailbox.put((object(), closed_path.resolve(), None, None, False, ['late error']))
+    closed_win._mailbox.put((object(), closed_path.resolve(), True, {'id': 'mutated', 'turns': []}))
+    closed_win._poll()
+
+    assert closed_win.document == doc_snapshot
+    assert closed_win.basis.text() == basis_snapshot
+    assert closed_win.asset_warning.text() == warning_snapshot
+    assert closed_win.question.toPlainText() == question_snapshot
+    closed_win.workbench.jobs.close()
+
+
+def test_close_while_operation_active_cancels_then_marks_closed(window, app, tmp_path, monkeypatch):
+    ui, provider = window
+    attach(ui, tmp_path, '** close after test')
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_discuss(prompt):
+        entered.set()
+        release.wait(5.0)
+        return '응답'
+
+    provider.discuss = slow_discuss
+    ui.question.setPlainText('닫기 테스트 질문')
+    ui.ask()
+    assert entered.wait(2.0)
+
+    # First close request defers closing while operation cancels
+    assert not ui.close()
+    assert ui._close_after is True
+    assert not ui._closed
+    assert ui.timer.isActive()
+
+    release.set()
+    deadline = time.monotonic() + 5.0
+    while not ui._closed and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert ui._closed is True
+    assert ui._op_token is None
+    assert ui._asset_token is None
+    assert not ui.timer.isActive()
