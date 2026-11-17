@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 import math
 from types import MappingProxyType
@@ -862,7 +862,7 @@ class ExperimentSpec:
     source_ref: ArtifactRefV1
     channels: tuple[ExperimentChannelSpec, ...]
     replicate_group: str = ""
-    conditions: Mapping[str, Any] = MappingProxyType({})
+    conditions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     sequence: tuple[Mapping[str, Any], ...] = ()
     source_kind: str = "experiment"
     schema_version: int = 1
@@ -1250,9 +1250,9 @@ class PredictionBundleV1:
     model_revision: str
     adapter: AdapterIdentity
     experiments: tuple[ExperimentPredictionV1, ...] = ()
-    optimizer_scalars: Mapping[str, float | None] = MappingProxyType({})
+    optimizer_scalars: Mapping[str, float | None] = field(default_factory=lambda: MappingProxyType({}))
     artifacts: tuple[ArtifactRefV1, ...] = ()
-    artifact_owners: Mapping[str, ArtifactOwner] = MappingProxyType({})
+    artifact_owners: Mapping[str, ArtifactOwner] = field(default_factory=lambda: MappingProxyType({}))
     run_ids: tuple[str, ...] = ()
     diagnostics: tuple[Mapping[str, Any] | str, ...] = ()
     schema_version: int = 1
@@ -1899,7 +1899,7 @@ class CampaignReceipt:
     termination_reason: str
     evaluation_ids: tuple[str, ...] = ()
     selected_ids: tuple[str, ...] = ()
-    budget_usage: Mapping[str, Any] = MappingProxyType({})
+    budget_usage: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     schema_version: int = 1
 
     def __post_init__(self) -> None:

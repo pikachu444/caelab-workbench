@@ -119,6 +119,7 @@ class ExpertWindow(QMainWindow):
         self.theme_action = self.view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         root = QWidget()
         root.setObjectName('chatRoot')
+        self._root = root
         outer = QHBoxLayout(root)
         outer.setContentsMargins(10, 6, 10, 6)
         outer.addStretch()
@@ -126,6 +127,7 @@ class ExpertWindow(QMainWindow):
         column.setMaximumWidth(960)
         self._column = column
         layout = QVBoxLayout(column)
+        self._column_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         top = QHBoxLayout()
@@ -164,6 +166,7 @@ class ExpertWindow(QMainWindow):
         composer_card.setObjectName('sectionCard')
         self.composer_card = composer_card
         composer_layout = QVBoxLayout(composer_card)
+        self._composer_layout = composer_layout
         composer_layout.setContentsMargins(8, 6, 8, 6)
         composer_layout.setSpacing(4)
         attachment_line = QHBoxLayout()
@@ -341,13 +344,14 @@ class ExpertWindow(QMainWindow):
         target_revision = target_document.get('revision')
         target_assets = (copy.deepcopy(self.document.get('evidences')), copy.deepcopy(self.document.get('proposals')))
         workbench = self.workbench
+        asset_mailbox = self._asset_mailbox
 
         def worker():
             try:
                 issues = workbench.expert_discussion_issues(target_path, target_document)
-                self._asset_mailbox.put((token, target_path, target_revision, target_assets, True, issues))
+                asset_mailbox.put((token, target_path, target_revision, target_assets, True, issues))
             except Exception as exc:
-                self._asset_mailbox.put((token, target_path, target_revision, target_assets, False, [f'무결성 검증 실패: {exc}']))
+                asset_mailbox.put((token, target_path, target_revision, target_assets, False, [f'무결성 검증 실패: {exc}']))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -654,24 +658,20 @@ class ExpertWindow(QMainWindow):
 
     def _sync_composer_layout(self):
         """Activate composer and parent layouts so label height/width settle immediately."""
-        targets = (
+        if getattr(self, '_closed', False) or not self.isVisible():
+            return
+        for widget in (
             getattr(self, 'basis', None),
             getattr(self, 'wait_label', None),
             getattr(self, 'composer_card', None),
             getattr(self, '_column', None),
-            self.centralWidget(),
-        )
-        for widget in targets:
-            if widget is None:
-                continue
-            widget.updateGeometry()
-            layout = widget.layout()
-            if layout is not None:
-                layout.activate()
-        for widget in (getattr(self, 'composer_card', None), getattr(self, '_column', None)):
-            layout = widget.layout() if widget is not None else None
-            if layout is not None:
-                layout.activate()
+            getattr(self, '_root', None),
+        ):
+            if widget is not None:
+                widget.updateGeometry()
+        for layout_obj in (getattr(self, '_composer_layout', None), getattr(self, '_column_layout', None)):
+            if layout_obj is not None:
+                layout_obj.activate()
 
     def _set_wait_text(self, text):
         self.wait_label.setText(text)
@@ -839,7 +839,8 @@ class ExpertWindow(QMainWindow):
             solver_id = solver.currentData()
             units = {key: field.text().strip() for key, field in unit_fields.items() if field.text().strip()}
             assets = self.assets
-            self._start('attach', lambda: self.workbench.import_expert_files(
+            workbench = self.workbench
+            self._start('attach', lambda: workbench.import_expert_files(
                 assets, files=files, solver_id=solver_id, units=units))
 
     def capture_run(self, _checked=False):
@@ -968,7 +969,8 @@ class ExpertWindow(QMainWindow):
             if run is None or isinstance(frame_index, tuple):
                 return
             assets = self.assets
-            self._start('attach', lambda: self.workbench.capture_expert_run(run, assets, frame_index=frame_index))
+            workbench = self.workbench
+            self._start('attach', lambda: workbench.capture_expert_run(run, assets, frame_index=frame_index))
         except Exception as error:
             self._error(error)
 
@@ -984,14 +986,16 @@ class ExpertWindow(QMainWindow):
         path, revision = self.path, self.document['revision']
         evidence_id = self.document['selected_evidence_id']
         role, provider = self.role.currentData(), self.document.get('provider_id')
+        workbench = self.workbench
+        cancel_event = self._cancel
         def cancelled():
-            if self._cancel.is_set():
+            if cancel_event.is_set():
                 raise RuntimeError('사용자가 응답 대기를 중단했습니다.')
         stage_token, stage_mailbox = object(), self._stage_mailbox
         def report_stage(stage):
             stage_mailbox.put((stage_token, stage))
         self._pending_message = dict(question=question, role=self.role.currentText(), evidence_id=evidence_id, status='pending')
-        self._start('ask', lambda: self.workbench.ask_expert_discussion(
+        self._start('ask', lambda: workbench.ask_expert_discussion(
             path, question, evidence_id=evidence_id, template_id=role, provider_id=provider,
             expected_revision=revision, check_cancelled=cancelled, on_stage=report_stage),
             stage_token=stage_token)
@@ -1011,11 +1015,12 @@ class ExpertWindow(QMainWindow):
         if operation == 'ask':
             self.transcript.follow_tail = True
             self.transcript.verticalScrollBar().setValue(self.transcript.verticalScrollBar().maximum())
+        mailbox = self._mailbox
         def work():
             try:
-                self._mailbox.put((op_token, target_path, True, function()))
+                mailbox.put((op_token, target_path, True, function()))
             except Exception as error:
-                self._mailbox.put((op_token, target_path, False, error))
+                mailbox.put((op_token, target_path, False, error))
         threading.Thread(target=work, daemon=True).start()
 
     def cancel_request(self):
@@ -1160,6 +1165,7 @@ class ExpertWindow(QMainWindow):
 
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
+        self._sync_composer_layout()
         QTimer.singleShot(0, self._restore_view_state)
 
     def closeEvent(self, event):  # noqa: N802

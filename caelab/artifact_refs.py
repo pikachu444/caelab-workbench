@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import io
 import json
@@ -831,7 +831,7 @@ class NumericResultV1:
     status: str
     reason_codes: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
-    operator_provenance: Mapping[str, Any] = MappingProxyType({})
+    operator_provenance: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     schema_version: int = 1
 
     def __post_init__(self) -> None:

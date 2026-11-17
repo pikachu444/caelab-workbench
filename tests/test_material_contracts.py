@@ -1075,3 +1075,21 @@ def test_defect_regressions_observation_complex_freeze_and_units():
     assert convert_values(0.02, QuantityUnitSpec("mm/mm", "nominal_strain"), QuantityUnitSpec("1", "nominal_strain")) == pytest.approx(0.02)
     assert convert_values(1.5, QuantityUnitSpec("1", "stress_ratio"), QuantityUnitSpec("", "stress_ratio")) == pytest.approx(1.5)
     assert convert_values(0.3, QuantityUnitSpec("", "poisson_ratio"), QuantityUnitSpec("1", "poisson_ratio")) == pytest.approx(0.3)
+
+
+def test_dataclasses_never_use_direct_mappingproxy_defaults_for_python_311() -> None:
+    import dataclasses
+    from types import MappingProxyType
+    import caelab.artifact_refs as artifact_refs
+    import caelab.materials.contracts as contracts
+
+    for mod in (artifact_refs, contracts):
+        for name, obj in vars(mod).items():
+            if dataclasses.is_dataclass(obj):
+                for f in dataclasses.fields(obj):
+                    assert not isinstance(f.default, MappingProxyType), (
+                        f"{mod.__name__}.{name}.{f.name} must use default_factory, not direct MappingProxyType default"
+                    )
+                    if f.name in {"operator_provenance", "conditions", "optimizer_scalars", "artifact_owners", "budget_usage"}:
+                        assert f.default_factory is not dataclasses.MISSING
+                        assert isinstance(f.default_factory(), MappingProxyType)
