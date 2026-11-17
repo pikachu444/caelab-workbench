@@ -2,7 +2,22 @@
 
 ## 실행할 전체 개발 순서 — 2026-11-12 재개정
 
-[전체 개발 계획](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)과 [실행 작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)에 기존 미완료와 신규 연구를 함께 배치했습니다. 지금 착수할 구현은 전문가 창의 프레임·검증 상태 수정(D01), 시험·결과·단위의 공통 기반(D02), Prep 표시 갱신(D03)입니다. 첫 연구 납품은 실제 CSV로 Prony 계수를 찾고 곡선을 비교해 저장·재열기까지 연결하는 D02/D04/D05/D06/D07입니다. 문서 수정으로 제품 구현·N분류·Windows 인수를 완료 처리하지 않습니다. 기존 병합 기능은 재사용하고 실제 미확인·추가 개발을 나눴습니다.
+[전체 개발 계획](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)과 [실행 작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)에 기존 미완료와 신규 연구를 함께 배치했습니다. 초기 착수 3건인 전문가 창의 프레임·검증 상태 수정(D01), 시험·결과·단위의 공통 기반(D02), Prep 표시 갱신(D03) 구현과 독립 QA 통합을 마쳤으며, 다음 첫 연구 납품은 실제 CSV로 Prony 계수를 찾고 곡선을 비교해 저장·재열기까지 연결하는 D04/D05/D06/D07입니다. 문서 수정이나 오프스크린 검사만으로 N분류·물리 Windows 인수를 완료 처리하지 않으며, 실제 미확인 범위는 그대로 분리 유지합니다.
+
+## 초기 착수 3건 통합 현황 (D01 · D02 · D03) — 2026-11-18 구현·독립 QA·통합
+
+1. **`D01` (`caelab-workbench`) — 전문가 창의 프레임·검증 상태 수정** (`apps/workbench_qt/expert_window.py`, `apps/workbench_qt/native_analysis.py`, `tests/test_expert_window.py`, `tests/test_native_analysis_expert_bridge.py`)
+   - **구현**: CLI `--frame-index` 및 `ExpertWindow(requested_frame_index=...)`에서 0-based `frame_index == 0`을 누락 없이 전달·보존하고, `NativeAnalysisWindow.request_expert_debate` 핸드오프와 `capture_run`의 1-based `프레임 N` 라벨을 통일했습니다. 요청 프레임이 실행 결과에 없을 때는 경고 배지(`capture_missing_hint`)와 한국어 버튼(`가져오기`/`취소`)으로 명시 안내·차단하며, `source_kind='manual'` 수동 파일·다른 실행·프레임 차이를 구분해 표시합니다. `_unit_summary_tag()`로 단위 출처를 구분하고 `단위 미확인` 중복 출력을 제거했으며, 무결성 검증 중/실패(`ok=False`) 시 전송 차단·`[다시 확인]` 버튼(`reverify_assets_button`)·동적 툴팁·`wait_label` 한 줄 표시·`_sync_composer_layout()` 및 늦은 비동기 응답 토큰 격리를 구현했습니다.
+   - **검증 및 미확인 경계**: `qa-chief-reviewer` 코드·회귀 테스트 재감사 PASS 및 `qa-cae-user-expert` 1440×900(오프스크린, Malgun Gothic 로드) 캡처 3종·UX 재검토·반론 토의 PASS를 받았습니다. 물리 Windows 데스크톱 실화면 확인(`#45`)은 실행 작업표 계획대로 `D33` 단계의 미확인 과제로 남깁니다.
+
+2. **`D02` (`caelab-workbench`) — 시험·결과·단위의 공통 자료 구현 (`CORE01`)** (`caelab/artifact_refs.py`, `caelab/materials/__init__.py`, `caelab/materials/units.py`, `caelab/materials/contracts.py`, `tests/test_material_contracts.py`)
+   - **구현**: GUI·VTK·솔버 비의존(`PySide6`/`vtk`/솔버 미임포트) 순수 계약·단위 계층을 구축했습니다. `caelab/artifact_refs.py`와 함께 `parse_material_unit`, `validate_unit_string`, `convert_values`, `convert_frequency_angular`, `QuantityUnitSpec`, `ModelDescriptorV1`, `ParameterSpec`, `ExperimentSpec`, `ExperimentChannelSpec`, `ScalarResponseSpecV1`, `ExperimentPredictionV1`, `PredictedChannelV1`, `PredictionBundle`, `PredictionBundleV1`, `ComparisonSpec`, `SelectionRecordV1`, `AssessmentResultV1`, `StudySnapshot` 계약을 구현했습니다.
+   - **검증 및 미확인 경계**: `qa-chief-reviewer`가 지적한 5건의 결함 수정 후 재감사를 PASS했습니다. 후속 `CalibrationStudyService`·GUI 연결은 `D04`~`D07` 범위입니다.
+
+3. **`D03` (`pikachu444/caelab-prep`, `PREP:N17`) — 숨김·표시 갱신 원자화** (`caelab-prep` PR `#80` → `main` `879088e`)
+   - `MeshViewport.set_hidden_parts`, delta-only `_apply_visibility()`, `PrepController._apply_display_state` 일괄 갱신을 반영했고 원격 `main` 신규 클론에서 트리 SHA 일치 및 관련 UI·가시성 회귀 `101 passed, 1 skipped`(`test_egl_render_and_pick_visible_cells`는 Windows EGL 미지원 스킵)로 검증했습니다. 물리 Windows 데스크톱 GUI 확인(`N12`)은 `D33` 범위로 남깁니다.
+
+- **Workbench 통합 브랜치 검증 (`QT_QPA_PLATFORM=offscreen`)**: 12개 회귀 스위트(`test_material_contracts.py`, `test_mdo_variables.py`, `test_mdo_constraints.py`, `test_mdo_imports.py`, `test_native_analysis_expert_bridge.py`, `test_expert_window.py`, `test_native_runs_gui.py`, `test_expert_chat.py`, `test_program_boundaries.py`, `test_expert_view_settings.py`, `test_native_evidence.py`, `test_native_discussions.py`) 실행 결과 **`282 passed, 2 warnings`**(경고 2건은 기존 NumPy 2.5 `vtkmodules/util/numpy_support.py:240` `DeprecationWarning`).
 
 ## TRACK-3 MDO × 내장 SciPy PDE 솔버 폐루프 — 2026-11-10 구현 (2026-11-17 main 리베이스·통합)
 
