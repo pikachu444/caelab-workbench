@@ -1010,7 +1010,8 @@ def test_cli_frame_index_argument_and_zero_capture_on_open(app, tmp_path, monkey
 
 
 def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox
+    from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel
+    from apps.workbench_qt.expert_window import _run_time_text
     from caelab.native.run_store import RunStore
     from test_result_delivery import selected_project
 
@@ -1026,9 +1027,20 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
     assert '초안 기준: 전달받은 계산 · 프레임 1' in ui0.basis.text()
 
     def accept_initial(dialog):
+        runs_box = dialog.findChild(QComboBox, 'capture_run_choice')
         frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
-        ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        hint = dialog.findChild(QLabel, 'capture_missing_hint')
+        box = dialog.findChild(QDialogButtonBox)
+        ok_btn = box.button(QDialogButtonBox.Ok)
+        cancel_btn = box.button(QDialogButtonBox.Cancel)
+        assert ok_btn.text() == '가져오기'
+        assert cancel_btn.text() == '취소'
+        assert _run_time_text(run.created_at) in runs_box.currentText()
+        assert 'T' not in runs_box.currentText().split(' · ')[-1]
         assert frames_box.currentData() == 0
+        assert frames_box.currentText().startswith('프레임 1 · 단계 ')
+        assert frames_box.itemText(1).startswith('프레임 2 · 단계 ')
+        assert hint.isHidden()
         assert ok_btn.isEnabled()
         assert ui0.frame_context_state == 'matched'
         return QDialog.Accepted
@@ -1040,7 +1052,8 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
     ev0 = ui0.document['evidences'][ev0_id]
     assert ev0['frame_index'] == 0
     assert '프레임 1' in ui0.basis.text()
-    assert '선택한 첨부와 다름' not in ui0.basis.text()
+    assert '단위: mm / N (출처 미확인)' in ui0.basis.text()
+    assert '선택한 첨부와 다른' not in ui0.basis.text()
     assert run.id not in ui0.basis.text()
     # Transcript turn header shows frame tag exactly once without duplication
     ui0.document['turns'] = [dict(id='t0', question='결과를 확인해 주세요', reply='응답',
@@ -1049,6 +1062,7 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
     transcript_text = ui0.transcript.toPlainText()
     assert transcript_text.count('프레임 1') == 1
     assert '프레임 1 · 프레임 1' not in transcript_text
+    assert '단위: mm / N (출처 미확인)' in transcript_text
     ui0.document['turns'] = []
     assert ui0.close()
 
@@ -1059,6 +1073,7 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
     def accept_one(dialog):
         frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
         assert frames_box.currentData() == 1
+        assert frames_box.currentText().startswith('프레임 2 · 단계 ')
         assert ui1.frame_context_state == 'matched'
         return QDialog.Accepted
 
@@ -1083,17 +1098,22 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
 
     def accept_missing_placeholder(dialog):
         frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        hint = dialog.findChild(QLabel, 'capture_missing_hint')
         ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
         assert frames_box.currentIndex() == 0
         assert frames_box.itemText(0) == '전달받은 프레임 6 · 기록 없음'
         assert frames_box.currentData() == ('__missing_frame__', 5)
         assert ui_missing.frame_context_state == 'missing'
+        assert not hint.isHidden()
+        assert '요청한 프레임이 계산 결과에 없습니다' in hint.text()
         assert not ok_btn.isEnabled()
-        # Toggling to valid frame enables OK, toggling back disables OK
+        # Toggling to valid frame enables OK and hides hint; toggling back restores both
         frames_box.setCurrentIndex(1)
         assert frames_box.currentData() == 0
+        assert hint.isHidden()
         assert ok_btn.isEnabled()
         frames_box.setCurrentIndex(0)
+        assert not hint.isHidden()
         assert not ok_btn.isEnabled()
         return QDialog.Accepted
 
@@ -1118,7 +1138,7 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
     assert len(captured_calls) == 1
     assert ui_missing.question.toPlainText() == '사용자가 작성한 질문 초안'
     basis = ui_missing.basis.text()
-    assert '초안 기준: 전달받은 계산 · 프레임 6 (기록 없음) · 선택한 첨부와 다름' in basis
+    assert '초안 기준: 전달받은 계산 · 프레임 6 (기록 없음) · 선택한 첨부와 다른 프레임' in basis
     assert '이번 질문의 첨부:' in basis and '프레임 1' in basis
     assert run.id not in basis
     ui_missing.close()
@@ -1138,6 +1158,7 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
 
     def choose_log_only(dialog):
         frames_box = dialog.findChild(QComboBox, 'capture_frame_choice')
+        hint = dialog.findChild(QLabel, 'capture_missing_hint')
         ok_btn = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
         assert frames_box.count() == 2
         assert frames_box.itemText(0) == '전달받은 프레임 6 · 기록 없음'
@@ -1145,8 +1166,10 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
         assert frames_box.itemText(1) == '판독한 결과 프레임 없음 — 입력과 로그 가져오기'
         assert frames_box.itemData(1) is None
         assert ui_empty.frame_context_state == 'missing'
+        assert not hint.isHidden()
         assert not ok_btn.isEnabled()
         frames_box.setCurrentIndex(1)
+        assert hint.isHidden()
         assert ok_btn.isEnabled()
         return QDialog.Accepted
 
@@ -1155,7 +1178,7 @@ def test_capture_run_frame_handoff_zero_nonzero_and_missing_frame(app, tmp_path,
     finish(ui_empty, app)
     assert len(captured_calls) == 1
     assert captured_calls[0][1]['frame_index'] is None
-    assert '초안 기준: 전달받은 계산 · 프레임 6 (기록 없음) · 선택한 첨부와 다름' in ui_empty.basis.text()
+    assert '초안 기준: 전달받은 계산 · 프레임 6 (기록 없음) · 선택한 첨부와 다른 프레임' in ui_empty.basis.text()
     ui_empty.close()
     wb.jobs.close()
 
@@ -1166,7 +1189,16 @@ def test_asset_verification_badge_lifecycle_and_theme(window, app, tmp_path, mon
     ui, provider = window
     ui.show()
     app.processEvents()
+
+    # Empty document without evidence has clear tooltip explaining attachment requirement
+    assert not ui.ask_button.isEnabled()
+    assert '첨부 자료' in ui.ask_button.toolTip()
+    assert ui.reverify_assets_button.isHidden()
+    assert ui.wait_label.text() == ''
+
     attach(ui, tmp_path, '** badge test input')
+    assert ui.ask_button.isEnabled()
+    assert 'Enter' in ui.ask_button.toolTip()
 
     started = threading.Event()
     release = threading.Event()
@@ -1181,37 +1213,48 @@ def test_asset_verification_badge_lifecycle_and_theme(window, app, tmp_path, mon
     ui.reload_document()
     assert started.wait(2.0)
     assert ui._asset_verifying is True
+    assert ui._asset_verify_failed is False
     assert ui._asset_warning_tone == 'running'
     assert not ui.asset_warning.isHidden()
     assert '확인하는 중' in ui.asset_warning.text()
     assert status_badge_style('running', ui._theme_mode) in ui.asset_warning.styleSheet()
     assert not ui.ask_button.isEnabled()
+    assert '무결성을 확인하는 중' in ui.ask_button.toolTip()
+    assert ui.wait_label.text() == '무결성 확인 중…'
+    assert not ui.reverify_assets_button.isVisible()
 
     # Toggling theme while verifying preserves running tone
     ui.theme_action.trigger()
     assert ui._asset_warning_tone == 'running'
     assert status_badge_style('running', ui._theme_mode) in ui.asset_warning.styleSheet()
 
-    # Pass -> badge hides, ask button enabled
+    # Pass -> badge hides, ask button enabled, wait_label cleared
     release.set()
     ui.wait_for_asset_verification(timeout=3.0)
     assert not ui._asset_verifying
+    assert not ui._asset_verify_failed
     assert not ui.asset_warning.isVisible()
     assert ui.asset_warning.text() == ''
     assert ui.ask_button.isEnabled()
+    assert not ui.reverify_assets_button.isVisible()
+    assert ui.wait_label.text() == ''
 
-    # Issues returned -> warning badge visible
+    # Issues returned -> warning badge + reverify button visible; ask_button stays non-blocked
     monkeypatch.setattr(ui.workbench, 'expert_discussion_issues',
                         lambda path, doc: ['근거 missing: 보존 파일 누락'])
     ui.reload_document()
     ui.wait_for_asset_verification(timeout=3.0)
     assert not ui._asset_verifying
+    assert not ui._asset_verify_failed
     assert ui._asset_warning_tone == 'warning'
     assert ui.asset_warning.isVisible()
     assert '누락·변경' in ui.asset_warning.text()
     assert status_badge_style('warning', ui._theme_mode) in ui.asset_warning.styleSheet()
+    assert ui.reverify_assets_button.isVisible() and ui.reverify_assets_button.isEnabled()
+    assert ui.ask_button.isEnabled()
+    assert ui.wait_label.text() == ''
 
-    # Exception raised -> error badge visible without leaking raw exception details
+    # Exception raised -> error badge visible, ask_button & ask() blocked, reverify button recovers
     def broken_issues(path, doc):
         raise RuntimeError('INTERNAL_SECRET_TRACE')
 
@@ -1219,13 +1262,176 @@ def test_asset_verification_badge_lifecycle_and_theme(window, app, tmp_path, mon
     ui.reload_document()
     ui.wait_for_asset_verification(timeout=3.0)
     assert not ui._asset_verifying
+    assert ui._asset_verify_failed is True
     assert ui._asset_warning_tone == 'error'
     assert ui.asset_warning.isVisible()
     assert '무결성 확인에 실패했습니다' in ui.asset_warning.text()
     assert 'INTERNAL_SECRET_TRACE' not in ui.asset_warning.text()
     assert status_badge_style('error', ui._theme_mode) in ui.asset_warning.styleSheet()
-    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', original_issues)
+    assert not ui.ask_button.isEnabled()
+    assert '무결성 확인에 실패했습니다' in ui.ask_button.toolTip()
+    assert ui.wait_label.text() == '무결성 확인 실패'
+    assert ui.reverify_assets_button.isVisible() and ui.reverify_assets_button.isEnabled()
+
+    # Clicking ask directly is also guarded while verification failed
+    ui.question.setPlainText('실패 상태에서 질문 시도')
+    ui.ask()
+    assert ui._operation is None
     assert provider.prompts == []
+
+    # Reverify via button when error resolves restores ask_button even on unchanged document
+    monkeypatch.setattr(ui.workbench, 'expert_discussion_issues', original_issues)
+    ui.reverify_assets_button.click()
+    ui.wait_for_asset_verification(timeout=3.0)
+    assert not ui._asset_verifying
+    assert not ui._asset_verify_failed
+    assert not ui.asset_warning.isVisible()
+    assert not ui.reverify_assets_button.isVisible()
+    assert ui.ask_button.isEnabled()
+    assert ui.wait_label.text() == ''
+    assert provider.prompts == []
+
+    # Provider unavailable updates tooltip specifically
+    ui._provider_available = False
+    ui._set_busy(False)
+    assert not ui.ask_button.isEnabled()
+    assert '공급자' in ui.ask_button.toolTip()
+    ui._provider_available = True
+    ui._set_busy(False)
+
+
+def test_unit_provenance_and_no_duplicate_unconfirmed_units_in_basis_and_transcript(window, tmp_path):
+    ui, _ = window
+    ev_none = attach(ui, tmp_path, '** no units', 'nounits.inp')
+    ev_user = attach(ui, tmp_path, '** user units', 'userunits.inp')
+    ev_unknown_src = attach(ui, tmp_path, '** unknown source units', 'unknownsrc.inp')
+    ui.document['evidences'][ev_user['id']].update(
+        units={'length': 'mm', 'force': 'N'},
+        unit_source='user',
+    )
+    ui.document['evidences'][ev_unknown_src['id']].update(
+        units={'length': 'm', 'force': 'N'},
+        unit_source='declared by user',
+    )
+    ui.document['turns'] = [
+        {'id': 't1', 'question': '단위 없음 확인', 'reply': '응답 1', 'role': '해석',
+         'evidence_id': ev_none['id'], 'status': 'completed'},
+        {'id': 't2', 'question': '사용자 선언 확인', 'reply': '응답 2', 'role': '해석',
+         'evidence_id': ev_user['id'], 'status': 'completed'},
+        {'id': 't3', 'question': '출처 미확인 확인', 'reply': '응답 3', 'role': '해석',
+         'evidence_id': ev_unknown_src['id'], 'status': 'completed'},
+    ]
+
+    ui.document['selected_evidence_id'] = ev_none['id']
+    ui.render()
+    assert ui.basis.text().count('단위 미확인') == 1
+
+    ui.document['selected_evidence_id'] = ev_user['id']
+    ui.render()
+    assert '단위: mm / N (사용자 선언)' in ui.basis.text()
+
+    ui.document['selected_evidence_id'] = ev_unknown_src['id']
+    ui.render()
+    assert '단위: m / N (출처 미확인)' in ui.basis.text()
+
+    lines = ui.transcript.toPlainText().splitlines()
+    header_t1 = next(line for line in lines if 'nounits.inp' in line)
+    header_t2 = next(line for line in lines if 'userunits.inp' in line)
+    header_t3 = next(line for line in lines if 'unknownsrc.inp' in line)
+    assert header_t1.count('단위 미확인') == 1
+    assert '단위: mm / N (사용자 선언)' in header_t2
+    assert '단위: m / N (출처 미확인)' in header_t3
+    ui.document['turns'] = []
+
+
+def test_basis_distinguishes_run_frame_and_manual_mismatches(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Discard)
+    wb = Workbench()
+    try:
+        run_a = 'a' * 32
+        run_b = 'b' * 32
+        ui = ExpertWindow(run_id=run_a, requested_frame_index=0, workbench=wb)
+
+        ev_diff_frame = {'id': 'e1', 'source_kind': 'native_run', 'run_id': run_a, 'frame_index': 1,
+                         'created_at': '2026-11-18T00:00:00Z', 'files': [], 'units': {}}
+        ev_diff_run = {'id': 'e2', 'source_kind': 'native_run', 'run_id': run_b, 'frame_index': 0,
+                       'created_at': '2026-11-18T00:00:00Z', 'files': [], 'units': {}}
+        ev_diff_both = {'id': 'e3', 'source_kind': 'native_run', 'run_id': run_b, 'frame_index': 2,
+                        'created_at': '2026-11-18T00:00:00Z', 'files': [], 'units': {}}
+        ev_manual = {'id': 'e4', 'source_kind': 'manual', 'run_id': None, 'frame_index': None,
+                     'created_at': '2026-11-18T00:00:00Z', 'files': [], 'units': {}}
+        ui.document['evidences'] = {e['id']: e for e in (ev_diff_frame, ev_diff_run, ev_diff_both, ev_manual)}
+
+        for ev, expected in (
+            (ev_diff_frame, '초안 기준: 전달받은 계산 · 프레임 1 · 선택한 첨부와 다른 프레임'),
+            (ev_diff_run, '초안 기준: 전달받은 계산 · 프레임 1 · 선택한 첨부와 다른 실행'),
+            (ev_diff_both, '초안 기준: 전달받은 계산 · 프레임 1 · 선택한 첨부와 다른 실행·프레임'),
+            (ev_manual, '초안 기준: 전달받은 계산 · 프레임 1 · 선택한 첨부는 수동 파일·다른 프레임'),
+        ):
+            ui.document['selected_evidence_id'] = ev['id']
+            ui.render()
+            first_line = ui.basis.text().splitlines()[0]
+            assert first_line == expected
+            assert run_a not in ui.basis.text() and run_b not in ui.basis.text()
+
+        # When requested_frame_index is None, still distinguish other run vs manual file
+        ui_no_frame = ExpertWindow(run_id=run_a, workbench=wb)
+        ui_no_frame.document['evidences'] = {'e2': ev_diff_run, 'e4': ev_manual}
+        ui_no_frame.document['selected_evidence_id'] = 'e2'
+        ui_no_frame.render()
+        assert ui_no_frame.basis.text().splitlines()[0] == '초안 기준: 전달받은 계산 · 선택한 첨부와 다른 실행'
+        ui_no_frame.document['selected_evidence_id'] = 'e4'
+        ui_no_frame.render()
+        assert ui_no_frame.basis.text().splitlines()[0] == '초안 기준: 전달받은 계산 · 선택한 첨부는 수동 파일'
+        ui.close()
+        ui_no_frame.close()
+    finally:
+        wb.jobs.close()
+
+
+def test_handoff_notice_persists_until_superseded_by_attach_or_verify_error(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args: QMessageBox.Discard)
+    wb = Workbench()
+    try:
+        # 1) Fresh handoff keeps notice across initial render until evidence is attached
+        ui = ExpertWindow(tmp_path / 'handoff_attach.json', run_id='a' * 32, workbench=wb)
+        assert ui._handoff_notice_active is True
+        assert '전달되었습니다' in ui.status.text()
+        assert not ui.status.isHidden()
+
+        ui.render()
+        assert ui._handoff_notice_active is True
+        assert '전달되었습니다' in ui.status.text()
+
+        inp = tmp_path / 'a.inp'
+        inp.write_text('** input', encoding='utf-8')
+        ev = wb.import_expert_files(ui.assets, files={'input': inp}, solver_id='calculix')
+        ui._operation = 'attach'
+        tok = object()
+        ui._op_token = tok
+        ui._mailbox.put((tok, ui.path.resolve(), True, ev))
+        ui._poll()
+        ui.wait_for_asset_verification(timeout=3.0)
+        assert ui._handoff_notice_active is False
+        assert ui.status.text() == '자료를 첨부했습니다.'
+        ui.render()
+        assert ui.status.text() == '자료를 첨부했습니다.'
+        ui.close()
+
+        # 2) Verification failure supersedes initial handoff notice
+        ui_err = ExpertWindow(tmp_path / 'handoff_err.json', run_id='a' * 32, workbench=wb)
+        assert ui_err._handoff_notice_active is True
+        tok_asset = object()
+        ui_err._asset_token = tok_asset
+        ui_err._asset_mailbox.put((tok_asset, ui_err.path.resolve(), None, None, False, ['error']))
+        ui_err._poll()
+        assert ui_err._asset_verify_failed is True
+        assert ui_err._handoff_notice_active is False
+        assert ui_err.status.text() == ''
+        assert ui_err.status.isHidden()
+        ui_err.close()
+    finally:
+        wb.jobs.close()
 
 
 def test_late_responses_ignored_on_switched_document_and_closed_window(window, app, tmp_path, monkeypatch):

@@ -225,6 +225,7 @@ def test_request_expert_debate_passes_zero_and_nonzero_frame_index_without_captu
     display_run(window, state, tmp_path, name=run_id)
 
     window.frame_selector.setCurrentIndex(window.frame_selector.findData(0))
+    assert window.frame_selector.currentText().startswith("프레임 1 · 단계 ")
     window.request_expert_debate()
     expert_zero = window._expert_window
     assert expert_zero.requested_frame_index == 0
@@ -235,6 +236,8 @@ def test_request_expert_debate_passes_zero_and_nonzero_frame_index_without_captu
     assert "0.125 mm" in expert_zero.question.toPlainText()
 
     window.frame_selector.setCurrentIndex(window.frame_selector.findData(1))
+    assert window.frame_selector.currentText().startswith("프레임 2 · 단계 ")
+    assert window.frame_selector.currentText().endswith("[최종]")
     window.request_expert_debate()
     expert_one = window._expert_window
     assert expert_one is not expert_zero
@@ -334,7 +337,10 @@ def test_bridge_handoff_zero_frame_capture_run_selects_frame_zero_and_matches(
         assert attached["frame_index"] == 0
         assert "초안 기준: 전달받은 계산 · 프레임 1" in expert.basis.text()
         assert "선택한 첨부와 다름" not in expert.basis.text()
+        assert "선택한 첨부와 다른" not in expert.basis.text()
+        assert "선택한 첨부는" not in expert.basis.text()
         assert "프레임 1" in expert.basis.text()
+        assert "단위: mm / N (출처 미확인)" in expert.basis.text()
         assert run.id not in expert.basis.text()
         assert expert.question.toPlainText() == draft_text
     finally:

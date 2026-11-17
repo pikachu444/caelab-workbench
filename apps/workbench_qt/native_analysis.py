@@ -847,8 +847,10 @@ class NativeAnalysisWindow(QMainWindow):
             self.frame_selector.clear()
             frames = result.get("frames", [])
             for idx, frame in enumerate(frames):
-                label = f"단계 {frame.get('step', '?')} / 증분 {frame.get('increment', '?')} / 값 {frame.get('value', '?')}{' [최종]' if idx == len(frames) - 1 else ''}"
-                self.frame_selector.addItem(label, frame.get("index"))
+                raw_idx = frame.get("index")
+                num = (raw_idx + 1) if isinstance(raw_idx, int) and not isinstance(raw_idx, bool) else idx + 1
+                label = f"프레임 {num} · 단계 {frame.get('step', '?')} / 증분 {frame.get('increment', '?')} / 값 {frame.get('value', '?')}{' [최종]' if idx == len(frames) - 1 else ''}"
+                self.frame_selector.addItem(label, raw_idx)
             default = result.get("summary", {}).get("frame_index")
             index = self.frame_selector.findData(previous if previous is not None else default)
             if index < 0:
