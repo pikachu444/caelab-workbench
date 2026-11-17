@@ -34,17 +34,17 @@ description: >-
 1. **팀장 (`Orchestrator (Argon)` — 2-Phase Plan-Execute 메인 세션)**:
    - Plan/Review 단계(Plan Mode)에서만 Argon이 아키텍처·파일·줄번호·불변조건까지 확정한 `Concrete Spec`(`scratch/spec-*.md`)과 게이트 판정을 내리고, 실행(`exit_plan_mode`) 단계에서는 경량 실행 모델이 워커 오케스트레이션·테스트 검증·PR 통합을 수행합니다.
    - 직접 대량 코드를 작성하거나 수만 줄 로그를 읽지 않습니다.
-2. **서브 리드 / 적대적 검수 (`Gemini 4 Hydrogen (XHigh)` / `chief-reviewer` · `cae-user-expert`)**:
+2. **서브 리드 / 적대적 검수 (`Gemini 4 Hydrogen (XHigh)` / `chief-reviewer` · `cae-user-expert`, 또는 로컬 Codex CLI — `gpt-6.2-astra`, `model_reasoning_effort="xhigh"`)**:
    - 5시간 단기 롤링 쿼터를 활용해 `Concrete Spec` 감사, 수치 수식 검증, Gate 1 코드/계약 감사, Gate 2 `1440×900` 실화면 시각 UX 감수를 수행합니다.
-3. **병렬 개발 워커 A·B (로컬 Codex CLI — `gpt-6.1-sol`, `model_reasoning_effort="high"`, 또는 `Gemini 4 Hydrogen (High)` 병렬 Swarm/Subagent)**:
+3. **병렬 개발 워커 A·B (로컬 Codex CLI — `gpt-6.2-sol`, `model_reasoning_effort="high"`, 또는 `Gemini 4 Hydrogen (High)` 병렬 Swarm/Subagent)**:
    - 각각 독립된 `git worktree`에서 실행합니다:
      ```powershell
      $spec = Get-Content -Raw '<spec-path>.md'
-     $spec | codex exec -C <worktree-path> -s danger-full-access --json -m gpt-6.1-sol -c 'model_reasoning_effort="high"' -c 'mcp_servers={}' - > '<log-path>.jsonl' 2>&1
+     $spec | codex exec -C <worktree-path> -s danger-full-access --json -m gpt-6.2-sol -c 'model_reasoning_effort="high"' -c 'mcp_servers={}' - > '<log-path>.jsonl' 2>&1
      ```
    - 후속 수정 지시 시 반드시 기존 `thread_id`를 `resume`합니다 (`-C`와 `-s`는 `resume` 앞에 위치):
      ```powershell
-     $fixSpec | codex exec -C <worktree-path> -s danger-full-access resume <THREAD_ID> --json -m gpt-6.1-sol -c 'model_reasoning_effort="high"' -c 'mcp_servers={}' - > '<resume-log>.jsonl' 2>&1
+     $fixSpec | codex exec -C <worktree-path> -s danger-full-access resume <THREAD_ID> --json -m gpt-6.2-sol -c 'model_reasoning_effort="high"' -c 'mcp_servers={}' - > '<resume-log>.jsonl' 2>&1
      ```
    - **문서 과잉·토론 루프 방지 철칙 (Anti-Paperwork Drift)**: 워커에게 구현을 맡겼을 때 `caelab/`, `apps/`, `src/` 제품 코드 수정 없이 마크다운 명세·토론 JSONL·영수증·외부 원문 덤프만 Git에 누적하고 끝내는 것을 엄격히 금지합니다. 회의·비판 로그는 `scratch/`에 두고, PR은 동작하는 코드+테스트로만 제출합니다.
 4. **3단계 무신뢰(Zero-Trust) 독립 검수**:

@@ -190,8 +190,8 @@ Antigravity v2 업데이트로 도입된 **2-Phase Plan-Execute 코디네이터*
 | 역할 (Role) | 권장 모델 / 실행 수단 | 쿼터 주기 | 핵심 책임 및 운용 규격 |
 |---|---|---|---|
 | **총괄 아키텍트** (`Team Lead`) | **`Orchestrator (Argon)`**<br>(`gemini-pro-orchestrator-g1-pro`) | **주간 쿼터** (Plan 턴에만 과금) | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서만 Argon이 동작하고, `exit_plan_mode` 후 실제 명령/파일 편집/워커 관제는 경량 실행 모델로 위임하여 **주간 Argon 쿼터 소모를 70~80% 절감**. |
-| **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`**<br>(`gemini-4-hydrogen-xhigh`, Swarm/Subagent) | **5시간 롤링 리셋** | 주간 락에 묶이지 않는 고추론 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
-| **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) 또는 **`Claude Sonnet 5.5` / `Codex CLI`** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 직접 핀). |
+| **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`** (`gemini-4-hydrogen-xhigh`) 또는 **`Codex CLI` (`gpt-6.2-astra`, `xhigh`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 주간 락에 묶이지 않는 고추론 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
+| **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) 또는 **`Claude Sonnet 5.5` / `Codex CLI` (`gpt-6.2-sol`, `high`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 직접 핀). |
 | **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 3.8 Flash`** (`gemini-3.8-flash-high`/`low`) 또는 **`Claude Haiku`** | **5시간 롤링 리셋** | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검. |
 
 #### 문서 과잉·토론 루프 방지 철칙 (Anti-Paperwork Drift Rule)
