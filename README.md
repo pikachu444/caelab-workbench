@@ -77,6 +77,34 @@ modes = solve_eigenmodes_2d(num_modes=3)  # M-정규화 모드, 일반적인 lam
 `NativeResultView` 화면 연결은 포함하지 않습니다. 기존 FEniCSx 경로는 유지합니다.
 `python -m pytest tests/test_pde_scipy_solver.py tests/test_pde_line.py -v`로 검증합니다.
 
+`SciPyPDEEvaluator`는 외부 솔버 없이 순수 Python에서 DoE → PDE 해석 →
+목적·제약 평가 → Pareto 선정을 연결합니다. `__call__`은 `StudyManager`에,
+`evaluate_batch`는 `optimize`에 연결하며 변수 ID와 PDE 인자는 `variable_mapping`으로 지정합니다.
+응답은 `max_temp`, `min_temp`, 절점 산술평균 `mean_temp`, 절점 열유속 크기 최댓값 `max_flux`와
+`max_u`·`min_u`·`mean_u` 별칭입니다. 실패한 배치 관측은 빈 응답과 `valid=False`·이유를 보존합니다.
+
+```python
+from caelab.mdo import ContinuousVariable, VariableSpace, ObjectiveSpec, ConstraintSpec
+from caelab.mdo import SciPyPDEEvaluator, StudyManager
+from caelab.mdo.doe import DOEConfig, generate_design
+
+space = VariableSpace(variables=(
+    ContinuousVariable(id="k", name="Conductivity", unit="", lower=1, upper=5, initial=2),
+))
+evaluator = SciPyPDEEvaluator(variable_mapping={"k": "diffusion"}, default_rhs=100, nx=16, ny=16)
+study = StudyManager(space=space,
+    objectives=(ObjectiveSpec(id="cooler", response_id="max_temp", sense="MIN"),),
+    constraints=(ConstraintSpec(id="cap", response_id="max_temp", kind="UPPER", limit=3),))
+for point in generate_design(space, DOEConfig(method="lhs", n_samples=12, seed=42)).points:
+    record = study.add_point(point.values)
+    study.evaluate_point_with_evaluator(record, evaluator)
+print(study.update_pareto_front())
+```
+
+동일 환경·동일 seed에서 DoE와 최적화의 수치·Pareto 결과를 정확히 재현합니다.
+면별 `dirichlet_*` 매핑은 기본 `None`을 지정 면만의 Dirichlet 조건으로 바꾸고 나머지는 자연경계로 둡니다.
+균일 상수·함수 기본값은 다른 면에도 유지하며, Dirichlet/Neumann 중복·모서리 충돌은 오류입니다.
+
 ## 문서
 
 | 목적 | 문서 |

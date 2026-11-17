@@ -88,6 +88,12 @@ flowchart LR
 - 동일한 한계나 오류(예: CAD 실행 파일 미설치)를 상단 요약 줄과 하단 에디터에 2번 중복 출력하지 않습니다 (`self.cad_editor.isHidden()` 조건 등으로 단일화).
 - 입력 파일이나 단위계가 바뀌어 이전 해석 결과가 오래된(Stale) 경우, 긴 설명문 대신 노드 박스의 **노란 빗금 배지(`이전 입력의 결과`)** 와 상단 1줄 상태 요약으로 즉각 식별되게 합니다.
 
+### 2.8 `docs/specs/cae-research/` (D01~D39 및 `MaterialStudyWindow` C9) 구현 시 필수 GUI 가드레일
+`docs/specs/cae-research/core-implementation.md` (§C9) 및 `IMPLEMENTATION_TASKS_ko.md` (`D01`, `D06`, `D07`, `D18`)의 새 화면 구현은 반드시 위 **GUI 7대 법칙**을 최우선 가드레일로 적용해야 합니다:
+1. **내부 열거형·해시 UI 노출 금지**: `adequacy_status=not_assessed`, `source_unavailable`, `holdout_exposed`, raw `SHA-256` 해시/UUID를 라벨이나 테이블 셀에 그대로 렌더링하지 않고 간결한 한국어 공학 배지(`실측 대조 전`, `원문 미연결`, `보류 시험 포함`)로 변환하며 해시·진단값은 메타데이터/`setToolTip(...)`에만 둡니다.
+2. **관료적 면책 문구 금지**: `MaterialStudyWindow` 상단·하단 고정 배너에 `"실물 재료 적합성 미검증"`, `"공학 검증 미실시"`, `"값은 여기서 고치지 않습니다"` 같은 정적 방어 문구를 추가하지 않습니다.
+3. **70% 뷰포트 비례·클릭 마찰 제로화·직접 시각 검수**: `1440×900` 기준 중앙 곡선/잔차 플롯 및 비교 테이블 영역을 **70%(`>= 1000px`) 이상** 확보하고, Prep 카드 적용(`C10`)은 `Preview/Prepare 통과 ➔ Apply 즉시 활성화` 흐름을 따르며, 병합 전 반드시 `cae-user-expert`가 모든 도크/탭(Model·Experiments·Parameters·Comparisons·Evaluations·Exports)의 `1440×900` PNG 실렌더링 캡처를 육안 검증합니다.
+
 ---
 
 ## 3. 모델 등급(Tier)과 추론 강도(Reasoning Effort)를 조절하는 보편적 팀 오케스트레이션 원리
@@ -176,6 +182,22 @@ sequenceDiagram
   - **총괄 (`Gemini 4 Argon`)**: `scratch/spec-wb-gui-density.md`, `scratch/spec-prep-core-ui.md` 등 파일·줄번호·문자열까지 지정한 명세서만 작성.
   - **구현 워커 (`로컬 Codex CLI` — `gpt-6.1-sol`, `reasoning_effort="high"`)**: 두 개의 독립 워크트리(`wb-gui-density`, `prep-core-ui`)에서 백그라운드 명령(`$spec | codex exec -C <wt> -s danger-full-access --json ...`)으로 코드 수정 및 테스트 수행, 비판 수정 시 `codex exec -C <wt> -s danger-full-access resume <THREAD_ID>`로 동일 세션 재개.
   - **독립 검수단 (`Gemini Pro` 서브에이전트 4개)**: `chief-reviewer`(코드 감사)와 `cae-user-expert`(시각 UX 감사)를 모두 `Model: "pro"` 서브에이전트로 띄워 검수하고, `cae-user-expert`가 지적한 `Preview` 수동 체크박스 마찰과 `output_tabs` 캡처 누락을 재수정해 명시적 `APPROVED`를 받은 뒤 `main`에 병합함.
+
+### 3.6 Antigravity 차세대 모델 체계 (`Orchestrator (Argon)` & `Gemini 4 Hydrogen`) 기반 팀 구성 표준
+
+Antigravity v2 업데이트로 도입된 **2-Phase Plan-Execute 코디네이터**와 **5시간 단기 롤링 쿼터 기반 고추론 모델군**을 적용하여 주간 Argon 한도 고갈을 원천 차단하는 권장 표준 구성입니다.
+
+| 역할 (Role) | 권장 모델 / 실행 수단 | 쿼터 주기 | 핵심 책임 및 운용 규격 |
+|---|---|---|---|
+| **총괄 아키텍트** (`Team Lead`) | **`Orchestrator (Argon)`**<br>(`gemini-pro-orchestrator-g1-pro`) | **주간 쿼터** (Plan 턴에만 과금) | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서만 Argon이 동작하고, `exit_plan_mode` 후 실제 명령/파일 편집/워커 관제는 경량 실행 모델로 위임하여 **주간 Argon 쿼터 소모를 70~80% 절감**. |
+| **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`**<br>(`gemini-4-hydrogen-xhigh`, Swarm/Subagent) | **5시간 롤링 리셋** | 주간 락에 묶이지 않는 고추론 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
+| **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) 또는 **`Claude Sonnet 5.5` / `Codex CLI`** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 직접 핀). |
+| **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 3.8 Flash`** (`gemini-3.8-flash-high`/`low`) 또는 **`Claude Haiku`** | **5시간 롤링 리셋** | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검. |
+
+#### 문서 과잉·토론 루프 방지 철칙 (Anti-Paperwork Drift Rule)
+- **코드 없는 문서 PR 누적 금지**: 로컬 Codex CLI나 하위 워커에게 구현을 배정할 때, 실제 제품 코드(`caelab/`, `apps/`, `src/`) 변경 없이 수만 줄의 마크다운 명세서, 자체 토론 로그(`*.jsonl`), 검토 영수증(`review-*.md`), 외부 업스트림 원본 소스 덤프를 Git 저장소에 커밋하고 끝내는 행위를 엄격히 금지합니다.
+- 회의 안건·비판·재검토 로그는 `AGENTS.md` 규칙대로 Git 추적 밖(`scratch/` 등)에 유지하고, PR은 반드시 **동작하는 제품 코드 + 단위/회귀 테스트 + 핵심 동기화 문서(`CURRENT_STATE.md`, `README.md`)**로만 제출합니다.
+- `check_handoff.py` 등 정적 검증기가 `CURRENT_STATE.md`/`README.md` 같은 살아있는 문서를 영구 해시로 잠가 후속 코드 PR의 `check_doc_sync.py`를 막지 않도록 유지합니다.
 
 ---
 

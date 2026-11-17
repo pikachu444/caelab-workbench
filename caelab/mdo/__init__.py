@@ -69,4 +69,12 @@ __all__ = [
     "optimize",
     "CalculiXEvaluator",
     "extract_calculix_responses",
+    "SciPyPDEEvaluator",
 ]
+
+
+def __getattr__(name):
+    if name == "SciPyPDEEvaluator":
+        from caelab.mdo.pde_evaluator import SciPyPDEEvaluator
+        return SciPyPDEEvaluator
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

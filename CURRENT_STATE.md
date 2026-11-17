@@ -4,6 +4,28 @@
 
 [전체 개발 계획](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)과 [실행 작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)에 기존 미완료와 신규 연구를 함께 배치했습니다. 지금 착수할 구현은 전문가 창의 프레임·검증 상태 수정(D01), 시험·결과·단위의 공통 기반(D02), Prep 표시 갱신(D03)입니다. 첫 연구 납품은 실제 CSV로 Prony 계수를 찾고 곡선을 비교해 저장·재열기까지 연결하는 D02/D04/D05/D06/D07입니다. 문서 수정으로 제품 구현·N분류·Windows 인수를 완료 처리하지 않습니다. 기존 병합 기능은 재사용하고 실제 미확인·추가 개발을 나눴습니다.
 
+## TRACK-3 MDO × 내장 SciPy PDE 솔버 폐루프 — 2026-11-10 구현 (2026-11-17 main 리베이스·통합)
+
+기준 SHA는 `1c1cacb`(리베이스 대상 `b82e445`), 작업 브랜치는 `feature/wb-mdo-pde-closed-loop`입니다.
+`caelab.mdo.SciPyPDEEvaluator`는 외부 솔버·GUI 없이 기존 `solve_poisson_2d`를 사용합니다.
+`variable_mapping`으로 확산계수·소스·균일/면별 Dirichlet·면별 Neumann·영역 크기·격자를 연결하고,
+`__call__`은 `StudyManager`, `evaluate_batch`는 `optimize`의 요청 ID별 관측 계약을 따릅니다.
+응답은 `max_temp`, `min_temp`, `mean_temp`(절점 산술평균), `max_flux`(절점 열유속 크기 최댓값)와
+`max_u`, `min_u`, `mean_u` 별칭이며 단위는 호출자가 일관되게 정합니다.
+비양수 k·NaN/Inf·솔버 예외는 가짜 수치로 바꾸지 않고 배치에서 빈 응답·`valid=False`·실패 이유로,
+StudyManager에서는 `FAILED`·`NOT_ASSESSED`로 보존하여 Pareto 후보에서 제외합니다.
+
+실제 SciPy 호출 기반 신규 테스트는 LHS 12점 → 해석 → 목적 2개·온도 상한 제약 → Pareto 선정과
+NSGA-II 20회 평가를 검사합니다. 같은 환경·seed 42로 전체 흐름을 재실행해 설계점·응답·목적값·
+Pareto/선택 ID의 정확한 재현성을 비교합니다. 온도의 q/k 비례·열유속의 k 독립성 및 혼합 경계의
+해석해도 검사하며 mock은 사용하지 않습니다. 공개 export는 평가기 사용 시 불러오므로
+기존 MDO 기본 계약을 SciPy 등 선택 의존성 없이 import하는 경계를 유지합니다.
+
+Windows Python 3.13.5·NumPy 2.5.2·SciPy 1.18.0·pymoo 0.6.2에서 지정 신규+SciPy PDE 검사는
+**33 passed**, 선택 의존성 import 검사까지 포함하면 **34 passed**입니다. MDO 전체 회귀는
+**368 passed, 2 skipped, 268 warnings / 572.42초**입니다(skip 2건은 기존 CalculiX 실행 파일 부재).
+MDO Studio GUI 연결 및 실화면 UX 감수는 별도 후속 아이템 대상입니다.
+
 ## 기존 개발 계획과 새 명세의 연결 — 2026-11-12
 
 이번 갱신은 기존 계획과 새 12개 작업의 부모 항목·재사용분·추가 구현·선행·완료 기준을 연결한 **문서 변경**이다. 새 제품 기능 12개는 모두 구현 예정이며 문서 병합으로 구현 진도를 올리지 않는다. 세부 작업의 현재 배정은 미정이고 달력 날짜도 아직 없다.

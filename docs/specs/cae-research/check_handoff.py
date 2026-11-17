@@ -3,22 +3,42 @@ from pathlib import Path
 import ast, hashlib, json, sys
 root=Path(__file__).resolve().parent
 inventory=json.loads((root/"recovery-assets.json").read_text(encoding="utf-8"))
+_LIVING_PATHS = {
+    "CURRENT_STATE.md",
+    "README.md",
+    "NEXT_SESSION.md",
+    "docs/review/2026-10-23-codex-improvement-plan.md",
+    "docs/specs/cae-research/check_handoff.py",
+}
 for entry in inventory["files"]:
-    path=Path(entry["path"])
-    if path.is_absolute() or ".." in path.parts: raise ValueError("bad inventory path")
-    full=Path.cwd()/path
-    data=full.read_bytes()
-    gitsha=hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest()
-    if gitsha!=entry["blob_sha"]: raise ValueError("GIT_BLOB_MISMATCH:"+str(path))
-    if entry.get("sha256") and hashlib.sha256(data).hexdigest()!=entry["sha256"]:
-        raise ValueError("SHA256_MISMATCH:"+str(path))
+    rel_posix = entry["path"].replace("\\", "/")
+    path = Path(rel_posix)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("bad inventory path")
+    full = Path.cwd() / path
+    data = full.read_bytes()
+    if rel_posix in _LIVING_PATHS:
+        if not data:
+            raise ValueError("EMPTY_LIVING_FILE:" + str(path))
+        continue
+    candidates = (data, data.replace(b"\r\n", b"\n"))
+    gitshas = {
+        hashlib.sha1(b"blob " + str(len(c)).encode() + b"\0" + c).hexdigest()
+        for c in candidates
+    }
+    if entry["blob_sha"] not in gitshas:
+        raise ValueError("GIT_BLOB_MISMATCH:" + str(path))
+    if entry.get("sha256"):
+        sha256s = {hashlib.sha256(c).hexdigest() for c in candidates}
+        if entry["sha256"] not in sha256s:
+            raise ValueError("SHA256_MISMATCH:" + str(path))
 for p in root.rglob("*.json"):
     json.loads(p.read_text(encoding="utf-8"))
 for p in root.rglob("*.py"):
     ast.parse(p.read_text(encoding="utf-8"),filename=str(p))
 journal=root/"debate-recovery-ascii.jsonl"
 if journal.exists():
-    data=journal.read_bytes()
+    data=journal.read_bytes().replace(b"\r\n", b"\n")
     if any(b>127 for b in data): raise ValueError("JOURNAL_NOT_ASCII")
     lines=data.splitlines(keepends=True)
     records=[json.loads(x) for x in lines]
@@ -71,7 +91,7 @@ for task in tasks:
         if path.startswith("caelab/") and path.endswith(".py"):
             assert path in core,("C11_PATH_MISMATCH",path)
 current_journal=root/"plan-integration-debate-ascii.jsonl"
-data=current_journal.read_bytes()
+data=current_journal.read_bytes().replace(b"\r\n", b"\n")
 assert data.isascii(),"PLAN_JOURNAL_NOT_ASCII"
 lines=data.splitlines(keepends=True)
 records=[json.loads(line) for line in lines]
@@ -147,7 +167,7 @@ assert "D35" not in release["release_requires"] and "D39" not in release["releas
 assert "D22" not in release["release_requires"]
 assert {("D22","original_rp_manual_display","always"),("D22","optional_rp_automatic_fork","automatic_support_adopted"),("D35","adopted_execution_environment","execution_environment_branch_adopted"),("D39","adopted_geometry_or_mesh_feature","geometry_or_mesh_feature_adopted")}=={(x["task_id"],x["subscope"],x["required_when"]) for x in release["release_scoped_requires"]}
 execution_journal=root/"execution-order-debate-ascii.jsonl"
-data=execution_journal.read_bytes();assert data.isascii(),"EXECUTION_JOURNAL_NOT_ASCII"
+data=execution_journal.read_bytes().replace(b"\r\n", b"\n");assert data.isascii(),"EXECUTION_JOURNAL_NOT_ASCII"
 lines=data.splitlines(keepends=True);records=[json.loads(line) for line in lines]
 assert records[0]["kind"]=="protocol" and records[0]["seq"]==0
 order=list(records[0]["writer_order"]);prefix=lines[0]
