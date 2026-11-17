@@ -124,6 +124,7 @@ class ExpertWindow(QMainWindow):
         outer.addStretch()
         column = QWidget()
         column.setMaximumWidth(960)
+        self._column = column
         layout = QVBoxLayout(column)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -161,6 +162,7 @@ class ExpertWindow(QMainWindow):
         layout.addWidget(self.transcript, 1)
         composer_card = QFrame()
         composer_card.setObjectName('sectionCard')
+        self.composer_card = composer_card
         composer_layout = QVBoxLayout(composer_card)
         composer_layout.setContentsMargins(8, 6, 8, 6)
         composer_layout.setSpacing(4)
@@ -194,8 +196,7 @@ class ExpertWindow(QMainWindow):
         send_line = controls
         send_line.addStretch(1)
         self.wait_label = QLabel('')
-        self.wait_label.setMaximumWidth(110)
-        self.wait_label.setWordWrap(True)
+        self.wait_label.setWordWrap(False)
         send_line.addWidget(self.wait_label)
         self.stop = QPushButton('중단')
         self.stop.clicked.connect(self.cancel_request)
@@ -498,6 +499,7 @@ class ExpertWindow(QMainWindow):
         if evidence and self._cautions(evidence):
             basis_lines.append(' · '.join(self._cautions(evidence)))
         self.basis.setText('\n'.join(basis_lines))
+        self._sync_composer_layout()
         self.attachments_button.setText(f"첨부 자료 ({self.sources.count()})")
         fragments = []
         labels = {'completed': '', 'pending': '답변을 기다리고 있습니다…', 'failed': '답변을 받지 못했습니다.',
@@ -650,6 +652,31 @@ class ExpertWindow(QMainWindow):
             self.document['selected_evidence_id'] = previous
         self.render()
 
+    def _sync_composer_layout(self):
+        """Activate composer and parent layouts so label height/width settle immediately."""
+        targets = (
+            getattr(self, 'basis', None),
+            getattr(self, 'wait_label', None),
+            getattr(self, 'composer_card', None),
+            getattr(self, '_column', None),
+            self.centralWidget(),
+        )
+        for widget in targets:
+            if widget is None:
+                continue
+            widget.updateGeometry()
+            layout = widget.layout()
+            if layout is not None:
+                layout.activate()
+        for widget in (getattr(self, 'composer_card', None), getattr(self, '_column', None)):
+            layout = widget.layout() if widget is not None else None
+            if layout is not None:
+                layout.activate()
+
+    def _set_wait_text(self, text):
+        self.wait_label.setText(text)
+        self._sync_composer_layout()
+
     def _set_busy(self, busy):
         live = bool((self.document.get('pending_request') or {}).get('live'))
         verifying = getattr(self, '_asset_verifying', False)
@@ -693,6 +720,7 @@ class ExpertWindow(QMainWindow):
                 else ''
             )
         self.stop.setEnabled(self._operation == 'ask' and not self._cancel.is_set())
+        self._sync_composer_layout()
 
     def refresh_provider(self):
         status = self.workbench.expert_provider_status(self.document.get('provider_id'))
@@ -978,7 +1006,7 @@ class ExpertWindow(QMainWindow):
         self._stage_token = stage_token
         self._cancel.clear()
         self._set_busy(True)
-        self.wait_label.setText('자료 준비 중…' if operation == 'ask' else '첨부 자료를 보존하는 중')
+        self._set_wait_text('자료 준비 중…' if operation == 'ask' else '첨부 자료를 보존하는 중')
         self.render()
         if operation == 'ask':
             self.transcript.follow_tail = True
@@ -993,7 +1021,7 @@ class ExpertWindow(QMainWindow):
     def cancel_request(self):
         self._cancel.set()
         self.stop.setEnabled(False)
-        self.wait_label.setText('중단 요청 중…')
+        self._set_wait_text('중단 요청 중…')
         if self._pending_message:
             self._pending_message['status'] = 'cancelled'
         self.render()
@@ -1009,7 +1037,7 @@ class ExpertWindow(QMainWindow):
                 break
             if (self._operation == 'ask' and token is self._stage_token
                     and not self._cancel.is_set() and stage in labels):
-                self.wait_label.setText(labels[stage])
+                self._set_wait_text(labels[stage])
         while True:
             try:
                 token, path, rev, target_assets, ok, issues = self._asset_mailbox.get_nowait()

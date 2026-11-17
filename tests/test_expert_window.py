@@ -1221,6 +1221,9 @@ def test_asset_verification_badge_lifecycle_and_theme(window, app, tmp_path, mon
     assert not ui.ask_button.isEnabled()
     assert '무결성을 확인하는 중' in ui.ask_button.toolTip()
     assert ui.wait_label.text() == '무결성 확인 중…'
+    assert not ui.wait_label.wordWrap()
+    assert ui.wait_label.width() >= ui.wait_label.fontMetrics().horizontalAdvance('무결성 확인 중…')
+    assert ui.wait_label.height() >= ui.wait_label.fontMetrics().height()
     assert not ui.reverify_assets_button.isVisible()
 
     # Toggling theme while verifying preserves running tone
@@ -1271,6 +1274,10 @@ def test_asset_verification_badge_lifecycle_and_theme(window, app, tmp_path, mon
     assert not ui.ask_button.isEnabled()
     assert '무결성 확인에 실패했습니다' in ui.ask_button.toolTip()
     assert ui.wait_label.text() == '무결성 확인 실패'
+    assert not ui.wait_label.wordWrap()
+    assert ui.wait_label.width() >= ui.wait_label.fontMetrics().horizontalAdvance('무결성 확인 실패')
+    assert ui.wait_label.height() >= ui.wait_label.fontMetrics().height()
+    assert ui.wait_label.x() + ui.wait_label.width() <= ui.stop.x()
     assert ui.reverify_assets_button.isVisible() and ui.reverify_assets_button.isEnabled()
 
     # Clicking ask directly is also guarded while verification failed
@@ -1551,3 +1558,48 @@ def test_close_while_operation_active_cancels_then_marks_closed(window, app, tmp
     assert ui._op_token is None
     assert ui._asset_token is None
     assert not ui.timer.isActive()
+
+
+def test_wait_label_and_composer_card_layout_sync_without_clipping(window, app, tmp_path):
+    ui, _ = window
+    ui.show()
+    app.processEvents()
+
+    for size in ((1440, 900), (680, 580)):
+        ui.resize(*size)
+        app.processEvents()
+        baseline_card_h = ui.composer_card.height()
+        assert not ui.wait_label.wordWrap()
+
+        for text in ('무결성 확인 중…', '무결성 확인 실패', '모델 응답을 기다리는 중…'):
+            ui._set_wait_text(text)
+            immediate_state = (ui.wait_label.width(), ui.wait_label.height(), ui.composer_card.height())
+            metrics = ui.wait_label.fontMetrics()
+            assert ui.wait_label.width() >= metrics.horizontalAdvance(text)
+            assert ui.wait_label.height() >= metrics.height()
+            assert ui.wait_label.x() + ui.wait_label.width() <= ui.stop.x()
+            assert ui.composer_card.height() == baseline_card_h
+            app.processEvents()
+            assert (ui.wait_label.width(), ui.wait_label.height(), ui.composer_card.height()) == immediate_state
+
+    ui.resize(1440, 900)
+    app.processEvents()
+    ui._set_wait_text('')
+    single_line_h = ui.composer_card.height()
+
+    ui.run_id = 'other_run_id'
+    ui.requested_frame_index = 2
+    ui.frame_context_state = 'missing'
+    ev = attach(ui, tmp_path, '** unitless input', 'long_multiline_basis_input.inp')
+    ui.wait_for_asset_verification(timeout=2.0)
+    ui.document['evidences'][ev['id']]['frame_index'] = 0
+    ui.document['evidences'][ev['id']]['stale'] = True
+    ui.render()
+
+    immediate_basis_h = ui.basis.height()
+    immediate_card_h = ui.composer_card.height()
+    assert immediate_card_h > single_line_h
+    assert immediate_card_h >= ui.composer_card.minimumSizeHint().height()
+    app.processEvents()
+    assert ui.basis.height() == immediate_basis_h
+    assert ui.composer_card.height() == immediate_card_h
