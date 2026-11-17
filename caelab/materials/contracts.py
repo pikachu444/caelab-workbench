@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
 import math
 from types import MappingProxyType
 from typing import Any
+
+import numpy as np
 
 from caelab.artifact_refs import (
     ArtifactOwner,
@@ -56,7 +59,12 @@ _SCALAR_SOURCE_KINDS = frozenset({"residual", "parameter_expression", "adapter_s
 _PARAM_ROLES = frozenset({"free", "fixed", "linked"})
 _PARAM_TRANSFORMS = frozenset({"linear", "log"})
 _VALUE_KINDS = frozenset({"real", "complex"})
-_REPRESENTATIONS = frozenset({"scalar", "components", "real_imag", "storage_loss"})
+_REAL_REPRESENTATIONS = frozenset({"scalar", "components"})
+_COMPLEX_REPRESENTATIONS = frozenset({"real_imag", "storage_loss"})
+_REPRESENTATIONS = _REAL_REPRESENTATIONS | _COMPLEX_REPRESENTATIONS
+_CAPABILITY_REAL_REPS = frozenset({"scalar", "components", "vector", "tensor", "symmetric_tensor"})
+_CAPABILITY_COMPLEX_REPS = _COMPLEX_REPRESENTATIONS
+_CAPABILITY_REPRESENTATIONS = _CAPABILITY_REAL_REPS | _CAPABILITY_COMPLEX_REPS
 _SPLITS = frozenset({"train", "validation", "holdout"})
 _PASS_FAIL_NA = frozenset({"pass", "fail", "not_assessed"})
 _UNCERTAINTY_STATUSES = frozenset({"pass", "fail", "not_computed"})
@@ -133,12 +141,67 @@ def _constraint_to_dict(spec: ConstraintSpec) -> dict[str, Any]:
     }
 
 
+def _dataclass_to_plain(value: Any) -> Any:
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _dataclass_to_plain(value.to_dict())
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _dataclass_to_plain(getattr(value, f.name)) for f in fields(value)}
+    if isinstance(value, Enum):
+        return _dataclass_to_plain(value.value)
+    if isinstance(value, Mapping):
+        return {k: _dataclass_to_plain(v) for k, v in value.items()}
+    if isinstance(value, np.ndarray):
+        return [_dataclass_to_plain(x) for x in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [_dataclass_to_plain(item) for item in value]
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    return value
+
+
 def _coerce_mapping_or_dataclass(value: Any, name: str) -> MappingProxyType[str, Any]:
     if isinstance(value, Mapping):
         return _freeze_mapping(value, context=name)
     if is_dataclass(value) and not isinstance(value, type):
-        return _freeze_mapping(asdict(value), context=name)
+        return _freeze_mapping(_dataclass_to_plain(value), context=name)
     raise ValueError(f"{name} must be a mapping")
+
+
+def _validate_value_kind_representation(
+    value_kind: str,
+    representation: str,
+    component_order: tuple[str, ...],
+    *,
+    context: str,
+    require_nonempty_components: bool = False,
+) -> None:
+    if value_kind not in _VALUE_KINDS:
+        raise ValueError(f"{context}.value_kind must be one of {sorted(_VALUE_KINDS)}")
+    if representation not in _REPRESENTATIONS:
+        raise ValueError(f"{context}.representation must be one of {sorted(_REPRESENTATIONS)}")
+    if value_kind == "complex":
+        if representation not in _COMPLEX_REPRESENTATIONS:
+            raise ValueError(
+                f"{context} with value_kind='complex' requires representation in {sorted(_COMPLEX_REPRESENTATIONS)}"
+            )
+        if len(component_order) != 2:
+            raise ValueError(f"{context} with value_kind='complex' requires len(component_order) == 2")
+    else:
+        if representation in _COMPLEX_REPRESENTATIONS:
+            raise ValueError(
+                f"{context} with value_kind='real' cannot use complex representation {representation!r}"
+            )
+        if require_nonempty_components:
+            if not component_order:
+                raise ValueError(f"{context}.component_order must be non-empty")
+            if representation == "scalar" and len(component_order) != 1:
+                raise ValueError(
+                    f"{context} with value_kind='real' and representation='scalar' requires len(component_order) == 1"
+                )
 
 
 @dataclass(frozen=True)
@@ -199,9 +262,27 @@ class ObservableCapability:
         if not value_kinds or any(vk not in _VALUE_KINDS for vk in value_kinds):
             raise ValueError(f"ObservableCapability.value_kinds must be nonempty subset of {sorted(_VALUE_KINDS)}")
         reps = _require_str_tuple(self.representations, "ObservableCapability.representations")
-        if not reps or any(r not in _REPRESENTATIONS for r in reps):
+        if not reps or any(r not in _CAPABILITY_REPRESENTATIONS for r in reps):
             raise ValueError(
-                f"ObservableCapability.representations must be nonempty subset of {sorted(_REPRESENTATIONS)}"
+                f"ObservableCapability.representations must be nonempty subset of {sorted(_CAPABILITY_REPRESENTATIONS)}"
+            )
+        vk_set = set(value_kinds)
+        rep_set = set(reps)
+        if "complex" in vk_set and not (rep_set & _CAPABILITY_COMPLEX_REPS):
+            raise ValueError(
+                "ObservableCapability with 'complex' value_kind requires 'real_imag' or 'storage_loss' representation"
+            )
+        if "real" in vk_set and not (rep_set & _CAPABILITY_REAL_REPS):
+            raise ValueError(
+                "ObservableCapability with 'real' value_kind requires at least one real representation"
+            )
+        if vk_set == {"complex"} and (rep_set & _CAPABILITY_REAL_REPS):
+            raise ValueError(
+                "ObservableCapability with only 'complex' value_kind cannot include real representations"
+            )
+        if vk_set == {"real"} and (rep_set & _CAPABILITY_COMPLEX_REPS):
+            raise ValueError(
+                "ObservableCapability with only 'real' value_kind cannot include complex representations"
             )
         locs = _require_str_tuple(self.locations, "ObservableCapability.locations")
         if not locs:
@@ -651,10 +732,13 @@ class ObservableSpec:
         if len(set(comp_order)) != len(comp_order):
             raise ValueError("ObservableSpec.component_order must not contain duplicates")
         object.__setattr__(self, "component_order", comp_order)
-        if self.value_kind not in _VALUE_KINDS:
-            raise ValueError(f"ObservableSpec.value_kind must be one of {sorted(_VALUE_KINDS)}")
-        if self.representation not in _REPRESENTATIONS:
-            raise ValueError(f"ObservableSpec.representation must be one of {sorted(_REPRESENTATIONS)}")
+        _validate_value_kind_representation(
+            self.value_kind,
+            self.representation,
+            comp_order,
+            context="ObservableSpec",
+            require_nonempty_components=False,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -987,9 +1071,11 @@ class PredictedChannelV1:
             if not isinstance(getattr(self, ref_name), ArtifactRefV1):
                 raise ValueError(f"PredictedChannelV1.{ref_name} must be an ArtifactRefV1")
 
-        object.__setattr__(
-            self, "sample_key_columns", _require_str_tuple(self.sample_key_columns, "PredictedChannelV1.sample_key_columns")
-        )
+        sample_key_cols = _require_str_tuple(self.sample_key_columns, "PredictedChannelV1.sample_key_columns")
+        if not sample_key_cols:
+            raise ValueError("PredictedChannelV1.sample_key_columns must be non-empty")
+        object.__setattr__(self, "sample_key_columns", sample_key_cols)
+
         comp_order = _require_str_tuple(self.component_order, "PredictedChannelV1.component_order")
         if len(set(comp_order)) != len(comp_order):
             raise ValueError("PredictedChannelV1.component_order must not contain duplicates")
@@ -997,9 +1083,16 @@ class PredictedChannelV1:
             raise ValueError("PredictedChannelV1.component_order must match observable.component_order")
         object.__setattr__(self, "component_order", comp_order)
 
-        if self.value_kind not in _VALUE_KINDS or self.value_kind != self.observable.value_kind:
+        _validate_value_kind_representation(
+            self.value_kind,
+            self.representation,
+            comp_order,
+            context="PredictedChannelV1",
+            require_nonempty_components=True,
+        )
+        if self.value_kind != self.observable.value_kind:
             raise ValueError("PredictedChannelV1.value_kind must match observable.value_kind")
-        if self.representation not in _REPRESENTATIONS or self.representation != self.observable.representation:
+        if self.representation != self.observable.representation:
             raise ValueError("PredictedChannelV1.representation must match observable.representation")
 
         object.__setattr__(self, "coverage", _freeze_mapping(self.coverage, context="PredictedChannelV1.coverage"))

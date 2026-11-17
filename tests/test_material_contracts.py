@@ -57,7 +57,8 @@ from caelab.materials import (
     convert_values,
 )
 from caelab.mdo import variables as mdo_variables
-from caelab.mdo.constraints import ConstraintSpec
+from caelab.mdo.constraints import ConstraintSpec, Feasibility
+from caelab.mdo.optimize import BudgetUsage, EvaluationObservation
 
 
 def _sha(text: str) -> str:
@@ -250,17 +251,28 @@ def test_validate_relative_artifact_path_and_reparse_escape(tmp_path: Path):
             timeout=10,
         )
         assert proc.returncode == 0, proc.stdout + proc.stderr
-        with pytest.raises(ValueError):
-            validate_relative_artifact_path("link_dir/secret.txt", root=study_root)
-        with pytest.raises(ValueError):
-            read_safe_npy_v2("link_dir/arr.npy", root=study_root)
-        with pytest.raises(ValueError):
-            write_safe_npy_v2("link_dir/arr.npy", np.array([1.0]), root=study_root)
+        target_link = junction
     else:
-        sym = study_root / "link_dir"
-        sym.symlink_to(outside, target_is_directory=True)
+        target_link = study_root / "link_dir"
+        target_link.symlink_to(outside, target_is_directory=True)
+
+    # Defect 2 regressions: relative under root, absolute inside root containing junction/symlink,
+    # root=None with internal junction/symlink, and '..' inside absolute Path.
+    for bad_call in (
+        lambda: validate_relative_artifact_path("link_dir/secret.txt", root=study_root),
+        lambda: read_safe_npy_v2("link_dir/arr.npy", root=study_root),
+        lambda: write_safe_npy_v2("link_dir/arr.npy", np.array([1.0]), root=study_root),
+        lambda: write_safe_npy_v2(target_link / "arr.npy", np.array([1.0]), root=study_root),
+        lambda: read_safe_npy_v2(target_link / "arr.npy", root=study_root),
+        lambda: write_safe_npy_v2(target_link / "arr.npy", np.array([1.0])),
+        lambda: read_safe_npy_v2(target_link / "arr.npy"),
+        lambda: write_safe_npy_v2(study_root / "sub" / ".." / "arr.npy", np.array([1.0])),
+        lambda: read_safe_npy_v2(study_root / "sub" / ".." / "arr.npy"),
+        lambda: write_safe_npy_v2(study_root / "sub" / ".." / "arr.npy", np.array([1.0]), root=study_root),
+        lambda: read_safe_npy_v2(study_root / "sub" / ".." / "arr.npy", root=study_root),
+    ):
         with pytest.raises(ValueError):
-            validate_relative_artifact_path("link_dir/secret.txt", root=study_root)
+            bad_call()
 
 
 def test_canonical_array_hash_and_safe_npy_v2_roundtrip(tmp_path: Path):
@@ -831,3 +843,235 @@ def test_constraint_contract_json_and_additional_negative_validations():
     bad_status_assess["identifiability_status"] = "unknown"
     with pytest.raises(ValueError):
         AssessmentResultV1(objective={"eligible": True, "fit_loss": 0.1, "reason_codes": []}, assessment=bad_status_assess)
+
+
+def test_defect_regressions_observation_complex_freeze_and_units():
+    # Defect 1: EvaluationObservation (MappingProxyType) and BudgetUsage inside receipts, plus dataclass with Enum/ndarray
+    obs_record = EvaluationObservation(
+        request_id="req-1",
+        responses={"fit_loss": 0.1},
+        valid=True,
+        source_id="mat:1",
+    )
+    ev_receipt = EvaluationReceipt(
+        campaign_id=None,
+        evaluation_id="eval-1",
+        document_revision="drev-1",
+        content_revision="crev-1",
+        state="completed",
+        artifact_ref=_make_artifact_ref("eval-art"),
+        observation=obs_record,
+    )
+    assert ev_receipt.observation["responses"]["fit_loss"] == 0.1
+    assert EvaluationReceipt.from_dict(ev_receipt.to_dict()) == ev_receipt
+
+    budget = BudgetUsage(
+        dispatched_requests=5,
+        dispatcher_calls=2,
+        cache_hits=1,
+        duplicate_proposals=0,
+        predictions=0,
+        native_attempts=0,
+        failures=0,
+        elapsed_seconds=1.25,
+    )
+    camp_receipt = CampaignReceipt(
+        campaign_id="camp-1",
+        content_revision="crev-1",
+        state="completed",
+        termination_reason="CONVERGED",
+        evaluation_ids=("eval-1",),
+        selected_ids=("p-1",),
+        budget_usage=budget,
+    )
+    assert camp_receipt.budget_usage["dispatched_requests"] == 5
+    assert CampaignReceipt.from_dict(camp_receipt.to_dict()) == camp_receipt
+
+    @dataclasses.dataclass(frozen=True)
+    class _NestedMeta:
+        status: Feasibility
+        weights: np.ndarray
+        tags: dict
+
+    ev_nested = EvaluationReceipt(
+        campaign_id="camp-2",
+        evaluation_id="eval-2",
+        document_revision="drev-1",
+        content_revision="crev-1",
+        state="completed",
+        observation=_NestedMeta(
+            status=Feasibility.FEASIBLE,
+            weights=np.array([0.5, 0.5]),
+            tags=EvaluationObservation(request_id="r", responses={"a": 1.0}, valid=True, source_id="mat:2").responses,
+        ),
+    )
+    assert ev_nested.observation["status"] == "FEASIBLE"
+    assert ev_nested.observation["weights"] == (0.5, 0.5)
+    assert ev_nested.observation["tags"]["a"] == 1.0
+
+    # Defect 3: Complex representations, PredictedChannelV1 non-empty invariants, NumericResultV1 size/counts invariants
+    obs_complex = ObservableSpec(
+        id="E_star",
+        quantity_kind="storage_loss_modulus",
+        unit="MPa",
+        measure="viscoelastic",
+        component_order=("E_storage", "E_loss"),
+        value_kind="complex",
+        representation="storage_loss",
+    )
+    assert ObservableSpec.from_dict(obs_complex.to_dict()) == obs_complex
+
+    obs_real_imag = ObservableSpec(
+        id="Z_star",
+        quantity_kind="impedance",
+        unit="MPa",
+        measure="harmonic",
+        component_order=("real", "imag"),
+        value_kind="complex",
+        representation="real_imag",
+    )
+    assert ObservableSpec.from_dict(obs_real_imag.to_dict()) == obs_real_imag
+
+    for bad_obs_kw in (
+        dict(id="c1", quantity_kind="q", unit="MPa", measure="m", value_kind="complex", representation="scalar", component_order=("a", "b")),
+        dict(id="c2", quantity_kind="q", unit="MPa", measure="m", value_kind="complex", representation="storage_loss", component_order=("a",)),
+        dict(id="c3", quantity_kind="q", unit="MPa", measure="m", value_kind="real", representation="storage_loss", component_order=("a", "b")),
+        dict(id="c4", quantity_kind="q", unit="MPa", measure="m", value_kind="real", representation="real_imag", component_order=("a", "b")),
+    ):
+        with pytest.raises(ValueError):
+            ObservableSpec(**bad_obs_kw)
+
+    cap_c = ObservableCapability(
+        observable_id="E_star",
+        value_kinds=("complex",),
+        representations=("storage_loss",),
+        locations=("material_point",),
+        supported_units=("MPa",),
+    )
+    assert ObservableCapability.from_dict(cap_c.to_dict()) == cap_c
+    cap_both = ObservableCapability(
+        observable_id="E_both",
+        value_kinds=("real", "complex"),
+        representations=("scalar", "storage_loss"),
+        locations=("material_point",),
+        supported_units=("MPa",),
+    )
+    assert ObservableCapability.from_dict(cap_both.to_dict()) == cap_both
+
+    for bad_cap_kw in (
+        dict(observable_id="x", value_kinds=("complex",), representations=("scalar",), locations=("material_point",), supported_units=("MPa",)),
+        dict(observable_id="x", value_kinds=("complex",), representations=("vector",), locations=("material_point",), supported_units=("MPa",)),
+        dict(observable_id="x", value_kinds=("complex",), representations=("storage_loss", "scalar"), locations=("material_point",), supported_units=("MPa",)),
+        dict(observable_id="x", value_kinds=("real",), representations=("storage_loss",), locations=("material_point",), supported_units=("MPa",)),
+        dict(observable_id="x", value_kinds=("real", "complex"), representations=("scalar",), locations=("material_point",), supported_units=("MPa",)),
+    ):
+        with pytest.raises(ValueError):
+            ObservableCapability(**bad_cap_kw)
+
+    pch_complex = PredictedChannelV1(
+        observable_id="E_star",
+        observable=obs_complex,
+        independent_ref=_make_artifact_ref("ind"),
+        sample_keys_ref=_make_artifact_ref("sk"),
+        sample_key_columns=("source_row",),
+        values_ref=_make_artifact_ref("vals"),
+        mask_ref=_make_artifact_ref("mask"),
+        component_order=("E_storage", "E_loss"),
+        value_kind="complex",
+        representation="storage_loss",
+        coverage={"expected": 4, "valid": 4, "missing": 0},
+    )
+    assert PredictedChannelV1.from_dict(pch_complex.to_dict()) == pch_complex
+
+    obs_real_scalar = _make_observable("sig_xx", "MPa")
+    obs_real_empty_comp = ObservableSpec(id="sig", quantity_kind="stress", unit="MPa", measure="cauchy", value_kind="real", representation="scalar")
+    with pytest.raises(ValueError):
+        PredictedChannelV1(
+            observable_id="sig_xx",
+            observable=obs_real_scalar,
+            independent_ref=_make_artifact_ref("ind"),
+            sample_keys_ref=_make_artifact_ref("sk"),
+            sample_key_columns=(),
+            values_ref=_make_artifact_ref("vals"),
+            mask_ref=_make_artifact_ref("mask"),
+            component_order=("xx",),
+            value_kind="real",
+            representation="scalar",
+            coverage={"expected": 4, "valid": 4, "missing": 0},
+        )
+    with pytest.raises(ValueError):
+        PredictedChannelV1(
+            observable_id="sig",
+            observable=obs_real_empty_comp,
+            independent_ref=_make_artifact_ref("ind"),
+            sample_keys_ref=_make_artifact_ref("sk"),
+            sample_key_columns=("source_row",),
+            values_ref=_make_artifact_ref("vals"),
+            mask_ref=_make_artifact_ref("mask"),
+            component_order=(),
+            value_kind="real",
+            representation="scalar",
+            coverage={"expected": 4, "valid": 4, "missing": 0},
+        )
+
+    res_ref = _make_result_ref()
+    with pytest.raises(ValueError):
+        NumericResultV1(ref=res_ref, values=(1.0, 2.0), values_ref=None, sample_coordinates=(0.0, 1.0, 2.0), counts={}, status="ok")
+    with pytest.raises(ValueError):
+        NumericResultV1(ref=res_ref, values=(1.0, 2.0), values_ref=None, sample_coordinates=(0.0, 1.0), counts={"valid": True, "total": 2}, status="ok")
+    with pytest.raises(ValueError):
+        NumericResultV1(ref=res_ref, values=(1.0, 2.0), values_ref=None, sample_coordinates=(0.0, 1.0), counts={"valid": 3, "total": 2}, status="ok")
+    with pytest.raises(ValueError):
+        NumericResultV1(ref=res_ref, values=(1.0, 2.0), values_ref=None, sample_coordinates=(0.0, 1.0), counts={"valid": 2, "total": 5}, status="ok")
+
+    # Defect 4: Reject mutable .to_dict objects and NUL bytes in mapping keys
+    class _MutableToDict:
+        def __init__(self):
+            self.x = 1
+
+        def to_dict(self):
+            return {"x": self.x}
+
+    with pytest.raises(ValueError):
+        res_ref.with_operator({"id": "identity", "evil": _MutableToDict()})
+    with pytest.raises(ValueError):
+        res_ref.with_operator({"id": "identity", "bad\x00key": 1})
+    bad_art_dict = _make_artifact_ref().to_dict()
+    bad_art_dict["bad\x00key"] = 1
+    with pytest.raises(ValueError):
+        ArtifactRefV1.from_dict(bad_art_dict)
+
+    # Known frozen ArtifactRefV1 inside ResultRefV1.selection still works and roundtrips
+    sel_with_ref = ResultRefV1.from_dict(
+        {
+            **res_ref.to_dict(),
+            "selection": {
+                "selection_id": "sel-1",
+                "kind": "element_ids",
+                "artifact_ref": _make_artifact_ref("sel-art").to_dict(),
+                "count": 2,
+            },
+        }
+    )
+    assert ResultRefV1.from_dict(sel_with_ref.to_dict()) == sel_with_ref
+
+    # Defect 5: Dimensionless classification & unit gating
+    for bad_unit, bad_kind in (
+        ("", "strain_rate"),
+        ("1", "strain_rate"),
+        ("", "strain_energy"),
+        ("1", "strain_energy_density"),
+        ("", "energy_release_rate"),
+        ("1", "stress"),
+        ("MPa", "dimensionless"),
+        ("MPa", "poisson_ratio"),
+        ("MPa", "strain"),
+    ):
+        with pytest.raises(ValueError):
+            convert_values(1.0, QuantityUnitSpec(bad_unit, bad_kind), QuantityUnitSpec(bad_unit, bad_kind))
+
+    assert convert_values(1.0, QuantityUnitSpec("1/s", "strain_rate"), QuantityUnitSpec("1/ms", "strain_rate")) == pytest.approx(0.001)
+    assert convert_values(0.02, QuantityUnitSpec("mm/mm", "strain"), QuantityUnitSpec("", "strain")) == pytest.approx(0.02)
+    assert convert_values(0.02, QuantityUnitSpec("mm/mm", "nominal_strain"), QuantityUnitSpec("1", "nominal_strain")) == pytest.approx(0.02)
+    assert convert_values(1.5, QuantityUnitSpec("1", "stress_ratio"), QuantityUnitSpec("", "stress_ratio")) == pytest.approx(1.5)
+    assert convert_values(0.3, QuantityUnitSpec("", "poisson_ratio"), QuantityUnitSpec("1", "poisson_ratio")) == pytest.approx(0.3)

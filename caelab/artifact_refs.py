@@ -104,8 +104,8 @@ def _require_exact_keys(
         raise ValueError(f"{context} must be a mapping")
     keys = set(data.keys())
     for k in keys:
-        if not isinstance(k, str):
-            raise ValueError(f"{context} mapping keys must be strings")
+        if not isinstance(k, str) or "\x00" in k:
+            raise ValueError(f"{context} mapping keys must be valid strings without NUL bytes")
     allowed = set(required) | set(optional)
     extra = keys - allowed
     if extra:
@@ -114,6 +114,9 @@ def _require_exact_keys(
     if missing:
         raise ValueError(f"{context} is missing required fields: {sorted(missing)}")
     return data
+
+
+_FROZEN_INTERNAL_DTO_TYPES: tuple[type, ...] = ()
 
 
 def _freeze_json_value(value: Any, *, context: str = "value") -> Any:
@@ -136,13 +139,13 @@ def _freeze_json_value(value: Any, *, context: str = "value") -> Any:
     if isinstance(value, Mapping):
         frozen: dict[str, Any] = {}
         for k, v in value.items():
-            if not isinstance(k, str):
-                raise ValueError(f"{context} mapping keys must be strings")
+            if not isinstance(k, str) or "\x00" in k:
+                raise ValueError(f"{context} mapping keys must be valid strings without NUL bytes")
             frozen[k] = _freeze_json_value(v, context=f"{context}.{k}")
         return MappingProxyType(frozen)
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json_value(item, context=f"{context}[]") for item in value)
-    if hasattr(value, "to_dict"):
+    if type(value) in _FROZEN_INTERNAL_DTO_TYPES:
         return value
     raise ValueError(f"{context} contains unsupported non-JSON value of type {type(value).__name__}")
 
@@ -169,8 +172,8 @@ def _to_plain_json(value: Any) -> Any:
     if isinstance(value, Mapping):
         plain: dict[str, Any] = {}
         for k, v in value.items():
-            if not isinstance(k, str):
-                raise ValueError("JSON mapping keys must be strings")
+            if not isinstance(k, str) or "\x00" in k:
+                raise ValueError("JSON mapping keys must be valid strings without NUL bytes")
             plain[k] = _to_plain_json(v)
         return plain
     if isinstance(value, (list, tuple)):
@@ -345,6 +348,8 @@ def _resolve_npy_path(path: str | Path, root: Path | None) -> Path:
     if isinstance(path, str):
         if "\x00" in path:
             raise ValueError("Path must not contain NUL bytes")
+        if ".." in PurePosixPath(path).parts or ".." in PureWindowsPath(path).parts:
+            raise ValueError(f"Path must not contain '..': {path!r}")
         if root is not None:
             rel = validate_relative_artifact_path(path, root=root)
             return Path(root).resolve() / PurePosixPath(rel)
@@ -352,36 +357,43 @@ def _resolve_npy_path(path: str | Path, root: Path | None) -> Path:
     elif isinstance(path, Path):
         if "\x00" in str(path):
             raise ValueError("Path must not contain NUL bytes")
+        if ".." in path.parts:
+            raise ValueError(f"Path must not contain '..': {str(path)!r}")
         if root is not None:
             root_path = Path(root)
-            root_resolved = root_path.resolve()
             if path.is_absolute():
-                try:
-                    rel_part = path.relative_to(root_path)
-                    rel_posix = rel_part.as_posix()
-                except ValueError:
-                    resolved = path.resolve()
-                    if not resolved.is_relative_to(root_resolved):
-                        raise ValueError(f"Path {str(path)!r} escapes root {str(root_resolved)!r}") from None
-                    rel_posix = resolved.relative_to(root_resolved).as_posix()
-                validate_relative_artifact_path(rel_posix, root=root_path)
-                return root_resolved / PurePosixPath(rel_posix)
+                root_abs = Path(os.path.abspath(os.fspath(root_path)))
+                path_abs = Path(os.path.abspath(os.fspath(path)))
+                if path_abs.is_relative_to(root_abs):
+                    rel_posix = path_abs.relative_to(root_abs).as_posix()
+                    validate_relative_artifact_path(rel_posix, root=root_abs)
+                    return root_abs.resolve() / PurePosixPath(rel_posix)
+                root_resolved = root_path.resolve()
+                if path_abs.is_relative_to(root_resolved):
+                    rel_posix = path_abs.relative_to(root_resolved).as_posix()
+                    validate_relative_artifact_path(rel_posix, root=root_resolved)
+                    return root_resolved / PurePosixPath(rel_posix)
+                raise ValueError(f"Path {str(path)!r} escapes root {str(root_resolved)!r}")
             rel_posix = path.as_posix()
             validate_relative_artifact_path(rel_posix, root=root_path)
-            return root_resolved / PurePosixPath(rel_posix)
+            return root_path.resolve() / PurePosixPath(rel_posix)
         p = path
     else:
         raise ValueError("path must be a str or pathlib.Path")
 
-    if not p.is_absolute():
-        if ".." in p.parts:
-            raise ValueError(f"Relative path must not contain '..': {str(p)!r}")
+    if ".." in p.parts:
+        raise ValueError(f"Path must not contain '..': {str(p)!r}")
+    if p.is_absolute():
+        cur = Path(p.parts[0])
+        _check_not_reparse_or_symlink(cur, str(p))
+        for part in p.parts[1:]:
+            cur = cur / part
+            _check_not_reparse_or_symlink(cur, str(p))
+    else:
         cur = Path()
         for part in p.parts:
             cur = cur / part
             _check_not_reparse_or_symlink(cur, str(p))
-    else:
-        _check_not_reparse_or_symlink(p, str(p))
     return p
 
 
@@ -849,7 +861,24 @@ class NumericResultV1:
         )
         object.__setattr__(self, "sample_coordinates", coords)
 
-        object.__setattr__(self, "counts", _freeze_mapping(self.counts, context="NumericResultV1.counts"))
+        if self.values is not None and coords and len(self.values) != len(coords):
+            raise ValueError(
+                f"NumericResultV1.values length ({len(self.values)}) must match sample_coordinates length ({len(coords)})"
+            )
+
+        frozen_counts = _freeze_mapping(self.counts, context="NumericResultV1.counts")
+        for count_key in ("total", "valid", "expected", "missing"):
+            if count_key in frozen_counts:
+                _require_int(frozen_counts[count_key], f"NumericResultV1.counts[{count_key!r}]", minimum=0)
+        if "valid" in frozen_counts and "total" in frozen_counts and frozen_counts["valid"] > frozen_counts["total"]:
+            raise ValueError("NumericResultV1.counts['valid'] cannot exceed counts['total']")
+        if "valid" in frozen_counts and "expected" in frozen_counts and frozen_counts["valid"] > frozen_counts["expected"]:
+            raise ValueError("NumericResultV1.counts['valid'] cannot exceed counts['expected']")
+        if "total" in frozen_counts and coords and frozen_counts["total"] != len(coords):
+            raise ValueError(
+                f"NumericResultV1.counts['total'] ({frozen_counts['total']}) must match sample_coordinates length ({len(coords)})"
+            )
+        object.__setattr__(self, "counts", frozen_counts)
         _require_nonempty_str(self.status, "NumericResultV1.status")
         object.__setattr__(self, "reason_codes", _require_str_tuple(self.reason_codes, "NumericResultV1.reason_codes"))
         object.__setattr__(self, "warnings", _require_str_tuple(self.warnings, "NumericResultV1.warnings"))
@@ -1205,3 +1234,15 @@ class EvidenceEnvelopeV1:
             availability=m["availability"],
             payload=m["payload"],
         )
+
+
+_FROZEN_INTERNAL_DTO_TYPES = (
+    ProducerIdentity,
+    ArtifactOwner,
+    ArtifactRefV1,
+    ResultRefV1,
+    SeriesManifestV1,
+    DatasetManifestV1,
+    NumericResultV1,
+    EvidenceEnvelopeV1,
+)

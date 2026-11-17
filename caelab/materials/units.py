@@ -28,12 +28,46 @@ _DIMENSIONLESS_KINDS = frozenset({
     "dimensionless",
     "ratio",
     "strain",
+    "true_strain",
+    "logarithmic_strain",
+    "nominal_strain",
+    "engineering_strain",
+    "plastic_strain",
+    "equivalent_plastic_strain",
+    "volumetric_strain",
+    "shear_strain",
     "stretch",
+    "stretch_ratio",
+    "principal_stretch",
     "damage",
+    "damage_variable",
+    "poisson",
     "poisson_ratio",
     "scalar",
     "loss_factor",
+    "tan_delta",
+    "relative_humidity",
 })
+
+_DIMENSIONAL_MARKERS = (
+    "rate",
+    "energy",
+    "density",
+    "modulus",
+    "stress",
+    "force",
+    "power",
+    "work",
+    "velocity",
+    "flux",
+    "frequency",
+    "viscosity",
+    "thermal",
+    "length",
+    "mass",
+    "time",
+    "temperature",
+)
 
 # Dimensions: (Length[m], Mass[kg], Time[s], TempDiff[K], Amount[mol], Angle[rad])
 _EXTENDED_UNITS: dict[str, tuple[Fraction, tuple[int, int, int, int, int, int]]] = {
@@ -76,9 +110,11 @@ class QuantityUnitSpec:
 
 def _is_dimensionless_kind(quantity_kind: str) -> bool:
     q = quantity_kind.strip().lower()
-    return q in _DIMENSIONLESS_KINDS or any(
-        token in q for token in ("strain", "stretch", "ratio", "dimensionless", "poisson", "damage")
-    )
+    if q in _DIMENSIONLESS_KINDS or q.endswith("_ratio"):
+        return True
+    if any(marker in q for marker in _DIMENSIONAL_MARKERS):
+        return False
+    return q.endswith("_strain") or q.endswith("_stretch")
 
 
 def _rational_constant(node: ast.AST) -> Fraction:
@@ -169,10 +205,10 @@ def parse_material_unit(unit: str, *, quantity_kind: str = "dimensionless") -> t
     if not isinstance(quantity_kind, str) or not quantity_kind.strip():
         raise ValueError("quantity_kind must be a nonempty string")
 
-    if unit == "":
+    if unit in ("", "1"):
         if not _is_dimensionless_kind(quantity_kind):
-            raise ValueError(f"Empty unit '' is invalid for quantity_kind={quantity_kind!r}")
-        return _parse_multiplicative_unit("")
+            raise ValueError(f"Unit {unit!r} is invalid for non-dimensionless quantity_kind={quantity_kind!r}")
+        return _parse_multiplicative_unit(unit)
 
     if quantity_kind in ("absolute_temperature", "temperature_difference"):
         if unit not in ("K", "degC"):
@@ -185,6 +221,8 @@ def parse_material_unit(unit: str, *, quantity_kind: str = "dimensionless") -> t
         )
 
     scale, dim = _parse_multiplicative_unit(unit)
+    if _is_dimensionless_kind(quantity_kind) and dim != _ZERO_6D:
+        raise ValueError(f"Dimensionless quantity_kind={quantity_kind!r} requires dimensionless unit, got {unit!r}")
     if quantity_kind == "frequency" and dim != _FREQ_DIM:
         raise ValueError(f"Unit {unit!r} does not have pure frequency dimension (use convert_frequency_angular for rad/s)")
     if quantity_kind == "angular_frequency" and dim != _ANGULAR_FREQ_DIM:
