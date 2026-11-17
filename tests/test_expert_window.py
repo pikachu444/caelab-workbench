@@ -1603,3 +1603,23 @@ def test_wait_label_and_composer_card_layout_sync_without_clipping(window, app, 
     app.processEvents()
     assert ui.basis.height() == immediate_basis_h
     assert ui.composer_card.height() == immediate_card_h
+
+
+def test_theme_updates_ignore_closed_windows_and_handle_blocked_experts_module(window, app, tmp_path, monkeypatch):
+    import sys
+    from apps.workbench_qt.theme import set_theme_mode
+
+    ui, _ = window
+    closed_win = ExpertWindow(tmp_path / 'closed_theme.json')
+    closed_win.close()
+    assert closed_win._closed is True
+
+    closed_renders = []
+    monkeypatch.setattr(closed_win, 'render', lambda: closed_renders.append(True))
+    monkeypatch.setitem(sys.modules, 'caelab.assist.experts', None)
+
+    set_theme_mode('light')
+    set_theme_mode('dark')
+
+    assert closed_renders == []
+    assert ui._provider_available is False

@@ -278,6 +278,8 @@ class ExpertWindow(QMainWindow):
             self.render()
 
     def apply_theme(self, mode: str | None = None):
+        if getattr(self, '_closed', False):
+            return
         resolved = mode if mode in ('dark', 'light') else current_theme_mode()
         self._theme_mode = resolved
         p = get_palette(resolved)
@@ -723,7 +725,10 @@ class ExpertWindow(QMainWindow):
         self._sync_composer_layout()
 
     def refresh_provider(self):
-        status = self.workbench.expert_provider_status(self.document.get('provider_id'))
+        try:
+            status = self.workbench.expert_provider_status(self.document.get('provider_id'))
+        except Exception:
+            status = {'available': False}
         self._provider_available = status['available']
         self.provider.setText('공급자 설정 확인됨' if status['available'] else '공급자 설정이 필요합니다.')
         self.settings.setText('연결 설정' if status['available'] else '연결 설정 필요')
