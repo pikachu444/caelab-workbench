@@ -8,6 +8,8 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+from filelock import FileLock, Timeout
+
 from ..artifact_refs import (ArtifactOwner, ArtifactRefV1, DatasetManifestV1, ProducerIdentity, ResultRefV1,
                              canonical_sha256, validate_relative_artifact_path)
 from ..result_readers import ResultError, no_checkpoint
@@ -38,6 +40,18 @@ def _id(value):
 
 def operation_dir(store, source_run_id, operation_id):
     return artifact_path(store.root, f".derived/{_id(source_run_id)}/{_id(operation_id)}")
+
+
+def owning_store(store):
+    root = store.root
+    if _ID.fullmatch(root.name):
+        if _ID.fullmatch(root.parent.name) and root.parent.parent.name == ".derived":
+            return RunStore(root.parent.parent.parent, expected=True)
+        if root.parent.name == ".derived":
+            return RunStore(root.parent.parent, expected=True)
+        if (root / "job.json").is_file():
+            return RunStore(root.parent, expected=True)
+    return store
 
 
 def sha256_file(path, check=no_checkpoint):
@@ -100,13 +114,36 @@ def source_record(store, run_id):
 
 def source_fingerprint(data):
     snapshot = data["snapshot"]
-    return canonical_sha256({
+    content = {
         "identity": {key: data.get(key) for key in ("id", "node_id", "solver_id", "input_revision", "units", "unit_source")},
-        "inputs": [{key: item.get(key) for key in ("source_copy", "source_sha256", "execution_path", "execution_sha256")}
+        "inputs": [{"source_copy": item.get("source_copy"), "source_sha256": _original_sha(item),
+                    "execution_path": item.get("execution_path"), "execution_sha256": item.get("execution_sha256")}
                    for item in snapshot.get("files", ())],
         "outputs": snapshot.get("outputs", {}),
         "artifacts": snapshot.get("artifacts", {}),
-    }, exclude_keys=())
+    }
+    for key in ("mesh_revision", "expected_mesh"):
+        if key in snapshot:
+            content[key] = snapshot[key]
+    return canonical_sha256(content, exclude_keys=())
+
+
+def _original_sha(item):
+    return item.get("original_sha256") or item.get("source_sha256") or item.get("sha256")
+
+
+def verify_original_decks(source, record, check=no_checkpoint, *, code="HASH_MISMATCH"):
+    for item in record["snapshot"].get("files", ()):
+        relative, digest = item.get("source_copy"), _original_sha(item)
+        if not relative or not digest:
+            raise ResultError(code, "original deck copy has no recorded path or digest", availability="corrupt")
+        path = artifact_path(source, relative)
+        try:
+            if sha256_file(path, check) == digest:
+                continue
+        except FileNotFoundError as exc:
+            raise ResultError(code, f"missing original deck copy {relative}", availability="source_unavailable") from exc
+        raise ResultError(code, f"original deck copy changed: {relative}", availability="corrupt")
 
 
 def _read_receipt(folder, source_run_id, operation_id):
@@ -114,12 +151,15 @@ def _read_receipt(folder, source_run_id, operation_id):
         data = read_object(artifact_path(folder, "operation.json"))
     except FileNotFoundError:
         return None
-    except ValueError as exc:
+    except ResultError:
+        raise
+    except (ValueError, OSError) as exc:
         raise ResultError("INVALID_DATASET", "operation receipt", availability="corrupt") from exc
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise ResultError("UNSUPPORTED_CAPABILITY", "unknown operation receipt schema")
+    state = data.get("state")
     if (data.get("id") != operation_id or data.get("source_run_id") != source_run_id
-            or data.get("state") not in ACTIVE_OPERATIONS | TERMINAL_OPERATIONS):
+            or not isinstance(state, str) or state not in ACTIVE_OPERATIONS | TERMINAL_OPERATIONS):
         raise ResultError("INVALID_DATASET", "operation identity or state", availability="corrupt")
     return data
 
@@ -136,21 +176,48 @@ def _interrupt(folder, receipt):
     return receipt
 
 
-def recover_operations_unlocked(store):
+def _operation_receipts(store, *, strict=False):
     base = artifact_path(store.root, ".derived")
     for path in base.glob("*/*/operation.json"):
         source, operation = path.parent.parent.name, path.parent.name
         if not (_ID.fullmatch(source) and _ID.fullmatch(operation)):
             continue
-        folder = operation_dir(store, source, operation)
         try:
+            folder = operation_dir(store, source, operation)
             receipt = _read_receipt(folder, source, operation)
-        except ResultError as exc:
-            if exc.code != "UNSUPPORTED_CAPABILITY":
+        except ResultError:
+            if strict:
                 raise
             continue
-        if receipt is not None and receipt["state"] in ACTIVE_OPERATIONS:
+        if receipt is not None:
+            yield folder, receipt
+
+
+def recover_derived_operations(store):
+    """Recover orphaned operations while the caller holds the RunStore lease."""
+    for folder, receipt in _operation_receipts(store):
+        if receipt["state"] in ACTIVE_OPERATIONS:
             _interrupt(folder, receipt)
+
+
+def find_active_duplicate(store, plan):
+    for folder, receipt in _operation_receipts(store):
+        if (receipt["state"] in ACTIVE_OPERATIONS and receipt["source_run_id"] == plan["source_run_id"]
+                and receipt.get("cache_key") == plan["cache_key"] and receipt.get("plan_hash") == plan["plan_hash"]):
+            lock_path = artifact_path(folder, "operation.lock")
+            if lock_path.is_file():
+                try:
+                    with FileLock(lock_path, timeout=0):
+                        continue
+                except Timeout:
+                    return receipt
+    return None
+
+
+def verify_derived_datasets(store):
+    for _, receipt in _operation_receipts(store, strict=True):
+        if receipt["state"] == "completed":
+            load_completed_operation(store, receipt["source_run_id"], receipt["id"])
 
 
 def stored_snapshot(store: RunStore, source_run_id: str, operation_id: str):
@@ -160,8 +227,10 @@ def stored_snapshot(store: RunStore, source_run_id: str, operation_id: str):
         return receipt
     try:
         lease = store.lease()
-    except ValueError:
-        return receipt
+    except ValueError as exc:
+        if isinstance(exc.__cause__, Timeout):
+            return receipt
+        raise
     try:
         receipt = _read_receipt(folder, source_run_id, operation_id)
         if receipt is not None and receipt["state"] in ACTIVE_OPERATIONS:
@@ -198,7 +267,7 @@ def cancel_operation(manager, operation_id: str):
     return manager.cancel_operation(operation_id)
 
 
-def load_completed_operation(store, source_run_id, operation_id, *, check=no_checkpoint):
+def load_completed_operation(store, source_run_id, operation_id, *, check=no_checkpoint, live_stale=False):
     """Return the receipt and manifest after verifying the owner-scoped bundle."""
     folder = operation_dir(store, source_run_id, operation_id)
     receipt = _read_receipt(folder, source_run_id, operation_id)
@@ -230,30 +299,44 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
             raise ValueError("original receipt identity mismatch")
         if source_fingerprint(live) != receipt["source_fingerprint"]:
             raise ResultError("SOURCE_CHANGED", "immutable source run identity has changed", availability="stale")
+        verify_original_decks(source, fixed_record, check)
         for ref in inputs:
             if owners[ref.id] != ArtifactOwner("run", source_run_id):
                 raise ValueError(f"wrong source owner for {ref.id}")
             verify_artifact(source, ref, check=check)
         dataset = DatasetManifestV1.from_dict(read_object(folder / manifest.path))
-        return folder, receipt, dataset, bool(live.get("stale"))
+        digest = canonical_sha256(dataset.to_dict(), exclude_keys=())
+        if receipt.get("dataset_manifest_sha256", digest) != digest:
+            raise ResultError("HASH_MISMATCH", "canonical dataset manifest", availability="corrupt")
+        refs_by_id = {ref.id: ref for ref in outputs}
+        nested = [ArtifactRefV1.from_dict(frame["artifact_ref"]) for frame in dataset.frames]
+        for series in dataset.series:
+            nested.extend((series.coordinate_ref, series.source_row_index_ref))
+        if any(refs_by_id.get(ref.id) != ref for ref in nested):
+            raise ResultError("HASH_MISMATCH", "dataset references an unregistered artifact", availability="corrupt")
+        stale = live_stale(live) if callable(live_stale) else live_stale
+        return folder, receipt, dataset, bool(live.get("stale") or stale)
     except ResultError:
         raise
     except (ValueError, KeyError, TypeError) as exc:
         raise ResultError("INVALID_DATASET", str(exc), availability="corrupt") from exc
 
 
-def resolve_result_ref(store: RunStore, ref: ResultRefV1, *, check_cancelled=None) -> dict:
+def resolve_result_ref(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live_stale=False) -> dict:
     """Resolve a fixed ResultRef without substituting a newer run or dataset."""
     if not isinstance(ref, ResultRefV1):
         raise ResultError("INVALID_DATASET", "a ResultRefV1 is required")
     check = check_cancelled or no_checkpoint
-    folder, receipt, dataset, stale = load_completed_operation(store, ref.source_run_id, ref.operation_id, check=check)
+    store = owning_store(store)
+    folder, receipt, dataset, stale = load_completed_operation(
+        store, ref.source_run_id, ref.operation_id, check=check, live_stale=live_stale)
+    manifest_digests = {canonical_sha256(dataset.to_dict(), exclude_keys=()), receipt["dataset_ref"]["sha256"]}
     if (receipt["source_node_id"] != ref.source_node_id or dataset.dataset_id != ref.dataset_id
             or receipt["source_receipt_sha256"] != ref.source_receipt_sha256
             or ArtifactRefV1.from_dict(receipt["source_receipt_ref"]) != ref.source_receipt_ref
             or tuple(ArtifactRefV1.from_dict(item) for item in receipt["source_artifacts"]) != ref.source_artifacts
             or canonical_sha256(receipt, exclude_keys=()) != ref.operation_manifest_sha256
-            or receipt["dataset_ref"]["sha256"] != ref.dataset_manifest_sha256):
+            or ref.dataset_manifest_sha256 not in manifest_digests):
         raise ResultError("HASH_MISMATCH", "result reference does not match the fixed operation bundle",
                           availability="corrupt")
     return {"operation_dir": folder, "operation": receipt, "dataset": dataset,

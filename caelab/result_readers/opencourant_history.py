@@ -118,7 +118,8 @@ def _quantity(kind, code):
     return None
 
 
-def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, units=None) -> tuple[dict, ...]:
+def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exact_required_set=None,
+                         expected_bindings=None, solid_formulation=None, units=None) -> tuple[dict, ...]:
     """Match entity columns against the positional TITLES pairs and fixed requests."""
     normalized = _headers(raw_headers)
     pairs = titles_meta["pairs"]
@@ -162,7 +163,9 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, uni
             quantity, component, dimension, measure = quantity_info
             output_type = {0: "Node", 1: "Solid"}[kind]
             basis = "global" if quantity in {"stress", "displacement", "velocity"} else "unknown"
-        declaration = (units or {}).get(dimension, "unknown")
+        declared_units = units or {}
+        declaration = declared_units.get(dimension, declared_units.get("pressure", "unknown")
+                                         if dimension == "stress" else "unknown")
         if isinstance(declaration, dict):
             declaration = declaration.get("symbol", declaration.get("unit", "unknown"))
         bindings.append({
@@ -170,7 +173,8 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, uni
             "normalized_header": header, "group_title": group_title, "output_type": output_type,
             "entity_id": entity_id, "entity_title": entity, "variable_code": code, "source_titles_pair_index": pair_index,
             "quantity": quantity, "component": component, "measure": measure,
-            "basis": basis, "unit": declaration, "operator": "curve_extract",
+            "basis": basis, "unit": declaration, "unit_dimension": "pressure" if dimension == "stress" else dimension,
+            "operator": "curve_extract",
         })
     if expected_columns is not None:
         if not isinstance(expected_columns, (list, tuple)) or any(not isinstance(h, str) for h in expected_columns):
@@ -178,6 +182,32 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, uni
         missing = set(map(_normalized, expected_columns)) - {b["normalized_header"] for b in bindings}
         if missing:
             raise ResultError("COVERAGE_INCOMPLETE", ", ".join(sorted(missing)))
+    by_header = {binding["normalized_header"]: binding for binding in bindings}
+    if exact_required_set is not None:
+        if not isinstance(exact_required_set, (list, tuple)) or any(not isinstance(h, str) for h in exact_required_set):
+            raise ResultError("SCHEMA_MISMATCH", "exact_required_set must list complete history headers")
+        missing = set(map(_normalized, exact_required_set)) - by_header.keys()
+        if missing:
+            raise ResultError("SCHEMA_MISMATCH", f"missing or unsupported history fields: {', '.join(sorted(missing))}")
+    if expected_bindings is not None:
+        if not isinstance(expected_bindings, (list, tuple)):
+            raise ResultError("SOURCE_MISMATCH", "expected_bindings must list source history requests")
+        match_keys = {"entity_id", "group_title", "variable_code"}
+        for expected in expected_bindings:
+            if (not isinstance(expected, dict) or not match_keys <= expected.keys()
+                    or not expected.keys() <= match_keys | {"entity_title", "output_type"}
+                    or type(expected["entity_id"]) is not int
+                    or not any(all(binding.get(key) == value for key, value in expected.items()) for binding in bindings)):
+                raise ResultError("SOURCE_MISMATCH", f"unmatched source history request: {expected}")
+    for binding in bindings:
+        if binding["output_type"] != "Solid":
+            continue
+        formulation = (solid_formulation.get(str(binding["entity_id"])) if isinstance(solid_formulation, dict)
+                       else solid_formulation)
+        if binding["quantity"] in {"stress", "strain"} and formulation != "hex8_1pt":
+            raise ResultError("SOURCE_MISMATCH", f"1-point HEX8 required for {binding['normalized_header']}")
+        if formulation == "hex8_1pt":
+            binding["integration_point"] = "IPpoint"
     return tuple(bindings)
 
 
@@ -196,8 +226,9 @@ def extract_history(csv_path: Path, titles_path: Path, request_spec) -> DatasetM
     check = request_spec.get("check_cancelled") or no_checkpoint
     titles = read_titles(titles_path, check_cancelled=check)
     table = read_th_csv(csv_path, check_cancelled=check)
-    bindings = bind_history_columns(titles, table["raw_header"], expected_columns=request_spec.get("expected_columns"),
-                                     units=request_spec.get("units"))
+    bindings = bind_history_columns(titles, table["raw_header"], **{
+        key: request_spec.get(key) for key in ("expected_columns", "exact_required_set", "expected_bindings",
+                                              "solid_formulation", "units")})
     if not bindings:
         raise ResultError("UNSUPPORTED_OBSERVABLE", "no supported history columns")
     coordinates = _npy(root, output / "history-time.npy", table["times"], "sample_coordinates")

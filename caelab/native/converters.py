@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -14,7 +15,8 @@ from pathlib import Path
 from ..artifact_refs import ArtifactOwner, ArtifactRefV1, DatasetManifestV1, canonical_json_bytes, canonical_sha256
 from ..result_readers import ResultError, no_checkpoint
 from ..result_readers import opencourant_history, vtk_fields
-from .operations import POST_PRODUCER, artifact, artifact_path, read_object, sha256_file, source_fingerprint, source_record, verify_artifact
+from .operations import (POST_PRODUCER, artifact, artifact_path, read_object, sha256_file,
+                         source_fingerprint, source_record, verify_artifact, verify_original_decks)
 from .run_store import TERMINAL_STATES
 
 GUNZIP_LIMIT = 5 * 1024**3
@@ -22,6 +24,46 @@ _COPY_CHUNK = 1024 * 1024
 _PROFILES = {"OC-ANIM-1", "OC-TH4-1", "VTU-1"}
 _ANIMATION = re.compile(r".*(A[0-9]{3,})(?:\.gz)?", re.I)
 _HISTORY = re.compile(r".*T01", re.I)
+_LOG_LIMIT = 64 * 1024**2
+
+
+def reader_code_sha256(profile, check=no_checkpoint):
+    module = opencourant_history if profile == "OC-TH4-1" else vtk_fields
+    source = Path(module.__file__)
+    if source.is_file():
+        return sha256_file(source, check)
+    check()
+    # Frozen installations may only expose the code object through their loader.
+    import marshal
+    code = module.__loader__.get_code(module.__name__)
+    return hashlib.sha256(marshal.dumps(code)).hexdigest()
+
+
+def _install_root(options, executable):
+    candidate = options.get("install_root") or os.environ.get("CAELAB_OPENCOURANT")
+    root = Path(candidate).resolve() if candidate else None
+    if root and root.is_file() and not options.get("install_root") and root.name.startswith("starter_"):
+        root = root.parent.parent
+    if root is not None and root.is_dir() and executable.is_relative_to(root) and executable != root:
+        return root
+    if options.get("allow_custom_executable") is True:
+        return None
+    raise ResultError("UNTRUSTED_CONVERTER_EXECUTABLE", str(executable))
+
+
+def converter_environment(plan, environment):
+    program = plan["executable"]
+    root = program and program.get("install_root")
+    if os.name != "nt" or not root:
+        return environment
+    home = Path(root)
+    directories = ("exec", "extlib/hm_reader/win64", "extlib/intelOneAPI_runtime/win64",
+                   "hm_reader/win64", "intelOneAPI_runtime/win64")
+    external_path = next((v for k, v in environment.items() if k.upper() == "PATH"), "")
+    env = {k: v for k, v in environment.items() if k.upper() not in {"PATH", "RAD_CFG_PATH", "KMP_STACKSIZE"}}
+    env.update(PATH=os.pathsep.join([*(str(home / directory) for directory in directories), external_path]).rstrip(os.pathsep),
+               RAD_CFG_PATH=str(home / "hm_cfg_files"), KMP_STACKSIZE="400m")
+    return env
 
 
 def _registered(receipt):
@@ -105,7 +147,9 @@ def _read_source_plan(store, run_id, profile, frame_ids, options, *, check=no_ch
 def _seal(plan):
     content = {key: value for key, value in plan.items() if key not in {"plan_hash", "cache_key", "executable"}}
     executable = plan["executable"]
-    content["executable"] = None if executable is None else {k: v for k, v in executable.items() if k != "path_audit"}
+    content["executable"] = None if executable is None else {
+        k: v for k, v in executable.items() if k not in {"path_audit", "install_root"}}
+    content["options"] = {k: v for k, v in plan["options"].items() if k != "install_root"}
     plan_hash = canonical_sha256(content, exclude_keys=())
     return plan_hash, canonical_sha256({"conversion_plan": plan_hash}, exclude_keys=())
 
@@ -118,7 +162,8 @@ def _plan(store, source_run_id, profile, executable, frame_ids, options, *, chec
     if options is not None and not isinstance(options, Mapping):
         raise ResultError("INVALID_DATASET", "converter options must be an object")
     options = json.loads(canonical_json_bytes(options or {}))
-    for name, default in (("gunzip_limit_bytes", GUNZIP_LIMIT), ("output_limit_bytes", GUNZIP_LIMIT)):
+    for name, default in (("gunzip_limit_bytes", GUNZIP_LIMIT), ("output_limit_bytes", GUNZIP_LIMIT),
+                          ("max_log_bytes", _LOG_LIMIT)):
         value = options.setdefault(name, default)
         if type(value) is not int or value <= 0:
             raise ResultError("INVALID_DATASET", f"{name} must be a positive integer")
@@ -137,20 +182,32 @@ def _plan(store, source_run_id, profile, executable, frame_ids, options, *, chec
             path = Path(executable).resolve(strict=True)
             if not path.is_file():
                 raise OSError("expected a converter executable file")
+            root = _install_root(options, path)
+            if root is not None:
+                options["install_root"] = str(root)
             program = {"path_audit": str(path), "sha256": sha256_file(path, check),
-                       "version": options.get("tool_version", "unknown"), "host_os": platform.system()}
+                       "version": options.get("tool_version", "unknown"), "host_os": platform.system(),
+                       "install_root": str(root) if root is not None else None}
         except OSError as exc:
             raise ResultError("PROGRAM_UNAVAILABLE", str(executable)) from exc
+    if profile == "OC-ANIM-1":
+        recorded_mesh = receipt["snapshot"].get("expected_mesh")
+        if recorded_mesh is not None and options.get("expected_mesh", recorded_mesh) != recorded_mesh:
+            raise ResultError("SOURCE_MISMATCH", "requested mesh differs from the registered source mesh")
+        mesh = options.setdefault("expected_mesh", recorded_mesh)
+        if not isinstance(mesh, Mapping) or not mesh.get("node_coordinates") or not mesh.get("elements"):
+            raise ResultError("SOURCE_MISMATCH", "OC-ANIM-1 requires verified source node and element maps")
+        # The pinned producer writes the engine's on/off byte unchanged.
+        options["active_erosion_status"] = 1 if program["install_root"] is not None else 0
     plan = {
         "schema_version": 1, "profile": profile, "reader_version": "1", "source_run_id": source_run_id,
         "source_node_id": receipt["node_id"], "source_input_revision": receipt.get("input_revision"),
+        "source_mesh_revision": receipt["snapshot"].get("mesh_revision"),
         "source_fingerprint": source_fingerprint(receipt), "source_artifacts": [ref.to_dict() for ref in refs],
         "frame_ids": list(frame_ids), "options": options, "units": receipt.get("units") or {},
         "executable": program, "estimated_input_bytes": sum(ref.size for ref in refs),
     }
-    reader_module = opencourant_history if profile == "OC-TH4-1" else vtk_fields
-    reader_file = Path(reader_module.__file__)
-    plan["reader_sha256"] = sha256_file(reader_file, check) if reader_file.is_file() else None
+    plan["reader_sha256"] = reader_code_sha256(profile, check)
     plan["plan_hash"], plan["cache_key"] = _seal(plan)
     return plan
 
@@ -177,7 +234,9 @@ def verify_plan(store, plan, check):
                           plan["frame_ids"], plan["options"], check=check)
         if refreshed != plan:
             raise ValueError("plan no longer matches the registered source and executable")
-    except (ValueError, TypeError, KeyError) as exc:
+    except ResultError:
+        raise
+    except (ValueError, TypeError, KeyError, OSError) as exc:
         raise ResultError("STALE_PLAN", str(exc)) from exc
 
 
@@ -204,7 +263,8 @@ def _stage_file(source, target, check, *, gzip_limit=None):
 
 def prepare_conversion(store, folder, plan, check):
     verify_plan(store, plan, check)
-    source, receipt_path, _ = source_record(store, plan["source_run_id"])
+    source, receipt_path, receipt = source_record(store, plan["source_run_id"])
+    verify_original_decks(source, receipt, check, code="SOURCE_CHANGED")
     for name in ("inputs", "outputs"):
         artifact_path(folder, name).mkdir()
     frozen = folder / "inputs/source-receipt.json"
@@ -250,6 +310,7 @@ def verify_source(store, plan, check):
     directory, _, current = source_record(store, plan["source_run_id"])
     if source_fingerprint(current) != plan["source_fingerprint"]:
         raise ResultError("SOURCE_CHANGED", "source receipt changed during conversion")
+    verify_original_decks(directory, current, check, code="SOURCE_CHANGED")
     for item in plan["source_artifacts"]:
         verify_artifact(directory, ArtifactRefV1.from_dict(item), check=check, code="SOURCE_CHANGED")
 
@@ -291,25 +352,34 @@ def validate_oc_outputs(operation_dir: Path, plan: Mapping, *, check_cancelled=N
                 pending = artifact_path(folder, f"outputs/frame-{index:03d}.vtk.part")
                 _nonempty(pending, limit)
                 grid = vtk_fields.read_vtk(pending, exact_required_set=plan["options"].get("exact_required_set"),
-                                           expected=plan["options"].get("expected_mesh"), check_cancelled=check)
+                                           expected=plan["options"]["expected_mesh"],
+                                           active_erosion_status=plan["options"]["active_erosion_status"],
+                                           check_cancelled=check)
                 target = pending.with_suffix("")
                 pending.replace(target)
             elif profile == "VTU-1":
                 target = artifact_path(folder, f"inputs/in{index:03d}.vtu")
                 _nonempty(target, limit)
-                grid = vtk_fields.read_vtu(target, check_cancelled=check)
+                grid = vtk_fields.read_vtu(target, exact_required_set=plan["options"].get("exact_required_set"),
+                                           node_id_policy=plan["options"].get("node_id_policy"), check_cancelled=check)
+                if not vtk_fields.nodal_fields(grid):
+                    raise ResultError("SCHEMA_MISMATCH", "VTU has no queryable nodal physics fields")
             else:
                 raise ResultError("UNSUPPORTED_CAPABILITY", profile)
             ref = artifact(folder, target, "frame_output", "vtk-legacy" if profile == "OC-ANIM-1" else "vtu",
                            POST_PRODUCER, check=check)
             outputs.append(ref)
+            element_fields = vtk_fields.tensor_fields(grid) if profile == "OC-ANIM-1" else set()
+            if profile == "OC-ANIM-1" and (erosion := vtk_fields.erosion_field(grid)) is not None:
+                element_fields.add(erosion)
             frames.append({"frame_id": frame_id, "time": grid.time, "artifact_ref": ref.to_dict(),
-                           "fields": sorted(name for name in grid.point_data
-                                            if not name.startswith("Coverage_") and name not in {"NODE_ID", "NativeNodeId"}),
-                           "element_fields": sorted(vtk_fields.tensor_fields(grid)) if profile == "OC-ANIM-1" else [],
+                           **vtk_fields.sample_metadata(grid), "fields": sorted(vtk_fields.nodal_fields(grid)),
+                           "element_fields": sorted(element_fields),
                            "geometry_state": "deformed" if profile == "OC-ANIM-1" else "reference"})
         dataset = DatasetManifestV1(plan["cache_key"], "field", frames=tuple(frames))
-    return {"dataset": dataset.to_dict(), "outputs": outputs}
+    manifest = dataset.to_dict()
+    return {"dataset": manifest, "dataset_manifest_sha256": canonical_sha256(manifest, exclude_keys=()),
+            "outputs": outputs}
 
 
 def receipt_owners(source_id, operation_id, source_artifacts, operation_artifacts):

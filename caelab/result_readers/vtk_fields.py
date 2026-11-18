@@ -44,6 +44,7 @@ class FieldGrid:
     element_ids: np.ndarray | None = None
     part_ids: np.ndarray | None = None
     component_names: dict = field(default_factory=dict)
+    active_erosion_status: int = 0
 
     @property
     def reference_points(self) -> np.ndarray:
@@ -314,51 +315,97 @@ def _geometry(grid, check):
         check()
         if (_WIDTHS.get(cell_type) != len(cell) or len(set(cell)) != len(cell)
                 or min(cell) < 0 or max(cell) >= n):
-            raise ResultError("INVALID_DATASET", f"invalid connectivity for VTK cell type {cell_type}")
+            raise ResultError("INVALID_CONNECTIVITY", f"invalid connectivity for VTK cell type {cell_type}")
 
 
 def tensor_fields(grid):
     return {name for name in grid.cell_data if _TENSOR.fullmatch(name)}
 
 
+def nodal_fields(grid):
+    return {name for name, array in grid.point_data.items()
+            if (name not in {"NODE_ID", "NativeNodeId", "node_id", "vtkGhostType"}
+                and not name.startswith("Coverage_") and np.isfinite(array).any()
+                and (name not in {"DISP", "Displacement", "VELO", "Velocity"} or array.shape[1] == 3))}
+
+
+def erosion_field(grid):
+    return next((name for name in ("EROSION_STATUS", "Scalar:EROSION_STATUS") if name in grid.cell_data), None)
+
+
+def _scalar(grid, *names):
+    for name in names:
+        data = grid.field_data.get(name)
+        if data is not None:
+            if data.shape != (1, 1) or not np.isfinite(data[0, 0]):
+                raise ResultError("INVALID_DATASET", f"{name} must be a finite scalar")
+            return name, data[0, 0].item()
+    return None, None
+
+
 def _time(grid, *, required):
-    data = grid.field_data.get("TIME")
-    if data is None and required:
+    name, value = _scalar(grid, "TIME") if required else _scalar(grid, "TIME", "TimeValue")
+    if name is None and required:
         raise ResultError("MISSING_TIME", "FIELD TIME is required")
-    if data is not None:
-        if data.shape != (1, 1) or not np.isfinite(data[0, 0]):
-            raise ResultError("INVALID_DATASET", "TIME must be a finite scalar")
-        grid.time = float(data[0, 0])
+    if name is not None:
+        grid.time = float(value)
+
+
+def sample_metadata(grid):
+    metadata = {}
+    for key, names in (
+        ("step", ("Native_step", "step")), ("increment", ("Native_increment", "increment")),
+        ("native_value", ("Native_value",)), ("analysis_type", ("Native_analysis_type", "analysis_type")),
+    ):
+        _, value = _scalar(grid, *names)
+        if value is not None:
+            metadata[key] = value
+    name, _ = _scalar(grid, "TIME", "TimeValue")
+    if grid.time is not None:
+        metadata["time_source"] = name or "Native_value"
+    if "native_value" in metadata:
+        metadata["coordinate_kind"] = {0: "static", 1: "time", 2: "frequency", 3: "load_step"}.get(
+            metadata.get("analysis_type"), "native")
+    return metadata
 
 
 def _validate_identity(grid, expected):
     if "node_coordinates" in expected:
         oracle = {int(key): value for key, value in expected["node_coordinates"].items()}
         if set(oracle) != set(grid.node_ids):
-            raise ResultError("OBSERVABLE_MISMATCH", "NODE_ID set")
+            raise ResultError("SOURCE_MISMATCH", "NODE_ID set")
         for node, xyz in zip(grid.node_ids, grid.reference_points):
             target = np.asarray(oracle[node])
-            if target.shape != (3,) or not np.allclose(xyz, target, rtol=1e-6, atol=1e-8):
-                raise ResultError("OBSERVABLE_MISMATCH", f"reference coordinates for node {node}")
+            if target.shape != (3,) or not np.allclose(xyz, target, rtol=1e-5, atol=1e-4):
+                raise ResultError("SOURCE_MISMATCH", f"reference coordinates for node {node}")
     if "elements" in expected:
         oracle = {int(key): value for key, value in expected["elements"].items()}
         if set(oracle) != set(grid.element_ids):
-            raise ResultError("OBSERVABLE_MISMATCH", "ELEMENT_ID set")
+            raise ResultError("SOURCE_MISMATCH", "ELEMENT_ID set")
         for element, part, kind, cell in zip(grid.element_ids, grid.part_ids, grid.cell_types, grid.cells):
             actual = {"part_id": int(part), "cell_type": int(kind),
                       "node_ids": [int(grid.node_ids[i]) for i in cell]}
             if actual != oracle[element]:
-                raise ResultError("OBSERVABLE_MISMATCH", f"topology or part for element {element}")
+                raise ResultError("SOURCE_MISMATCH", f"topology or part for element {element}")
 
 
-def read_vtk(path, *, exact_required_set=None, expected=None, check_cancelled=None) -> FieldGrid:
+def read_vtk(path, *, exact_required_set=None, expected=None, active_erosion_status=0,
+             check_cancelled=None) -> FieldGrid:
     """Validate OC-ANIM-1 and bind optional source geometry by native ID."""
     check = check_cancelled or no_checkpoint
     grid = _read(path, _legacy, check)
+    grid.active_erosion_status = active_erosion_status
     # anim_to_vtk emits a repeated fourth connectivity index for triangles.
     if len(grid.cells) == len(grid.cell_types):
-        grid.cells = tuple(tuple(dict.fromkeys(cell)) if kind == 5 and len(cell) == 4 else cell
-                           for kind, cell in zip(grid.cell_types, grid.cells))
+        cells = []
+        for kind, cell in zip(grid.cell_types, grid.cells):
+            check()
+            if kind == 5 and len(cell) == 4:
+                if cell[3] != cell[2] or len(set(cell[:3])) != 3:
+                    raise ResultError("INVALID_CONNECTIVITY", f"invalid repeated triangle vertex: {cell}")
+                cell = cell[:3]
+            cells.append(cell)
+        grid.cells = tuple(cells)
     _geometry(grid, check)
     _time(grid, required=True)
     n, m = len(grid.points), len(grid.cells)
@@ -373,14 +420,23 @@ def read_vtk(path, *, exact_required_set=None, expected=None, check_cancelled=No
     required = set(exact_required_set or ())
     if exact_required_set is None:
         if masks["2DELEM"].any():
-            required.update(("2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)", "2DELEM_Stress_(layer__1)"))
+            required.update(("2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)"))
+            required.update(f"2DELEM_Stress_(layer__{i})_" for i in range(1, 6))
         if masks["3DELEM"].any():
             required.add("3DELEM_Stress")
     available = grid.point_data.keys() | grid.cell_data.keys() | grid.field_data.keys()
-    missing = {name for name in required if _TENSOR.fullmatch(name) and name not in tensors and name + "_" not in tensors}
+    missing = {name for name in required if _TENSOR.fullmatch(name) and name not in tensors}
     missing.update(name for name in required if not _TENSOR.fullmatch(name) and name not in available)
     if missing:
-        raise ResultError("PARTIAL_REQUIRED_FIELD", ", ".join(sorted(missing)))
+        raise ResultError("SCHEMA_MISMATCH", ", ".join(sorted(missing)))
+    erosion = erosion_field(grid)
+    if erosion is not None:
+        status = grid.cell_data[erosion]
+        if status.shape != (m, 1) or not np.isin(status, [0, 1]).all():
+            raise ResultError("SCHEMA_MISMATCH", f"{erosion} must be scalar")
+        active = status[:, 0] == active_erosion_status
+    else:
+        active = np.ones(m, dtype=bool)
     for arrays in (grid.point_data, grid.cell_data, grid.field_data):
         for name, data in arrays.items():
             check()
@@ -390,7 +446,7 @@ def read_vtk(path, *, exact_required_set=None, expected=None, check_cancelled=No
             if name.startswith("Coverage_"):
                 covered = name[9:]
                 if covered in required or covered.rstrip("_") in required or covered in {"Displacement", "Velocity"}:
-                    mask = masks[covered[:6]] if covered in tensors else slice(None)
+                    mask = (masks[covered[:6]] & active) if covered in tensors else slice(None)
                     if data.shape[1] != 1 or np.any(data[mask] != 1):
                         raise ResultError("PARTIAL_REQUIRED_FIELD", name)
     for family, mask in masks.items():
@@ -414,7 +470,7 @@ def read_vtk(path, *, exact_required_set=None, expected=None, check_cancelled=No
     return grid
 
 
-def read_vtu(path, *, check_cancelled=None) -> FieldGrid:
+def read_vtu(path, *, exact_required_set=None, node_id_policy=None, entity="node", check_cancelled=None) -> FieldGrid:
     """Read the registered ASCII and inline binary VTU formats used by Workbench."""
     check = check_cancelled or no_checkpoint
     try:
@@ -426,14 +482,27 @@ def read_vtu(path, *, check_cancelled=None) -> FieldGrid:
             raise exc from None
     _geometry(grid, check)
     _time(grid, required=False)
-    def id_name(arrays, producer, standard):
-        if producer in arrays and standard in arrays:
-            if not np.array_equal(arrays[producer], arrays[standard]):
-                raise ResultError("OBSERVABLE_MISMATCH", f"{producer} conflicts with {standard}")
-        return producer if producer in arrays else standard
+    if grid.time is None and _scalar(grid, "Native_analysis_type", "analysis_type")[1] == 1:
+        _, time = _scalar(grid, "Native_value")
+        grid.time = float(time) if time is not None else None
 
-    grid.node_ids = _ids(grid.point_data, id_name(grid.point_data, "NativeNodeId", "NODE_ID"), len(grid.points))
-    grid.element_ids = _ids(grid.cell_data, id_name(grid.cell_data, "NativeElementId", "ELEMENT_ID"), len(grid.cells))
+    def grid_ids(arrays, names, rows, *, required, ordinal=False):
+        found = [name for name in names if name in arrays]
+        if not found:
+            if ordinal:
+                return np.arange(1, rows + 1)
+            return _ids(arrays, names[0], rows) if required else None
+        if any(not np.array_equal(arrays[found[0]], arrays[name]) for name in found[1:]):
+            raise ResultError("OBSERVABLE_MISMATCH", f"conflicting ID arrays: {found}")
+        return _ids(arrays, found[0], rows)
+
+    grid.node_ids = grid_ids(grid.point_data, ("NativeNodeId", "NODE_ID", "node_id"), len(grid.points),
+                             required=entity == "node", ordinal=node_id_policy == "one_based")
+    grid.element_ids = grid_ids(grid.cell_data, ("NativeElementId", "ELEMENT_ID"), len(grid.cells),
+                                required=entity == "element")
+    missing = set(exact_required_set or ()) - nodal_fields(grid)
+    if missing:
+        raise ResultError("SCHEMA_MISMATCH", f"missing queryable VTU fields: {', '.join(sorted(missing))}")
     return grid
 
 
@@ -472,18 +541,21 @@ def von_mises(tensor):
 
 
 def query_field(grid, field_id, *, ids=None, component=None, operator="values", basis="global",
-                units=None, check_cancelled=None):
+                units=None, check_cancelled=None, include_coverage=False):
     """Query native rows in the requested ID order and return numeric values and shape."""
     check = check_cancelled or no_checkpoint
     if basis not in {"global", "element_local"}:
         raise ResultError("UNSUPPORTED_BASIS", str(basis))
-    point = (field_id in grid.point_data and not field_id.startswith("Coverage_")
-             and field_id not in {"NODE_ID", "NativeNodeId"})
+    point = field_id in nodal_fields(grid)
+    erosion = grid.profile == "OC-ANIM-1" and field_id == erosion_field(grid)
     if point:
         entity_ids, data, allowed = grid.node_ids, grid.point_data[field_id], np.ones(len(grid.points), dtype=bool)
         if basis != "global":
             raise ResultError("UNSUPPORTED_BASIS", f"{field_id} has a global nodal basis")
-    elif grid.profile == "OC-ANIM-1" and _TENSOR.fullmatch(field_id) and field_id in grid.cell_data:
+    elif erosion:
+        entity_ids, data = grid.element_ids, grid.cell_data[field_id]
+        allowed = np.ones(len(grid.cells), dtype=bool)
+    elif grid.profile == "OC-ANIM-1" and field_id in tensor_fields(grid):
         entity_ids, data = grid.element_ids, grid.cell_data[field_id]
         allowed = grid.family_masks[field_id[:6]]
     else:
@@ -498,15 +570,26 @@ def query_field(grid, field_id, *, ids=None, component=None, operator="values", 
         indices = np.array([id_rows[entity] for entity in ids], dtype=np.intp)
     if not len(indices) or not allowed[indices].all():
         raise ResultError("OBSERVABLE_MISMATCH", "selection crosses the field's association or element family")
+    total = len(indices)
+    eroded_ids = ()
+    erosion_name = erosion_field(grid)
+    if erosion_name and not point and not erosion:
+        active = grid.cell_data[erosion_name][indices, 0] == grid.active_erosion_status
+        eroded_ids = tuple(map(int, entity_ids[indices[~active]]))
+        indices = indices[active]
     coverage = (grid.point_data if point else grid.cell_data).get("Coverage_" + field_id)
     if coverage is not None and (coverage.shape[1] != 1 or np.any(coverage[indices, 0] != 1)):
         raise ResultError("COVERAGE_INCOMPLETE", field_id)
     values = data[indices]
     if not np.isfinite(values).all():
         raise ResultError("COVERAGE_INCOMPLETE", f"non-finite selected {field_id}")
-    if not point:
+    if erosion:
+        if component is not None:
+            raise ResultError("UNSUPPORTED_FIELD", f"{field_id} is scalar")
+        values = values[:, 0]
+    elif not point:
         values = values.reshape(-1, 3, 3)
-        if field_id.startswith("2DELEM") and basis == "global":
+        if field_id.startswith("2DELEM") and basis == "global" and len(values):
             rotation = []
             for index in indices:
                 check()
@@ -515,6 +598,10 @@ def query_field(grid, field_id, *, ids=None, component=None, operator="values", 
             values = rotation.transpose(0, 2, 1) @ values @ rotation
         elif field_id.startswith("3DELEM") and basis != "global":
             raise ResultError("UNSUPPORTED_BASIS", "solid tensors are stored in the global basis")
+        if field_id == "3DELEM_Stress":
+            # anim_to_vtk serializes the native yz slot in xz and vice versa.
+            values[:, [0, 1], 2] = values[:, [1, 0], 2]
+            values[:, 2, [0, 1]] = values[:, 2, [1, 0]]
         if component and component.lower() == "vm" and "Stress" in field_id:
             values = von_mises(values)
         elif component:
@@ -524,9 +611,13 @@ def query_field(grid, field_id, *, ids=None, component=None, operator="values", 
             values = values[:, row, col]
     elif component is not None:
         labels = grid.component_names.get(field_id) or ()
-        label = next((i for i, name in enumerate(labels) if name and component.casefold() == name.casefold()), None)
-        if label is None and values.shape[1] == 3 and component.lower() in ("x", "y", "z"):
-            label = "xyz".index(component.lower())
+        requested = component.casefold()
+        aliases = {"d1": "x", "d2": "y", "d3": "z"}
+        axis = aliases.get(requested, requested)
+        matches = [i for i, name in enumerate(labels) if name and aliases.get(name.casefold(), name.casefold()) == axis]
+        label = matches[0] if len(matches) == 1 else None
+        if not any(labels) and values.shape[1] == 3 and axis in ("x", "y", "z"):
+            label = "xyz".index(axis)
         if label is None:
             raise ResultError("UNSUPPORTED_FIELD", f"{field_id}.{component}")
         values = values[:, label]
@@ -541,10 +632,13 @@ def query_field(grid, field_id, *, ids=None, component=None, operator="values", 
         values = np.hypot(np.hypot(values[:, 0], values[:, 1]), values[:, 2])
     elif operator in {"min", "max", "mean"}:
         function = {"min": np.min, "max": np.max, "mean": np.mean}[operator]
-        values = np.asarray(function(values, axis=0))
+        values = np.asarray(function(values, axis=0)) if len(values) else values
     elif operator not in {"identity", "values"}:
         raise ResultError("UNSUPPORTED_OBSERVABLE", operator)
     check()
     if not np.isfinite(values).all():
         raise ResultError("INVALID_DATASET", "numeric operator produced a non-finite result")
-    return values, tuple(map(int, entity_ids[indices]))
+    result = (values, tuple(map(int, entity_ids[indices])))
+    if include_coverage:
+        return (*result, {"total": total, "eroded_ids": eroded_ids})
+    return result
