@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 import hashlib
 import math
 from pathlib import Path
@@ -27,7 +28,7 @@ from caelab.materials.contracts import (
 )
 from caelab.materials.experiments import load_experiment_channel_arrays
 from caelab.materials.registry import MaterialStudyError
-from caelab.materials.units import QuantityUnitSpec, convert_values
+from caelab.materials.units import QuantityUnitSpec, convert_frequency_angular, convert_values
 from caelab.mdo.constraints import ConstraintSpec, Feasibility, assess_constraints
 from caelab.mdo.variables import evaluate_expression
 
@@ -390,12 +391,59 @@ def interpolate_to_observed_grid(
     return out
 
 
+def observed_rows_overlap(
+    fit: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    other: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    *,
+    fit_grid: QuantityUnitSpec,
+    other_grid: QuantityUnitSpec,
+    fit_observable: ObservableSpec,
+    other_observable: ObservableSpec,
+) -> bool:
+    """Compare complete observed rows in the same units, allowing conversion roundoff."""
+    if fit_observable != replace(other_observable, unit=fit_observable.unit):
+        return False
+    fit_x, fit_y, _, fit_mask = fit
+    other_x, other_y, _, other_mask = other
+    converted_grid = other_grid != fit_grid
+    converted_values = other_observable.unit != fit_observable.unit
+    try:
+        if {fit_grid.quantity_kind, other_grid.quantity_kind} == {"frequency", "angular_frequency"}:
+            other_x = convert_frequency_angular(other_x, other_grid, fit_grid)
+        elif converted_grid:
+            other_x = convert_values(other_x, other_grid, fit_grid)
+        if converted_values:
+            other_y = convert_values(
+                other_y,
+                QuantityUnitSpec(other_observable.unit, other_observable.quantity_kind),
+                QuantityUnitSpec(fit_observable.unit, fit_observable.quantity_kind),
+            )
+    except ValueError:
+        return False  # Distinct physical quantities do not share sample rows.
+
+    other_valid = np.flatnonzero(np.all(other_mask, axis=1))
+    order = other_valid[np.argsort(other_x[other_valid])]
+    sorted_x = other_x[order]
+    fit_valid = np.all(fit_mask, axis=1)
+    coords = fit_x[fit_valid]
+    tolerance = 8 * np.finfo(np.float64).eps
+    radius = (tolerance if converted_grid else 0.0) * np.abs(coords)
+    value_tolerance = tolerance if converted_values else 0.0
+    left = np.searchsorted(sorted_x, coords - radius)
+    right = np.searchsorted(sorted_x, coords + radius, side="right")
+    for row, start, end in zip(fit_y[fit_valid], left, right):
+        if end > start and np.any(np.all(np.isclose(other_y[order[start:end]], row, rtol=value_tolerance, atol=0), axis=1)):
+            return True
+    return False
+
+
 def build_normalization_payload(
     *,
     experiments: Mapping[str, ExperimentSpec],
     experiment_data: Mapping[str, Mapping[str, Any]],
     comparisons: Sequence[ComparisonSpec],
     data_root: Path,
+    schema_version: int = 2,
 ) -> dict[str, Any]:
     """Build deterministic frozen normalization payload (C4) from train comparisons and observed grids."""
     fit_comps = [c for c in comparisons if c.required_for_fit]
@@ -433,8 +481,21 @@ def build_normalization_payload(
                 "source_sha256": exp.source_ref.sha256,
             }
         )
+        if schema_version == 2:
+            observable = next(ch.observable for ch in exp.channels if ch.observable_id == comp.observable_id)
+            entries[-1].update(
+                experiment_revision=exp.experiment_revision,
+                independent_unit=ch_entry["independent_unit"],
+                independent_quantity_kind=ch_entry["independent_quantity_kind"],
+                observable_unit=observable.unit,
+                observable_quantity_kind=observable.quantity_kind,
+                grid_sha256=ch_entry["independent_ref"]["sha256"],
+                observation_sha256=ch_entry["values_ref"]["sha256"],
+                sample_keys_sha256=ch_entry["sample_keys_ref"]["sha256"],
+                mask_sha256=ch_entry["mask_ref"]["sha256"],
+            )
     return {
-        "schema_version": 1,
+        "schema_version": schema_version,
         "fit_comparison_ids": [c.id for c in fit_comps],
         "total_fit_weight": total_fit_weight,
         "comparisons": entries,

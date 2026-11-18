@@ -317,7 +317,7 @@ def _make_custom_study(tmp_path: Path, adapter: _CustomLinearAdapter, name: str 
             unit_specs={"x": QuantityUnitSpec("1", "dimensionless"), "y": QuantityUnitSpec("MPa", "stress")},
             conditions={},
             split=sp,
-            replicate_group="rep-1",
+            replicate_group=f"rep-{sp}",
             expected_revision=svc.snapshot().document_revision,
         )
 
@@ -1011,7 +1011,7 @@ def test_confirmation_freezes_before_array_reads_and_isolates_holdout_errors(tmp
         assert result.assessment.objective["fit_loss"] == 0.0
         assert result.assessment.assessment["holdout_status"] == "fail"
         assert set(exp.experiment_id for exp in result.prediction_bundle.experiments) == {
-            "exp_train", "exp_hold",
+            "exp_train", "exp_val", "exp_hold",
         }
 
         def reject_holdout(plan, request, **kwargs):
@@ -1392,9 +1392,10 @@ def test_validation_diagnostics_and_declared_confirmation_are_isolated(tmp_path,
     svc, _ = _make_custom_study(tmp_path, adapter)
     with svc:
         fit, val, hold = svc.comparisons()
+        diagnostic = replace(val, id="undeclared", required_for_validation=False)
         svc.configure(
             parameters=svc.parameters(),
-            comparisons=(fit, replace(val, required_for_validation=False), hold),
+            comparisons=(fit, val, diagnostic),
             expected_revision=svc.snapshot().document_revision,
         )
         exploration = svc.evaluate(
@@ -1402,11 +1403,21 @@ def test_validation_diagnostics_and_declared_confirmation_are_isolated(tmp_path,
         )
         diagnostics = svc.evaluation(exploration.evaluation_id).assessment.assessment
         assert diagnostics["validation_status"] == "not_assessed"
-        assert next(item for item in diagnostics["channel_checks"] if item["split"] == "validation")["loss"] == 0.0
+        assert {item["comparison_id"] for item in diagnostics["channel_checks"]} == {fit.id}
+        confirmed = svc.evaluate(
+            {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+            execution_phase="confirmation", compute_identifiability=False,
+        )
+        checks = {
+            item["comparison_id"]: item for item in
+            svc.evaluation(confirmed.evaluation_id).assessment.assessment["channel_checks"]
+        }
+        assert set(checks) == {fit.id, val.id, diagnostic.id}
+        assert checks[diagnostic.id]["loss"] == 0.0
 
         svc.configure(
             parameters=svc.parameters(),
-            comparisons=(fit, val, replace(val, id="undeclared", required_for_validation=False), hold),
+            comparisons=(fit, val, diagnostic, hold),
             assessment_policy={"selection_policy": {"mode": "manual_with_validation", "validation_comparison_ids": [val.id]}},
             expected_revision=svc.snapshot().document_revision,
         )
@@ -1420,6 +1431,12 @@ def test_validation_diagnostics_and_declared_confirmation_are_isolated(tmp_path,
             return execute(plan, request, **kwargs)
 
         monkeypatch.setattr(adapter, "execute", fail_validation)
+        exploration = svc.evaluate(
+            {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, compute_identifiability=False,
+        )
+        assert {check["comparison_id"] for check in svc.evaluation(exploration.evaluation_id).assessment.assessment[
+            "channel_checks"
+        ]} == {fit.id, val.id}
         confirmed = svc.evaluate(
             {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision,
             cache_policy="refresh", execution_phase="confirmation", compute_identifiability=False,
@@ -1512,7 +1529,7 @@ def test_holdout_cannot_reuse_training_rows_under_a_different_label(tmp_path):
         assert not list((svc.data_root / "holdout_exposures").glob("*.json"))
 
 
-@pytest.mark.parametrize("fault", ["marker", "lease"])
+@pytest.mark.parametrize("fault", ["marker", "lease", "lease_after_touch"])
 def test_save_as_retry_after_standalone_root_setup_failure(tmp_path, monkeypatch, fault):
     import caelab.materials.service as material_service
 
@@ -1528,6 +1545,8 @@ def test_save_as_retry_after_standalone_root_setup_failure(tmp_path, monkeypatch
 
     def fail_lease(root, stage):
         assert root == dest_root
+        if fault == "lease_after_touch":
+            (root / "study.lock").touch()
         raise MaterialStudyError("STUDY_LOCKED", stage)
 
     with svc:
@@ -1579,7 +1598,11 @@ def test_last_optimizer_step_accepts_control_and_preserves_prior_selection(tmp_p
         monkeypatch.setattr(material_service, "mdo_optimize", finish_while_user_acts)
         receipt = svc.optimize(expected_revision=svc.snapshot().document_revision)
         assert (receipt.state, receipt.termination_reason) == (terminal, f"USER_{action.upper()}")
-        assert json.loads(svc.path.read_bytes())["selected_evaluation_id"] == selected.evaluation_id
+        manifest = json.loads(svc.path.read_bytes())
+        checkpoint = json.loads((svc.data_root / "campaigns" / f"{receipt.campaign_id}.json").read_bytes())
+        assert manifest["selected_evaluation_id"] == selected.evaluation_id
+        assert receipt.selected_ids == (selected.evaluation_id,)
+        assert manifest["campaigns"][receipt.campaign_id]["selected_ids"] == checkpoint["selected_ids"] == [selected.evaluation_id]
 
 
 def test_graceful_single_stop_is_distinct_from_cancel(tmp_path, monkeypatch):
@@ -1679,3 +1702,218 @@ def test_exploration_after_direct_confirmation_can_freeze_its_own_lineage(tmp_pa
         assert svc.find_frozen_selection(fit.evaluation_id) == linked.selection_ref
         assert svc.evaluation(run("confirmation").evaluation_id).selection_ref == linked.selection_ref
         assert svc.evaluation(run("confirmation", selection_ref=direct.selection_ref).evaluation_id).selection_ref == direct.selection_ref
+
+
+@pytest.mark.parametrize("field,bad_value", [
+    ("evaluation_id", "another-evaluation"), ("selection_id", "another-selection"),
+    ("content_revision", "foreign-revision"), ("parameter_set_sha256", "0" * 64),
+    ("exposed_experiment_ids", ["unknown-holdout"]),
+])
+def test_confirmation_verifies_holdout_event_before_first_delivery(tmp_path, monkeypatch, field, bad_value):
+    import caelab.materials.service as material_service
+
+    svc, _ = _make_custom_study(tmp_path, _CustomLinearAdapter())
+    write = material_service.atomic_json
+
+    def write_wrong_event(path, payload):
+        if path.parent.name == "holdout_exposures":
+            payload = {**payload, field: bad_value}
+        write(path, payload)
+
+    with svc:
+        monkeypatch.setattr(material_service, "atomic_json", write_wrong_event)
+        with pytest.raises(MaterialStudyError, match="CORRUPT_ARTIFACT"):
+            svc.evaluate(
+                {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+                execution_phase="confirmation", compute_identifiability=False,
+            )
+        assert not svc.list_evaluations()
+        assert not json.loads(svc.path.read_bytes())["holdout_exposures"]
+
+
+@pytest.mark.parametrize("field,bad_value", [
+    ("fit_comparison_ids", ["other"]), ("total_fit_weight", 999),
+    ("grid_sha256", "0" * 64), ("observation_sha256", "0" * 64), ("observable_unit", "Pa"),
+])
+def test_replay_recomputes_normalization_with_valid_but_wrong_refs(tmp_path, field, bad_value):
+    from caelab.artifact_refs import canonical_json_bytes
+
+    adapter = _CustomLinearAdapter()
+    svc, _ = _make_custom_study(tmp_path, adapter)
+
+    def rewrite(ref, payload):
+        raw = canonical_json_bytes(payload)
+        (svc.data_root / ref.path).write_bytes(raw)
+        return replace(ref, sha256=hashlib.sha256(raw).hexdigest(), size=len(raw))
+
+    with svc:
+        receipt = svc.evaluate(
+            {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+            execution_phase="confirmation", compute_identifiability=False,
+            on_progress=lambda event: svc.cancel(event["operation_id"]),
+        )
+        ref = svc.evaluation(receipt.evaluation_id).selection_ref
+        frozen = SelectionRecordV1.from_dict(json.loads((svc.data_root / ref.path).read_bytes()))
+        payload = json.loads((svc.data_root / frozen.normalization_ref.path).read_bytes())
+        target = payload if field in payload else payload["comparisons"][0]
+        target[field] = bad_value
+        changed_norm = rewrite(frozen.normalization_ref, payload)
+        changed_ref = rewrite(ref, replace(frozen, normalization_ref=changed_norm).to_dict())
+        svc._manifest["revisions"][receipt.content_revision]["selections"] = [changed_ref.to_dict()]
+
+        with pytest.raises(MaterialStudyError, match="SELECTION_MISMATCH"):
+            svc.evaluate(
+                {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+                execution_phase="confirmation", selection_ref=changed_ref, compute_identifiability=False,
+            )
+        assert not adapter.calls
+
+
+@pytest.mark.parametrize("split", ["validation", "holdout"])
+@pytest.mark.parametrize("overlap", ["replicates", "samples"])
+def test_cross_csv_split_independence_uses_groups_and_normalized_rows(tmp_path, split, overlap):
+    adapter = _CustomLinearAdapter()
+    svc, _ = _make_custom_study(tmp_path, adapter)
+    with svc:
+        fit, val, hold = svc.comparisons()
+        template = svc.experiments()[0].channels[0]
+        replica_csv = tmp_path / "formatted_elsewhere.csv"
+        # One shared observation (1, 5 MPa), the other sample is distinct.
+        replica_csv.write_text("x,y\n1.000,5000.0\n9.0,29000\n", encoding="utf-8")
+        svc.import_experiment(
+            replica_csv, experiment_id="replica", split=split,
+            channels=[replace(template, source_unit="kPa", observable=replace(template.observable, unit="kPa"))],
+            unit_specs={"x": QuantityUnitSpec("1", "dimensionless")},
+            conditions={"temperature_K": 313.15} if overlap == "replicates" else {},
+            replicate_group="rep-train" if overlap == "replicates" else "different",
+            expected_revision=svc.snapshot().document_revision,
+        )
+        replica = replace(val if split == "validation" else hold, experiment_id="replica")
+        policy = (
+            {"mode": "manual_with_validation", "validation_comparison_ids": [replica.id]}
+            if split == "validation" else {"mode": "training_only", "validation_comparison_ids": []}
+        )
+        svc.configure(
+            parameters=svc.parameters(), comparisons=(fit, replica), assessment_policy={"selection_policy": policy},
+            expected_revision=svc.snapshot().document_revision,
+        )
+        phase = "exploration" if split == "validation" else "confirmation"
+        expected_reason = "SHARED_REPLICATE_GROUP" if overlap == "replicates" else "OVERLAPPING_NORMALIZED_SAMPLES"
+        with pytest.raises(MaterialStudyError, match="DATA_RECIPE_INCOMPATIBLE") as caught:
+            svc.evaluate(
+                {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+                execution_phase=phase, compute_identifiability=False,
+            )
+        assert caught.value.details["reason"] == expected_reason
+        assert not adapter.calls
+        if split == "validation":
+            with pytest.raises(MaterialStudyError, match="DATA_RECIPE_INCOMPATIBLE"):
+                svc.optimize(expected_revision=svc.snapshot().document_revision)
+            assert not adapter.calls
+
+
+@pytest.mark.parametrize("failure", ["exception", "explicit"])
+def test_optimizer_failure_takes_precedence_over_graceful_stop(tmp_path, monkeypatch, failure):
+    import caelab.materials.service as material_service
+
+    svc, _ = _make_custom_study(tmp_path, _CustomLinearAdapter())
+    real_optimize = material_service.mdo_optimize
+
+    def fail_after_stop(*args, **kwargs):
+        assert svc.stop(svc.snapshot().active_campaign_id).accepted
+        if failure == "exception":
+            raise RuntimeError("optimizer lost its workspace")
+        result = real_optimize(*args, **kwargs)
+        return replace(result, termination_reason="FAILED")
+
+    monkeypatch.setattr(material_service, "mdo_optimize", fail_after_stop)
+    with svc:
+        result = svc.optimize(expected_revision=svc.snapshot().document_revision)
+        assert (result.state, result.termination_reason) == ("failed", "OPTIMIZER_FAILED")
+        checkpoint = json.loads((svc.data_root / "campaigns" / f"{result.campaign_id}.json").read_bytes())
+        assert (checkpoint["state"], checkpoint["termination_reason"]) == ("failed", "OPTIMIZER_FAILED")
+
+
+def test_implicit_confirmation_refreezes_legacy_training_only_scope(tmp_path):
+    from caelab.artifact_refs import canonical_json_bytes
+    from caelab.materials.residuals import build_normalization_payload
+
+    svc, _ = _make_custom_study(tmp_path, _CustomLinearAdapter())
+    params = {"m": 3, "b": 2}
+
+    def confirm(**kwargs):
+        return svc.evaluate(
+            params, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+            execution_phase="confirmation", compute_identifiability=False, **kwargs,
+        )
+
+    def rewrite(ref, payload):
+        raw = canonical_json_bytes(payload)
+        (svc.data_root / ref.path).write_bytes(raw)
+        return replace(ref, sha256=hashlib.sha256(raw).hexdigest(), size=len(raw))
+
+    with svc:
+        fit = svc.evaluate(params, expected_revision=svc.snapshot().document_revision, compute_identifiability=False)
+        cancelled = confirm(on_progress=lambda event: svc.cancel(event["operation_id"]))
+        ref = svc.evaluation(cancelled.evaluation_id).selection_ref
+        frozen = SelectionRecordV1.from_dict(json.loads((svc.data_root / ref.path).read_bytes()))
+        legacy_normalization = rewrite(frozen.normalization_ref, build_normalization_payload(
+            experiments=svc._experiments_map(), experiment_data=svc._manifest["experiment_data"],
+            comparisons=[comp for comp in svc.comparisons() if comp.split == "train"],
+            data_root=svc.data_root, schema_version=1,
+        ))
+        legacy = rewrite(ref, replace(
+            frozen, validation_experiment_revisions=(), normalization_ref=legacy_normalization,
+        ).to_dict())
+        svc._manifest["revisions"][fit.content_revision]["selections"] = [legacy.to_dict()]
+        with pytest.raises(MaterialStudyError, match="SELECTION_MISMATCH"):
+            confirm(selection_ref=legacy)
+        assert svc.find_frozen_selection(fit.evaluation_id) is None
+        confirmed = svc.evaluation(confirm().evaluation_id)
+        assert confirmed.selection_ref != legacy
+        assert confirmed.assessment.assessment["validation_status"] == "pass"
+        assert confirmed.assessment.assessment["holdout_status"] == "pass"
+
+
+def test_holdout_disjoint_csv_rows_cannot_duplicate_validation_samples(tmp_path):
+    adapter = _CustomLinearAdapter()
+    svc, _ = _make_custom_study(tmp_path, adapter)
+    with svc:
+        fit, val, hold = svc.comparisons()
+        template = svc.experiments()[0].channels[0]
+        csv_path = tmp_path / "repeated_validation.csv"
+        csv_path.write_text("x,y,partition\n7,23,val\n8,26,val\n7,23,hold\n8,26,hold\n", encoding="utf-8")
+        for eid, split, partition in (("valid", "validation", "val"), ("hold", "holdout", "hold")):
+            svc.import_experiment(
+                csv_path, experiment_id=eid, split=split, channels=[template],
+                row_filter={"partition": partition}, conditions={"temperature_K": 313.15},
+                expected_revision=svc.snapshot().document_revision,
+            )
+        svc.configure(
+            parameters=svc.parameters(),
+            comparisons=(fit, replace(val, experiment_id="valid"), replace(hold, experiment_id="hold")),
+            expected_revision=svc.snapshot().document_revision,
+        )
+        with pytest.raises(MaterialStudyError, match="DATA_RECIPE_INCOMPATIBLE") as caught:
+            svc.evaluate(
+                {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+                execution_phase="confirmation", compute_identifiability=False,
+            )
+        assert caught.value.details["reason"] == "OVERLAPPING_NORMALIZED_SAMPLES"
+        assert not adapter.calls
+
+
+def test_same_unit_split_samples_require_exact_coordinate_and_value():
+    from caelab.materials.residuals import observed_rows_overlap
+
+    axis = QuantityUnitSpec("s", "time")
+    observable = ObservableSpec(
+        id="E", quantity_kind="stress", unit="MPa", measure="cauchy", component_order=("E",),
+    )
+    keys = np.array([[0]])
+    mask = np.ones((1, 1), dtype=bool)
+    fit = (np.array([1e12]), np.array([[100.0]]), keys, mask)
+    other = (np.array([1e12 + 0.001]), np.array([[np.nextafter(100.0, 200.0)]]), keys, mask)
+    assert not observed_rows_overlap(
+        fit, other, fit_grid=axis, other_grid=axis, fit_observable=observable, other_observable=observable,
+    )

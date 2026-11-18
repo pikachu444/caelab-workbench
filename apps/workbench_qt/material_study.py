@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import replace as replace_spec
 import json
@@ -58,7 +59,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 import matplotlib
 
-from caelab.artifact_refs import ArtifactRefV1, read_safe_npy_v2, validate_relative_artifact_path
+from caelab.artifact_refs import ArtifactRefV1, validate_relative_artifact_path
 from caelab.materials.contracts import (
     ComparisonSpec,
     ExperimentChannelSpec,
@@ -68,6 +69,7 @@ from caelab.materials.contracts import (
 from caelab.materials.evaluator import build_variable_space, resolve_parameter_values
 from caelab.materials.experiments import load_experiment_channel_arrays, preview_csv_rows
 from caelab.materials.registry import CalibrationEvaluationArtifact, MaterialStudyError, default_registry
+from caelab.materials.residuals import _verify_and_read_channel_ref
 from caelab.materials.service import CalibrationStudyService
 from caelab.materials.units import QuantityUnitSpec, convert_frequency_angular, convert_values
 from caelab.mdo.optimize import OptimizationConfig
@@ -248,6 +250,14 @@ def _unit_label(label: str, unit: str) -> str:
 
 def _number_text(value: float | None) -> str:
     return str(value) if value is not None else ""
+
+
+def _draft_number(item: QTableWidgetItem) -> float | None:
+    text = item.text().strip()
+    original, display = item.data(Qt.ItemDataRole.UserRole)
+    if text == display:
+        return original
+    return float(text) if text else None
 
 
 def _tinted_icon(icon: QIcon, size: QSize, color: str) -> QIcon:
@@ -805,6 +815,7 @@ class MaterialStudyWindow(QMainWindow):
         self.ax_curve = self.fig.add_subplot(121)
         self.ax_resid = self.fig.add_subplot(122)
         self._plot_channels: dict[Any, tuple[str, str, str, np.ndarray]] = {}
+        self._plot_legend: dict[Any, Any] = {}
         self.canvas.mpl_connect("button_press_event", self._on_plot_clicked)
         plot_layout.addWidget(self.mpl_toolbar)
         plot_layout.addWidget(self.canvas, 1)
@@ -1212,9 +1223,12 @@ class MaterialStudyWindow(QMainWindow):
                 _number_text(spec.lower), _number_text(spec.upper), _TRANSFORM_KO[spec.transform],
                 "", spec.expression or prony_relations.get(spec.id, ""), group, "",
             )
+            numeric_fields = {1: spec.default, 4: spec.lower, 5: spec.upper}
             for col, text in enumerate(items):
                 cell = QTableWidgetItem(text)
                 cell.setToolTip(text)
+                if col in numeric_fields:
+                    cell.setData(Qt.ItemDataRole.UserRole, (numeric_fields[col], text))
                 if col == 0:
                     cell.setToolTip(spec.name)
                     cell.setData(Qt.ItemDataRole.UserRole, spec.id)
@@ -1288,9 +1302,12 @@ class MaterialStudyWindow(QMainWindow):
                 "예" if spec.required_for_validation else "아니요",
                 _number_text(spec.acceptance_limit),
             )
+            numeric_fields = {2: spec.scale, 3: spec.weight, 7: spec.acceptance_limit}
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(value)
+                if col in numeric_fields:
+                    cell.setData(Qt.ItemDataRole.UserRole, (numeric_fields[col], value))
                 if self.service.read_only or col < 2:
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 elif col == 4:
@@ -1314,7 +1331,7 @@ class MaterialStudyWindow(QMainWindow):
             role = role_keys.get(text[3], text[3])
             transform = transform_keys.get(text[6], text[6])
             try:
-                val, lo, hi = (float(text[col]) if text[col] else None for col in (1, 4, 5))
+                val, lo, hi = (_draft_number(self.param_table.item(row, col)) for col in (1, 4, 5))
                 if val is not None and ((lo is not None and val < lo) or (hi is not None and val > hi)):
                     raise ValueError("초기/초안 값은 하한과 상한 사이여야 합니다.")
                 if transform == "log" and any(x is not None and x <= 0 for x in (val, lo, hi)):
@@ -1342,17 +1359,18 @@ class MaterialStudyWindow(QMainWindow):
         flags = {"예": True, "아니요": False, "true": True, "false": False}
         updated = []
         for row, spec in enumerate(self.service.comparisons()):
-            scale, weight, policy, fit, validation, limit = (
-                self.comparison_table.item(row, col).text().strip() for col in range(2, 8)
+            policy, fit, validation = (
+                self.comparison_table.item(row, col).text().strip() for col in (4, 5, 6)
             )
             policy = policies.get(policy, policy)
             try:
                 if policy not in _WEIGHTS_KO:
                     raise ValueError("unrecognized sample weights policy")
+                scale, weight, limit = (_draft_number(self.comparison_table.item(row, col)) for col in (2, 3, 7))
                 updated.append(replace_spec(
-                    spec, scale=float(scale), weight=float(weight),
+                    spec, scale=scale, weight=weight,
                     required_for_fit=flags[fit.lower()], required_for_validation=flags[validation.lower()],
-                    sample_weights_policy=policy, acceptance_limit=float(limit) if limit else None,
+                    sample_weights_policy=policy, acceptance_limit=limit,
                 ))
             except (KeyError, ValueError) as exc:
                 raise MaterialStudyError(
@@ -1585,13 +1603,19 @@ class MaterialStudyWindow(QMainWindow):
         self.loss_summary_label.setText(label)
 
         labels = {exp.experiment_id: _experiment_label(exp) for exp in self.service.experiments()}
+        multiplicity = Counter((check.get("experiment_id"), check.get("observable_id")) for check in checks)
         self.channel_summary_table.setRowCount(len(checks))
         for row, check in enumerate(checks):
             loss = check.get("loss")
             max_err = check.get("max_abs_error")
             exp_id = str(check.get("experiment_id", ""))
+            obs_id = str(check.get("observable_id", ""))
+            comparison_id = check.get("comparison_id")
+            channel_label = _ko_observable(obs_id)
+            if multiplicity[exp_id, obs_id] > 1:
+                channel_label = f"{channel_label} · {comparison_id}"
             values = (
-                labels.get(exp_id, exp_id), _ko_observable(str(check.get("observable_id", ""))),
+                labels.get(exp_id, exp_id), channel_label,
                 _ko_split(check.get("split")), f"{loss:.3e}" if isinstance(loss, (int, float)) else "미확인",
                 f"{max_err:.4g}" if isinstance(max_err, (int, float)) else "미확인", _ko_status(check.get("status")),
             )
@@ -1602,7 +1626,7 @@ class MaterialStudyWindow(QMainWindow):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(reasons if col == 5 and reasons else value)
                 if col == 0:
-                    cell.setData(Qt.ItemDataRole.UserRole, (exp_id, check.get("observable_id"), check.get("comparison_id")))
+                    cell.setData(Qt.ItemDataRole.UserRole, comparison_id)
                 self.channel_summary_table.setItem(row, col, cell)
 
     def _refresh_plot_selector(self) -> None:
@@ -1648,14 +1672,17 @@ class MaterialStudyWindow(QMainWindow):
             ax.grid(True, alpha=0.35, color=grid_color)
 
         self._plot_channels.clear()
+        self._plot_legend.clear()
         art = self._verify_holdout_display()
         experiment_data = self.service._manifest.get("experiment_data", {})
         data_root = self.service.data_root
         selected = self.plot_selector.currentData()
         records = {
-            (entry["experiment_id"], entry["observable_id"]): entry
-            for entry in art.channel_results
+            entry["comparison_id"]: entry for entry in art.channel_results
         } if art else {}
+        comparisons_by_channel: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for comparison_id, entry in records.items():
+            comparisons_by_channel[entry["experiment_id"], entry["observable_id"]].append(comparison_id)
         dark = self._theme_mode == "dark"
         palettes = {
             "train": ("#38bdf8", "#2dd4bf", "#a78bfa", "#93c5fd") if dark else ("#0369a1", "#0f766e", "#6d28d9", "#1d4ed8"),
@@ -1679,7 +1706,6 @@ class MaterialStudyWindow(QMainWindow):
             palette = palettes[split]
             idx = split_counts[split]
             split_counts[split] += 1
-            color = palette[idx % len(palette)]
             temp = exp.conditions.get("temperature_K")
             temp_label = f"{temp:.2f} K" if isinstance(temp, (int, float)) else _experiment_label(exp)
             for ch_idx, ch in enumerate(exp.channels):
@@ -1691,48 +1717,54 @@ class MaterialStudyWindow(QMainWindow):
                 if selected == ("family", "relax") and obs_id != "E_relax":
                     continue
                 observed_entry = experiment_data.get(eid, {}).get(obs_id)
-                saved = records.get((eid, obs_id))
-                if not observed_entry or (art is not None and saved is None):
+                if not observed_entry:
                     continue
-                try:
-                    if saved is None:
-                        x, obs_y, _, _ = load_experiment_channel_arrays(observed_entry, data_root=data_root)
-                    else:
-                        x, obs_y, pred_y, residual = (
-                            read_safe_npy_v2(ArtifactRefV1.from_dict(saved[key]).path, root=data_root)
-                            for key in ("observed_coords_ref", "observed_values_ref", "predicted_on_obs_ref", "residuals_ref")
-                        )
-                    current_x = QuantityUnitSpec(observed_entry["independent_unit"], observed_entry["independent_quantity_kind"])
-                    target_x = axis_x or current_x
-                    if current_x.quantity_kind == target_x.quantity_kind:
-                        x = np.asarray(convert_values(x, current_x, target_x))
-                    else:
-                        x = np.asarray(convert_frequency_angular(x, current_x, target_x))
-                    current_y = QuantityUnitSpec(ch.observable.unit, ch.observable.quantity_kind)
-                    target_y = QuantityUnitSpec(axis_y_unit if axis_y_unit is not None else current_y.unit, current_y.quantity_kind)
-                    obs_y = np.asarray(convert_values(obs_y, current_y, target_y))
-                    if saved is not None:
-                        pred_y = np.asarray(convert_values(pred_y, current_y, target_y))
-                except (MaterialStudyError, OSError, ValueError, KeyError) as exc:
-                    self.status_bar.showMessage(f"그래프 자료를 표시할 수 없습니다. {_human_error(exc)}")
-                    continue
+                comparison_ids = comparisons_by_channel[eid, obs_id] if art is not None else [None]
+                for comp_idx, comparison_id in enumerate(comparison_ids):
+                    saved = records.get(comparison_id)
+                    try:
+                        if saved is None:
+                            x, obs_y, _, _ = load_experiment_channel_arrays(observed_entry, data_root=data_root)
+                        else:
+                            x, obs_y, pred_y, residual = (
+                                _verify_and_read_channel_ref(ArtifactRefV1.from_dict(saved[key]), data_root)
+                                for key in ("observed_coords_ref", "observed_values_ref", "predicted_on_obs_ref", "residuals_ref")
+                            )
+                        current_x = QuantityUnitSpec(observed_entry["independent_unit"], observed_entry["independent_quantity_kind"])
+                        target_x = axis_x or current_x
+                        if current_x.quantity_kind == target_x.quantity_kind:
+                            x = np.asarray(convert_values(x, current_x, target_x))
+                        else:
+                            x = np.asarray(convert_frequency_angular(x, current_x, target_x))
+                        current_y = QuantityUnitSpec(ch.observable.unit, ch.observable.quantity_kind)
+                        target_y = QuantityUnitSpec(axis_y_unit if axis_y_unit is not None else current_y.unit, current_y.quantity_kind)
+                        obs_y = np.asarray(convert_values(obs_y, current_y, target_y))
+                        if saved is not None:
+                            pred_y = np.asarray(convert_values(pred_y, current_y, target_y))
+                    except (MaterialStudyError, OSError, ValueError, KeyError) as exc:
+                        self.status_bar.showMessage(f"그래프 자료를 표시할 수 없습니다. {_human_error(exc)}")
+                        continue
 
-                axis_x, axis_y_unit = target_x, target_y.unit
-                axis_observables.add(obs_id)
-                use_log_x &= bool(np.all(x > 0.0))
-                short_obs = {"E_storage": "E'", "E_loss": "E''", "E_star": "E*", "E_relax": "E(t)"}.get(obs_id, _ko_observable(obs_id))
-                caption = f"{_ko_split(split)} {temp_label} {short_obs}"
-                marker = ("o", "s", "^", "D")[(idx + ch_idx) % 4]
-                linestyle = ("-", "--", "-.")[(idx + ch_idx) % 3]
-                observed, = self.ax_curve.plot(x, obs_y[:, 0], marker, markersize=3.0, alpha=0.8, color=color,
-                                                label=caption if saved is None else "_nolegend_")
-                if saved is not None:
-                    predicted, = self.ax_curve.plot(x, pred_y[:, 0], linestyle, linewidth=1.55, color=color, label=caption)
-                    resid, = self.ax_resid.plot(x, residual[:, 0], marker + linestyle, markersize=2.8, linewidth=1.15,
-                                               color=color, label=caption)
-                    for line in (observed, predicted, resid):
-                        self._plot_channels[line] = (eid, obs_id, saved["comparison_id"], residual[:, 0])
-                    plotted_residual = True
+                    axis_x, axis_y_unit = target_x, target_y.unit
+                    axis_observables.add(obs_id)
+                    use_log_x &= bool(np.all(x > 0.0))
+                    short_obs = {"E_storage": "E'", "E_loss": "E''", "E_star": "E*", "E_relax": "E(t)"}.get(obs_id, _ko_observable(obs_id))
+                    caption = f"{_ko_split(split)} {temp_label} {short_obs}"
+                    if len(comparison_ids) > 1:
+                        caption = f"{caption} · {comparison_id}"
+                    color = palette[(idx + comp_idx) % len(palette)]
+                    style_index = idx + ch_idx + comp_idx
+                    marker = ("o", "s", "^", "D")[style_index % 4]
+                    linestyle = ("-", "--", "-.")[style_index % 3]
+                    observed, = self.ax_curve.plot(x, obs_y[:, 0], marker, markersize=3.0, alpha=0.8, color=color,
+                                                    label=caption if saved is None else "_nolegend_")
+                    if saved is not None:
+                        predicted, = self.ax_curve.plot(x, pred_y[:, 0], linestyle, linewidth=1.55, color=color, label=caption)
+                        resid, = self.ax_resid.plot(x, residual[:, 0], marker + linestyle, markersize=2.8, linewidth=1.15,
+                                                   color=color, label=caption)
+                        for line in (observed, predicted, resid):
+                            self._plot_channels[line] = (comparison_id, eid, obs_id, residual[:, 0])
+                        plotted_residual = True
 
         if axis_x is not None:
             x_name = {"frequency": "주파수", "angular_frequency": "각주파수", "time": "시간", "strain": "변형률"}.get(
@@ -1759,6 +1791,10 @@ class MaterialStudyWindow(QMainWindow):
                     facecolor=panel_bg, edgecolor=grid_color, labelcolor=fg, framealpha=1,
                     borderpad=0.35, handlelength=2, columnspacing=1.1, labelspacing=0.3,
                 )
+                handles, _ = ax.get_legend_handles_labels()
+                for text, line in zip(legend.get_texts(), handles):
+                    if line in self._plot_channels:
+                        self._plot_legend[text] = line
                 legend.set_draggable(False)
         else:
             self.ax_curve.text(0.5, 0.5, "표시할 실험 곡선이 없습니다.", ha="center", va="center", color=fg, transform=self.ax_curve.transAxes)
@@ -1769,7 +1805,13 @@ class MaterialStudyWindow(QMainWindow):
         self.canvas.draw_idle()
 
     def _on_plot_clicked(self, event: Any) -> None:
-        if event.button != 1 or event.inaxes not in (self.ax_curve, self.ax_resid) or self.mpl_toolbar.mode:
+        if event.button != 1 or self.mpl_toolbar.mode:
+            return
+        for label, line in self._plot_legend.items():
+            if label.contains(event)[0]:
+                self._select_plot_comparison(line)
+                return
+        if event.inaxes not in (self.ax_curve, self.ax_resid):
             return
         hit = None
         best_distance = math.inf
@@ -1786,11 +1828,11 @@ class MaterialStudyWindow(QMainWindow):
             if distances[nearest] < best_distance:
                 best_distance = distances[nearest]
                 hit = (line, int(indices[nearest]))
-        if hit is None:
-            return
+        if hit is not None:
+            self._select_plot_comparison(*hit)
 
-        line, index = hit
-        eid, obs_id, comparison_id, residuals = self._plot_channels[line]
+    def _select_plot_comparison(self, line: Any, index: int | None = None) -> None:
+        comparison_id, eid, obs_id, residuals = self._plot_channels[line]
         is_holdout = any(exp.experiment_id == eid and exp.split == "holdout" for exp in self.service.experiments())
         if is_holdout and obs_id not in self._holdout_channels(self._verify_holdout_display(), eid):
             self._redraw_plots()
@@ -1798,14 +1840,16 @@ class MaterialStudyWindow(QMainWindow):
         table = self.channel_summary_table
         for row in range(table.rowCount()):
             item = table.item(row, 0)
-            if item.data(Qt.ItemDataRole.UserRole) == (eid, obs_id, comparison_id):
+            if item.data(Qt.ItemDataRole.UserRole) == comparison_id:
                 self.detail_tabs.setCurrentIndex(3)
                 table.selectRow(row)
                 table.scrollToItem(item)
-                x = line.get_xdata()[index]
+                point = ""
+                if index is not None:
+                    x = line.get_xdata()[index]
+                    point = f" · {line.axes.get_xlabel()} {x:.6g} · 정규화 잔차 {residuals[index]:.3e}"
                 self.loss_summary_label.setText(
-                    f"{item.text()} · {table.item(row, 1).text()} · {line.axes.get_xlabel()} {x:.6g}"
-                    f" · 정규화 잔차 {residuals[index]:.3e} · 채널 손실 {table.item(row, 3).text()}"
+                    f"{item.text()} · {table.item(row, 1).text()}{point} · 채널 손실 {table.item(row, 3).text()}"
                 )
                 break
 

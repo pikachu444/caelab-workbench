@@ -229,8 +229,8 @@ def test_b3_synthetic_regression_dma_and_relaxation_slsqp(tmp_path: Path) -> Non
             parameters=svc.parameters(),
             comparisons=comps,
             assessment_policy={"selection_policy": {
-                "mode": "manual_with_validation",
-                "validation_comparison_ids": [comparison.id for comparison in comps if comparison.split == "validation"],
+                "mode": "training_only",
+                "validation_comparison_ids": [],
             }},
             user_constraints=(),
             expected_revision=svc.snapshot().document_revision,
@@ -252,6 +252,7 @@ def test_b3_synthetic_regression_dma_and_relaxation_slsqp(tmp_path: Path) -> Non
         assert camp.selected_ids
 
         best_explore = svc.evaluation(camp.selected_ids[0])
+        assert {check["split"] for check in best_explore.assessment.assessment["channel_checks"]} == {"train"}
         assert best_explore.assessment.assessment["holdout_status"] == "not_assessed"
         assert best_explore.assessment.objective["fit_loss"] <= 1e-10
         for pname, expected_val in truth.items():

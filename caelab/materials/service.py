@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from functools import cache
 import hashlib
 import json
 import math
@@ -49,6 +50,7 @@ from caelab.materials.evaluator import (
 )
 from caelab.materials.experiments import (
     import_csv_experiment,
+    load_experiment_channel_arrays,
     preview_csv_rows,
 )
 from caelab.materials.registry import (
@@ -66,7 +68,8 @@ from caelab.materials.registry import (
     SaveAsReceipt,
     default_registry,
 )
-from caelab.materials.residuals import build_normalization_payload
+from caelab.materials.residuals import build_normalization_payload, observed_rows_overlap
+from caelab.materials.units import QuantityUnitSpec
 from caelab.mdo.constraints import ConstraintSpec
 from caelab.mdo.objectives import ObjectiveSpec
 from caelab.mdo.optimize import OptimizationConfig, OptimizationProblem, optimize as mdo_optimize
@@ -1015,16 +1018,17 @@ class CalibrationStudyService:
         assessment_policy: Mapping[str, Any],
     ) -> tuple[ComparisonSpec, ...]:
         sel_policy = assessment_policy.get("selection_policy", {})
+        manual_validation = sel_policy.get("mode") == "manual_with_validation"
+        confirming = execution_phase == "confirmation"
         val_comp_ids = set(sel_policy.get("validation_comparison_ids", ()))
         return tuple(
             c for c in comparisons
             if c.split == "train" or (
                 c.split == "validation" and (
-                    c.id in val_comp_ids
-                    or execution_phase == "exploration" and not c.required_for_validation
+                    c.id in val_comp_ids if manual_validation else confirming
                 )
             ) or (
-                execution_phase == "confirmation" and c.split == "holdout"
+                confirming and c.split == "holdout"
             )
         )
 
@@ -1033,34 +1037,57 @@ class CalibrationStudyService:
         ids = {comp.experiment_id for comp in comparisons}
         return tuple(exp for exp in experiments.values() if exp.experiment_id in ids)
 
-    def _check_independent_holdout(self, experiments: Sequence[ExperimentSpec]) -> None:
-        fit_sources = {e.source_ref.sha256 for e in experiments if e.split != "holdout"}
-        holdout_sources = {e.source_ref.sha256 for e in experiments if e.split == "holdout"}
-        shared = fit_sources & holdout_sources
-        recipes = {}
-        for exp in experiments:
-            if exp.source_ref.sha256 in shared:
-                ref = ArtifactRefV1.from_dict(self._manifest["experiment_sources"][exp.experiment_id]["recipe_ref"])
-                recipes[exp.experiment_id] = self._read_ref_json(ref, self._data_root, "holdout.independence")
-        for holdout in experiments:
-            if holdout.split != "holdout" or holdout.experiment_id not in recipes:
+    def _check_independent_splits(
+        self,
+        experiments: Mapping[str, ExperimentSpec],
+        experiment_data: Mapping[str, Mapping[str, Any]],
+        comparisons: Sequence[ComparisonSpec],
+    ) -> None:
+        channels: dict[str, set[str]] = {}
+        for comp in comparisons:
+            channels.setdefault(comp.experiment_id, set()).add(comp.observable_id)
+        participating = tuple(experiments[eid] for eid in channels)
+
+        @cache
+        def source_rows(eid: str) -> frozenset[int]:
+            ref = ArtifactRefV1.from_dict(self._manifest["experiment_sources"][eid]["recipe_ref"])
+            recipe = self._read_ref_json(ref, self._data_root, "split.independence")
+            return frozenset(recipe["source_rows"])
+
+        @cache
+        def observed(eid: str, cid: str):
+            entry = experiment_data[eid][cid]
+            spec = next(ch.observable for ch in experiments[eid].channels if ch.observable_id == cid)
+            grid = QuantityUnitSpec(entry["independent_unit"], entry["independent_quantity_kind"])
+            return load_experiment_channel_arrays(entry, data_root=self._data_root), grid, spec
+
+        def sample_overlap(a: str, b: str, cid: str) -> bool:
+            fit_rows, fit_grid, fit_spec = observed(a, cid)
+            other_rows, other_grid, other_spec = observed(b, cid)
+            return observed_rows_overlap(
+                fit_rows, other_rows, fit_grid=fit_grid, other_grid=other_grid,
+                fit_observable=fit_spec, other_observable=other_spec,
+            )
+
+        for fit in participating:
+            if fit.split == "holdout":
                 continue
-            hold = recipes[holdout.experiment_id]
-            for other in experiments:
-                if other.split == "holdout" or other.source_ref.sha256 != holdout.source_ref.sha256:
+            for other in participating:
+                if other.split == "train" or other.split == fit.split:
                     continue
-                fit = recipes[other.experiment_id]
-                overlap = set(hold["source_rows"]) & set(fit["source_rows"])
-                identical = any(
-                    h["independent"] == f["independent"] and h["values"] == f["values"]
-                    for key, h in hold["array_sha256s"].items()
-                    if (f := fit["array_sha256s"].get(key)) is not None
-                )
-                if overlap or identical:
+                conflict = None
+                if fit.split == "train" and fit.replicate_group and fit.replicate_group == other.replicate_group:
+                    conflict = "SHARED_REPLICATE_GROUP"
+                elif fit.source_ref.sha256 == other.source_ref.sha256 and source_rows(fit.experiment_id) & source_rows(other.experiment_id):
+                    conflict = "OVERLAPPING_SOURCE_ROWS"
+                elif fit.conditions.get("temperature_K") == other.conditions.get("temperature_K"):
+                    if any(sample_overlap(fit.experiment_id, other.experiment_id, cid)
+                           for cid in sorted(channels[fit.experiment_id] & channels[other.experiment_id])):
+                        conflict = "OVERLAPPING_NORMALIZED_SAMPLES"
+                if conflict is not None:
                     raise MaterialStudyError(
-                        "DATA_RECIPE_INCOMPATIBLE", "holdout.independence",
-                        {"reason": "NON_INDEPENDENT_HOLDOUT", "experiment_id": holdout.experiment_id,
-                         "compared_with": other.experiment_id},
+                        "DATA_RECIPE_INCOMPATIBLE", "split.independence",
+                        {"reason": conflict, "experiment_id": other.experiment_id, "compared_with": fit.experiment_id},
                     )
 
     def _write_revision_json_ref(
@@ -1171,8 +1198,43 @@ class CalibrationStudyService:
                 same_lineage and rec.adapter == adapter and rec.parameter_values_sha256 == target_hash
                 and dict(rec.physical_parameters) == dict(parameters)
             ):
+                if self._legacy_selection_scope_changed(rec):
+                    continue
                 return ref
         return None
+
+    def _legacy_selection_scope_changed(self, selection: SelectionRecordV1) -> bool:
+        stored = self._read_ref_json(selection.normalization_ref, self._data_root, "evaluate.selection")
+        if stored.get("schema_version") != 1:
+            return False
+        policy = self._manifest["assessment_policy"]
+        comparisons = self._comparisons()
+        exploration = self._phase_comparisons(
+            execution_phase="exploration", comparisons=comparisons, assessment_policy=policy,
+        )
+        confirmation = self._phase_comparisons(
+            execution_phase="confirmation", comparisons=comparisons, assessment_policy=policy,
+        )
+        validation = tuple(
+            {"experiment_id": exp.experiment_id, "experiment_revision": exp.experiment_revision}
+            for exp in self._compared_experiments(self._experiments_map(), confirmation)
+            if exp.split == "validation"
+        )
+        declared = set(policy["selection_policy"]["validation_comparison_ids"])
+        previous_ids = [
+            comp.id for comp in comparisons if comp.split == "train" or (
+                comp.split == "validation" and (comp.id in declared or not comp.required_for_validation)
+            )
+        ]
+        previous_validation = tuple(
+            item for item in validation
+            if any(comp.experiment_id == item["experiment_id"] and comp.id in declared for comp in confirmation)
+        )
+        stored_ids = [entry.get("comparison_id") for entry in stored.get("comparisons", ()) if isinstance(entry, Mapping)]
+        return (
+            stored_ids == previous_ids and selection.validation_experiment_revisions == previous_validation
+            and (stored_ids != [comp.id for comp in exploration] or previous_validation != validation)
+        )
 
     def find_frozen_selection(self, evaluation_id: str) -> ArtifactRefV1 | None:
         art = self.evaluation(evaluation_id)
@@ -1310,14 +1372,27 @@ class CalibrationStudyService:
         physical_parameters: Mapping[str, float],
         numerical_settings: Mapping[str, Any],
         compared_experiments: Sequence[ExperimentSpec],
+        experiments: Mapping[str, ExperimentSpec],
+        experiment_data: Mapping[str, Mapping[str, Any]],
         comparisons: Sequence[ComparisonSpec],
         assessment_policy: Mapping[str, Any],
         optimization_config: Mapping[str, Any] | None,
     ) -> tuple[SelectionRecordV1, str]:
         rec = self._read_frozen_selection(selection_ref, content_revision)
-        self._read_ref_json(rec.normalization_ref, self._data_root, "evaluate.selection")
+        normalization = self._read_ref_json(rec.normalization_ref, self._data_root, "evaluate.selection")
         policy = self._read_ref_json(rec.assessment_policy_ref, self._data_root, "evaluate.selection")
         selection_policy = self._read_ref_json(rec.selection_policy_ref, self._data_root, "evaluate.selection")
+        norm_version = normalization.get("schema_version")
+        if type(norm_version) is not int or norm_version not in (1, 2):
+            raise MaterialStudyError("SELECTION_MISMATCH", "evaluate.selection", {"reason": "NORMALIZATION_VERSION"})
+        # Existing v1 selections are compared against their original canonical shape.
+        expected_norm = build_normalization_payload(
+            experiments=experiments, experiment_data=experiment_data,
+            comparisons=self._phase_comparisons(
+                execution_phase="exploration", comparisons=comparisons, assessment_policy=assessment_policy,
+            ),
+            data_root=self._data_root, schema_version=norm_version,
+        )
         expected_selection_policy = {
             "schema_version": 1,
             **_to_plain_json(assessment_policy["selection_policy"]),
@@ -1339,7 +1414,11 @@ class CalibrationStudyService:
             or dict(rec.physical_parameters) != dict(physical_parameters)
             or rec.parameter_values_sha256 != canonical_sha256(dict(physical_parameters), exclude_keys=())
             or rec.numerical_settings_sha256 != canonical_sha256(_to_plain_json(numerical_settings), exclude_keys=())
+            or normalization != expected_norm
+            or rec.normalization_ref.sha256 != _sha256_bytes(canonical_json_bytes(expected_norm))
             or policy != _to_plain_json(assessment_policy) or selection_policy != expected_selection_policy
+            or rec.assessment_policy_ref.sha256 != _sha256_bytes(canonical_json_bytes(assessment_policy))
+            or rec.selection_policy_ref.sha256 != _sha256_bytes(canonical_json_bytes(expected_selection_policy))
             or rec.source_evaluation_ids != actual_sources
             or rec.training_experiment_revisions != revisions("train")
             or rec.validation_experiment_revisions != revisions("validation")
@@ -1412,6 +1491,7 @@ class CalibrationStudyService:
             "selection_ref": selection_ref.to_dict(),
             "selection_id": selection.selection_id,
             "parameter_set_sha256": selection.parameter_values_sha256,
+            "exposed_experiment_ids": [exp.experiment_id for exp in holdout_experiments],
             "selection_procedure_sha256": selection_procedure_sha256,
             "holdout_experiments": [
                 {
@@ -1445,6 +1525,7 @@ class CalibrationStudyService:
 
     def _verified_holdout_exposure(
         self, artifact: CalibrationEvaluationArtifact, entry: Mapping[str, Any],
+        *, pending_refs: Sequence[Mapping[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], SelectionRecordV1]:
         stage = "holdout_exposure"
         try:
@@ -1486,7 +1567,7 @@ class CalibrationStudyService:
                 expected = [item for item in expected if item["experiment_id"] in executed]
                 if len(expected) != len(executed):
                     raise ValueError("EXECUTED_HOLDOUT_NOT_SELECTED")
-            refs = self._manifest.get("holdout_exposures", ())
+            refs = pending_refs if pending_refs is not None else self._manifest.get("holdout_exposures", ())
             indexed_ref = entry.get("holdout_exposure_ref")
             if indexed_ref is not None:
                 if indexed_ref not in refs:
@@ -1515,6 +1596,12 @@ class CalibrationStudyService:
                 )
                 # Legacy on-demand exposures used only the parameter digest as the procedure ID.
                 allowed_procedures = (proc, actual_sha) if indexed_ref is None else (proc,)
+                expected_ids = {item["experiment_id"] for item in expected}
+                exposed_ids = data.get("exposed_experiment_ids")
+                if exposed_ids is not None or pending_refs is not None:
+                    if (not isinstance(exposed_ids, list) or not all(isinstance(eid, str) for eid in exposed_ids)
+                            or len(exposed_ids) != len(expected_ids) or set(exposed_ids) != expected_ids):
+                        raise ValueError("EXPOSURE_EXPERIMENT_IDS_MISMATCH")
                 if (
                     type(data.get("schema_version")) is not int or data["schema_version"] != 1
                     or not isinstance(event_id, str) or not event_id
@@ -1563,12 +1650,17 @@ class CalibrationStudyService:
         if request_id is None:
             return None
         manifest = self._manifest
-        planned = self._compared_experiments(
-            self._experiments_map(), self._phase_comparisons(
-                execution_phase="exploration", comparisons=self._comparisons(),
-                assessment_policy=manifest["assessment_policy"],
-            ),
+        comparisons = self._phase_comparisons(
+            execution_phase="exploration", comparisons=self._comparisons(),
+            assessment_policy=manifest["assessment_policy"],
         )
+        planned = self._compared_experiments(self._experiments_map(), comparisons)
+        comparison_ids = {comp.id for comp in comparisons}
+        if any(
+            check.get("comparison_id") not in comparison_ids
+            for check in artifact.assessment.assessment["channel_checks"]
+        ):
+            return None  # Recompute older cache entries whose validation scope has changed.
         revisions = {exp.experiment_id: exp.experiment_revision for exp in planned}
         params = dict(artifact.physical_parameters)
         actual_key = compute_candidate_cache_key(
@@ -1721,6 +1813,8 @@ class CalibrationStudyService:
                         physical_parameters=full_phys,
                         numerical_settings=numerical_settings,
                         compared_experiments=planned_exps,
+                        experiments=experiments,
+                        experiment_data=exp_data,
                         comparisons=comparisons,
                         assessment_policy=assessment_policy,
                         optimization_config=opt_config,
@@ -1742,13 +1836,10 @@ class CalibrationStudyService:
                     manifest = json.loads(json.dumps(self._manifest))
                     manifest["revisions"][content_rev].setdefault("selections", []).append(selection_ref.to_dict())
                     start_doc_rev = self._commit_manifest_unlocked(manifest, "evaluate.freeze")
-                self._check_independent_holdout(self._compared_experiments(
-                    experiments, (*phase_comparisons, *self._phase_comparisons(
-                        execution_phase="exploration", comparisons=comparisons, assessment_policy=assessment_policy,
-                    )),
-                ))
+                self._check_independent_splits(experiments, exp_data, phase_comparisons)
             else:
                 selection_ref = None
+                self._check_independent_splits(experiments, exp_data, phase_comparisons)
 
             cache_key = compute_candidate_cache_key(
                 content_revision=content_rev,
@@ -1828,7 +1919,9 @@ class CalibrationStudyService:
             )
 
             exp_ref = None
-            if artifact.holdout_exposed and selection_ref is not None and frozen_selection is not None:
+            if artifact.holdout_exposed:
+                if selection_ref is None or frozen_selection is None:
+                    raise MaterialStudyError("CORRUPT_ARTIFACT", "holdout_exposure", {"evaluation_id": eval_id})
                 exp_ref = self._record_holdout_exposure(
                     evaluation_id=eval_id,
                     content_revision=content_rev,
@@ -1839,6 +1932,8 @@ class CalibrationStudyService:
                         exp for exp in holdout_exps if exp.experiment_id in artifact.executed_holdout_experiment_ids
                     ),
                 )
+                if not isinstance(exp_ref, ArtifactRefV1):
+                    raise MaterialStudyError("CORRUPT_ARTIFACT", "holdout_exposure", {"evaluation_id": eval_id})
             self._check_disk_cas(start_doc_rev, "evaluate")
             new_manifest = json.loads(json.dumps(self._manifest))
             rev_entry = new_manifest["revisions"].setdefault(content_rev, self._build_revision_entry(new_manifest))
@@ -1865,7 +1960,11 @@ class CalibrationStudyService:
                 "created_at": artifact.created_at,
             }
             if exp_ref is not None:
-                new_manifest.setdefault("holdout_exposures", []).append(exp_ref.to_dict())
+                refs = new_manifest.setdefault("holdout_exposures", [])
+                refs.append(exp_ref.to_dict())
+                self._verified_holdout_exposure(
+                    artifact, new_manifest["evaluations"][eval_id], pending_refs=refs,
+                )
             if artifact.state == "completed" and res_out.objective_eligible:
                 new_manifest["selected_evaluation_id"] = eval_id
                 if execution_phase == "exploration":
@@ -2016,6 +2115,7 @@ class CalibrationStudyService:
             started_at = utc_now()
 
         try:
+            self._check_independent_splits(experiments, exp_data, phase_comparisons)
             campaign_path = data_root / "campaigns" / f"{campaign_id}.json"
             running = {
                 "campaign_id": campaign_id,
@@ -2121,9 +2221,11 @@ class CalibrationStudyService:
             raw_reason = opt_result.termination_reason if opt_result is not None else "FAILED"
             if cancel_event.is_set():
                 final_state, term_reason = "cancelled", "USER_CANCEL"
+            elif optimizer_error is not None or raw_reason == "FAILED":
+                final_state, term_reason = "failed", "OPTIMIZER_FAILED"
             elif stop_event.is_set():
                 final_state, term_reason = "stopped", "USER_STOP"
-            elif optimizer_error is not None or raw_reason in ("FAILED", "CANCELLED"):
+            elif raw_reason == "CANCELLED":
                 final_state, term_reason = "failed", "OPTIMIZER_FAILED"
             elif raw_reason == "NO_VALID_EVALUATIONS":
                 final_state, term_reason = "failed", raw_reason
@@ -2135,7 +2237,7 @@ class CalibrationStudyService:
                 point_to_eval[pt_id] for pt_id in opt_result.selected_ids if pt_id in point_to_eval
             ] if opt_result is not None and final_state in ("completed", "stopped") else []
             best_selected_eval = selected_eval_ids[0] if selected_eval_ids else None
-            if final_state == "stopped":
+            if final_state in ("stopped", "cancelled"):
                 old_id = self._manifest.get("selected_evaluation_id")
                 old = self._manifest["evaluations"].get(old_id, {})
                 if old.get("state") == "completed" and old.get("fit_loss") is not None:
@@ -2522,19 +2624,27 @@ class CalibrationStudyService:
         journal_path.unlink(missing_ok=True)
         stage.rmdir()
 
-    def _remove_created_copy_root(self, journal: Mapping[str, Any]) -> None:
+    def _remove_created_copy_root(self, journal: Mapping[str, Any], *, created_here: bool = False) -> None:
         dest, root, _ = _derive_study_paths(journal["destination_path"])
         if not journal["created_data_root"] or dest.exists() or root == dest.parent or not root.is_dir():
             return
+        self._check_copy_root(root)
         marker = self._copy_owner_marker(journal, root)
-        if not self._owns_copy_directory(journal, root):
+        if not (created_here and not marker.exists()) and not self._owns_copy_directory(journal, root):
             return
         # Remove only the transaction's empty dedicated root. A file from another owner
         # makes rmdir fail and leaves that owner’s data intact.
         if any(path.name not in ("study.lock", marker.name) for path in root.iterdir()):
             return
-        marker.unlink()
-        (root / "study.lock").unlink(missing_ok=True)
+        lock_path = root / "study.lock"
+        if lock_path.exists():
+            try:
+                with FileLock(lock_path, timeout=0, thread_local=False):
+                    pass
+            except (Timeout, OSError):
+                return
+            lock_path.unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
         root.rmdir()
 
     def _clean_copy_markers(self, journal: Mapping[str, Any]) -> None:
@@ -2695,16 +2805,8 @@ class CalibrationStudyService:
                     dest_lease.release()
                     dest_lease = None
                     self._remove_created_copy_root(journal)
-                elif journal["created_data_root"] and not dest_manifest.exists():
-                    # mkdir succeeded in this call, but no data could have been published.
-                    # Only discard the transaction marker and an empty directory.
-                    self._check_copy_root(dest_data_root)
-                    self._copy_owner_marker(journal, dest_data_root).unlink(missing_ok=True)
-                    try:
-                        dest_data_root.rmdir()
-                    except OSError:
-                        if not any(dest_data_root.iterdir()):
-                            raise
+                else:
+                    self._remove_created_copy_root(journal, created_here=True)
                 self._clean_copy_stage(journal_path, journal)
             raise
         finally:

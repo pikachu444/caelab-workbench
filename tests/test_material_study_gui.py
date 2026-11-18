@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 import math
 import os
@@ -406,12 +407,12 @@ def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(
             if channel["experiment_id"] == holdout_id
             for key, ref in channel.items() if key.endswith("_ref")
         }
-        read_array = material_study.read_safe_npy_v2
+        read_array = material_study._verify_and_read_channel_ref
         load_observed = material_study.load_experiment_channel_arrays
 
-        def read_non_holdout(path, **kwargs):
-            assert path not in protected
-            return read_array(path, **kwargs)
+        def read_non_holdout(ref, *args, **kwargs):
+            assert ref.path not in protected
+            return read_array(ref, *args, **kwargs)
 
         def load_non_holdout(entry, **kwargs):
             assert entry["values_ref"]["path"] not in holdout_observed_paths
@@ -421,7 +422,7 @@ def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(
         exposure_ref = exposure_meta["holdout_exposure_ref"]
         (win.service.data_root / exposure_ref["path"]).unlink()
         with monkeypatch.context() as patch:
-            patch.setattr(material_study, "read_safe_npy_v2", read_non_holdout)
+            patch.setattr(material_study, "_verify_and_read_channel_ref", read_non_holdout)
             patch.setattr(material_study, "load_experiment_channel_arrays", load_non_holdout)
             win._redraw_plots()
             assert not any(line.get_label().startswith("보류") for line in win.ax_curve.lines)
@@ -869,6 +870,138 @@ def test_gui_validation_flag_and_unnamed_experiment_labels(tmp_path: Path) -> No
         assert not win._draft_dirty
         duplicate = MaterialStudyError("INVALID_CONFIGURATION", "import", {"reason": "DUPLICATE_EXPERIMENT_ID"})
         assert "같은 이름" in material_study._human_error(duplicate)
+    finally:
+        win.close()
+        app.processEvents()
+
+
+def test_gui_apply_keeps_unedited_float64_cells(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _get_app()
+    study_path = _create_b3_study(tmp_path, with_val_holdout=False)
+    with CalibrationStudyService.open(study_path) as svc:
+        parameters = [
+            replace(p, default=93.12345678901235, lower=10.123456789012346, upper=702.3456789012345)
+            if p.id == "E0" else p
+            for p in svc.parameters()
+        ]
+        comparisons = svc.comparisons()
+        full_precision = replace(
+            comparisons[0], scale=1.23456789, weight=1.0 / 3.0, acceptance_limit=None,
+        )
+        specified_limit = replace(comparisons[1], acceptance_limit=0.12345678901234567)
+        svc.configure(
+            parameters=parameters,
+            comparisons=[full_precision, specified_limit, *comparisons[2:]],
+            expected_revision=svc.snapshot().document_revision,
+        )
+
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: pytest.fail("apply rejected valid numeric edits"))
+    win = MaterialStudyWindow(study_path=study_path)
+    try:
+        scale_cell = win.comparison_table.item(0, 2)
+        weight_cell = win.comparison_table.item(0, 3)
+        assert scale_cell.text() == "1.23457"
+        assert weight_cell.text() == "0.333333"
+        scale_cell.setText(f" {scale_cell.text()} ")
+        row = next(
+            i for i in range(win.param_table.rowCount())
+            if win.param_table.item(i, 0).data(Qt.ItemDataRole.UserRole) == "E0"
+        )
+        win.param_table.item(row, 1).setText("98.76543219876543")
+        win.comparison_table.item(1, 2).setText("123.45678901234567")
+        win.on_apply_parameter_draft()
+        e0 = next(p for p in win.service.parameters() if p.id == "E0")
+        assert e0.default == 98.76543219876543
+        assert e0.lower == 10.123456789012346
+        assert e0.upper == 702.3456789012345
+        assert win.service.comparisons()[0] == full_precision
+        assert win.service.comparisons()[1] == replace(specified_limit, scale=123.45678901234567)
+
+        win.comparison_table.item(1, 7).setText("")
+        win.on_apply_parameter_draft()
+        assert win.service.comparisons()[1].acceptance_limit is None
+        assert next(p for p in win.service.parameters() if p.id == "E0") == e0
+    finally:
+        win.close()
+        app.processEvents()
+
+
+def test_gui_plot_preserves_duplicate_comparisons_and_withholds_corrupt_arrays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from caelab.materials import residuals
+
+    app = _get_app()
+    study_path = _create_b3_study(tmp_path, with_val_holdout=False)
+    with CalibrationStudyService.open(study_path) as svc:
+        comparisons = svc.comparisons()
+        first = comparisons[0]
+        second = replace(first, id="dma_29315_tight", scale=first.scale / 5)
+        svc.configure(
+            parameters=svc.parameters(), comparisons=[*comparisons, second],
+            expected_revision=svc.snapshot().document_revision,
+        )
+
+    win = MaterialStudyWindow(study_path=study_path)
+    try:
+        win.resize(1440, 900)
+        win.show()
+        app.processEvents()
+        win.on_evaluate()
+        assert win.wait_for_idle(timeout=30)
+        active = win._active_eval_artifact
+        selector = win.plot_selector
+        selector.setCurrentIndex(next(
+            i for i in range(selector.count()) if selector.itemData(i) == ("exp", first.experiment_id)
+        ))
+
+        def select_pixel(x: float, y: float, expected_id: str) -> None:
+            event = MouseEvent("button_press_event", win.canvas, x, y, button=1)
+            win.canvas.callbacks.process("button_press_event", event)
+            table = win.channel_summary_table
+            selected = table.selectionModel().selectedRows()
+            assert len(selected) == 1
+            assert table.item(selected[0].row(), 0).data(Qt.ItemDataRole.UserRole) == expected_id
+            assert expected_id in win.loss_summary_label.text()
+
+        for comp in (first, second):
+            win.canvas.draw()
+            legend_text = next(t for t in win.ax_curve.get_legend().get_texts() if t.get_text().endswith(comp.id))
+            bbox = legend_text.get_window_extent(win.canvas.get_renderer())
+            select_pixel((bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2, comp.id)
+
+            artist = next(line for line in win.ax_resid.lines if line.get_label().endswith(comp.id))
+            win.canvas.draw()
+            select_pixel(*win.ax_resid.transData.transform(artist.get_xydata()[20]), comp.id)
+            assert "정규화 잔차" in win.loss_summary_label.text()
+
+        result = next(row for row in active.channel_results if row["comparison_id"] == second.id)
+        original_reader = residuals.read_safe_npy_v2
+        for field, change_bytes in (
+            ("residuals_ref", lambda data: data[:-1] + bytes([data[-1] ^ 1])),
+            ("predicted_on_obs_ref", lambda data: data + b"!"),
+        ):
+            rel = result[field]["path"]
+            artifact = win.service.data_root / rel
+            data = artifact.read_bytes()
+
+            def fail_on_unverified_load(path, **kwargs):
+                assert path != rel, "corrupt array reached the NPY loader"
+                return original_reader(path, **kwargs)
+
+            artifact.write_bytes(change_bytes(data))
+            with monkeypatch.context() as patch:
+                patch.setattr(residuals, "read_safe_npy_v2", fail_on_unverified_load)
+                win._redraw_plots()
+            assert "손상" in win.status_bar.currentMessage()
+            for axis in (win.ax_curve, win.ax_resid):
+                labels = [line.get_label() for line in axis.lines]
+                assert any(label.endswith(first.id) for label in labels)
+                assert not any(label.endswith(second.id) for label in labels)
+
+            artifact.write_bytes(data)
+            win._redraw_plots()
+            assert any(line.get_label().endswith(second.id) for line in win.ax_resid.lines)
     finally:
         win.close()
         app.processEvents()
