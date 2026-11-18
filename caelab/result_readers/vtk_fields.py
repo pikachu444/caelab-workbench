@@ -420,12 +420,12 @@ def _validate_identity(grid, expected):
         for element, part, kind, cell in zip(grid.element_ids, grid.part_ids, grid.cell_types, grid.cells):
             saved = oracle[element]
             expected_nodes = tuple(saved["node_ids"])
-            actual_nodes = tuple(grid.node_ids[i] for i in cell)
-            matches = actual_nodes == expected_nodes
-            if not matches and kind == 10 and set(expected_nodes) <= point_index.keys():
+            if kind == 10:
                 # anim_to_vtk writes tetrahedra through a set of VTK point indices.
-                sorted_indices = sorted(point_index[node] for node in expected_nodes)
-                matches = tuple(cell) == tuple(sorted_indices)
+                matches = (set(expected_nodes) <= point_index.keys() and
+                           tuple(cell) == tuple(sorted(point_index[node] for node in expected_nodes)))
+            else:
+                matches = tuple(grid.node_ids[i] for i in cell) == expected_nodes
             if part != saved["part_id"] or kind != saved["cell_type"] or not matches:
                 raise ResultError("SOURCE_MISMATCH", f"topology or part for element {element}")
 

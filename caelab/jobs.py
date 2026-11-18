@@ -16,6 +16,7 @@ import threading
 import time
 import traceback
 import uuid
+from concurrent.futures import Future
 from typing import Callable, Sequence, Any, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -711,6 +712,8 @@ class JobManager:
                     if (control["store"].root == store.root and control["plan_identity"] == identity
                             and control["receipt"]["state"] in ACTIVE_OPERATIONS
                             and not control["cancel"].is_set()):
+                        if time.monotonic() >= deadline:
+                            raise ResultError("TIMEOUT", "conversion deadline elapsed before duplicate lookup")
                         return copy.deepcopy(control["receipt"])
                 try:
                     lease = store.lease()
@@ -719,12 +722,29 @@ class JobManager:
                     if not isinstance(exc.__cause__, LockTimeout):
                         raise
                     busy = exc
-            duplicate = find_active_duplicate(store, plan)
-            if duplicate is not None:
-                return duplicate
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise busy
+                raise ResultError("TIMEOUT", "conversion deadline elapsed waiting for the RunStore lease") from busy
+            # A filesystem read may block past the caller's deadline. The
+            # scanner only observes existing operations and can finish on its own.
+            scan = Future()
+
+            def scan_duplicate():
+                try:
+                    scan.set_result(find_active_duplicate(store, plan, deadline=deadline))
+                except Exception as exc:
+                    scan.set_exception(exc)
+
+            threading.Thread(target=scan_duplicate, name="caelab-result-duplicate", daemon=True).start()
+            try:
+                duplicate = scan.result(max(0, deadline - time.monotonic()))
+            except TimeoutError as exc:
+                raise ResultError("TIMEOUT", "conversion deadline elapsed during active receipt scan") from exc
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ResultError("TIMEOUT", "conversion deadline elapsed waiting for the RunStore lease") from busy
+            if duplicate is not None:
+                return duplicate
             time.sleep(min(.025, remaining))
         with self._native_lock:
             try:

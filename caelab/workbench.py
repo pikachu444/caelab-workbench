@@ -34,8 +34,9 @@ def _source_metadata_changed(item: dict) -> bool:
     # WSL remounts can assign a different device number to the same file.
     # Keep full device identity for collection races, but not saved-run freshness.
     saved = item.get("stat")
-    if isinstance(saved, dict) and any(current[key] != saved.get(key) for key in
-                                       ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino")):
+    if (isinstance(saved, dict) and {"st_size", "st_mtime_ns"} <= saved.keys()
+            and any(current[key] != saved[key] for key in
+                    ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino") if key in saved)):
         return True
     digest = item.get("original_sha256") or item.get("source_sha256") or item.get("sha256")
     if not digest:
@@ -290,9 +291,12 @@ class Workbench:
         for index, stored in enumerate(runs):
             owned = self.jobs.native_snapshot(stored.id)
             run = owned if owned and owned.workdir == stored.workdir else stored
-            snapshot = with_input_snapshot({"snapshot": run.snapshot}, run.workdir / INPUT_SNAPSHOT)["snapshot"]
-            reason = self._native_stale_reason(project, run.node_id, run.solver_id, run.input_path,
-                                               run.units, run.unit_source, snapshot)
+            try:
+                snapshot = with_input_snapshot({"snapshot": run.snapshot}, run.workdir / INPUT_SNAPSHOT)["snapshot"]
+                reason = self._native_stale_reason(project, run.node_id, run.solver_id, run.input_path,
+                                                   run.units, run.unit_source, snapshot)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                reason = f"실행 입력 스냅샷을 읽을 수 없습니다: {exc}"
             run.stale, run.stale_reason = bool(reason), reason
             runs[index] = run
         return runs

@@ -10,6 +10,7 @@ import os
 import platform
 import re
 import shutil
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -27,9 +28,46 @@ _PROFILES = {"OC-ANIM-1", "OC-TH4-1", "VTU-1"}
 _ANIMATION = re.compile(r".*(A[0-9]{3,})(?:\.gz)?", re.I)
 _HISTORY = re.compile(r".*T01", re.I)
 _LOG_LIMIT = 64 * 1024**2
-_CONVERTER_MARKERS = {
-    "OC-ANIM-1": (b"DATASET UNSTRUCTURED_GRID", b"TIME 1 1 double", b"EROSION_STATUS int 1"),
-    "OC-TH4-1": (b"T01 TO CSV CONVERTER", b"MISSING INPUT ARGUMENT: TH-FILE"),
+# OpenCourant latest-20261011 release evidence in post-implementation.md.
+_PINNED_CONVERTER_SHA256 = {
+    "OC-ANIM-1": "9c97eee2991f6949d16477831cc684165f53b790f498cbef51b8e8fd67bf28ae",
+    "OC-TH4-1": "704d647331ae4befd329d18b991d644f2af930abd117c5d204c23925f75fc8db",
+}
+_PINNED_WINDOWS_ZIP_SHA256 = "6d0ea8b43b68aa12f0a2787b339384a554978cbb65a5d3dbaf1e40598f02e7e6"
+
+# Named /MAT keywords from the pinned Starter's hm_read_mat dispatch.
+_MATERIAL_ALIASES = {
+    alias: law for law, aliases in {
+        0: "VOID", 1: "ELAST", 2: "PLAS_JOHNS JOHNS ZERIL PLAS_ZERIL PLAS_PREDEF",
+        3: "HYDPLA", 4: "HYD_JCOOK", 5: "JWL", 6: "HYDRO HYD_VISC K-EPS",
+        10: "DPRAG1", 11: "BOUND B-K-EPS", 12: "3D_COMP", 13: "RIGID",
+        14: "COMPSO", 15: "CHANG", 16: "GRAY", 18: "THERM", 19: "FABRI",
+        20: "BIMAT", 21: "DPRAG", 22: "DAMA", 23: "PLAS_DAM", 24: "CONC",
+        25: "COMPSH", 26: "SESAM", 27: "PLAS_BRIT", 28: "HONEYCOMB",
+        29: "USER1", 30: "USER2", 31: "USER3", 32: "HILL", 33: "FOAM_PLAS",
+        34: "BOLTZMAN", 35: "FOAM_VISC", 36: "PLAS_TAB", 37: "BIPHAS",
+        38: "VISC_TAB", 40: "KELVINMAX", 41: "LEE_TARVER", 42: "OGDEN",
+        43: "HILL_TAB", 44: "COWPER", 46: "LES_FLUID", 48: "ZHAO", 49: "STEINB",
+        50: "VISC_HONEY", 51: "MULTIMAT", 52: "GURSON", 53: "TSAI_TAB",
+        54: "PREDIT", 57: "BARLAT3 BARLAT", 58: "FABR_A FABR", 59: "CONNECT", 60: "PLAS_T3",
+        62: "VISC_HYP", 63: "HANSEL", 64: "UGINE_ALZ", 65: "ELASTOMER", 68: "COSSER",
+        70: "FOAM_TAB", 72: "HILL_MMC", 75: "POROUS", 76: "SAMP", 78: "YUMODEL",
+        79: "JOHN_HOLM", 81: "DPRAG_CAP", 87: "BARLAT2000",
+        88: "MLAW88 TABULATED_HYPERELASTIC", 93: "ORTH_HILL CONVERSE", 94: "YEOH",
+        95: "BERGSTROM_BOYCE", 97: "JWLB", 99: " ".join(f"USER{i:02d}" for i in range(1, 100)),
+        100: "MNF", 101: "PP", 102: "DPRAG2", 103: "HENSEL-SPI FLAW103",
+        104: "JOHNS_VOCE_DRUCKER", 105: "POWDER_BURN POWDER-BURN", 106: "JCOOK_ALM",
+        107: "PAPER_LIGHT PFEIFFER", 108: "SPR_GENE", 110: "VEGTER", 111: "MARLOW",
+        112: "PAPER XIA", 113: "SPR_BEAM", 114: "SPR_SEATBELT", 115: "DESHFLECK",
+        119: "SH_SEATBELT", 120: "TAPO", 121: "PLAS_RATE", 122: "MODIFIED_LADEVEZE",
+        123: "LAMINATED_FRACTURE_DAIMLER_PINHO", 124: "CDPM2", 125: "LAMINATED_COMPOSITE",
+        126: "JOHNSON_HOLMQUIST_CONCRETE", 127: "ENHANCED_COMPOSITE", 128: "HILL_VISC_PLAST",
+        129: "THERMO_ELASTO_VISCOPLASTIC_CREEP", 130: "MODIFIED_HONEYCOMB", 131: "ELASTO_PLASTIC",
+        132: "LAMINATED_FRACTURE_DAIMLER_CAMANHO", 133: "GRANULAR", 134: "VISCOUS_FOAM",
+        135: "GENERAL_JOINT", 136: "GLOBAL_REINFORCED_CONCRETE", 137: "COMPUTATIONAL_WELDING_MECHANICS",
+        151: "MULTIFLUID", 158: "FABR_NL", 163: "CRUSHABLE_FOAM", 169: "ARUP_ADHESIVE",
+        190: "FOAM_DUBOIS", 200: "MDS", 999: "GAS",
+    }.items() for alias in aliases.split()
 }
 
 
@@ -45,7 +83,7 @@ def reader_code_sha256(profile, check=no_checkpoint):
     return hashlib.sha256(marshal.dumps(code)).hexdigest()
 
 
-def _install_root(options, executable, profile, check):
+def _install_root(options, executable, profile, digest, check):
     candidate = options.get("install_root") or os.environ.get("CAELAB_OPENCOURANT")
     root = Path(candidate).resolve() if candidate else None
     if root and root.is_file() and not options.get("install_root") and root.name.startswith("starter_"):
@@ -56,7 +94,9 @@ def _install_root(options, executable, profile, check):
         directories = {"exec", "bin", f"output_converters/{name}", f"output_converters/{name}/bin"}
         if executable.name.lower() in filenames and executable.parent.relative_to(root).as_posix().lower() in directories:
             if options.get("allow_custom_executable") is True or (
-                    _executable_header(executable) and _converter_markers(executable, profile, check)):
+                    _executable_header(executable) and (
+                        digest == _PINNED_CONVERTER_SHA256[profile]
+                        or os.name == "nt" and _matches_pinned_windows_member(root, executable, digest, check))):
                 return root
     if options.get("allow_custom_executable") is True:
         return None
@@ -80,20 +120,32 @@ def _executable_header(path):
         return len(header) >= 8 and header.startswith(b"#!") and bool(header[2:].splitlines()[0].strip())
 
 
-def _converter_markers(path, profile, check):
-    # Identify the converter family using literals emitted by the pinned source.
-    remaining = set(_CONVERTER_MARKERS[profile])
-    overlap = max(map(len, remaining)) - 1
-    tail = b""
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(_COPY_CHUNK), b""):
-            check()
-            data = tail + chunk
-            remaining = {marker for marker in remaining if marker not in data}
-            if not remaining:
-                return True
-            tail = data[-overlap:]
-    return False
+def _stream_sha256(stream, check):
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(_COPY_CHUNK), b""):
+        check()
+        digest.update(chunk)
+    check()
+    return digest.hexdigest()
+
+
+def _matches_pinned_windows_member(root, executable, digest, check):
+    # The release pins the Windows archive as a whole. Hash and open the
+    # same archive handle, then compare against its official package member.
+    try:
+        with (root / "OpenCourant_win64.zip").open("rb") as stream:
+            if _stream_sha256(stream, check) != _PINNED_WINDOWS_ZIP_SHA256:
+                return False
+            relative = executable.relative_to(root).as_posix().lower()
+            names = {relative, f"opencourant/{relative}", f"opencourant_win64/{relative}"}
+            with zipfile.ZipFile(stream) as archive:
+                matches = [member for member in archive.infolist() if member.filename.lower() in names]
+                if len(matches) != 1:
+                    return False
+                with archive.open(matches[0]) as member:
+                    return _stream_sha256(member, check) == digest
+    except (FileNotFoundError, zipfile.BadZipFile):
+        return False
 
 
 def converter_environment(plan, environment):
@@ -280,12 +332,11 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                 nip = shell_properties[prop]
                 law = materials.get(material, "")
                 law_number = re.fullmatch(r"LAW([0-9]+)", law)
-                law_id = 1 if law == "ELAST" else int(law_number[1]) if law_number else None
+                law_id = int(law_number[1]) if law_number else _MATERIAL_ALIASES.get(law)
                 # Starter uses separate rules for quadrilaterals and triangles.
                 if nip > 1 and (law_id in {1, 136} or law_id == 91 and element["cell_type"] == 9):
                     nip = 0
-                elif nip == 0 and ((law_id is not None and law_id not in {0, 1, 91, 136})
-                                   or law in {"PLAS_JOHNS", "PLAS_ZERIL"}):
+                elif nip == 0 and law_id is not None and law_id not in {0, 1, 91, 136}:
                     nip = 3
                 shell_nip_by_id[eid] = nip
             mesh = {"node_coordinates": nodes, "elements": elements, "shell_ids": sorted(map(int, shells)),
@@ -379,10 +430,11 @@ def _plan(store, source_run_id, profile, executable, frame_ids, options, *, chec
             path = Path(executable).resolve(strict=True)
             if not path.is_file():
                 raise OSError("expected a converter executable file")
-            root = _install_root(options, path, profile, check)
+            digest = sha256_file(path, check)
+            root = _install_root(options, path, profile, digest, check)
             if root is not None:
                 options["install_root"] = str(root)
-            program = {"path_audit": str(path), "sha256": sha256_file(path, check),
+            program = {"path_audit": str(path), "sha256": digest,
                        "version": options.get("tool_version", "unknown"), "host_os": platform.system(),
                        "install_root": str(root) if root is not None else None}
         except OSError as exc:

@@ -19,6 +19,22 @@ from .run_store import RunStore
 _SPATIAL_READERS = {"OC-ANIM-1": vtk_fields.read_vtk, "VTU-1": vtk_fields.read_vtu}
 _OPERATORS = {"identity", "values", "min", "max", "mean", "norm"}
 _CANONICAL_OPERATOR = {"id": "identity", "version": "1", "params": {}}
+# Source bytes at 5e59f175, for LF and CRLF checkouts.
+_ORIGINAL_FIELD_READERS = {
+    "3d5c291d80078f4653e776c1aedc5234f1c9a0bd6cbe58a1e482a121fab14f76",
+    "35613ec816b8f7c63fd8dbc266413fc9c070ca48677e67bf48d0bcb713ebe593",
+}
+_ORIGINAL_HISTORY_READERS = {
+    "7dd090b12f1935023a192c80facd74b29eeaf8a431d68b669ec8dbee62890b1e",
+    "5a24dc667268e875451adc20982e5432c4515fe9647dae550f94527d66cb9363",
+}
+
+
+def _original_reader(receipt):
+    adapter = receipt["adapter"]
+    readers = _ORIGINAL_HISTORY_READERS if adapter["id"] == "OC-TH4-1" else _ORIGINAL_FIELD_READERS
+    return (receipt.get("result") is None and "dataset_manifest_sha256" not in receipt
+            and adapter.get("code_sha256") in readers)
 
 
 def _completed(store, operation_id, source_run_id, check):
@@ -90,15 +106,21 @@ def _semantics(folder, receipt, dataset, frame_id, field_id, check):
     item = _find_location(dataset, frame_id, field_id)
     if dataset.dataset_kind == "history":
         column = _history_column(folder, receipt, field_id, check)
-        binding, semantics = column["binding"], column["semantics"]
+        binding = column["binding"]
         association = {"Global": "global", "Solid": "element", "Node": "point"}[binding["output_type"]]
         location = {"association": association}
+        if binding["entity_id"] is not None:
+            location["entity_id"] = binding["entity_id"]
+        if "semantics" not in column and _original_reader(receipt):
+            if association == "element":
+                location["integration_point"] = "IPpoint"
+            shear = "tensor" if binding["quantity"] == "stress" else "unknown"
+            return item, location, binding["basis"], binding["measure"], shear, {"symbol": binding["unit"]}, "unknown", binding
+        semantics = column["semantics"]
         if association == "point":
             location["integration_point"] = "none"
         if "integration_point" in semantics:
             location["integration_point"] = semantics["integration_point"]
-        if binding["entity_id"] is not None:
-            location["entity_id"] = binding["entity_id"]
         return item, location, semantics["basis"], semantics["measure"], (
             "tensor" if binding["quantity"] == "stress" else "unknown"), {
                 "symbol": semantics["unit"], "dimension": semantics["unit_dimension"]}, "unknown", binding
@@ -111,6 +133,8 @@ def _semantics(folder, receipt, dataset, frame_id, field_id, check):
         location["layer"] = layer[1]
     if "Stress" in field_id or field_id == "STRESS":
         measure, dimension, shear = "Cauchy", "pressure", "tensor"
+        if _original_reader(receipt):
+            dimension = "stress"
     elif "Strain" in field_id or field_id == "TOSTRAIN":
         measure, dimension, shear = "unknown", "strain", "unknown"
     elif field_id in {"Displacement", "DISP"}:
@@ -289,7 +313,7 @@ def _saved_selection(store, receipt, selection, location, check, *, pinning=Fals
     return ids, digest, payload_sha
 
 
-def _selection(store, receipt, selection, location, check):
+def _selection(store, receipt, selection, location, check, *, legacy_inline=False):
     ids = selection.get("ids")
     kind = selection.get("kind")
     entity = {"point": "node", "element": "element"}.get(location["association"])
@@ -299,7 +323,7 @@ def _selection(store, receipt, selection, location, check):
         ids, digest, _ = _saved_selection(store, receipt, selection, location, check)
         _verify_selection_revision(selection, digest)
     elif ids is not None:
-        _verify_selection_revision(selection, _selection_digest(selection, ids))
+        _verify_selection_revision(selection, _selection_digest(selection, ids), required=not legacy_inline)
     if ids is None and selection:
         raise ResultError("HASH_MISMATCH", "selection does not identify a pinned payload")
     if ids is not None and not isinstance(ids, (list, tuple)):
@@ -332,7 +356,7 @@ def _validate_semantics(ref, location, basis, measure, shear, units, geometry, b
     if ref.eligibility.get("fit") or ref.eligibility.get("fit_eligible"):
         raise ResultError("SEMANTIC_MISMATCH", "reader profile does not authorize fitting")
     for key in ("dimension", "unit_dimension"):
-        if key in ref.units and ref.units[key] != units["dimension"]:
+        if key in ref.units and ref.units[key] != units.get("dimension"):
             raise ResultError("SEMANTIC_MISMATCH", "result unit dimension differs from the field")
     if ref.units.get("symbol", ref.units.get("unit", "unknown")) != units["symbol"]:
         raise ResultError("UNIT_UNKNOWN", "result unit differs from the dataset declaration")
@@ -363,8 +387,10 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
     if receipt["adapter"]["version"] != "1" or profile not in {*_SPATIAL_READERS, "OC-TH4-1"}:
         raise ResultError("UNSUPPORTED_CAPABILITY", "unregistered numeric reader")
     expected_reader = receipt.get("reader_code_sha256", receipt["adapter"].get("code_sha256"))
+    active_reader = converters.reader_code_sha256(profile, check)
+    original_reader = resolved["legacy_manifest"] and _original_reader(receipt)
     if (expected_reader != receipt["adapter"].get("code_sha256")
-            or converters.reader_code_sha256(profile, check) != expected_reader):
+            or not original_reader and active_reader != expected_reader):
         raise ResultError("HASH_MISMATCH", "active reader code differs from the operation receipt")
     item, location, basis, measure, shear, units, geometry, binding = _semantics(
         folder, receipt, dataset, ref.frame_id, ref.field_id, check)
@@ -378,6 +404,8 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
     audit = {"id": normalized, "version": "1", "params": {}, "base_quantity_ref_sha256": base_hash,
              "requested_quantity_ref_sha256": requested_hash, "base_ref_sha256": base_hash,
              "requested_ref_sha256": requested_hash}
+    if original_reader:
+        audit.update(reader_code_sha256=active_reader, recorded_reader_code_sha256=expected_reader)
     eroded = ()
     if dataset.dataset_kind == "history":
         if profile != "OC-TH4-1" or op != "curve_extract" or ref.selection:
@@ -410,9 +438,10 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
             kwargs["node_id_policy"] = options.get("node_id_policy")
         grid = _SPATIAL_READERS[profile](source, check_cancelled=check, **kwargs)
         metadata = vtk_fields.sample_metadata(grid)
-        if grid.time != item["time"] or any(item.get(key) != val for key, val in metadata.items()):
+        if (grid.time != item["time"] and (not original_reader or item["time"] is not None)
+                or any(item.get(key) != val for key, val in metadata.items() if key in item or not original_reader)):
             raise ResultError("HASH_MISMATCH", "frame TIME differs from its registered value")
-        ids = _selection(store, receipt, ref.selection, location, check)
+        ids = _selection(store, receipt, ref.selection, location, check, legacy_inline=original_reader)
         if location["association"] == "point" and "entity_id" in ref.location:
             entity_id = ref.location["entity_id"]
             if type(entity_id) is not int or entity_id <= 0 or (ids is not None and tuple(ids) != (entity_id,)):

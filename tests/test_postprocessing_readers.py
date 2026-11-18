@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from dataclasses import replace
 
 import numpy as np
@@ -51,7 +52,7 @@ def _vtk(*, missing=(), replacements=None, permutation=tuple(range(7)), extra_sh
     u = np.array([[3, 4, 0], [3, 4, 0], [3, 4, 0], [0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 0, 2]])
     indices = [permutation.index(i) for i in range(7)]
     triangles = [indices[i] for i in (0, 1, 2, 2)]
-    solid = indices[3:]
+    solid = sorted(indices[3:])
     cell_count = 3 if extra_shell else 2
     triangle_row = "4 " + " ".join(map(str, triangles))
     data = [
@@ -128,16 +129,16 @@ def test_vtk_rejects_invalid_native_layout(tmp_path, missing, replacements, code
         read_vtk(path, exact_required_set=TENSORS, expected=MESH)
 
 
-def test_tetra_can_follow_archived_or_sorted_vtk_point_indices(tmp_path):
+def test_tetra_requires_sorted_vtk_point_indices(tmp_path):
     path = tmp_path / "tetra.vtk"
-    permutation = (0, 1, 2, 3, 6, 4, 5)
-    for row, native_ids in (("4 3 5 6 4", [14, 15, 16, 17]), ("4 3 4 5 6", [14, 17, 15, 16])):
-        path.write_text(_vtk(permutation=permutation, replacements={"4 3 5 6 4": row}), encoding="ascii")
-        grid = read_vtk(path, expected=MESH)
-        assert grid.node_ids[list(grid.cells[1])].tolist() == native_ids
-    path.write_text(_vtk(permutation=permutation, replacements={"4 3 5 6 4": "4 3 4 6 5"}), encoding="ascii")
-    with pytest.raises(ResultError, match="SOURCE_MISMATCH"):
-        read_vtk(path, expected=MESH)
+    permutation = (0, 1, 2, 3, 5, 4, 6)
+    path.write_text(_vtk(permutation=permutation), encoding="ascii")
+    grid = read_vtk(path, expected=MESH)
+    assert grid.node_ids[list(grid.cells[1])].tolist() == [14, 16, 15, 17]
+    for row in ("4 3 5 4 6", "4 3 4 6 5"):
+        path.write_text(_vtk(permutation=permutation, replacements={"4 3 4 5 6": row}), encoding="ascii")
+        with pytest.raises(ResultError, match="SOURCE_MISMATCH"):
+            read_vtk(path, expected=MESH)
 
 
 def test_vtk_physical_time_rotation_undeformed_points_and_family(tmp_path):
@@ -781,6 +782,8 @@ def test_verify_plan_preserves_deadline_and_requires_trusted_converter(tmp_path,
     plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"],
                     {"install_root": str(tmp_path), "allow_custom_executable": True})
     shutil.copyfile(sys.executable, tool)
+    with tool.open("ab") as binary:
+        binary.write(b"anim_to_vtk\0OpenCourant\0DATASET UNSTRUCTURED_GRID\0TIME 1 1 double\0EROSION_STATUS int 1\0")
     with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], {"install_root": str(tmp_path)})
     trusted = plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"],
@@ -792,6 +795,27 @@ def test_verify_plan_preserves_deadline_and_requires_trusted_converter(tmp_path,
         assert env["PATH"].split(os.pathsep)[0] == str(tool.parent)
         assert env["PATH"].split(os.pathsep)[-1] == "original"
         assert env["RAD_CFG_PATH"] == str(tmp_path / "hm_cfg_files") and env["KMP_STACKSIZE"] == "400m"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows converter release archive")
+def test_windows_converter_must_match_member_of_trusted_release(tmp_path, monkeypatch):
+    store, _, _ = _fixture_animation(tmp_path)
+    tool = tmp_path / "exec" / "anim_to_vtk_win64.exe"
+    tool.parent.mkdir()
+    shutil.copyfile(sys.executable, tool)
+    archive = tmp_path / "OpenCourant_win64.zip"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.write(tool, "OpenCourant/exec/anim_to_vtk_win64.exe")
+    opts = {"install_root": str(tmp_path)}
+    with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts)
+    monkeypatch.setattr(converters, "_PINNED_WINDOWS_ZIP_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
+    plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts)
+    assert plan["executable"]["sha256"] == hashlib.sha256(tool.read_bytes()).hexdigest()
+    with tool.open("ab") as binary:
+        binary.write(b"modified but still executable")
+    with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts)
 
 
 def test_final_log_size_and_owned_descendant_exit(tmp_path, monkeypatch, manager):
@@ -942,19 +966,19 @@ def test_saved_rad_authority_shell_layers_and_live_deck(tmp_path, manager, nip):
         read_result(store, ref)
 
 
-@pytest.mark.parametrize("matching_stat", [False, True])
-def test_workbench_run_list_checks_working_deck_hash_even_without_metadata_change(tmp_path, monkeypatch, matching_stat):
+@pytest.mark.parametrize("stat_mode", ["absent", "empty", "matching"])
+def test_workbench_run_list_checks_working_deck_hash_even_without_metadata_change(tmp_path, monkeypatch, stat_mode):
     from types import SimpleNamespace
     from caelab import workbench as workbench_module
 
     store, source = _run(tmp_path, {})
     live = tmp_path / "working.rad"
     _snapshot_sidecar(source, _rad_mesh_deck(), live)
-    if matching_stat:
+    if stat_mode != "absent":
         path = source / "input/snapshot.json"
         sidecar = json.loads(path.read_bytes())
         metadata = workbench_module.fingerprint(live)
-        sidecar["files"][0]["stat"] = metadata
+        sidecar["files"][0]["stat"] = metadata if stat_mode == "matching" else {}
         atomic_json(path, sidecar)
         monkeypatch.setattr(workbench_module, "fingerprint", lambda _: metadata)
     job = json.loads((source / "job.json").read_bytes())
@@ -967,6 +991,39 @@ def test_workbench_run_list_checks_working_deck_hash_even_without_metadata_chang
     live.write_bytes(live.read_bytes().replace(b"#RADIOSS", b"#CHANGED"))
     assert workbench.native_runs(project)[0].stale
     assert workbench.jobs.close()
+
+
+def test_workbench_marks_only_the_run_with_a_corrupt_input_sidecar_stale(tmp_path):
+    from types import SimpleNamespace
+    from caelab.workbench import Workbench
+
+    store, source = _run(tmp_path, {})
+    healthy = store.read(source / "job.json")
+    bad_id = "b" * 32
+    broken = replace(healthy, id=bad_id, workdir=store.root / bad_id)
+    store.write(broken)
+    sidecar = broken.workdir / "input/snapshot.json"
+    sidecar.parent.mkdir()
+    sidecar.write_text("{", encoding="ascii")
+    reference = SimpleNamespace(path=healthy.input_path, stale=False, units=healthy.units, unit_source=healthy.unit_source)
+    project = SimpleNamespace(path=tmp_path / "project.json", run_store=store.root, run_store_expected=True,
+                              nodes={NODE: SimpleNamespace(program_id=healthy.solver_id)}, input_file=lambda _: reference)
+    workbench = Workbench()
+    runs = {run.id: run for run in workbench.native_runs(project)}
+    assert not runs[healthy.id].stale
+    assert runs[bad_id].stale and "스냅샷" in runs[bad_id].stale_reason
+    assert workbench.jobs.close()
+
+
+@pytest.mark.parametrize(("alias", "effective"), [("ELAST", 0), ("JOHNS", 3), ("ZERIL", 3), ("PLAS_PREDEF", 3),
+                                                 ("PLAS_TAB", 3), ("COMPSH", 3), ("FABR", 3), ("HYD_JCOOK", 3),
+                                                 ("VOID", 0), ("GLOBAL_REINFORCED_CONCRETE", 0)])
+def test_shell_nip_uses_starter_material_alias(tmp_path, alias, effective):
+    store, source = _run(tmp_path, {"caseA001": b"fixture"})
+    mat_card = f"/MAT/{alias}/1\nmaterial\n/END\n".encode()
+    _snapshot_sidecar(source, _rad_mesh_deck(0).replace(b"/END\n", mat_card), tmp_path / "work.rad")
+    plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], {"allow_custom_executable": True})
+    assert plan["options"]["expected_mesh"]["shell_nip_by_id"] == {"101": effective}
 
 
 @pytest.mark.parametrize(("requested", "plastic"), [(5, 5), (0, 3)])
@@ -1183,6 +1240,15 @@ def test_completed_receipt_accepts_top_level_or_result_manifest_reference(tmp_pa
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
     assert receipt["state"] == "completed", receipt["error"]
     path = operation_dir(store, ROOT_ID, receipt["id"]) / "operation.json"
+    both = {**receipt, "result": {**receipt["result"], "dataset_manifest_ref": receipt["dataset_ref"],
+                                  "dataset_manifest_sha256": receipt["dataset_manifest_sha256"]}}
+    atomic_json(path, both)
+    assert inspect_dataset(store, receipt["id"]).dataset_id == plan["cache_key"]
+    for conflict in ({"dataset_manifest_sha256": "f" * 64},
+                     {"dataset_manifest_ref": {**receipt["dataset_ref"], "sha256": "f" * 64}}):
+        atomic_json(path, {**both, "result": {**both["result"], **conflict}})
+        with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+            operation_snapshot(manager, store, ROOT_ID, receipt["id"])
     receipt.pop("result")
     atomic_json(path, receipt)
     assert inspect_dataset(store, receipt["id"]).dataset_id == plan["cache_key"]
@@ -1197,12 +1263,24 @@ def test_completed_receipt_accepts_top_level_or_result_manifest_reference(tmp_pa
 
 @pytest.mark.parametrize("canonical", [False, True])
 def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager, canonical):
-    store, _, plan = _fixture_animation(tmp_path)
+    store, source, plan = _fixture_animation(tmp_path)
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
     assert receipt["state"] == "completed", receipt["error"]
     folder = operation_dir(store, ROOT_ID, receipt["id"])
     digest = receipt.pop("dataset_manifest_sha256")
     receipt.pop("result")
+    frozen = json.loads((folder / "inputs/source-receipt.json").read_bytes())
+    snapshot = frozen["snapshot"]
+    legacy_identity = {
+        "identity": {k: frozen.get(k) for k in ("id", "node_id", "solver_id", "input_revision", "units", "unit_source")},
+        "inputs": [{k: f.get(k) for k in ("source_copy", "source_sha256", "execution_path", "execution_sha256")}
+                   for f in snapshot["files"]],
+        "outputs": snapshot.get("outputs", {}), "artifacts": snapshot.get("artifacts", {}),
+    }
+    receipt["source_fingerprint"] = hashlib.sha256(canonical_json_bytes(legacy_identity)).hexdigest()
+    assert receipt["source_fingerprint"] != plan["source_fingerprint"]
+    legacy_reader = "35613ec816b8f7c63fd8dbc266413fc9c070ca48677e67bf48d0bcb713ebe593"
+    receipt["adapter"]["code_sha256"] = receipt["reader_code_sha256"] = receipt["adapter_code_sha256"] = legacy_reader
     if canonical:
         receipt["dataset_ref"]["sha256"] = digest
     atomic_json(folder / "operation.json", receipt)
@@ -1212,21 +1290,34 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
     assert inspect_dataset(RunStore(saved), receipt["id"]).dataset_id == plan["cache_key"]
     assert (folder / "dataset.json").is_file()
     assert not (folder / "dataset.json.orphaned").exists()
+    ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x")
+    historical_ref = replace(ref, dataset_manifest_sha256=receipt["dataset_ref"]["sha256"],
+                             selection={"ids": [11]}, location={"association": "point"})
+    for quantity_ref in (ref, historical_ref):
+        assert resolve_result_ref(store, quantity_ref)["availability"] == "available"
+    assert read_result(RunStore(saved), historical_ref).values == (3,)
+    deck = source / "fixture.rad"
+    archived_deck = deck.read_bytes()
+    deck.write_bytes(archived_deck + b"changed")
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        resolve_result_ref(store, historical_ref)
+    deck.write_bytes(archived_deck)
     receipt["dataset_ref"]["sha256"] = "f" * 64
     atomic_json(folder / "operation.json", receipt)
     with pytest.raises(ResultError, match="HASH_MISMATCH"):
         inspect_dataset(store, receipt["id"])
 
 
-@pytest.mark.parametrize(("state", "key"), [("failed", "result"), ("cancelled", "dataset_ref"),
-                                           ("failed", "dataset_manifest_ref")])
-def test_terminal_with_result_is_corrupt_for_read_and_recovery(tmp_path, manager, state, key):
+@pytest.mark.parametrize(("state", "key", "value"), [
+    ("failed", "result", {}), ("cancelled", "dataset_ref", {}),
+    ("failed", "dataset_manifest_ref", {}), ("cancelled", "dataset_manifest_sha256", "a" * 64)])
+def test_terminal_with_result_is_corrupt_for_read_and_recovery(tmp_path, manager, state, key, value):
     store, _ = _run(tmp_path, {})
     op_id = "b" * 32
     folder = operation_dir(store, ROOT_ID, op_id)
     atomic_json(folder / "operation.json", {"schema_version": 1, "source_run_id": ROOT_ID, "id": op_id,
                                           "state": state, "error": {"code": "CANCELLED", "message": "ended"},
-                                          key: {"present": True}})
+                                          key: value})
     with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
         operation_snapshot(manager, store, ROOT_ID, op_id)
     with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
@@ -1239,7 +1330,7 @@ def test_conversion_lease_wait_uses_short_caller_timeout(tmp_path, manager):
     store, _, plan = _fixture_animation(tmp_path)
     with store.lease():
         start = time.monotonic()
-        with pytest.raises(ValueError):
+        with pytest.raises(ResultError, match="TIMEOUT"):
             submit_conversion(manager, store, plan, timeout=.1)
         assert time.monotonic() - start < 1
 
@@ -1271,6 +1362,34 @@ def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypa
             release.set()
         assert duplicate.result(timeout=5)["id"] == first.result(timeout=5)["id"]
     assert manager.cancel_operation(first.result()["id"])
+    assert other.close()
+
+
+def test_cross_manager_duplicate_scan_cannot_return_receipt_after_deadline(tmp_path, monkeypatch, manager):
+    from caelab.native import operations
+
+    other = JobManager()
+    store, _, plan = _fixture_animation(tmp_path, "import time; time.sleep(60)")
+    queued = submit_conversion(manager, store, plan)
+    _wait(manager, store, queued, {"running"})
+    reader = operations._read_receipt
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_receipt(*args):
+        entered.set()
+        release.wait(2)
+        return reader(*args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(operations, "_read_receipt", slow_receipt)
+        try:
+            start = time.monotonic()
+            with pytest.raises(ResultError, match="TIMEOUT"):
+                submit_conversion(other, store, plan, timeout=.1)
+            assert entered.is_set() and time.monotonic() - start < .8
+        finally:
+            release.set()
+    assert manager.cancel_operation(queued["id"])
     assert other.close()
 
 
