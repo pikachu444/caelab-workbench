@@ -762,6 +762,37 @@ def test_split_timeout_budgets_prep_slow_does_not_cannibalize_provider(tmp_path,
     assert not provider_entered.is_set()
 
 
+@pytest.mark.parametrize("load_duration, provider_duration, expected", [
+    (11.0, 0.0, "timed_out"), (7.0, 4.0, "timed_out"), (7.0, 2.0, "completed"),
+])
+def test_index_loading_consumes_request_budget(tmp_path, monkeypatch, load_duration, provider_duration, expected):
+    from types import SimpleNamespace
+
+    clock = [100.0]
+    calls = []
+    provider = Provider()
+    provider.availability = lambda: (calls.append("availability") or True, "")
+
+    def discuss(prompt):
+        calls.append("discuss")
+        clock[0] += provider_duration
+        return "provider response"
+
+    def load_index():
+        clock[0] += load_duration
+        return SimpleNamespace(index=None)
+
+    provider.discuss = discuss
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(service, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(service, "pin_knowledge_index", load_index)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 10.0)
+    turn = ask(path, doc, template_id="material")["turns"][-1]
+    assert turn["status"] == expected
+    assert calls == ([] if load_duration > 10 else ["availability", "discuss"])
+    assert turn["budget_used"]["total_seconds"] == load_duration + provider_duration
+
+
 def test_split_timeout_budgets_dedicated_provider_budget_and_caller_monotonic_anchor(tmp_path, monkeypatch):
     entered_search = threading.Event()
     release_search = threading.Event()

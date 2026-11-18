@@ -14,6 +14,8 @@ import sys
 import time
 import uuid
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import numpy as np
 import pytest
 
@@ -36,8 +38,6 @@ from caelab.native.run_store import NativeRun, RunStore, utc_now
 from caelab.workbench import Workbench
 from test_native_results import _field, _geometry
 
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 _TETRA_NODES = (1, 2, 3, 4)
 _TETRA_XYZ = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
@@ -381,6 +381,7 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
 
 def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkeypatch):
     """Invalidate old exports and receipts on STEP, PMX and INP edits, then reopen a fresh export/run."""
+    pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QApplication
     from apps.workbench_qt.native_analysis import NativeAnalysisWindow
 
@@ -464,6 +465,7 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkey
 
 def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path, monkeypatch):
     """Exercise scalar CalculiX MDO using synthetic receipts, plus independent study and project copies."""
+    pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QApplication, QMessageBox
     from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
 
@@ -623,13 +625,14 @@ def test_d32_contract_boundaries_and_discipline_graph_gap(tmp_path: Path):
 
 
 
-def test_d32_include_card_state_and_rendered_connectivity_guard(tmp_path):
+@pytest.mark.parametrize("element_header", ["*ELEMENT,TYPE=C3D4", "*ELEMENT ,TYPE=C3D4"])
+def test_d32_include_card_state_and_rendered_connectivity_guard(tmp_path, element_header):
     root = tmp_path / "part.inp"
     include = tmp_path / "rows.inc"
     include.write_text("1,1,2,3,<LAST_NODE>\n", encoding="utf-8")
     root.write_text(
         "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n5,1,1,1\n"
-        "*ELEMENT,TYPE=C3D4\n*INCLUDE,INPUT=rows.inc\n"
+        f"{element_header}\n*INCLUDE,INPUT=rows.inc\n"
         "*STEP\n*STATIC\n*CLOAD\n1,1,<LOAD>\n*END STEP\n",
         encoding="utf-8",
     )

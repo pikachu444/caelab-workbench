@@ -990,7 +990,9 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
 
     def assess(target, *, approved=True, include_good=False, trace_role="retrieval_trace",
                candidate_scopes=None, facets=None, out_of_scope=None, drop=(), invalid_quote=None,
-               trace_ids=None, assessment_ids=None, gaps=(), question_plan=plan):
+               trace_ids=None, assessment_ids=None, gaps=(), question_plan=plan,
+               response_format=None, trace_outcome=None, trace_format="cae-retrieval-trace-v1", trace_schema=None,
+               trace_events=False, host_overrides=None):
         candidates = [candidate, target] if include_good else [target]
         probe = query_language.build_retrieval_decision(
             question_plan, candidates, explicit_facets=facets, candidate_solver_scopes=candidate_scopes,
@@ -999,11 +1001,20 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
         ids = [item["citation"] for item in candidates]
         trace_payload = {"type": "retrieval_assessment", "schema_version": 1, **identity,
                          "candidate_ids": ids if trace_ids is None else trace_ids}
+        if trace_outcome is not None:
+            trace_payload["decision"] = trace_outcome
+        if trace_schema is not None:
+            trace_payload["schema"] = trace_schema
+        if trace_events:
+            trace_payload = {"events": [
+                {key: trace_payload[key] for key in (*identity, "candidate_ids")},
+                {"status": trace_outcome},
+            ]}
         raw = canonical_json_bytes(trace_payload)
         (tmp_path / "trace.json").write_bytes(raw)
         trace = ArtifactRefV1(
             id="trace", role=trace_role or "retrieval_trace", path="trace.json",
-            sha256=hashlib.sha256(raw).hexdigest(), size=len(raw), format_id="cae-retrieval-trace-v1",
+            sha256=hashlib.sha256(raw).hexdigest(), size=len(raw), format_id=trace_format,
             producer=producer,
         )
         quotes = [{"candidate_id": target["citation"], "start": 0, "end": len(text)}]
@@ -1020,10 +1031,18 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
             "out_of_scope": out_of_scope or {"is_non_cae": False, "original_spans": [], "reason": ""},
             "limitations": [],
         }
-        for field in drop:
-            result.pop(field)
         if invalid_quote is not None:
             result["checks"][0]["quoted_spans"] = [*quotes, invalid_quote]
+        if response_format == "frozen":
+            result = {key: result[key] for key in ("type", "checks", "out_of_scope", "limitations")}
+        elif response_format in ("compact", "persisted_compact"):
+            result = {"candidate_ids": ids, "citations": ids, "scope_status": "in_scope",
+                      "quotes": [{"candidate_id": cid, "start": 0, "end": len(text)} for cid in ids]}
+            if response_format == "persisted_compact":
+                result.update(**identity, trace_ref=trace.to_dict(), decision="supported")
+                result.update(host_overrides or {})
+        for field in drop:
+            result.pop(field)
         return query_language.build_retrieval_decision(
             question_plan, candidates, source_review_refs=[review],
             approved_source_reviews={reviewed_sha: review} if approved else {},
@@ -1055,18 +1074,51 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     with pytest.raises(ValueError, match="original span"):
         assess(candidate, out_of_scope=bad_span)
     assert assess(candidate).status == "supported"
+    assert assess(candidate, response_format="frozen").status == "supported"
+    assert assess(candidate, response_format="compact").status == "supported"
+    assert assess(candidate, response_format="persisted_compact").status == "supported"
+    with pytest.raises(ValueError, match="identity"):
+        assess(candidate, response_format="persisted_compact", host_overrides={"query_plan_sha256": "0" * 64})
+    assert assess(candidate, response_format="compact", trace_schema="caelab.retrieval_trace.v1",
+                  trace_format="other-format").status == "supported"
+    for response_format in ("frozen", "compact"):
+        with pytest.raises(ValueError, match="fields"):
+            assess(candidate, response_format=response_format,
+                   drop=("checks",) if response_format == "frozen" else ("quotes",))
+    for trace_outcome in ("insufficient", "out_of_scope"):
+        assert assess(candidate, trace_outcome=trace_outcome).status == "insufficient"
+        assert assess(candidate, trace_outcome=trace_outcome, trace_events=True, trace_role="tool_trace",
+                      trace_format="cae-tool-trace-v1").status == "insufficient"
+    with pytest.raises(ValueError, match="trace format"):
+        assess(candidate, trace_role="tool_trace", trace_format="cae-tool-trace-v1")
     assert assess(candidate, trace_role="tool_trace").status == "supported"
     assert assess(candidate, approved=False).status == "insufficient"
     assert assess(candidate, gaps=["missing_restart_validation"]).status == "insufficient"
     restart = query_language.prepare_query("GEOS v2.23 restart")
     assert "missing_restart_validation" in assess(candidate, question_plan=restart).missing_evidence
     wrong_solver = dict(candidate, solver_scope=["calculix"])
+    comparison = query_language.prepare_query("Compare GEOS and CalculiX Drucker-Prager")
+    ccx = dict(wrong_solver, citation="calculix-manual:chapter-1")
+    both_solvers = assess(ccx, include_good=True, response_format="compact", question_plan=comparison)
+    assert both_solvers.status == "supported"
+    assert {item.candidate_id for item in both_solvers.candidate_checks if item.relation == "relevant"} == {
+        candidate["citation"], ccx["citation"]
+    }
+    one_solver = assess(ccx, response_format="compact", question_plan=comparison)
+    assert one_solver.status == "insufficient" and "missing_solver" in one_solver.missing_evidence
+    assert one_solver.candidate_checks[0].relation == "relevant"
     assert assess(wrong_solver, candidate_scopes={candidate["citation"]: ["geos"]}).status == "insufficient"
     assert assess(wrong_solver, facets={"solver": "calculix"}).status == "insufficient"
     assert assess(dict(wrong_solver, coverage_facets={"solver": ["geos"]})).status == "insufficient"
     for invalid in (dict(edition="2.230"), dict(char_end=80), dict(document_sha256="b" * 64)):
         assert assess(dict(candidate, citation="other:chunk", **invalid), include_good=True).status == "insufficient"
     first = query_language.build_retrieval_decision(plan, [candidate])
+    matching = {"source_id": candidate["source_id"], "start_line": 12, "end_line": 12, "page": None}
+    nested = query_language.build_retrieval_decision(plan, [dict(candidate, page=None, source_span=matching)])
+    assert first.candidate_set_sha256 != nested.candidate_set_sha256
+    for bad in (dict(start_line=13), dict(end_line=15), dict(source_id="other"), dict(page=1)):
+        with pytest.raises(ValueError, match="source_span conflict"):
+            query_language.build_retrieval_decision(plan, [dict(candidate, page=None, source_span={**matching, **bad})])
     for changed in (dict(text=text[:-1] + "X"), dict(line_start=13, line_end=13), dict(source_id="other")):
         altered = query_language.build_retrieval_decision(plan, [dict(candidate, **changed)])
         assert first.candidate_set_sha256 != altered.candidate_set_sha256
@@ -1174,6 +1226,42 @@ def test_d09_review_overlay_applies_per_source_and_image_only_fails(tmp_path):
         corpus.build_corpus(manifest, output_root=out, verify_only=True)
 
 
+def test_d09_pdf_chunk_page_is_bounded_at_build_and_load(tmp_path, monkeypatch):
+    from pypdf import PdfWriter
+
+    root, manifest, data = _make_sample_corpus(tmp_path)
+    source = data["sources"][0]
+    pdf = root / "manual.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(pdf)
+    raw = pdf.read_bytes()
+    source.update(local_relative_path=pdf.name, sha256=hashlib.sha256(raw).hexdigest(), byte_length=len(raw))
+    manifest.write_bytes(canonical_json_bytes(data))
+    # The real PDF page tree supplies the count. Stub layout-dependent text extraction.
+    monkeypatch.setattr(corpus, "_pdf_page_texts", lambda reader: ["Weak form\n" for _ in reader.pages])
+    overlay = tmp_path / "overlay.json"
+    span = {"source_id": source["source_id"], "chunk_id": "weak-form", "line_start": 1,
+            "line_end": 1, "section_path": ["Weak form"], "page": 999}
+    overlay.write_bytes(canonical_json_bytes({"schema_version": 1, "chunks": [span]}))
+    with pytest.raises(ValueError, match="PAGE_OUT_OF_RANGE"):
+        corpus.build_corpus(manifest, output_root=tmp_path / "out", review_overlay_path=overlay)
+    span["page"] = 1
+    overlay.write_bytes(canonical_json_bytes({"schema_version": 1, "chunks": [span]}))
+    receipt = corpus.build_corpus(manifest, output_root=tmp_path / "out", review_overlay_path=overlay)
+    index_path = Path(receipt.index_dir)
+    index, _ = corpus.load_corpus_bundle(index_path)
+    assert index.chunks[0].corpus_chunk.page_start == 1
+    chunks_path = index_path / "chunks.json"
+    payload = json.loads(chunks_path.read_bytes())
+    payload["chunks"][0].update(page_start=999, page_end=999)
+    chunks_path.write_bytes(canonical_json_bytes(payload))
+    published, _ = corpus.load_corpus_manifest(index_path / "manifest.json")
+    digest = corpus._index_digest(published, corpus._dir_snapshot(index_path))
+    altered = index_path.rename(tmp_path / digest)
+    with pytest.raises(ValueError, match="PAGE_OUT_OF_RANGE"):
+        corpus.load_corpus_bundle(altered)
+
 
 @pytest.mark.parametrize("defect", ["wrong_schema", "wrong_version", "wrong_discussion", "wrong_turn", "alias", "event", "chunk", "no_terminal"])
 def test_saved_request_artifact_issues_block_history_and_store_copy(tmp_path, monkeypatch, defect):
@@ -1277,12 +1365,18 @@ def test_cancelling_attachment_dialog_keeps_v1_unchanged(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("mode", ["source_missing", "source_tampered", "vectors_nonfinite", "vector_meta_missing",
-                                  "forged_quotation", "notice_missing", "notice_tampered"])
+                                  "forged_quotation", "notice_missing", "notice_tampered",
+                                  "code_page", "local_quotation"])
 def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_path, mode):
     import io
     import shutil
 
-    _, manifest_path, _ = _make_sample_corpus(tmp_path)
+    _, manifest_path, manifest_data = _make_sample_corpus(tmp_path)
+    if mode == "local_quotation":
+        for source in manifest_data["sources"]:
+            source["review_status"] = "approved"
+        manifest_data["sources"][0]["license"]["redistribution"] = "local_only"
+        manifest_path.write_bytes(canonical_json_bytes(manifest_data))
     receipt = corpus.build_corpus(manifest_path, output_root=tmp_path / "out")
     original = Path(receipt.index_dir)
     staged = tmp_path / "staged"
@@ -1295,14 +1389,21 @@ def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_p
         raw = path.read_bytes()
         path.write_bytes(b"x" + raw[1:])
         error = "SHA256_MISMATCH"
-    elif mode == "forged_quotation":
+    elif mode in ("forged_quotation", "local_quotation", "code_page"):
         path = staged / "chunks.json"
         payload = json.loads(path.read_bytes())
         quoted = payload["chunks"][0]
-        quoted["text"] = "x" + quoted["text"][1:]
-        quoted["text_sha256"] = hashlib.sha256(quoted["text"].encode()).hexdigest()
+        if mode == "code_page":
+            quoted.update(page_start=1, page_end=1)
+            error = "PAGE_NOT_APPLICABLE"
+        else:
+            quoted["text"] = "x" + quoted["text"][1:]
+            quoted["text_sha256"] = hashlib.sha256(quoted["text"].encode()).hexdigest()
+            error = "LOCAL_CHUNK_DIGEST_MISMATCH" if mode == "local_quotation" else "PACKAGED_SOURCE_SPAN_MISMATCH"
+        if mode == "local_quotation":
+            assert not (staged / "sources" / "calculix_theory.md").exists()
+            assert corpus.load_corpus_bundle(original)[1]["verification_status"] == "verified_with_limitations"
         path.write_bytes(canonical_json_bytes(payload))
-        error = "PACKAGED_SOURCE_SPAN_MISMATCH"
     elif mode in ("notice_missing", "notice_tampered"):
         notice = staged / "licenses" / "LICENSE"
         if mode == "notice_missing":
@@ -1440,7 +1541,8 @@ def test_d08_pin_index_and_save_request_before_provider_availability(tmp_path, m
     assert knowledge.search_knowledge_result("Drucker-Prager trial pressure").index_digest == index_b.index_digest
 
 
-@pytest.mark.parametrize("key", ["evidence_summary", "evidence_name", "evidence_refs"])
+@pytest.mark.parametrize("key", ["evidence_summary", "evidence_name", "evidence_refs",
+                                 "evidence_sources", "evidence_pack_sha256", "evidence_pack_hash"])
 def test_d08_case_attachment_mismatch_excluded_from_history_and_save_as(tmp_path, monkeypatch, key):
     from caelab.native.run_store import RunStore
 
@@ -1457,13 +1559,23 @@ def test_d08_case_attachment_mismatch_excluded_from_history_and_save_as(tmp_path
     doc = discussions.attach_evidence(path, evidence, expected_revision=doc["revision"])
     provider = _StubTheoryProvider("sensitive previous reply")
     monkeypatch.setattr(experts, "get_provider", lambda *_args: provider)
-    options = {"evidence_id": evidence["id"], "template_id": "interpretation"}
+    options = {"evidence_id": evidence["id"], "template_id": "next_test"}
     updated = discussions.ask_discussion(path, "First case", expected_revision=doc["revision"], **options)
     assert updated["turns"][-1]["status"] == "completed"
     assert not discussions.discussion_issues(path)
-    updated["turns"][-1][key] = []
+    turn = updated["turns"][-1]
+    if key.startswith("evidence_pack") or key == "evidence_sources":
+        frozen = json.loads((path.parent / "assets" / turn["request_context_ref"]["path"]).read_bytes())
+        assert turn["evidence_sources"] == frozen["evidence_sources"]
+        assert turn["evidence_pack_sha256"] == frozen["evidence_pack_sha256"]
+        assert len(turn["evidence_sources"]) > 1
+        turn[key] = turn[key][:-1] if key == "evidence_sources" else "0" * 64
+        diagnostic = "evidence_pack"
+    else:
+        turn[key] = []
+        diagnostic = "첨부 근거 식별 정보"
     path.write_bytes(canonical_json_bytes(updated))
-    assert any("첨부 근거 식별 정보" in issue for issue in discussions.discussion_issues(path))
+    assert any(diagnostic in issue for issue in discussions.discussion_issues(path))
     target = tmp_path / "invalid-copy"
     with pytest.raises(ValueError, match="요청 자산"):
         RunStore(root).copy_to(target)
@@ -1487,15 +1599,22 @@ def test_d09_verify_only_writes_no_temporary_directories(tmp_path, monkeypatch):
     assert corpus.load_corpus_bundle(out, with_vectors=True)[0].vectors is not None
 
 
-def test_d09_comparison_editions_and_unmentioned_facet_spans(tmp_path):
+@pytest.mark.parametrize("question", [
+    "CalculiX versions 2.22 and 16.5: compare weak form and Drucker-Prager",
+    "Compare 2.22 vs 16.5 in CalculiX: weak form and Drucker-Prager",
+    "Compare 2.22 and 16.5 of CCX: weak form and Drucker-Prager",
+])
+def test_d09_comparison_editions_and_unmentioned_facet_spans(tmp_path, question):
     _, manifest, data = _make_sample_corpus(tmp_path)
     data["sources"][1]["solver_scope"] = ["calculix"]
     manifest.write_bytes(canonical_json_bytes(data))
     corpus.build_corpus(manifest, output_root=tmp_path / "out")
-    question = "CalculiX versions 2.22 and 16.5: compare weak form and Drucker-Prager"
     plan, hits, decision = corpus.search_corpus(tmp_path / "out", question)
     editions = [req for req in decision.requirements if req.facet == "edition"]
     assert [req.expected for req in editions] == ["2.22", "16.5"]
+    if "CCX" in question:
+        alias = next(span for span in plan.term_spans if span["matched_term"] == "calculix")
+        assert alias["source_text"] == question[alias["start"]:alias["end"]] == "CCX"
     assert {hit.edition for hit in hits} == {"2.22", "16.5"}
     assert "edition_mismatch" not in decision.missing_evidence
     one_edition = [hit for hit in hits if hit.edition == "2.22"]

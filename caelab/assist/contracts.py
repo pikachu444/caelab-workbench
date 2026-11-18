@@ -528,6 +528,7 @@ class CorpusSourceSpec:
     parser: Mapping[str, Any]
     extraction_quality: str
     review_status: str | None = None
+    page_count: int | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self.source_id, "CorpusSourceSpec.source_id")
@@ -592,6 +593,8 @@ class CorpusSourceSpec:
 
         if self.review_status not in (None, "approved", "partial", "rejected", "unreviewed", "review_required"):
             raise ValueError(f"Invalid source review status: {self.review_status!r}")
+        if self.page_count is not None:
+            _require_int(self.page_count, "CorpusSourceSpec.page_count", minimum=1)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -609,6 +612,7 @@ class CorpusSourceSpec:
             "parser": _to_plain(self.parser),
             "extraction_quality": self.extraction_quality,
             **({"review_status": self.review_status} if self.review_status is not None else {}),
+            **({"page_count": self.page_count} if self.page_count is not None else {}),
         }
 
     @classmethod
@@ -637,7 +641,7 @@ class CorpusSourceSpec:
                 "parser",
                 "extraction_quality",
             },
-            optional={"review_status"},
+            optional={"review_status", "page_count"},
             context="CorpusSourceSpec",
         )
         return cls(**m)
@@ -651,6 +655,7 @@ class CorpusManifest:
     revision: str
     sources: tuple[CorpusSourceSpec, ...]
     schema_version: int = 1
+    local_chunk_sha256: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if _require_int(self.schema_version, "CorpusManifest.schema_version") != 1:
@@ -669,6 +674,14 @@ class CorpusManifest:
                 raise ValueError(f"Duplicate source_id in CorpusManifest: {src.source_id!r}")
             seen_ids.add(src.source_id)
         object.__setattr__(self, "sources", sources)
+        if self.local_chunk_sha256 is not None:
+            if not isinstance(self.local_chunk_sha256, Mapping):
+                raise ValueError("CorpusManifest.local_chunk_sha256 must be an object")
+            for citation, digest in self.local_chunk_sha256.items():
+                _require_nonempty_str(citation, "local chunk citation")
+                _require_sha256(digest, "local chunk SHA256")
+            object.__setattr__(self, "local_chunk_sha256", _freeze_value(self.local_chunk_sha256,
+                                                                       context="local_chunk_sha256"))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -676,6 +689,7 @@ class CorpusManifest:
             "corpus_id": self.corpus_id,
             "revision": self.revision,
             "sources": [src.to_dict() for src in self.sources],
+            **({"local_chunk_sha256": dict(self.local_chunk_sha256)} if self.local_chunk_sha256 is not None else {}),
         }
 
     @classmethod
@@ -699,6 +713,7 @@ class CorpusManifest:
         m = _require_exact_keys(
             data,
             {"schema_version", "corpus_id", "revision", "sources"},
+            optional={"local_chunk_sha256"},
             context="CorpusManifest",
         )
         return cls(**m)
@@ -731,7 +746,7 @@ class CorpusManifest:
                 {"source_id", "source_kind", "title", "edition", "commit", "uri", "local_relative_path",
                  "sha256", "byte_length", "license", "parser", "extraction_quality"},
                 optional={"repository", "path", "git_blob_sha", "previous_observed_sha256_matches",
-                          "solver_scope", "review_status"}, context="recovery source",
+                          "solver_scope", "review_status", "page_count"}, context="recovery source",
             ))
             for key in ("repository", "path", "git_blob_sha", "previous_observed_sha256_matches"):
                 source.pop(key, None)

@@ -53,7 +53,7 @@ def _deck_lines(root: Path, files):
         if line.startswith("**"):
             continue
         if line.startswith("*"):
-            card = line.split(",", 1)[0].upper()
+            card = line.split(",", 1)[0].strip().upper()
         if line:
             yield filename, number, card, line
 

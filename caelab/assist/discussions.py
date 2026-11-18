@@ -606,6 +606,48 @@ def _case_evidence_identity(evidence):
     }
 
 
+def _evidence_pack(turn, request_sha):
+    return {
+        "request_context_sha256": request_sha,
+        "evidence_sources": turn["evidence_sources"],
+        "provided_materials": turn["provided_materials"],
+        "shown_ids": turn["citations"]["shown_ids"],
+    }
+
+
+def _verify_evidence_pack(asset_root, turn, context, context_ref):
+    initial_ref = context.get("initial_request_context_ref")
+    if initial_ref is None and "evidence_pack_sha256" not in turn:
+        # Earlier turns bound the pack to the single recorded request context.
+        stored = turn.get("evidence_pack_hash")
+        if turn.get("status") == "completed" and (
+            context.get("evidence_pack_required") or stored is None and turn.get("evidence_sources")
+        ):
+            raise ValueError("evidence_pack 완료된 요청의 동결 근거 또는 SHA256 누락")
+        if stored is None:
+            return
+        base_sha = context_ref["sha256"]
+    else:
+        initial = _read_request_json(asset_root, initial_ref, turn["id"], "request_context")
+        pack_fields = {"initial_request_context_ref", "evidence_sources", "evidence_pack_sha256"}
+        if initial != {key: value for key, value in context.items() if key not in pack_fields}:
+            raise ValueError("evidence_pack 초기 요청 문맥 불일치")
+        stored = context.get("evidence_pack_sha256")
+        if (context.get("evidence_sources") != turn.get("evidence_sources")
+                or turn.get("evidence_pack_sha256") != stored or turn.get("evidence_pack_hash") != stored):
+            raise ValueError("evidence_pack 근거 출처 또는 해시 불일치")
+        base_sha = initial_ref["sha256"]
+    pack = _evidence_pack(turn, base_sha)
+    if not isinstance(pack["provided_materials"], list) or any(
+        not isinstance(item, dict) or not isinstance(item.get("source"), str)
+        for item in pack["provided_materials"]
+    ):
+        raise ValueError("evidence_pack 제공 근거 형식 불일치")
+    actual_sources = list(dict.fromkeys(item["source"] for item in pack["provided_materials"]))
+    if actual_sources != pack["evidence_sources"] or canonical_sha256(pack) != stored:
+        raise ValueError("evidence_pack 근거 출처 또는 SHA256 불일치")
+
+
 def _turn_artifact_issues(document, turn, asset_root):
     refs_present = any(turn.get(key) is not None for key in _REQUEST_ARTIFACT_KEYS)
     completed = turn.get("status") == "completed"
@@ -657,7 +699,8 @@ def _turn_artifact_issues(document, turn, asset_root):
         if modern or any(key in turn for key in ("request_artifact_ref", "request_artifact_sha256")):
             if turn.get("request_artifact_ref") != context_ref or turn.get("request_artifact_sha256") != context_ref["sha256"]:
                 report("request_artifact_ref", ValueError("요청 자료 별칭 또는 SHA256 불일치"))
-    except (OSError, ValueError, TypeError) as error:
+        _verify_evidence_pack(asset_root, turn, context, context_ref)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
         report("request_context_ref", error)
 
     if trace_ref is None and not completed and turn.get("retrieval_trace_ref") is None:
@@ -840,6 +883,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
     Only the caller writes. A late daemon worker can neither update a document
     nor start a provider after retrieval has been cancelled or timed out.
     """
+    request_start = time.monotonic()
     path = Path(path).resolve()
     if not isinstance(question, str) or not question.strip():
         raise ValueError("질문을 입력하세요.")
@@ -902,8 +946,6 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     }
 
                 provider = experts.get_provider(provider_id or document.get("provider_id"))
-                if isinstance(provider, experts.OpenAICompatibleProvider):
-                    provider.timeout_seconds = provider_budget
                 request_id = str(uuid.uuid4())
                 now = utc_now()
                 policy_id = document.get("tool_policy_id") or ROLE_POLICY_V2_ID
@@ -927,6 +969,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 }
                 request_context_payload = {
                     "schema": "caelab.expert_request.v1",
+                    "evidence_pack_required": True,
                     "schema_version": 1,
                     "request_id": request_id,
                     "turn_id": request_id,
@@ -1021,9 +1064,8 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
         except Timeout as error:
             raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
-        start_time = time.monotonic()
-        prep_deadline = start_time + prep_budget
-        overall_deadline = start_time + overall_budget
+        overall_deadline = request_start + overall_budget
+        prep_deadline = min(request_start + prep_budget, overall_deadline)
         if on_stage is not None:
             try:
                 on_stage("preparation")
@@ -1035,6 +1077,8 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
         responses = queue.Queue()
         context_saved = threading.Event()
         context = None
+        prepared_ref = None
+        pack_sha = None
         provider_started = threading.Event()
         provider_deadline_box = [overall_deadline]
         provider_started_at_box = [None]
@@ -1137,6 +1181,8 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 provider_started.set()
                 checkpoint("provider")
 
+                if isinstance(provider, experts.OpenAICompatibleProvider):
+                    provider.timeout_seconds = provider_deadline_box[0] - provider_started_at
                 reply = provider.discuss(prompt)
                 if not isinstance(reply, str) or not reply.strip():
                     raise ValueError("공급자가 비어 있는 답변을 반환했습니다.")
@@ -1196,6 +1242,28 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     status, reply, error_text = "timed_out", "", f"전문가 요청이 {overall_budget:g}초 제한을 넘었습니다."
                     break
                 if prepared:
+                    try:
+                        with _lock(path):
+                            current = _current(path, pending_document["revision"], idle=False)
+                            if current["id"] != pending_document["id"]:
+                                raise DiscussionConflict("질문을 시작한 대화가 바뀌었습니다.")
+                            pending_turn = current["turns"][-1]
+                            pending_turn.update(evidence_sources=message["evidence_sources"],
+                                                provided_materials=message["provided_materials"])
+                            pending_turn["citations"]["shown_ids"] = message["shown_ids"]
+                            pack_sha = canonical_sha256(_evidence_pack(pending_turn, request_context_ref["sha256"]))
+                            prepared_ref = _write_immutable_request_json(
+                                asset_root, f"requests/{request_id}/prepared/request_context.json",
+                                f"prepared-request-context:{request_id}", "request_context", "cae-request-context-v1",
+                                {**request_context_payload, "initial_request_context_ref": request_context_ref,
+                                 "evidence_sources": message["evidence_sources"], "evidence_pack_sha256": pack_sha},
+                            )
+                    except (OSError, Timeout) as error:
+                        status, reply, error_text = "failed", "", f"{type(error).__name__}: {error}"
+                        break
+                    except DiscussionConflict:
+                        stopped.set()
+                        raise
                     context = message
                     context_saved.set()
                     continue
@@ -1209,10 +1277,10 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
             except Exception as error:
                 error_text += f" 공급자 중단 요청 실패: {type(error).__name__}"
         end_time = time.monotonic()
-        total_elapsed = max(0.0, end_time - start_time)
+        total_elapsed = max(0.0, end_time - request_start)
         p_start = provider_started_at_box[0]
         if p_start is not None:
-            prep_elapsed = max(0.0, p_start - start_time)
+            prep_elapsed = max(0.0, p_start - request_start)
             provider_elapsed = max(0.0, end_time - p_start)
         else:
             prep_elapsed = total_elapsed
@@ -1227,12 +1295,10 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 finished_at = utc_now()
                 final_turn.update(status=status, reply=reply, error=error_text, finished_at=finished_at, stage=final_stage)
                 if context is not None:
-                    final_turn["evidence_pack_hash"] = canonical_sha256({
-                        "request_context_sha256": request_context_ref["sha256"],
-                        "evidence_sources": context["evidence_sources"],
-                        "provided_materials": context["provided_materials"],
-                        "shown_ids": context["shown_ids"],
-                    })
+                    request_context_ref = prepared_ref
+                    final_turn.update(request_context_ref=prepared_ref, request_artifact_ref=prepared_ref,
+                                      request_artifact_sha256=prepared_ref["sha256"],
+                                      evidence_pack_hash=pack_sha, evidence_pack_sha256=pack_sha)
                     final_turn.update({
                         key: context[key]
                         for key in ("evidence_sources", "provided_materials", "knowledge_status",
