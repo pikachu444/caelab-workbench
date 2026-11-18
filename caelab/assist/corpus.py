@@ -32,7 +32,7 @@ from .contracts import (
     QueryPlan,
     RetrievalDecisionV1,
 )
-from .query_language import build_retrieval_decision, prepare_query
+from .query_language import build_retrieval_decision, classify_non_cae_intent, editions_match, extract_query_requirements, normalize_solver, prepare_query
 
 __all__ = [
     "build_corpus",
@@ -62,24 +62,26 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _load_strict_json(path: Path) -> tuple[Any, bytes]:
     raw = path.read_bytes()
+    return _strict_json(raw, path), raw
+
+
+def _strict_json(raw: bytes, path: Path) -> Any:
     text = raw.decode("utf-8")
     if "\x00" in text:
         raise ValueError(f"NUL byte rejected in JSON file: {path}")
-    data = json.loads(
+    return json.loads(
         text,
         object_pairs_hook=_reject_duplicate_keys,
         parse_constant=_reject_non_finite,
     )
-    return data, raw
 
 
-def _write_bytes_fsync(path: Path, payload: bytes) -> str:
+def _write_bytes_fsync(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as stream:
         stream.write(payload)
         stream.flush()
         os.fsync(stream.fileno())
-    return hashlib.sha256(payload).hexdigest()
 
 
 def _atomic_json_fsync(path: Path, data: Mapping[str, Any]) -> Path:
@@ -142,6 +144,7 @@ def load_review_overlay(overlay_path: str | Path, manifest: CorpusManifest) -> d
     if not isinstance(reviews, list):
         raise ValueError("Review overlay 'reviews' must be a list")
     validated_reviews: list[dict[str, Any]] = []
+    seen_reviews = set()
     for idx, rev in enumerate(reviews):
         if not isinstance(rev, dict):
             raise ValueError(f"reviews[{idx}] must be an object")
@@ -153,10 +156,13 @@ def load_review_overlay(overlay_path: str | Path, manifest: CorpusManifest) -> d
             raise ValueError(
                 f"REVIEW_OVERLAY_HASH_MISMATCH: source {sid!r} expected {expected_sha}, got {rev.get('document_sha256')!r}"
             )
-        status = rev.get("status", "approved")
-        if status not in {"approved", "partial", "rejected"}:
-            raise ValueError(f"reviews[{idx}].status must be approved|partial|rejected, got {status!r}")
-        validated_reviews.append(dict(rev))
+        if sid in seen_reviews:
+            raise ValueError(f"Duplicate review overlay source: {sid!r}")
+        seen_reviews.add(sid)
+        status = rev.get("status", "unreviewed")
+        if status not in ("approved", "partial", "rejected", "unreviewed"):
+            raise ValueError(f"reviews[{idx}].status is invalid: {status!r}")
+        validated_reviews.append(dict(rev, status=status))
 
     curated_chunks = data.get("chunks", [])
     if not isinstance(curated_chunks, list):
@@ -190,26 +196,100 @@ def load_review_overlay(overlay_path: str | Path, manifest: CorpusManifest) -> d
     }
 
 
-def _verify_source_bytes(source: CorpusSourceSpec, source_root: Path) -> tuple[str, bytes | None]:
+def _verify_bytes(raw: bytes, identifier: str, sha256: str, byte_length: int) -> None:
+    if len(raw) != byte_length:
+        raise ValueError(f"BYTE_LENGTH_MISMATCH: {identifier} expected {byte_length} bytes, got {len(raw)}")
+    actual_sha = _sha256_bytes(raw)
+    if actual_sha != sha256:
+        raise ValueError(f"SHA256_MISMATCH: {identifier} expected {sha256}, got {actual_sha}")
+
+
+def _read_asset(root: Path, relative: str) -> bytes:
+    return (root / validate_relative_artifact_path(relative, root=root)).read_bytes()
+
+
+def _verify_source_bytes(source: CorpusSourceSpec, source_root: Path, embedded: bytes | None) -> bytes | None:
     if source.local_relative_path is None:
         if source.extraction_quality == "source_unavailable":
-            return "source_unavailable", None
+            return None
         raise ValueError(f"SOURCE_UNAVAILABLE: {source.source_id} has no local_relative_path")
-    rel = validate_relative_artifact_path(source.local_relative_path, root=source_root)
-    candidate = source_root.resolve() / PurePosixPath(rel)
-    if not candidate.is_file():
-        raise FileNotFoundError(f"SOURCE_UNAVAILABLE: {source.source_id} missing at {rel}")
-    raw = candidate.read_bytes()
-    if len(raw) != source.byte_length:
-        raise ValueError(
-            f"BYTE_LENGTH_MISMATCH: {source.source_id} expected {source.byte_length} bytes, got {len(raw)}"
+    raw = embedded if embedded is not None else _read_asset(source_root, source.local_relative_path)
+    _verify_bytes(raw, source.source_id, source.sha256, source.byte_length)
+    return raw
+
+
+def _source_notices(source: CorpusSourceSpec, root: Path, embedded: Mapping[str, bytes]) -> dict[str, bytes]:
+    license_data = source.license
+    required = license_data["redistribution"] == "notice_required" or license_data.get("notice_required")
+    notices = license_data.get("notice_files", ())
+    if required and not notices:
+        parent = PurePosixPath(source.local_relative_path).parent
+        notices = tuple(
+            (parent / name).as_posix()
+            for name in ("LICENSE", "LICENSE.txt", "COPYING", "NOTICE", "NOTICE.txt")
+            if (root / parent / name).is_file()
         )
-    actual_sha = _sha256_bytes(raw)
-    if actual_sha != source.sha256:
-        raise ValueError(
-            f"SHA256_MISMATCH: {source.source_id} expected {source.sha256}, got {actual_sha}"
-        )
-    return "available", raw
+    if required and not notices:
+        raise ValueError(f"LICENSE_NOTICE_MISSING: {source.source_id}")
+    verified = {}
+    for item in notices:
+        rel = item if isinstance(item, str) else item["path"]
+        raw = embedded[rel] if rel in embedded else _read_asset(root, rel)
+        if not raw.strip():
+            raise ValueError(f"LICENSE_NOTICE_EMPTY: {rel}")
+        if not isinstance(item, str):
+            _verify_bytes(raw, rel, item["sha256"], item["byte_length"])
+        # Recovery bundle paths already include the licenses directory.
+        staged = rel if rel.startswith("licenses/") else f"licenses/{rel}"
+        verified[staged] = raw
+    return verified
+
+
+def _recovery_materials(data, manifest):
+    if "manifest" not in data:
+        return {}, {}, {}
+    embedded_sources = {}
+    embedded_notices = {}
+    chunks_by_source = {}
+    sources = {source.source_id: source for source in manifest.sources}
+    for item in data["sources"]:
+        source = sources.get(item["source_id"])
+        if source is None or source.source_id in embedded_sources:
+            raise ValueError("Missing or duplicate recovery source manifest entry")
+        raw = item["text"].encode("utf-8")
+        if (item["sha256"], item["byte_length"], item["commit"], item["source_kind"]) != (
+            source.sha256, source.byte_length, source.commit, source.source_kind
+        ):
+            raise ValueError(f"Recovery source metadata mismatch: {source.source_id}")
+        _verify_bytes(raw, source.source_id, source.sha256, source.byte_length)
+        embedded_sources[source.source_id] = raw
+    if set(embedded_sources) != set(sources):
+        raise ValueError("Recovery source bytes are incomplete")
+    for item in data["licenses"]:
+        rel = f"licenses/{item['id']}/{item['path']}"
+        validate_relative_artifact_path(rel)
+        if rel in embedded_notices:
+            raise ValueError(f"Duplicate recovery notice: {rel}")
+        raw = item["text"].encode("utf-8")
+        _verify_bytes(raw, rel, item["sha256"], item["byte_length"])
+        embedded_notices[rel] = raw
+    expected_notices = {notice["path"] for source in manifest.sources for notice in source.license["notice_files"]}
+    if not expected_notices <= embedded_notices.keys():
+        raise ValueError("Recovery license notice bytes are incomplete")
+    for item in data["chunks"]:
+        chunk = dict(item)
+        chunk.pop("extraction_quality", None)
+        span = chunk.pop("span")
+        if set(span) != {"line_start", "line_end", "char_start", "char_end"}:
+            raise ValueError("Invalid recovery chunk span")
+        chunk.update(span)
+        chunk["coverage_facets"] = {**chunk["coverage_facets"], "solver": chunk["coverage_facets"]["solver_ids"]}
+        spec = CorpusChunkSpec.from_dict(chunk)
+        source = sources.get(spec.source_id)
+        if source is None or spec.document_sha256 != source.sha256 or spec.edition != source.edition:
+            raise ValueError(f"Recovery chunk provenance mismatch: {spec.citation}")
+        chunks_by_source.setdefault(spec.source_id, []).append(chunk)
+    return embedded_sources, embedded_notices, chunks_by_source
 
 
 def _line_spans(text: str) -> tuple[list[str], list[int], list[int]]:
@@ -243,6 +323,11 @@ def _extract_curated_chunk(
     chunk_text = text[cs:ce]
     if not chunk_text.strip():
         raise ValueError(f"EMPTY_CHUNK: {source.source_id}:{spec['chunk_id']} has empty text")
+    if any(key in spec and spec[key] != value for key, value in (
+        ("char_start", cs), ("char_end", ce), ("text", chunk_text),
+        ("text_sha256", _sha256_bytes(chunk_text.encode("utf-8"))),
+    )):
+        raise ValueError(f"CURATED_SPAN_MISMATCH: {source.source_id}:{spec['chunk_id']}")
     facets = dict(spec.get("coverage_facets") or {})
     facets.setdefault("solver", list(source.solver_scope))
     return CorpusChunkSpec(
@@ -468,7 +553,11 @@ def build_corpus(
     """Validate sources & reviews and atomically build/verify a cae-small-bm25-hash-v1 corpus index."""
     _check_cancel(check_cancelled)
     m_path = Path(manifest_path).expanduser().resolve()
-    manifest, manifest_sha = load_corpus_manifest(m_path)
+    data, _ = _load_strict_json(m_path)
+    manifest = CorpusManifest.from_dict(data)
+    manifest_bytes = canonical_json_bytes(manifest.to_dict())
+    manifest_sha = _sha256_bytes(manifest_bytes)
+    embedded_sources, embedded_notices, curated_by_source = _recovery_materials(data, manifest)
     source_root = m_path.parent
     out_root = Path(output_root).expanduser().resolve()
 
@@ -477,29 +566,44 @@ def build_corpus(
 
     source_statuses: dict[str, str] = {}
     verified_bytes: dict[str, bytes] = {}
+    notices_to_stage: dict[str, bytes] = {}
     warnings: list[str] = []
-
-    for src in manifest.sources:
-        _check_cancel(check_cancelled)
-        status_label, raw = _verify_source_bytes(src, source_root)
-        source_statuses[src.source_id] = status_label
-        if raw is not None:
-            verified_bytes[src.source_id] = raw
-        else:
-            warnings.append(f"source_unavailable:{src.source_id}")
-
-    curated_by_source: dict[str, list[dict[str, Any]]] = {}
-    if overlay_data is not None:
-        for chk in overlay_data["chunks"]:
-            curated_by_source.setdefault(chk["source_id"], []).append(chk)
+    reviews = {item["source_id"]: item["status"] for item in (overlay_data or {}).get("reviews", ())}
+    for chunk in (overlay_data or {}).get("chunks", ()):
+        if chunk["source_id"] in curated_by_source and embedded_sources:
+            raise ValueError("Review overlays cannot replace frozen recovery spans")
+        curated_by_source.setdefault(chunk["source_id"], []).append(chunk)
 
     chunks: list[CorpusChunkSpec] = []
+    seen_citations = set()
     for src in manifest.sources:
         _check_cancel(check_cancelled)
-        raw = verified_bytes.get(src.source_id)
-        if raw is None:
+        review_status = reviews.get(src.source_id, src.review_status or "unreviewed")
+        if "rejected" in (review_status, src.review_status):
+            source_statuses[src.source_id] = "rejected"
+            warnings.append(f"source_rejected:{src.source_id}")
             continue
-        chunks.extend(_chunk_text_with_spans(src, raw, curated_by_source.get(src.source_id, ())))
+        raw = _verify_source_bytes(src, source_root, embedded_sources.get(src.source_id))
+        if raw is None:
+            source_statuses[src.source_id] = "source_unavailable"
+            warnings.append(f"source_unavailable:{src.source_id}")
+            continue
+        verified_bytes[src.source_id] = raw
+        notices_to_stage.update(_source_notices(src, source_root, embedded_notices))
+        extracted = _chunk_text_with_spans(src, raw, curated_by_source.get(src.source_id, ()))
+        if not extracted:
+            raise ValueError(f"NO_EXTRACTABLE_CHUNKS: {src.source_id}")
+        for chunk in extracted:
+            if chunk.citation in seen_citations:
+                raise ValueError(f"Duplicate corpus chunk: {chunk.citation}")
+            seen_citations.add(chunk.citation)
+            scope = _chunk_solver_scope(chunk)
+            if not set(scope) <= set(src.solver_scope):
+                raise ValueError(f"Chunk solver scope exceeds source scope: {chunk.citation}")
+        chunks.extend(extracted)
+        source_statuses[src.source_id] = review_status
+        if review_status != "approved":
+            warnings.append(f"source_review_{review_status}:{src.source_id}")
 
     embedder = rag.HashingEmbedder()
     reranker = rag.LexicalReranker()
@@ -548,10 +652,8 @@ def build_corpus(
             {
                 **chunk.to_dict(),
                 "heading_path": list(chunk.section_path),
-                "solver": (source_by_id[chunk.source_id].solver_scope[0]
-                           if len(source_by_id[chunk.source_id].solver_scope) == 1
-                           else ""),
-                "solver_scope": list(source_by_id[chunk.source_id].solver_scope),
+                "solver_scope": list(_chunk_solver_scope(chunk)),
+                "review_status": source_statuses[chunk.source_id],
                 "source_kind": source_by_id[chunk.source_id].source_kind,
             }
             for chunk in chunks
@@ -561,7 +663,6 @@ def build_corpus(
     vec_buf = io.BytesIO()
     npy_format.write_array(vec_buf, vectors, version=(2, 0), allow_pickle=False)
     vectors_bytes = vec_buf.getvalue()
-    manifest_bytes = canonical_json_bytes(manifest.to_dict())
     chunks_bytes = canonical_json_bytes(chunks_payload)
     reviews_bytes = canonical_json_bytes(overlay_data) if overlay_data is not None else None
 
@@ -569,6 +670,7 @@ def build_corpus(
         "manifest.json": manifest_bytes,
         "chunks.json": chunks_bytes,
         "vectors.npy": vectors_bytes,
+        **notices_to_stage,
     }
     if reviews_bytes is not None:
         files_to_stage["reviews.json"] = reviews_bytes
@@ -579,32 +681,22 @@ def build_corpus(
         if src.license["redistribution"] in _REDISTRIBUTABLE_VALUES and src.local_relative_path:
             files_to_stage[f"sources/{src.local_relative_path}"] = raw
 
-    digest_input = {rel: _sha256_bytes(data) for rel, data in sorted(files_to_stage.items())}
-    index_digest = canonical_sha256(
-        {
-            "corpus_id": manifest.corpus_id,
-            "revision": manifest.revision,
-            "profile_id": CORPUS_PROFILE_ID,
-            "files": digest_input,
-        }
-    )
+    index_digest = _index_digest(manifest, files_to_stage)
 
     indexes_dir = out_root / "indexes"
     indexes_dir.mkdir(parents=True, exist_ok=True)
     target_dir = indexes_dir / index_digest
     tmp_dir = Path(tempfile.mkdtemp(prefix=".tmp-corpus-", dir=indexes_dir))
-    tmp_pointer: Path | None = None
-
     try:
         for rel, payload in files_to_stage.items():
             _check_cancel(check_cancelled)
             rel_ok = validate_relative_artifact_path(rel, root=tmp_dir)
             dest = tmp_dir / PurePosixPath(rel_ok)
-            written_sha = _write_bytes_fsync(dest, payload)
-            if written_sha != _sha256_bytes(payload):
-                raise ValueError(f"STAGED_HASH_MISMATCH: {rel}")
+            _write_bytes_fsync(dest, payload)
 
         _check_cancel(check_cancelled)
+        if _index_digest(manifest, _dir_snapshot(tmp_dir)) != index_digest:
+            raise ValueError("STAGED_HASH_MISMATCH: corpus index")
         status_out = "built"
         if target_dir.exists():
             if not target_dir.is_dir():
@@ -619,7 +711,6 @@ def build_corpus(
                     )
                 status_out = "reused"
             else:
-                target_dir.rmdir()
                 os.replace(tmp_dir, target_dir)
         else:
             os.replace(tmp_dir, target_dir)
@@ -639,12 +730,6 @@ def build_corpus(
         }
         pointer_path = out_root / "current.json"
         _atomic_json_fsync(pointer_path, pointer_payload)
-    except BaseException:
-        if tmp_pointer is not None:
-            tmp_pointer.unlink(missing_ok=True)
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
     finally:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -668,62 +753,90 @@ def build_corpus(
     )
 
 
+def _index_digest(manifest, files):
+    return canonical_sha256({
+        "corpus_id": manifest.corpus_id,
+        "revision": manifest.revision,
+        "profile_id": CORPUS_PROFILE_ID,
+        "files": {rel: _sha256_bytes(raw) for rel, raw in files.items()},
+    })
+
+
+def _chunk_solver_scope(chunk: CorpusChunkSpec) -> tuple[str, ...]:
+    scope = chunk.coverage_facets.get("solver", ())
+    if not isinstance(scope, tuple) or any(not isinstance(solver, str) or not solver for solver in scope):
+        raise ValueError(f"Invalid chunk solver scope: {chunk.citation}")
+    return scope
+
+
 def load_corpus_bundle(root_or_index_dir: str | Path) -> tuple[rag.HybridIndex, dict[str, Any]]:
-    """Load and verify a corpus index from output_root (current.json) or an index folder."""
+    """Verify every file from a single published index and load that same snapshot."""
     base = Path(root_or_index_dir).expanduser().resolve()
+    index_dir = base
     pointer_file = base / "current.json"
-    pointer, _ = (_load_strict_json(pointer_file) if pointer_file.is_file() else (None, b""))
-    if pointer is not None:
-        if not isinstance(pointer, dict) or not isinstance(pointer.get("index_relative_path"), str):
+    pointer = None
+    if pointer_file.is_file():
+        pointer, _ = _load_strict_json(pointer_file)
+        if not isinstance(pointer, dict) or pointer.get("schema_version") != 1:
             raise ValueError(f"Invalid corpus current.json pointer: {pointer_file}")
-        rel = validate_relative_artifact_path(pointer["index_relative_path"], root=base)
-        index_dir = base / PurePosixPath(rel)
-    else:
-        index_dir = base
+        digest = pointer.get("index_digest")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Invalid corpus index_digest in current.json")
+        if pointer.get("index_relative_path") != f"indexes/{digest}":
+            raise ValueError("Corpus pointer path does not match index_digest")
+        index_dir = base / validate_relative_artifact_path(pointer["index_relative_path"], root=base)
 
-    chunks_file = index_dir / "chunks.json"
-    if not chunks_file.is_file():
-        raise FileNotFoundError(f"Corpus chunks.json missing: {chunks_file}")
-    meta, _ = _load_strict_json(chunks_file)
-    if not isinstance(meta, dict) or not isinstance(meta.get("chunks"), list):
-        raise ValueError(f"Invalid chunks.json structure in {index_dir}")
+    files = _dir_snapshot(index_dir)
+    for filename in ("chunks.json", "manifest.json", "vectors.npy"):
+        if filename not in files:
+            raise FileNotFoundError(f"Corpus {filename} missing: {index_dir}")
+    manifest = CorpusManifest.from_dict(_strict_json(files["manifest.json"], index_dir / "manifest.json"))
+    digest = _index_digest(manifest, files)
+    if index_dir.name != digest or (pointer is not None and pointer["index_digest"] != digest):
+        raise ValueError("INDEX_DIGEST_MISMATCH: corpus index files differ from their published digest")
+
+    meta = _strict_json(files["chunks.json"], index_dir / "chunks.json")
+    if not isinstance(meta, dict) or type(meta.get("schema_version")) is not int or meta["schema_version"] != 1:
+        raise ValueError("Invalid corpus chunks.json schema")
+    embedder_id = rag.HashingEmbedder().id
+    reranker_id = rag.LexicalReranker().id
+    manifest_sha = _sha256_bytes(files["manifest.json"])
+    profile = {
+        "corpus_id": manifest.corpus_id, "profile_id": CORPUS_PROFILE_ID, "embedder_id": embedder_id,
+        "reranker_id": reranker_id, "manifest_sha256": manifest_sha,
+    }
+    expected_meta = dict(profile, corpus_revision=manifest.revision, rrf_k=rag.RRF_K,
+                         bm25={"k1": 1.5, "b": 0.75}, vector_dim=rag.HashingEmbedder.DIM, vector_dtype="float32")
+    if any(meta.get(key) != value for key, value in expected_meta.items()) or not isinstance(meta.get("chunks"), list):
+        raise ValueError("Corpus chunks.json metadata does not match manifest or retrieval profile")
     if pointer is not None:
-        if pointer.get("chunk_count") is not None and pointer["chunk_count"] != len(meta["chunks"]):
-            raise ValueError("Pointer chunk_count mismatches chunks.json count")
-        if pointer.get("manifest_sha256") and meta.get("manifest_sha256") != pointer["manifest_sha256"]:
-            raise ValueError("Pointer manifest_sha256 mismatches chunks.json manifest_sha256")
+        expected_pointer = dict(profile, revision=manifest.revision, chunk_count=len(meta["chunks"]))
+        if any(pointer.get(key) != value for key, value in expected_pointer.items()):
+            raise ValueError("Corpus pointer metadata does not match the verified index")
 
-    embedder_id = meta.get("embedder_id")
-    if not isinstance(embedder_id, str) or not embedder_id:
-        raise ValueError(f"Missing embedder_id in {chunks_file}")
-    if pointer and pointer.get("embedder_id") and pointer["embedder_id"] != embedder_id:
-        raise ValueError("Pointer embedder_id mismatches chunks.json embedder_id")
-
-    vectors_file = index_dir / "vectors.npy"
-    vectors: np.ndarray | None = None
-    if vectors_file.is_file():
-        vectors = np.load(vectors_file, allow_pickle=False)
-        if not isinstance(vectors, np.ndarray) or vectors.ndim != 2:
-            raise ValueError(f"Invalid vectors.npy shape in {index_dir}")
-        if vectors.shape[0] != len(meta["chunks"]):
-            raise ValueError("vectors.npy row count mismatches chunks count")
-        if embedder_id == "hashing-fallback":
-            _validate_vectors(vectors, len(meta["chunks"]))
-        elif not np.isfinite(vectors).all():
-            raise ValueError("vectors.npy contains non-finite values")
-
-    chunks = [
-        rag.Chunk(
-            chunk_id=c["chunk_id"],
-            source_id=c["source_id"],
-            heading_path=tuple(c.get("section_path") or c.get("heading_path") or ("section",)),
-            text=c["text"],
-            solver=c.get("solver", ""),
-        )
-        for c in meta["chunks"]
-    ]
-    index = rag.HybridIndex(chunks=chunks, embedder_id=embedder_id, vectors=vectors)
-    return index, meta
+    vectors = _validate_vectors(np.load(io.BytesIO(files["vectors.npy"]), allow_pickle=False), len(meta["chunks"]))
+    sources = {source.source_id: source for source in manifest.sources}
+    chunks = []
+    citations = set()
+    for raw in meta["chunks"]:
+        spec = CorpusChunkSpec.from_dict({
+            key: value for key, value in raw.items()
+            if key not in {"heading_path", "solver", "solver_scope", "source_kind", "review_status"}
+        })
+        scope = _chunk_solver_scope(spec)
+        source = sources.get(spec.source_id)
+        if (source is None or spec.document_sha256 != source.sha256 or spec.edition != source.edition
+                or tuple(raw["solver_scope"]) != scope or not set(scope) <= set(source.solver_scope)
+                or spec.char_end - spec.char_start != len(spec.text) or spec.citation in citations):
+            raise ValueError(f"Invalid corpus chunk provenance: {spec.citation}")
+        citations.add(spec.citation)
+        chunks.append(rag.Chunk(
+            chunk_id=spec.chunk_id, source_id=spec.source_id, heading_path=spec.section_path, text=spec.text,
+            solver=scope[0] if len(scope) == 1 else "", solver_scope=scope, corpus_chunk=spec,
+        ))
+    index = rag.HybridIndex(chunks=chunks, embedder_id=embedder_id, vectors=vectors,
+                            corpus_revision=manifest.revision, index_digest=digest)
+    return index, dict(meta, index_digest=digest)
 
 
 def search_hybrid_with_plan(
@@ -735,9 +848,10 @@ def search_hybrid_with_plan(
     limit: int = 5,
     candidate_count: int = rag.RERANK_CANDIDATES,
     solver: str | None = None,
+    edition: str | None = None,
 ) -> list[rag.Chunk]:
     """Run cae-small-bm25-hash-v1 multi-query top-20 BM25 + vector RRF(k=60) + lexical rerank."""
-    if not index.chunks:
+    if not index.chunks or classify_non_cae_intent(plan)[0]:
         return []
     if index.embedder_id and embedder.id != index.embedder_id:
         raise ValueError(
@@ -753,12 +867,12 @@ def search_hybrid_with_plan(
         ):
             raise ValueError("Hashing fallback index requires float32 512-dim vectors")
 
-    allowed: list[int] | None = None
-    if solver:
-        allowed = [i for i, c in enumerate(index.chunks) if not c.solver or c.solver == solver]
-        if not allowed:
-            return []
-    pool = allowed if allowed is not None else list(range(len(index.chunks)))
+    pool = [
+        i for i, chunk in enumerate(index.chunks)
+        if _matches_scope(chunk, solver, edition)
+    ]
+    if not pool:
+        return []
 
     query_texts = list(dict.fromkeys([plan.original_text, *(q.text for q in plan.queries)]))
     fused_scores: dict[int, float] = {}
@@ -813,52 +927,33 @@ def search_corpus(
         facets["edition"] = edition
 
     plan = prepare_query(question, query_language=query_language, explicit_facets=facets or None)
-    index, meta = load_corpus_bundle(root_or_index_dir)
-    embedder = rag.HashingEmbedder()
-    reranker = rag.LexicalReranker()
-
+    index, _ = load_corpus_bundle(root_or_index_dir)
+    requirements = {req.facet: req.expected for req in extract_query_requirements(plan, facets)}
+    target_solver = normalize_solver(requirements.get("solver"))
+    target_edition = requirements.get("edition")
     hits = search_hybrid_with_plan(
-        index,
-        plan,
-        embedder=embedder,
-        reranker=reranker,
-        limit=limit,
-        solver=solver,
+        index, plan, embedder=rag.HashingEmbedder(), reranker=rag.LexicalReranker(),
+        limit=limit, solver=target_solver, edition=target_edition,
     )
-    chunk_meta_map = {
-        (c["source_id"], c["chunk_id"]): c
-        for c in meta.get("chunks", [])
-        if isinstance(c, dict)
-    }
-    matched_specs: list[CorpusChunkSpec] = []
-    solver_scopes: dict[str, Sequence[str]] = {}
-    for ch in hits:
-        raw_c = chunk_meta_map.get((ch.source_id, ch.chunk_id))
-        if raw_c is not None and {"document_sha256", "text_sha256", "edition", "line_start", "line_end", "char_start", "char_end"} <= raw_c.keys():
-            spec = CorpusChunkSpec(
-                source_id=raw_c["source_id"],
-                chunk_id=raw_c["chunk_id"],
-                document_sha256=raw_c["document_sha256"],
-                text=raw_c["text"],
-                text_sha256=raw_c["text_sha256"],
-                edition=raw_c["edition"],
-                section_path=tuple(raw_c.get("section_path") or raw_c.get("heading_path") or ("section",)),
-                line_start=raw_c["line_start"],
-                line_end=raw_c["line_end"],
-                char_start=raw_c["char_start"],
-                char_end=raw_c["char_end"],
-                page_start=raw_c.get("page_start"),
-                page_end=raw_c.get("page_end"),
-                coverage_facets=raw_c.get("coverage_facets") or {"solver": raw_c.get("solver_scope", [])},
-            )
-            matched_specs.append(spec)
-            solver_scopes[spec.citation] = raw_c.get("solver_scope") or ([ch.solver] if ch.solver else [])
-
+    matched_specs = [chunk.corpus_chunk for chunk in hits]
+    # Keep mismatches in the decision only, where their source tags explain the empty results.
+    decision_candidates = matched_specs or mismatched_corpus_candidates(index, target_solver, target_edition)
     decision = build_retrieval_decision(
-        plan,
-        matched_specs,
-        source_review_refs=source_review_refs,
-        explicit_facets=facets or None,
-        candidate_solver_scopes=solver_scopes,
+        plan, decision_candidates, source_review_refs=source_review_refs, explicit_facets=facets or None,
     )
     return plan, matched_specs, decision
+
+
+def _matches_scope(chunk: rag.Chunk, solver: str | None, edition: str | None) -> bool:
+    return (
+        (solver in (None, "", "general") or chunk.matches_solver(solver))
+        and (not edition or chunk.corpus_chunk is None or editions_match(edition, chunk.corpus_chunk.edition))
+    )
+
+
+def mismatched_corpus_candidates(
+    index: rag.HybridIndex, solver: str | None, edition: str | None,
+) -> list[CorpusChunkSpec]:
+    if any(_matches_scope(chunk, solver, edition) for chunk in index.chunks):
+        return []
+    return [chunk.corpus_chunk for chunk in index.chunks if chunk.corpus_chunk is not None]

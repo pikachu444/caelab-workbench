@@ -342,9 +342,9 @@ class RoleReadPolicyV1:
             policy_id=m["policy_id"],
             template_id=m["template_id"],
             template_revision=m["template_revision"],
-            allowed_evidence_sources=tuple(m["allowed_evidence_sources"]),
-            allowed_query_tools=tuple(m["allowed_query_tools"]),
-            allowed_result_projections=tuple(m["allowed_result_projections"]),
+            allowed_evidence_sources=_require_str_tuple(m["allowed_evidence_sources"], "allowed_evidence_sources"),
+            allowed_query_tools=_require_str_tuple(m["allowed_query_tools"], "allowed_query_tools"),
+            allowed_result_projections=_require_str_tuple(m["allowed_result_projections"], "allowed_result_projections"),
             policy_sha256=m["policy_sha256"],
         )
 
@@ -520,6 +520,7 @@ class CorpusSourceSpec:
     solver_scope: tuple[str, ...]
     parser: Mapping[str, Any]
     extraction_quality: str
+    review_status: str | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self.source_id, "CorpusSourceSpec.source_id")
@@ -539,6 +540,7 @@ class CorpusSourceSpec:
         lic = _require_exact_keys(
             self.license,
             {"id", "source_uri", "redistribution"},
+            optional={"notice_required", "notice_files"},
             context=f"CorpusSourceSpec({self.source_id}).license",
         )
         _require_nonempty_str(lic["id"], "license.id")
@@ -546,6 +548,19 @@ class CorpusSourceSpec:
         redist = lic["redistribution"]
         if type(redist) is not bool and (not isinstance(redist, str) or redist not in _LICENSE_REDISTRIBUTIONS):
             raise ValueError(f"license.redistribution must be bool or one of {sorted(_LICENSE_REDISTRIBUTIONS)}")
+        if "notice_required" in lic:
+            _require_bool(lic["notice_required"], "license.notice_required")
+        notices = lic.get("notice_files", ())
+        if not isinstance(notices, (tuple, list)):
+            raise ValueError("license.notice_files must be a sequence")
+        for notice in notices:
+            if isinstance(notice, str):
+                validate_relative_artifact_path(notice)
+                continue
+            _require_exact_keys(notice, {"path", "sha256", "byte_length"}, context="license.notice_files")
+            validate_relative_artifact_path(notice["path"])
+            _require_sha256(notice["sha256"], "notice.sha256")
+            _require_int(notice["byte_length"], "notice.byte_length", minimum=1)
         object.__setattr__(self, "license", _freeze_value(lic, context="license"))
 
         if isinstance(self.solver_scope, str):
@@ -568,6 +583,9 @@ class CorpusSourceSpec:
                 f"CorpusSourceSpec.extraction_quality must be one of {sorted(_EXTRACTION_QUALITIES)}, got {self.extraction_quality!r}"
             )
 
+        if self.review_status not in (None, "approved", "partial", "rejected", "unreviewed"):
+            raise ValueError(f"Invalid source review status: {self.review_status!r}")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
@@ -583,6 +601,7 @@ class CorpusSourceSpec:
             "solver_scope": list(self.solver_scope),
             "parser": _to_plain(self.parser),
             "extraction_quality": self.extraction_quality,
+            **({"review_status": self.review_status} if self.review_status is not None else {}),
         }
 
     @classmethod
@@ -604,6 +623,7 @@ class CorpusSourceSpec:
                 "parser",
                 "extraction_quality",
             },
+            optional={"review_status"},
             context="CorpusSourceSpec",
         )
         return cls(**m)
@@ -646,17 +666,81 @@ class CorpusManifest:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CorpusManifest:
+        if isinstance(data, Mapping) and "manifest" in data:
+            _require_exact_keys(
+                data, {"schema_version", "recovery_kind", "manifest", "chunks", "sources", "licenses"},
+                optional={"verification"}, context="CorpusRecoveryBundle",
+            )
+            if _require_int(data["schema_version"], "CorpusRecoveryBundle.schema_version") != 1:
+                raise ValueError("Unsupported recovery bundle schema")
+            _require_nonempty_str(data["recovery_kind"], "CorpusRecoveryBundle.recovery_kind")
+            scopes: dict[str, set[str]] = {}
+            for chunk in data["chunks"]:
+                source_id = _require_nonempty_str(chunk.get("source_id"), "chunk.source_id")
+                solver_ids = _require_str_tuple(chunk["coverage_facets"]["solver_ids"], "chunk.solver_ids")
+                scopes.setdefault(source_id, set()).update(solver_ids)
+            return cls._from_recovery_manifest(data["manifest"], scopes)
+        if isinstance(data, Mapping) and "recovery_notice" in data:
+            return cls._from_recovery_manifest(data, {})
         m = _require_exact_keys(
             data,
             {"schema_version", "corpus_id", "revision", "sources"},
             context="CorpusManifest",
         )
-        return cls(
-            schema_version=m["schema_version"],
-            corpus_id=m["corpus_id"],
-            revision=m["revision"],
-            sources=tuple(CorpusSourceSpec.from_dict(item) for item in m["sources"]),
+        return cls(**m)
+
+    @classmethod
+    def _from_recovery_manifest(cls, data, scopes):
+        m = _require_exact_keys(
+            data, {"schema_version", "corpus_id", "revision", "sources", "recovery_notice", "license_files"},
+            optional={"chunking", "embedding", "reranker", "limitations", "files"},
+            context="RecoveryCorpusManifest",
         )
+        notices = {}
+        for item in m["license_files"]:
+            notice = _require_exact_keys(
+                item, {"id", "path", "sha256", "byte_length"},
+                optional={"repository", "commit", "uri", "git_blob_sha"}, context="recovery license",
+            )
+            notice_id = _require_nonempty_str(notice["id"], "recovery license.id")
+            if notice_id in notices:
+                raise ValueError(f"Duplicate recovery license: {notice_id}")
+            notices[notice_id] = {
+                "path": f"licenses/{notice_id}/{notice['path']}",
+                "sha256": notice["sha256"],
+                "byte_length": notice["byte_length"],
+            }
+        sources = []
+        for item in m["sources"]:
+            source = dict(_require_exact_keys(
+                item,
+                {"source_id", "source_kind", "title", "edition", "commit", "uri", "local_relative_path",
+                 "sha256", "byte_length", "license", "parser", "extraction_quality"},
+                optional={"repository", "path", "git_blob_sha", "previous_observed_sha256_matches",
+                          "solver_scope", "review_status"}, context="recovery source",
+            ))
+            for key in ("repository", "path", "git_blob_sha", "previous_observed_sha256_matches"):
+                source.pop(key, None)
+            license_data = dict(_require_exact_keys(
+                source["license"], {"id", "redistribution"},
+                optional={"source_uri", "notice_ids", "notice_required"}, context="recovery source license",
+            ))
+            notice_ids = _require_str_tuple(license_data.pop("notice_ids", ()), "license.notice_ids")
+            if any(notice_id not in notices for notice_id in notice_ids):
+                raise ValueError("Recovery source references a missing license notice")
+            if license_data["redistribution"] == "allowed_with_original_license_and_notices":
+                if not notice_ids:
+                    raise ValueError("Recovery source requires license notices")
+                license_data["redistribution"] = "notice_required"
+            license_data.setdefault("source_uri", None)
+            license_data["notice_files"] = [notices[notice_id] for notice_id in notice_ids]
+            source["license"] = license_data
+            source.setdefault("solver_scope", sorted(scopes.get(source["source_id"], ())))
+            if source["extraction_quality"] == "independent_recovery_review_pending":
+                source["extraction_quality"] = "unverified"
+            sources.append(CorpusSourceSpec.from_dict(source))
+        return cls(corpus_id=m["corpus_id"], revision=m["revision"], sources=sources,
+                   schema_version=m["schema_version"])
 
 
 @dataclass(frozen=True)

@@ -38,6 +38,16 @@ def test_markdown_formats_text_table_and_normal_code_but_removes_only_proposals(
     assert 'proposals' not in plain
 
 
+def test_markdown_formats_korean_bold_before_particle_without_touching_code(app):
+    span = "**마찰각(friction angle, beta)**은"
+    body, malformed = markdown_body("Drucker-Prager 모델에서 " + span + " ...")
+    assert not malformed
+    assert "<strong>마찰각(friction angle, beta)</strong>은" in body
+    assert "**" not in body
+    code_body, _ = markdown_body(f"`{span}`\n\n```text\n{span}\n```")
+    assert code_body.count(span) == 2
+
+
 @pytest.mark.parametrize('block', ['```proposals\n{bad}\n```', '```proposals\n[1]\n```', '```proposals\n[]'])
 def test_bad_proposal_payload_is_not_shown_as_a_normal_proposal(app, block):
     body, malformed = markdown_body('응답 본문\n\n' + block)

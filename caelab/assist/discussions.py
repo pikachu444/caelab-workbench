@@ -14,7 +14,9 @@ from pathlib import Path, PureWindowsPath
 
 from filelock import FileLock, Timeout
 
-from ..artifact_refs import ArtifactRefV1, ProducerIdentity, canonical_json_bytes, canonical_sha256
+from ..artifact_refs import (
+    ArtifactRefV1, ProducerIdentity, canonical_json_bytes, canonical_sha256, validate_relative_artifact_path,
+)
 from ..native.run_store import atomic_json, utc_now
 from ..native.input_snapshot import fingerprint
 from . import experts
@@ -321,10 +323,10 @@ def create_discussion(path, *, title="새 대화", question_scope: str = "case_a
 
 def load_discussion(path) -> dict:
     path = Path(path).resolve()
-    document = _read(path)
+    document, raw = _read_raw(path)
     if document.get("schema_version") == 1:
-        # Upgrade in-memory view only; never write on open.
         document = _upgrade_v1_to_v2(document)
+        document["v1_disk_sha256"] = hashlib.sha256(raw).hexdigest()
     pending = document.get("pending_request")
     if pending:
         live = _active(path)
@@ -341,12 +343,16 @@ def load_discussion(path) -> dict:
 def save_discussion(path, document, *, expected_revision: int) -> dict:
     path = Path(path).resolve()
     candidate = copy.deepcopy(document)
+    v1_disk_sha256 = candidate.pop("v1_disk_sha256", None)
     _validate(candidate)
     try:
         with _lock(path):
             current, raw_v1_bytes = _current_raw(path, expected_revision, idle=False)
-            if raw_v1_bytes is not None and candidate.get("schema_version") == 1:
-                candidate = _upgrade_v1_to_v2(candidate)
+            if raw_v1_bytes is not None:
+                if v1_disk_sha256 != hashlib.sha256(raw_v1_bytes).hexdigest():
+                    raise DiscussionConflict("저장된 v1 원본이 바뀌었습니다. 다시 열어 확인하세요.")
+            elif v1_disk_sha256 is not None:
+                raise DiscussionConflict("저장된 v1 원본이 바뀌었습니다. 다시 열어 확인하세요.")
             if _active(path):
                 raise DiscussionBusy("이 대화에 진행 중인 질문이 있습니다.")
             saved_pending = copy.deepcopy(current.get("pending_request"))
@@ -577,6 +583,24 @@ def discussion_issues(path, document=None) -> list[str]:
             issues.extend(f"근거 {identifier}: {issue}" for issue in verify_evidence(evidence, path.parent / "assets"))
             if any(item["role"] in {"input", "include"} for item in evidence["files"]):
                 issues.extend(f"근거 {identifier}: {issue}" for issue in _source_input_issues(evidence))
+        asset_root = path.parent / "assets"
+        for turn in document["turns"]:
+            requires_refs = turn.get("status") == "completed" and turn.get("question_scope") == "theory"
+            for key, role in (("request_context_ref", "request_context"), ("tool_trace_ref", "tool_trace")):
+                ref = turn.get(key)
+                if ref is None and not requires_refs:
+                    continue
+                try:
+                    artifact = ArtifactRefV1.from_dict(ref)
+                    if artifact.role != role:
+                        raise ValueError("자료 역할 불일치")
+                    raw = (asset_root / validate_relative_artifact_path(artifact.path, root=asset_root)).read_bytes()
+                    if len(raw) != artifact.size or hashlib.sha256(raw).hexdigest() != artifact.sha256:
+                        raise ValueError("자료 바이트 또는 SHA256 불일치")
+                except OSError:
+                    issues.append(f"발언 {turn.get('id')} {key} 무결성 확인 실패: 파일 누락 또는 접근 실패")
+                except (ValueError, TypeError) as error:
+                    issues.append(f"발언 {turn.get('id')} {key} 무결성 확인 실패: {error}")
         for proposal in document["proposals"]:
             try:
                 if not isinstance(proposal, dict):
@@ -594,9 +618,16 @@ def _provided_materials(discussion, evidence, origin):
     for source in discussion.evidence_sources:
         if source == "knowledge":
             for entry in discussion.knowledge_result.entries:
+                chunk = entry.corpus_chunk
+                provenance = {
+                    key: getattr(chunk, key)
+                    for key in ("edition", "document_sha256", "line_start", "line_end", "char_start", "char_end",
+                                "page_start", "page_end")
+                } if chunk is not None else {}
                 materials.append({"source": source, "citation_id": experts.citation_id(entry),
                                   "topic": entry.topic, "text": entry.text,
-                                  "text_sha256": hashlib.sha256(entry.text.encode("utf-8")).hexdigest(), **origin})
+                                  "text_sha256": hashlib.sha256(entry.text.encode("utf-8")).hexdigest(),
+                                  **provenance, **origin})
         elif evidence is not None:
             key = {"result_summary": "summary_text", "model_summary": "model_text", "solver_log": "log_text"}[source]
             text = evidence[key]
@@ -624,48 +655,33 @@ def _write_immutable_request_json(asset_root: Path, rel_posix: str, artifact_id:
     ).to_dict()
 
 
+def _segment_paragraph(reply, raw_start, raw_end, request_id, reply_sha, verified_set):
+    paragraph = reply[raw_start:raw_end]
+    start = raw_start + len(paragraph) - len(paragraph.lstrip())
+    end = raw_start + len(paragraph.rstrip())
+    if start >= end:
+        return None
+    citation_ids = [cid for cid in extract_citations(reply[start:end]) if cid in verified_set]
+    return {
+        "claim_id": str(uuid.uuid5(uuid.UUID(request_id), f"{start}:{end}:{reply_sha}")),
+        "text_span": [start, end],
+        "citation_ids": citation_ids,
+        "basis": "evidence" if citation_ids else "model_general_unverified",
+        "support": "not_assessed",
+    }
+
+
 def _segment_reply_claims(reply: str, request_id: str, verified_citations: list[str]) -> list[dict]:
-    if not reply or not reply.strip():
-        return []
     reply_sha = hashlib.sha256(reply.encode("utf-8")).hexdigest()
     verified_set = set(verified_citations)
-    claims: list[dict] = []
-    cursor = 0
-    for match in _PARAGRAPH_SPLIT_RE.finditer(reply):
-        raw_start, raw_end = cursor, match.start()
-        cursor = match.end()
-        seg = reply[raw_start:raw_end]
-        l_trim = len(seg) - len(seg.lstrip())
-        r_trim = len(seg) - len(seg.rstrip())
-        start = raw_start + l_trim
-        end = raw_end - r_trim
-        if start < end:
-            text_seg = reply[start:end]
-            seg_cids = [cid for cid in extract_citations(text_seg) if cid in verified_set]
-            claims.append({
-                "claim_id": str(uuid.uuid5(uuid.UUID(request_id), f"{start}:{end}:{reply_sha}")),
-                "text_span": [start, end],
-                "citation_ids": seg_cids,
-                "basis": "evidence" if seg_cids else "model_general_unverified",
-                "support": "not_assessed",
-            })
-    if cursor <= len(reply):
-        raw_start, raw_end = cursor, len(reply)
-        seg = reply[raw_start:raw_end]
-        l_trim = len(seg) - len(seg.lstrip())
-        r_trim = len(seg) - len(seg.rstrip())
-        start = raw_start + l_trim
-        end = raw_end - r_trim
-        if start < end:
-            text_seg = reply[start:end]
-            seg_cids = [cid for cid in extract_citations(text_seg) if cid in verified_set]
-            claims.append({
-                "claim_id": str(uuid.uuid5(uuid.UUID(request_id), f"{start}:{end}:{reply_sha}")),
-                "text_span": [start, end],
-                "citation_ids": seg_cids,
-                "basis": "evidence" if seg_cids else "model_general_unverified",
-                "support": "not_assessed",
-            })
+    matches = list(_PARAGRAPH_SPLIT_RE.finditer(reply))
+    starts = [0, *(match.end() for match in matches)]
+    ends = [*(match.start() for match in matches), len(reply)]
+    claims = []
+    for start, end in zip(starts, ends):
+        claim = _segment_paragraph(reply, start, end, request_id, reply_sha, verified_set)
+        if claim is not None:
+            claims.append(claim)
     return claims
 
 
@@ -703,6 +719,13 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
         raise ValueError("질문을 입력하세요.")
     if question_scope is not None and question_scope not in QUESTION_SCOPES:
         raise ValueError(f"지원하지 않는 질문 범위입니다: {question_scope!r}")
+    effective_scope = question_scope or (
+        "theory" if template_id == "theory" and evidence_id is None else "case_analysis"
+    )
+    if effective_scope == "theory" and evidence_id is not None:
+        raise ValueError("이론·문헌 자문(theory) 범위에서는 실행·모델 근거를 첨부하지 않습니다.")
+    if effective_scope == "case_analysis" and template_id == "theory":
+        raise ValueError("계산 결과 분석(case_analysis)에서는 실행 근거를 읽는 역할을 선택하세요.")
     if not isinstance(review_policy_id, str) or not review_policy_id.strip():
         raise ValueError("review_policy_id는 비어 있지 않은 문자열이어야 합니다.")
     if isinstance(responds_to_review_ids, (str, bytes)) or not hasattr(responds_to_review_ids, "__iter__"):
@@ -731,18 +754,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     provider_budget = min(provider_budget, REQUEST_TIMEOUT_SECONDS)
                     prep_budget = min(prep_budget, REQUEST_TIMEOUT_SECONDS)
 
-                if question_scope is not None:
-                    effective_scope = question_scope
-                elif evidence_id is not None:
-                    effective_scope = "case_analysis"
-                elif template_id == "theory" or document.get("question_scope") == "theory":
-                    effective_scope = "theory"
-                else:
-                    effective_scope = "case_analysis"
-
                 if effective_scope == "theory":
-                    if evidence_id is not None:
-                        raise ValueError("이론·문헌 자문(theory) 범위에서는 실행·모델 근거를 첨부하지 않습니다.")
                     evidence = None
                     origin = {
                         "evidence_id": None,
@@ -769,7 +781,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 now = utc_now()
                 policy_id = document.get("tool_policy_id") or ROLE_POLICY_V2_ID
                 role_policy = build_role_read_policy(template.id, template.allowed_tools, policy_id=policy_id)
-                transport_mode = "structured_action" if provider.id == "openscience" else "prompt_only"
+                transport_mode = "prompt_only"
                 provider_caps = _provider_capabilities_snapshot(provider, transport_mode)
                 profile_ref = (
                     copy.deepcopy(retrieval_assessment_profile_ref)
@@ -947,21 +959,17 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     used_plan = getattr(k_res, "query_plan", None) or query_plan
                     if getattr(k_res, "corpus_revision", None):
                         k_corpus_rev = k_res.corpus_revision
-                    cand_dicts = [
-                        {
-                            "source_id": e.source_id,
-                            "chunk_id": e.id,
-                            "citation": experts.citation_id(e),
-                            "text": e.text,
-                            "edition": "unknown",
-                            "document_sha256": hashlib.sha256(e.text.encode("utf-8")).hexdigest(),
-                            "coverage_facets": {"solver": [e.solver] if e.solver else []},
+                    candidates = [
+                        entry.corpus_chunk or {
+                            "citation": experts.citation_id(entry),
+                            "text": entry.text,
+                            "coverage_facets": {"solver": entry.solver_scope},
                         }
-                        for e in k_res.entries
-                    ]
+                        for entry in k_res.entries
+                    ] or k_res.mismatched_candidates
                     decision = build_retrieval_decision(
                         used_plan,
-                        cand_dicts,
+                        candidates,
                         explicit_facets={"solver": k_res.solver} if k_res.solver else None,
                     )
                     retrieval_decisions.append(decision.to_dict())
@@ -1103,6 +1111,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     if evidence is not None and "model_summary" in final_turn["evidence_sources"]:
                         current["proposals"].extend(_native_proposals(reply, evidence, request_id))
                     current["draft_question"] = ""
+                    current["draft_context"].pop("native_analysis_framing", None)
                 else:
                     current["failures"].append({"request_id": request_id, "reason": error_text,
                                                 "evidence_sources": list(template.allowed_tools), **origin})

@@ -104,6 +104,19 @@ def test_all_entries_open_independent_window_with_selected_run(analysis, tmp_pat
     assert state.closed == []
 
 
+def test_switch_to_theory_removes_automatic_case_draft(analysis, tmp_path):
+    window, state = analysis
+    display_run(window, state, tmp_path)
+    window.request_expert_debate()
+    expert = window._expert_window
+    assert "ERROR: not convergent" in expert.question.toPlainText()
+    expert.scope_combo.setCurrentIndex(expert.scope_combo.findData("theory"))
+    assert expert.question.toPlainText() == ""
+    window.request_expert_debate()
+    assert window._expert_window is expert
+    assert expert.question.toPlainText() == ""
+
+
 def test_reuse_preserves_draft_and_separates_run_and_frame_contexts(analysis, tmp_path):
     window, state = analysis
     first = display_run(window, state, tmp_path)

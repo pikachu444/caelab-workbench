@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from collections import Counter
 import hashlib
 import re
 import unicodedata
@@ -27,11 +28,45 @@ __all__ = [
     "build_retrieval_decision",
 ]
 
-GLOSSARY_REVISION = "cae-glossary-ko-en-v1"
+GLOSSARY_REVISION = "cae-glossary-ko-en-v2"
 
 # Curated bilingual Korean <-> English CAE terminology pairs (longest match applied at runtime).
 _GLOSSARY_PAIRS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
-    (("포아송 방정식",), ("Poisson equation",)),
+    (("푸아송 문제", "포아송 문제", "푸아송 방정식", "포아송 방정식"), ("Poisson equation",)),
+    (("노이만 경계항", "자연 경계항", "경계 적분"), ("Neumann boundary term", "boundary integral")),
+    (("법선 미분", "외향 법선 미분"), ("normal derivative",)),
+    (("병진 강체 모드", "병진"), ("translation", "translational rigid mode")),
+    (("회전 강체 모드", "회전"), ("rotation", "rotational rigid mode")),
+    (("삼차원", "3차원"), ("three-dimensional",)),
+    (("작은 변형", "미소 변형률"), ("small strain", "infinitesimal strain")),
+    (("등방탄성", "등방 탄성"), ("isotropic elasticity",)),
+    (("정수압 응력", "정수압응력", "평균 응력"), ("hydrostatic stress", "mean stress")),
+    (("응력 편차", "편차 텐서"), ("stress deviator", "deviatoric tensor")),
+    (("압축성 네오후크", "압축성 신후크"), ("compressible neo-Hookean",)),
+    (("변형 에너지 밀도", "변형률 에너지 밀도"), ("strain energy density", "stored energy density")),
+    (("변형 구배 행렬식", "체적비"), ("determinant of the deformation gradient", "Jacobian")),
+    (("일차 피올라 응력", "제1 피올라 응력"), ("first Piola stress", "first Piola-Kirchhoff stress")),
+    (("응력 밀어올리기",), ("stress push-forward", "push forward to Cauchy stress")),
+    (("dpsi/dF", "에너지의 변형 구배 미분"), ("diff(psi, F)", "energy derivative with respect to F")),
+    (("1-sum(alpha)", "프로니 평형 분율"), ("equilibrium fraction", "normalized equilibrium modulus")),
+    (("PK1->Cauchy", "제1 피올라 응력에서 코시 응력으로"), ("first Piola to Cauchy stress", "stress push-forward")),
+    (("시험응력", "시험 응력"), ("trial stress", "trial stress invariants")),
+    (("시험 편차응력", "시험 편차 응력 불변량"), ("trial deviatoric stress", "trialQ")),
+    (("시험 평균응력", "시험 압력"), ("trial pressure", "trialP")),
+    (("이전 점착력", "기존 점착력", "이전 응집력"), ("old cohesion", "oldCohesion")),
+    (("항복판정", "항복 판정"), ("yield test", "yield function")),
+    (("비연관 유동", "비연관 흐름"), ("non-associated flow", "nonassociative flow")),
+    (("정규화 이완계수", "정규화 이완 탄성계수"), ("normalized relaxation modulus",)),
+    (("장시간 잔류값", "장시간 평형 탄성계수"), ("long-time relaxation modulus", "equilibrium modulus", "E_inf")),
+    (("정규화 프로니 계수", "정규화 이완 강도"), ("normalized Prony coefficients", "alpha")),
+    (("각진동수", "각 주파수", "각주파수"), ("angular frequency", "omega")),
+    (("배응력", "역응력", "후방 응력"), ("backstress", "back stress")),
+    (("샤보슈", "샤보쉬"), ("Chaboche",)),
+    (("6성분 이력", "여섯 성분 이력"), ("six-component history", "six-component tensor")),
+    (("내부 변수", "내부 이력 변수"), ("internal variable", "history array")),
+    (("스칼라",), ("scalar",)),
+    (("배응력 부호", "역응력 부호"), ("backstress sign convention",)),
+    (("연화",), ("softening",)),
     (("포아송비", "포아송 비"), ("Poisson's ratio", "Poisson ratio")),
     (("포아송",), ("Poisson",)),
     (("노이만 경계조건", "노이만 경계 조건"), ("Neumann boundary condition",)),
@@ -65,7 +100,6 @@ _GLOSSARY_PAIRS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("손실 탄성계수", "손실탄성계수"), ("loss modulus",)),
     (("시간-온도 중첩", "시간 온도 중첩"), ("time-temperature superposition", "WLF")),
     (("이동 인자", "이동 함수", "이동계수"), ("shift factor",)),
-    (("각주파수",), ("angular frequency",)),
     (("주파수",), ("frequency",)),
     (("점탄성",), ("viscoelastic", "viscoelasticity")),
     (("점성",), ("viscous",)),
@@ -158,16 +192,15 @@ _SOLVER_PATTERNS: tuple[tuple[str, str], ...] = (
     ("abaqus", "abaqus"),
 )
 
+_EDITION_RE = re.compile(r"(?<![\w.])v?\d+\.\d+(?:\.\d+)*(?![0-9A-Za-z]|\.\d)", re.I)
 _PROTECTED_TOKEN_RE = re.compile(
-    r"(?:"
-    r"\*[A-Za-z][A-Za-z0-9_ -]*"  # solver keyword cards like *NODE PRINT, *STATIC
-    r"|v?\d+\.\d+(?:\.\d+)+"  # software editions like v0.10.0, 2.23.1
-    r"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"  # numbers
-    r"|<=|>=|!=|==|<|>|="  # comparisons
-    r"|\b(?:MPa|GPa|kPa|Pa|mm|cm|km|m|kg|Mg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|3D|2D|1D|PK1|VM|WLF|RF|LAW\d+|C3D\d+)\b"
-    r"|\b(?:not|no|without|never|except|unless|only|before|after|when|if)\b"
-    r")",
-    re.IGNORECASE,
+    r"\*[A-Z][A-Z0-9_]*(?![A-Za-z0-9_])(?:[ \t]+[A-Z][A-Z0-9_]*(?![A-Za-z0-9_]))*"
+    r"|(?<![A-Za-z0-9])(?i:3D|2D|1D)(?![A-Za-z0-9_])"
+    r"|(?<![0-9A-Za-z])(?:[vV]\d+\.\d+(?:\.\d+)*|\d+(?:\.\d+){2,})(?!\.\d)"
+    r"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
+    r"|<=|>=|!=|==|<|>|="
+    r"|(?<![A-Za-z'’])(?i:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|kJ/mol|J/mol|PK1|VM|WLF|RF|LAW\d+|C3D\d+)(?![A-Za-z0-9_])"
+    r"|(?i:\b(?:not|no|without|never|except|unless|only|before|after|when|if)\b)"
 )
 
 _KO_NEGATION_RE = re.compile(r"(?:않\w*|아닌|아니\w*|없\w*|제외\w*|없이|말고)")
@@ -351,7 +384,7 @@ _EN_STOPWORDS = frozenset(
 
 _NON_CAE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("weather", re.compile(r"(?:날씨|기온|강수|예보|weather|forecast|temperature\s+outside|rain\s+tomorrow)", re.I)),
-    ("cooking", re.compile(r"(?:요리|레시피|음식|김치찌개|파스타|recipe|cook|cooking|baking|ingredients)", re.I)),
+    ("cooking", re.compile(r"(?:요리|레시피|음식|김치찌개|파스타|recipe|(?<!johnson[-–— ])\bcook(?:ing)?\b|baking|ingredients)", re.I)),
     ("price_shopping", re.compile(r"(?:가격|할인|쇼핑|price|discount|buy\s+a|how\s+much\s+does)", re.I)),
     ("sports", re.compile(r"(?:축구|야구|농구|스포츠|경기\s*결과|soccer|football|baseball|basketball|sports\s+score)", re.I)),
     ("translation", re.compile(r"(?:번역해|영어로\s*번역|translate\s+to|translation\s+of)", re.I)),
@@ -410,7 +443,23 @@ def _nfkc_with_orig_map(text: str) -> tuple[str, list[tuple[int, int]]]:
         for sub in norm:
             out_chars.append(sub)
             mapping.append((idx, idx + 1))
-    return "".join(out_chars), mapping
+    normalized = unicodedata.normalize("NFKC", text)
+    if normalized == "".join(out_chars):
+        return normalized, mapping
+
+    # Composition across original code points (for example decomposed Hangul)
+    # maps the composed character to the whole original range.
+    prefix = ""
+    mapping = []
+    for index, char in enumerate(text):
+        updated = unicodedata.normalize("NFKC", prefix + char)
+        common = len(prefix)
+        while common and prefix[:common] != updated[:common]:
+            common -= 1
+        start = mapping[common][0] if common < len(mapping) else index
+        mapping[common:] = [(start, index + 1)] * (len(updated) - common)
+        prefix = updated
+    return normalized, mapping
 
 
 def _detect_language(text: str, requested: str) -> str:
@@ -543,7 +592,7 @@ def _find_unmatched_spans(
             continue
         if _HANGUL_RE.search(token):
             stem = _strip_ko_particle(token)
-            if stem in _KO_STOPWORDS or token in _KO_STOPWORDS:
+            if stem in _KO_STOPWORDS or token in _KO_STOPWORDS or token in _KO_PARTICLES:
                 continue
             if len(stem) <= 1 and stem in {"수", "것", "값", "식", "점", "선", "면", "축", "항", "형"}:
                 continue
@@ -567,8 +616,8 @@ def prepare_query(
         raise ValueError("query policy must be a nonempty string")
 
     original_text = question
-    detected_lang = _detect_language(original_text, query_language)
     nfkc_text, orig_map = _nfkc_with_orig_map(original_text)
+    detected_lang = _detect_language(nfkc_text, query_language)
     protected = _protected_ranges(nfkc_text)
     term_spans, nfkc_matches = _match_glossary_spans(original_text, nfkc_text, orig_map, protected)
     covered_ranges = [*protected, *((s, e) for s, e, _c, _t in nfkc_matches)]
@@ -620,22 +669,13 @@ def prepare_query(
                     resource_revision=GLOSSARY_REVISION,
                 )
             )
-        # Cross-lingual variant keeps original protected tokens + expanded domain targets.
-        dedup_targets = list(dict.fromkeys(expanded_bag))
-        protected_texts = [nfkc_text[s:e] for s, e in sorted(set(protected))]
-        cross_parts = list(dict.fromkeys([*protected_texts, *dedup_targets]))
-        if explicit_facets:
-            for key in ("solver", "edition", "model", "unit"):
-                val = explicit_facets.get(key)
-                if isinstance(val, str) and val.strip():
-                    cross_parts.append(val.strip())
-        cross_text = " ".join(cross_parts).strip()
-        if cross_text and cross_text not in {q.text for q in queries}:
-            target_lang = "en" if detected_lang == "ko" else ("ko" if detected_lang == "en" else "mixed")
+        # Keep complete expressions intact, including unmatched operands and operators.
+        cross_text = f"{nfkc_text} {' '.join(dict.fromkeys(expanded_bag))}"
+        if cross_text not in {q.text for q in queries}:
             queries.append(
                 QueryVariant(
                     text=cross_text,
-                    language=target_lang,
+                    language="mixed",
                     method="glossary_cross_lingual",
                     resource_revision=GLOSSARY_REVISION,
                 )
@@ -672,7 +712,7 @@ def extract_query_requirements(
 
     facets = dict(explicit_facets or {})
     # Auto-detect solver if not explicitly passed
-    if not facets.get("solver"):
+    if str(facets.get("solver") or "").casefold() in {"", "general"}:
         low = text.lower()
         for alias, canonical in _SOLVER_PATTERNS:
             m = re.search(rf"(?<![0-9a-z]){re.escape(alias)}(?![0-9a-z])", low)
@@ -706,8 +746,8 @@ def extract_query_requirements(
 
     if facets.get("edition"):
         ed = str(facets["edition"]).strip()
-        idx = text.lower().find(ed.lower())
-        span = (idx, idx + len(ed)) if idx >= 0 else (0, len(text))
+        match = next((m for m in _EDITION_RE.finditer(text) if editions_match(m[0], ed)), None)
+        span = match.span() if match else (0, len(text))
         reqs.append(
             RetrievalRequirementV1(
                 requirement_id="req-edition",
@@ -719,7 +759,16 @@ def extract_query_requirements(
             )
         )
     else:
-        m_ed = re.search(r"\bv?\d+\.\d+(?:\.\d+)+\b", text)
+        m_ed = next(
+            (m for m in _EDITION_RE.finditer(text)
+             if m[0].lower().startswith("v") or m[0].count(".") > 1
+             or re.search(r"(?:edition|version|버전|판본)\s*$", text[:m.start()], re.I)
+             or text.strip() == m[0] or (
+                 m[0].split(".")[0] != "0" and any(
+                     r.facet == "solver" and 0 <= m.start() - r.original_span[1] <= 3 for r in reqs
+                 )
+             )), None,
+        )
         if m_ed:
             reqs.append(
                 RetrievalRequirementV1(
@@ -765,6 +814,21 @@ def extract_query_requirements(
     return tuple(reqs)
 
 
+def normalize_solver(solver: str | None) -> str | None:
+    if not solver:
+        return None
+    normalized = solver.casefold()
+    return dict(_SOLVER_PATTERNS).get(normalized, normalized)
+
+
+def editions_match(left: str, right: str) -> bool:
+    def normalized(value):
+        value = value.strip().casefold()
+        return value.removeprefix("v") if _EDITION_RE.fullmatch(value) else value
+
+    return normalized(left) == normalized(right)
+
+
 def classify_non_cae_intent(plan: QueryPlan) -> tuple[bool, str]:
     """Return (is_non_cae, reason) ONLY for manifestly non-CAE questions without domain facets."""
     if plan.term_spans:
@@ -796,6 +860,24 @@ def _candidate_metadata(candidate: CorpusChunkSpec | Mapping[str, Any]) -> tuple
     return cid, sha, edition, scope, text
 
 
+def _has_valid_source_span(candidate: CorpusChunkSpec | Mapping[str, Any]) -> bool:
+    if isinstance(candidate, CorpusChunkSpec):
+        return candidate.char_end - candidate.char_start == len(candidate.text)
+    try:
+        lines = candidate["line_start"], candidate["line_end"]
+        chars = candidate["char_start"], candidate["char_end"]
+        text = candidate["text"]
+        return (
+            all(type(value) is int for value in (*lines, *chars))
+            and 1 <= lines[0] <= lines[1]
+            and 0 <= chars[0] < chars[1]
+            and isinstance(text, str) and chars[1] - chars[0] == len(text)
+            and candidate["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
+        )
+    except KeyError:
+        return False
+
+
 def build_retrieval_decision(
     plan: QueryPlan,
     candidates: Sequence[CorpusChunkSpec | Mapping[str, Any]],
@@ -807,8 +889,9 @@ def build_retrieval_decision(
     assessment_result: Mapping[str, Any] | None = None,
     assessment_trace_ref: ArtifactRefV1 | Mapping[str, Any] | None = None,
     candidate_solver_scopes: Mapping[str, Sequence[str]] | None = None,
+    approved_source_reviews: Mapping[str, ArtifactRefV1] | None = None,
 ) -> RetrievalDecisionV1:
-    """Build RetrievalDecisionV1 enforcing source review + semantic verification before 'supported'."""
+    """Build a decision from assessment quotes and host-verified reviews keyed by document SHA256."""
     query_plan_sha = canonical_sha256(plan.to_dict())
     reqs = extract_query_requirements(plan, explicit_facets)
 
@@ -818,14 +901,7 @@ def build_retrieval_decision(
         cand_summary.append({"candidate_id": cid, "source_sha256": sha, "edition": edition, "solver_scope": list(scope)})
     cand_set_sha = canonical_sha256(cand_summary)
 
-    req_solver = next((r.expected for r in reqs if r.facet == "solver"), None)
-    if req_solver:
-        req_solver_canon = next(
-            (canon for alias, canon in _SOLVER_PATTERNS if alias == req_solver.lower()),
-            req_solver.lower(),
-        )
-    else:
-        req_solver_canon = None
+    req_solver_canon = normalize_solver(next((r.expected for r in reqs if r.facet == "solver"), None))
     req_edition = next((r.expected for r in reqs if r.facet == "edition"), None)
 
     missing_evidence: list[str] = []
@@ -839,7 +915,7 @@ def build_retrieval_decision(
 
     # Non-CAE check only when no CAE terms/facets are present.
     is_non_cae, non_cae_reason = classify_non_cae_intent(plan)
-    if is_non_cae and not (explicit_facets and any(explicit_facets.get(k) for k in ("solver", "model", "edition"))):
+    if is_non_cae:
         missing_evidence.append("NON_CAE_REQUEST")
         limitations.append(non_cae_reason)
         assessment_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cae-retrieval:{query_plan_sha}:{cand_set_sha}:oos"))
@@ -861,6 +937,12 @@ def build_retrieval_decision(
     if not candidates:
         missing_evidence.append("NO_CANDIDATES")
 
+    approved_refs = tuple(
+        ref if isinstance(ref, ArtifactRefV1) else ArtifactRefV1.from_dict(ref)
+        for ref in source_review_refs
+    )
+    candidate_counts = Counter(record["candidate_id"] for record in cand_summary)
+    eligible: set[str] = set()
     solver_mismatch_count = 0
     edition_mismatch_count = 0
     for cand in candidates:
@@ -873,7 +955,7 @@ def build_retrieval_decision(
             solver_ok = req_solver_canon in norm_scope
         edition_ok = True
         if req_edition:
-            edition_ok = req_edition.lower() in edition.lower()
+            edition_ok = editions_match(req_edition, edition)
         if not solver_ok:
             solver_mismatch_count += 1
             checks.append(
@@ -899,6 +981,11 @@ def build_retrieval_decision(
                 )
             )
         else:
+            review = (approved_source_reviews or {}).get(sha)
+            if (isinstance(review, ArtifactRefV1) and review in approved_refs and review.role == "source_review"
+                    and re.fullmatch(r"[0-9a-f]{64}", sha) and sha != "0" * 64
+                    and candidate_counts[cid] == 1 and _has_valid_source_span(cand)):
+                eligible.add(cid)
             checks.append(
                 RetrievalCandidateCheckV1(
                     candidate_id=cid,
@@ -911,7 +998,7 @@ def build_retrieval_decision(
             )
 
     if candidates and solver_mismatch_count == len(candidates):
-        missing_evidence.append("SOLVER_COVERAGE_INSUFFICIENT")
+        missing_evidence.extend(("SOLVER_MISMATCH", "SOLVER_COVERAGE_INSUFFICIENT"))
     if candidates and edition_mismatch_count == len(candidates):
         missing_evidence.append("EDITION_COVERAGE_INSUFFICIENT")
 
@@ -939,10 +1026,14 @@ def build_retrieval_decision(
                     continue
                 valid_quotes = False
                 for q in chk.get("quoted_spans", []):
+                    if not isinstance(q, Mapping):
+                        continue
                     cid = q.get("candidate_id")
                     qs, qe = q.get("start"), q.get("end")
-                    ctext = cand_texts.get(cid, "")
-                    if isinstance(qs, int) and isinstance(qe, int) and 0 <= qs < qe <= len(ctext):
+                    if not isinstance(cid, str) or cid not in eligible:
+                        continue
+                    ctext = cand_texts[cid]
+                    if type(qs) is int and type(qe) is int and 0 <= qs < qe <= len(ctext):
                         valid_quotes = True
                         relevant_cids.setdefault(cid, []).append((r.requirement_id, qs, qe))
                 if not valid_quotes:
@@ -959,7 +1050,7 @@ def build_retrieval_decision(
                             reason=str(chk.get("reason") or "관련성 검토 통과"),
                         )
                     )
-            if all_satisfied and relevant_cids and solver_mismatch_count < len(candidates) and edition_mismatch_count < len(candidates):
+            if all_satisfied and relevant_cids:
                 for cid, entries in relevant_cids.items():
                     updated_checks.append(
                         RetrievalCandidateCheckV1(
@@ -972,7 +1063,7 @@ def build_retrieval_decision(
                         )
                     )
                 reqs = tuple(verified_reqs)
-                checks = updated_checks
+                checks = updated_checks + [check for check in checks if check.candidate_id not in relevant_cids]
                 status = "supported"
                 limitations = [str(x) for x in (assessment_result.get("limitations") or ())]
             else:

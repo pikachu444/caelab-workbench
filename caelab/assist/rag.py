@@ -21,6 +21,8 @@ Qwen3-Reranker-0.6B per the 008 recommendation).
 
 from __future__ import annotations
 
+from .contracts import CorpusChunkSpec
+
 import hashlib
 import json
 import math
@@ -49,7 +51,13 @@ class Chunk:
     source_id: str
     heading_path: tuple[str, ...]  # e.g. ("Theory", "Convergence")
     text: str
-    solver: str = ""  # canonical solver this chunk serves ("" = general)
+    solver: str = ""  # legacy single-solver index tag
+    solver_scope: tuple[str, ...] = ()
+    corpus_chunk: CorpusChunkSpec | None = None
+
+    def matches_solver(self, solver: str) -> bool:
+        scope = self.solver_scope or ((self.solver,) if self.solver else ())
+        return solver in scope or (not scope and self.corpus_chunk is None)
 
     @property
     def topic(self) -> str:
@@ -401,6 +409,8 @@ class HybridIndex:
     embedder_id: str
     bm25: BM25 = field(init=False)
     vectors: np.ndarray | None = None
+    corpus_revision: str | None = None
+    index_digest: str | None = None
 
     def __post_init__(self) -> None:
         docs = [tokenize(f"{c.topic}\n{c.text}") for c in self.chunks]

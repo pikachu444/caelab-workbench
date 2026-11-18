@@ -160,10 +160,20 @@ class ChatBrowser(QTextBrowser):
         return QByteArray()
 
 
+_KOREAN_BOLD = re.compile(
+    r"(?P<code>(?<!`)(?P<ticks>`+)(?!`).*?(?<!`)(?P=ticks)(?!`))"
+    r"|(?P<strong>(?<![\\*])\*\*(?=\S)(?:(?!\*\*|`).)+?[^\w\s*]\*\*)(?=[가-힣])"
+)
+
+
 def markdown_body(text: str, *, accepted_proposals=None, mode: str | None = None) -> tuple[str, bool]:
     """Render ordinary Markdown; strip only internal fenced proposal payloads."""
     malformed = False
     protocol_items = []
+    # Temporarily give the closing delimiter whitespace, then remove it after parsing.
+    boundary = '\ue000'
+    while boundary in text:
+        boundary += '\ue000'
     lines, kept = text.splitlines(), []
     index = 0
     in_code = False
@@ -192,6 +202,10 @@ def markdown_body(text: str, *, accepted_proposals=None, mode: str | None = None
             except (ValueError, TypeError):
                 malformed = True
         else:
+            if not in_code and not match and not line.startswith(('    ', '\t')):
+                line = _KOREAN_BOLD.sub(
+                    lambda m: m[0] if m['code'] else f'{m["strong"]} {boundary}', line
+                )
             kept.append(line)
             if match:
                 if not in_code:
@@ -204,6 +218,11 @@ def markdown_body(text: str, *, accepted_proposals=None, mode: str | None = None
         malformed = malformed or protocol_items != saved
     document = LocalDocument()
     document.setMarkdown(human_text('\n'.join(kept)), QTextDocument.MarkdownDialectGitHub | QTextDocument.MarkdownNoHTML)
+    cursor = document.find(f' {boundary}')
+    repaired_bold = not cursor.isNull()
+    while not cursor.isNull():
+        cursor.removeSelectedText()
+        cursor = document.find(f' {boundary}', cursor)
     # Links remain readable text, but cannot act as navigation or carry active URLs.
     block = document.begin()
     while block.isValid():
@@ -247,6 +266,8 @@ def markdown_body(text: str, *, accepted_proposals=None, mode: str | None = None
                 cursor.mergeCharFormat(fmt)
         block = block.next()
     result = document.toHtml().split('<body', 1)[1].split('>', 1)[1].rsplit('</body>', 1)[0]
+    if repaired_bold:
+        result = re.sub(r'<span style=" font-weight:700;">(.*?)</span>', r'<strong>\1</strong>', result, flags=re.S)
     return result, malformed
 
 

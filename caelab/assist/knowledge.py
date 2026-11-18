@@ -41,7 +41,7 @@ from pathlib import Path
 import numpy as np
 
 from . import rag
-from .contracts import QueryPlan
+from .contracts import CorpusChunkSpec, QueryPlan
 
 SOURCE_ID = "calculix-manual"
 SOURCE_LABEL = "CalculiX CrunchiX User's Manual v2.23 (Dhondt)"
@@ -55,6 +55,13 @@ class KnowledgeEntry:
     text: str
     source_id: str = SOURCE_ID
     solver: str = ""
+    corpus_chunk: CorpusChunkSpec | None = None
+
+    @property
+    def solver_scope(self) -> tuple[str, ...]:
+        if self.corpus_chunk is not None:
+            return self.corpus_chunk.coverage_facets.get("solver", ())
+        return (self.solver,) if self.solver else ()
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,7 @@ class KnowledgeSearchResult:
     error: str | None = None
     query_plan: QueryPlan | None = field(default=None, compare=False)
     corpus_revision: str | None = field(default=None, compare=False)
+    mismatched_candidates: tuple[CorpusChunkSpec, ...] = field(default=(), compare=False)
 
 
 # Canonical solver names and the spellings that identify them in
@@ -230,17 +238,9 @@ _index_cache: dict[tuple, rag.HybridIndex] = {}
 
 
 def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
-    """Load a prebuilt index — either a corpus bundle (current.json), `root` itself,
-    or every per-solver subfolder under it, merged. Chunks that carry no solver
+    """Load a legacy prebuilt index from `root` or merge its per-solver subfolders. Chunks that carry no solver
     tag yet (older builds) take the solver of their subfolder name.
     None when any folder's embedder differs from the configured one."""
-    if (root / "current.json").is_file():
-        from .corpus import load_corpus_bundle
-
-        loaded, _meta = load_corpus_bundle(root)
-        if loaded.embedder_id != embedder_id:
-            return None
-        return loaded
     if (root / "chunks.json").exists():
         folders = [root]
     elif root.is_dir():
@@ -276,11 +276,26 @@ def default_index() -> rag.HybridIndex:
     source set or embedder changes.
 
     Prebuilt indexes (CAELAB_CORPUS_INDEX_DIR or CAELAB_RAG_INDEX_DIR, made once — e.g. on the
-    GPU laptop — and copied over) are loaded instead of rebuilt when
-    their embedder matches the configured one: either a corpus bundle, single index,
-    or a parent folder of per-solver indexes."""
+    GPU laptop — and copied over) are loaded instead of rebuilt. A corpus bundle uses
+    its fixed retrieval profile. Legacy indexes use the configured embedder."""
+    corpus_dir = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "")
+    legacy_dir = os.environ.get("CAELAB_RAG_INDEX_DIR", "")
+    if corpus_dir or (legacy_dir and ((Path(legacy_dir) / "current.json").is_file()
+                                     or (Path(legacy_dir) / "manifest.json").is_file())):
+        from .corpus import load_corpus_bundle
+
+        root = Path(corpus_dir or legacy_dir).resolve()
+        # Validate the current bundle even when its immutable index was seen before.
+        loaded, _ = load_corpus_bundle(root)
+        key = ("corpus", root, loaded.corpus_revision, loaded.index_digest)
+        if key in _index_cache:
+            return _index_cache[key]
+        _index_cache.clear()
+        _index_cache[key] = loaded
+        return loaded
+
     embedder = rag.get_embedder()
-    prebuilt = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "") or os.environ.get("CAELAB_RAG_INDEX_DIR", "")
+    prebuilt = legacy_dir
     if prebuilt:
         key = ("prebuilt", prebuilt, embedder.id)
         if key in _index_cache:
@@ -312,24 +327,33 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
         text=chunk.text,
         source_id=chunk.source_id,
         solver=chunk.solver,
+        corpus_chunk=chunk.corpus_chunk,
     )
 
 
 def search_knowledge_result(query: str, limit: int = 3,
                             solver: str | None = None) -> KnowledgeSearchResult:
     """Keep solver scope and distinguish absent material from retrieval failure."""
-    from .corpus import search_hybrid_with_plan
-    from .query_language import prepare_query
+    from .corpus import mismatched_corpus_candidates, search_hybrid_with_plan
+    from .query_language import extract_query_requirements, normalize_solver, prepare_query
 
     requested = solver or os.environ.get("CAELAB_KNOWLEDGE_SOLVER", "") or infer_solver(query)
-    resolved = infer_solver(requested) or requested
+    resolved = infer_solver(requested) or normalize_solver(requested) or ""
     if not (query or "").strip():
         return KnowledgeSearchResult("no_material", [], resolved)
     try:
         plan = prepare_query(query, explicit_facets={"solver": resolved} if resolved else None)
+        requirements = {
+            req.facet: req.expected
+            for req in extract_query_requirements(plan, {"solver": resolved} if resolved else None)
+        }
+        resolved = normalize_solver(requirements.get("solver")) or ""
+        edition = requirements.get("edition")
         index = default_index()
-        embedder = rag.get_embedder()
-        reranker = rag.get_reranker()
+        if index.corpus_revision is not None:
+            embedder, reranker = rag.HashingEmbedder(), rag.LexicalReranker()
+        else:
+            embedder, reranker = rag.get_embedder(), rag.get_reranker()
         chunks = search_hybrid_with_plan(
             index,
             plan,
@@ -337,22 +361,16 @@ def search_knowledge_result(query: str, limit: int = 3,
             reranker=reranker,
             limit=limit,
             solver=resolved or None,
+            edition=edition,
         )
     except Exception as error:
         return KnowledgeSearchResult("error", [], resolved,
                                      f"{type(error).__name__}: {error}")
-    corpus_rev = None
-    prebuilt_dir = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "") or os.environ.get("CAELAB_RAG_INDEX_DIR", "")
-    if prebuilt_dir and (Path(prebuilt_dir) / "current.json").is_file():
-        try:
-            import json
-            ptr = json.loads((Path(prebuilt_dir) / "current.json").read_text(encoding="utf-8"))
-            corpus_rev = ptr.get("revision")
-        except Exception:
-            corpus_rev = None
-    return KnowledgeSearchResult("ok" if chunks else "no_material",
-                                 [_to_entry(c) for c in chunks], resolved,
-                                 query_plan=plan, corpus_revision=corpus_rev)
+    return KnowledgeSearchResult(
+        "ok" if chunks else "no_material", [_to_entry(c) for c in chunks], resolved,
+        query_plan=plan, corpus_revision=index.corpus_revision,
+        mismatched_candidates=tuple(mismatched_corpus_candidates(index, resolved, edition)) if not chunks else (),
+    )
 
 
 def search_knowledge(query: str, limit: int = 3, solver: str | None = None) -> list[KnowledgeEntry]:

@@ -41,10 +41,10 @@ class FakeProvider(ExpertProvider):
         )
 
 
-def test_templates_are_four_and_tools_actually_differ():
-    assert len(TEMPLATES) == 4
-    tool_sets = {t.allowed_tools for t in TEMPLATES}
-    assert len(tool_sets) == 4  # each role may read different evidence
+def test_templates_are_five_and_tools_actually_differ():
+    assert len(TEMPLATES) == 5
+    assert len({t.allowed_tools for t in TEMPLATES}) == 5
+    assert get_template("theory").allowed_tools == ("knowledge",)
     assert get_template("interpretation").allowed_tools == ("result_summary",)
 
 

@@ -90,6 +90,8 @@ class ExpertWindow(QMainWindow):
         self._pending_view = None
         self.path = None
         self.document = {}
+        self._loaded_v1_draft = None
+        self._native_analysis_framing = None
         self.project_path, self.node_id, self.run_id = project_path, node_id, run_id
         self.requested_frame_index = requested_frame_index
         self.frame_context_state = 'none' if requested_frame_index is None else 'requested'
@@ -345,7 +347,8 @@ class ExpertWindow(QMainWindow):
         self._asset_token = token
         self._asset_issues = []
         self._asset_verify_failed = False
-        has_assets = bool(self.document.get('evidences') or self.document.get('proposals'))
+        target_assets = self._asset_state()
+        has_assets = any(target_assets)
         if not has_assets or not self.path:
             self._asset_verifying = False
             self._asset_warning_tone = 'warning'
@@ -362,14 +365,14 @@ class ExpertWindow(QMainWindow):
         self.asset_warning.setStyleSheet(
             status_badge_style('running', getattr(self, '_theme_mode', None))
         )
-        self.asset_warning.setText('첨부 자료와 제안의 원본 무결성을 확인하는 중입니다…')
+        self.asset_warning.setText('첨부 자료와 보존된 요청 기록의 무결성을 확인하는 중입니다…')
         self.asset_warning.setVisible(True)
         self._set_busy(bool(self._operation))
 
         target_path = Path(self.path).resolve()
         target_document = copy.deepcopy(self.document)
         target_revision = target_document.get('revision')
-        target_assets = (copy.deepcopy(self.document.get('evidences')), copy.deepcopy(self.document.get('proposals')))
+        target_assets = copy.deepcopy(target_assets)
         workbench = self.workbench
         asset_mailbox = self._asset_mailbox
 
@@ -381,6 +384,15 @@ class ExpertWindow(QMainWindow):
                 asset_mailbox.put((token, target_path, target_revision, target_assets, False, [f'무결성 검증 실패: {exc}']))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _asset_state(self):
+        request_refs = [
+            (turn.get('id'), turn.get('request_context_ref'), turn.get('tool_trace_ref'))
+            for turn in self.document.get('turns', [])
+            if turn.get('request_context_ref') is not None or turn.get('tool_trace_ref') is not None
+            or (turn.get('status') == 'completed' and turn.get('question_scope') == 'theory')
+        ]
+        return self.document.get('evidences'), self.document.get('proposals'), request_refs
 
     def wait_for_asset_verification(self, timeout=5.0):
         start = time.monotonic()
@@ -434,10 +446,26 @@ class ExpertWindow(QMainWindow):
                 if target_role != 'theory':
                     self._last_case_role = target_role
 
+    def set_native_analysis_draft(self, text):
+        if self._current_scope() != 'case_analysis' or self.question.toPlainText().strip():
+            return
+        self._native_analysis_framing = text
+        self.question.setPlainText(text)
+
+    def _remove_native_analysis_framing(self):
+        draft_context = self.document.get('draft_context') or {}
+        draft_context.pop('native_analysis_framing', None)
+        framing, self._native_analysis_framing = self._native_analysis_framing, None
+        if framing and framing in self.question.toPlainText():
+            draft = self.question.toPlainText().replace(framing, '', 1).strip()
+            self.question.setPlainText(draft)
+            self._notice('계산 결과와 로그가 담긴 자동 초안을 제외했습니다. 이론 질문을 입력하세요.')
+
     def _on_scope_changed(self, _index=None):
         scope = self._current_scope()
         current_role = self.role.currentData()
         if scope == 'theory':
+            self._remove_native_analysis_framing()
             if current_role and current_role != 'theory':
                 self._last_case_role = current_role
             theory_idx = self.role.findData('theory')
@@ -471,6 +499,7 @@ class ExpertWindow(QMainWindow):
         self._op_token = None
         self._pending_message = None
         draft_ctx = document.get('draft_context') or {}
+        self._native_analysis_framing = draft_ctx.get('native_analysis_framing')
         scope = _normalize_question_scope(
             draft_ctx.get('question_scope')
             if isinstance(draft_ctx, dict) and 'question_scope' in draft_ctx
@@ -479,6 +508,7 @@ class ExpertWindow(QMainWindow):
         template_id = draft_ctx.get('template_id') if isinstance(draft_ctx, dict) else None
         self._sync_scope_and_role_widgets(scope, template_id=template_id)
         self.question.setPlainText(document.get('draft_question', ''))
+        self._loaded_v1_draft = self._editable_draft() if document.get('v1_disk_sha256') else None
         self._start_asset_verification()
         self.render()
         self._notice('')
@@ -490,8 +520,10 @@ class ExpertWindow(QMainWindow):
         draft = self.question.toPlainText()
         scope = self._current_scope()
         role_id = self.role.currentData()
+        framing = self._native_analysis_framing
         self.new_document()
         if self.path is not None:
+            self._native_analysis_framing = framing
             if draft and not self.question.toPlainText():
                 self.question.setPlainText(draft)
             self._sync_scope_and_role_widgets(scope, template_id=role_id)
@@ -500,7 +532,7 @@ class ExpertWindow(QMainWindow):
         return self.path is not None
 
     def new_document(self):
-        if not self.save_document():
+        if not self._save_before_leaving():
             return
         name, _ = QFileDialog.getSaveFileName(self, '새 대화 파일', 'discussion.json', '대화 (*.json)')
         if not name:
@@ -515,7 +547,7 @@ class ExpertWindow(QMainWindow):
             self._error(error)
 
     def open_document(self):
-        if not self.save_document():
+        if not self._save_before_leaving():
             return
         name, _ = QFileDialog.getOpenFileName(self, '대화 열기', '', '대화 (*.json)')
         if name:
@@ -535,6 +567,19 @@ class ExpertWindow(QMainWindow):
             except Exception as error:
                 self._error(error)
 
+    def _editable_draft(self):
+        return (
+            self.question.toPlainText(), self.document.get('title'),
+            copy.deepcopy(self.document.get('constraints')), self.document.get('selected_evidence_id'),
+            self.document.get('provider_id'), self._current_scope(), self.role.currentData(),
+        )
+
+    def _save_before_leaving(self):
+        if self._loaded_v1_draft is not None and self._editable_draft() == self._loaded_v1_draft:
+            self._save_view_state()
+            return True
+        return self.save_document()
+
     def save_document(self):
         if not self.path:
             return True
@@ -551,9 +596,12 @@ class ExpertWindow(QMainWindow):
                 role_id = self.role.currentData()
                 if role_id:
                     draft_ctx['template_id'] = role_id
+                if self._native_analysis_framing and scope == 'case_analysis':
+                    draft_ctx['native_analysis_framing'] = self._native_analysis_framing
                 candidate['draft_context'] = draft_ctx
             self.document = self.workbench.save_expert_discussion(
                 self.path, candidate, expected_revision=self.document['revision'])
+            self._loaded_v1_draft = None
             self._save_view_state()
             self.statusBar().showMessage('대화를 저장했습니다.', 3000)
             return True
@@ -604,6 +652,8 @@ class ExpertWindow(QMainWindow):
             if evidence is not None:
                 basis_lines.append('참고: 이론·문헌 자문 범위에서는 선택한 첨부 자료를 모델에 전달하지 않습니다.')
         else:
+            if self.role.currentData() == 'theory':
+                basis_lines.append('계산 결과 분석에는 실행 근거를 읽는 역할을 선택하세요. 첨부 없이 질문하려면 이론·문헌 자문 범위로 바꾸세요.')
             if self.requested_frame_index is not None:
                 draft_line = f'초안 기준: 전달받은 계산 · 프레임 {self.requested_frame_index + 1}'
                 if self.frame_context_state == 'missing':
@@ -828,6 +878,7 @@ class ExpertWindow(QMainWindow):
         scope = self._current_scope()
         has_evidence = bool(self.document.get('selected_evidence_id'))
         can_ask_without_evidence = scope == 'theory'
+        invalid_role = not can_ask_without_evidence and self.role.currentData() == 'theory'
         provider_ok = getattr(self, '_provider_available', False)
         for action in self._edit_actions:
             action.setEnabled(not busy)
@@ -838,13 +889,15 @@ class ExpertWindow(QMainWindow):
         self.question.setReadOnly(busy or live)
         self.ask_button.setEnabled(
             not busy and not live and (has_evidence or can_ask_without_evidence) and provider_ok
-            and not verifying and not verify_failed
+            and not invalid_role and (can_ask_without_evidence or not (verifying or verify_failed))
         )
         if busy or live:
             ask_tip = '진행 중인 작업이 끝난 뒤 다시 질문할 수 있습니다.'
-        elif verifying:
+        elif invalid_role:
+            ask_tip = '계산 결과 분석에는 실행 근거를 읽는 역할을 선택하세요.'
+        elif verifying and not can_ask_without_evidence:
             ask_tip = '첨부 자료와 제안의 무결성을 확인하는 중입니다.'
-        elif verify_failed:
+        elif verify_failed and not can_ask_without_evidence:
             ask_tip = '첨부 자료 무결성 확인에 실패했습니다. [다시 확인] 후 질문하세요.'
         elif not has_evidence and not can_ask_without_evidence:
             ask_tip = '첨부 자료를 선택한 뒤 질문할 수 있습니다.'
@@ -949,7 +1002,15 @@ class ExpertWindow(QMainWindow):
             if not self.save_document():
                 self.document = previous
 
+    def _allow_attachment(self):
+        if self._current_scope() == 'case_analysis':
+            return True
+        self._notice('질문에 실행 근거를 첨부하려면 질문 범위를 계산 결과 분석으로 바꾸세요.')
+        return False
+
     def import_files(self):
+        if not self._allow_attachment():
+            return
         if not self._ensure_document() or not self.save_document():
             return
         names, _ = QFileDialog.getOpenFileNames(self, '입력, 결과, 로그 선택', '',
@@ -993,6 +1054,8 @@ class ExpertWindow(QMainWindow):
                 assets, files=files, solver_id=solver_id, units=units))
 
     def capture_run(self, _checked=False):
+        if not self._allow_attachment():
+            return
         if not self._ensure_document() or not self.save_document():
             return
         try:
@@ -1126,11 +1189,7 @@ class ExpertWindow(QMainWindow):
     def ask(self):
         question = self.question.toPlainText().strip()
         scope = self._current_scope()
-        has_evidence = bool(self.document.get('selected_evidence_id'))
-        if (self._operation or not question or (not has_evidence and scope != 'theory')
-                or not getattr(self, '_provider_available', False)
-                or getattr(self, '_asset_verifying', False)
-                or getattr(self, '_asset_verify_failed', False)):
+        if not question or not self.ask_button.isEnabled():
             return
         if self.path is None and not self._ensure_document():
             return
@@ -1225,11 +1284,16 @@ class ExpertWindow(QMainWindow):
                     and token is self._asset_token
                     and self.path
                     and path == Path(self.path).resolve()):
-                current_assets = (self.document.get('evidences'), self.document.get('proposals'))
+                current_assets = self._asset_state()
                 if rev is None or self.document.get('revision') == rev or current_assets == target_assets:
                     self._asset_verifying = False
                     self._asset_issues = issues
                     problems = self._asset_issues
+                    request_issues = [
+                        issue for issue in problems
+                        if 'request_context_ref' in issue or 'tool_trace_ref' in issue
+                    ] if ok else []
+                    self.asset_warning.setToolTip('\n'.join(request_issues))
                     if not ok:
                         self._asset_verify_failed = True
                         self._asset_warning_tone = 'error'
@@ -1247,6 +1311,8 @@ class ExpertWindow(QMainWindow):
                             status_badge_style('warning', getattr(self, '_theme_mode', None))
                         )
                         self.asset_warning.setText(
+                            '보존된 요청 문맥 또는 도구 기록이 누락되었거나 변경되었습니다.'
+                            if request_issues else
                             '보존된 제안의 내용이나 출처를 확인할 수 없습니다. 대화는 읽을 수 있지만 제안은 다시 확인해 주세요.'
                             if any('제안' in problem for problem in problems) else
                             '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.'
@@ -1287,6 +1353,7 @@ class ExpertWindow(QMainWindow):
                     self.document = value
                     self._pending_message = None
                     draft_ctx = value.get('draft_context') or {}
+                    self._native_analysis_framing = draft_ctx.get('native_analysis_framing')
                     scope = _normalize_question_scope(
                         draft_ctx.get('question_scope')
                         if isinstance(draft_ctx, dict) and 'question_scope' in draft_ctx
@@ -1295,6 +1362,7 @@ class ExpertWindow(QMainWindow):
                     template_id = draft_ctx.get('template_id') if isinstance(draft_ctx, dict) else None
                     self._sync_scope_and_role_widgets(scope, template_id=template_id)
                     self.question.setPlainText(value.get('draft_question', ''))
+                    self._start_asset_verification()
                 self.render()
             except Exception as error:
                 self._error(error)
@@ -1356,7 +1424,7 @@ class ExpertWindow(QMainWindow):
             event.ignore()
             return
         live_elsewhere = bool((self.document.get('pending_request') or {}).get('live'))
-        if not live_elsewhere and not self.save_document():
+        if not live_elsewhere and not self._save_before_leaving():
             answer = QMessageBox.question(self, '대화를 저장하지 못했습니다',
                 '다른 창의 변경 또는 파일 오류로 저장하지 못했습니다. 이 창의 저장되지 않은 변경을 버리고 닫을까요?',
                 QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Cancel)

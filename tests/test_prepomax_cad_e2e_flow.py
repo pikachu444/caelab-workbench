@@ -1,9 +1,12 @@
-"""D32 E2E verification: FreeCAD STEP -> PrePoMax .pmx/.inp -> CalculiX -> ParaView / MDO."""
+"""D32 program connections, launch arguments, snapshot/receipts, stale invalidation and MDO service boundaries.
+
+CAD, PMX, INP, FRD and DAT fixtures are synthetic. The job boundary records
+launch requests and provides fixture output for the real receipt readers.
+"""
 from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 from pathlib import Path
 import sys
 import uuid
@@ -14,6 +17,7 @@ import pytest
 from caelab.assist import experts
 from caelab.connections import PROGRAMS, ProgramStatus, _status
 from caelab.jobs import BatchRun, LaunchRecord
+from caelab import mdo
 from caelab.mdo import apply_transaction as transaction
 from caelab.mdo.constraints import ConstraintSpec
 from caelab.mdo.objectives import ObjectiveSpec
@@ -28,7 +32,7 @@ from test_native_results import _field, _geometry
 
 
 class _E2EBoundaryJobs:
-    """Job boundary double executing real snapshot_input/collect_results while recording GUI launches."""
+    """Use real snapshots and result collection with synthetic files and recorded launch arguments."""
 
     def __init__(self, real_jobs):
         self._real_jobs = real_jobs
@@ -242,6 +246,7 @@ def _build_freecad_prepomax_calculix_project(tmp_path: Path):
 
 
 def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, monkeypatch):
+    """Check file connections, launch arguments and a synthetic CalculiX receipt through the Expert handoff."""
     wb, jobs, project, cad, pre, solver, pv, pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
     monkeypatch.setattr(experts, "get_provider", lambda _pid=None: _BridgeProvider())
     try:
@@ -258,7 +263,7 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
         assert jobs.launches[1].argv[-2:] == ["-f", str(files["pmx"].resolve())]
         assert jobs.launches[2].argv[-2:] == ["-f", str(files["step"].resolve())]
 
-        project_file = wb.save_native_project(project, tmp_path / "project.json")
+        wb.save_native_project(project, tmp_path / "project.json")
         run = wb.submit_native(project, solver.id)
         assert run.state == "completed"
         assert run.parse_state in {"readable", "partial"}
@@ -301,9 +306,12 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
 
 
 def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path):
-    wb, _jobs, project, cad, pre, solver, _pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
+    """Invalidate old exports and receipts on STEP, PMX and INP edits, then reopen a fresh export/run."""
+    wb, _jobs, project, cad, pre, solver, pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
     try:
         saved = wb.save_native_project(project, tmp_path / "stale_proj.json")
+        initial_run = wb.submit_native(project, solver.id)
+        initial_bytes = files["inp"].read_bytes()
         files["step"].write_text("UPDATED STEP GEOMETRY\n", encoding="utf-8")
         project.refresh()
         assert project.nodes[pre.id].files["output"].stale
@@ -314,17 +322,53 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path):
         files["pmx"].write_text("PrePoMax regenerated mesh", encoding="utf-8")
         wb.set_node_file(project, pre.id, files["pmx"], "document")
         assert project.nodes[pre.id].files["output"].stale
-        wb.set_node_file(project, pre.id, files["inp"], "output")
+        wb.set_node_file(project, pre.id, files["inp"], "output", units=initial_run.units)
         assert not project.nodes[pre.id].files["output"].stale
 
-        reopened = wb.open_native_project(saved)
-        assert reopened.input_file(solver.id).path == str(files["inp"].resolve())
+        middle_run = wb.submit_native(project, solver.id)
+        assert not wb.selected_native_run(project, solver.id).stale
+        updated_bytes = initial_bytes.replace(b"2.0, 2.0", b"2.5, 2.0")
+        assert updated_bytes != initial_bytes
+        files["inp"].write_bytes(updated_bytes)
+        project.refresh()
+        assert project.input_file(solver.id).status == "changed"
+        assert wb.selected_native_run(project, solver.id).stale
+        assert project.nodes[solver.id].files["output"].stale
+        assert project.nodes[pv.id].state == "stale"
+        assert (middle_run.workdir / middle_run.snapshot["files"][0]["source_copy"]).read_bytes() == initial_bytes
+
+        export = wb.set_node_file(project, pre.id, files["inp"], "output", units=middle_run.units)
+        assert export.status == "ready"
+        refreshed = wb.submit_native(project, solver.id)
+        assert refreshed.id != middle_run.id
+        assert refreshed.input_revision != middle_run.input_revision
+        assert (refreshed.workdir / refreshed.snapshot["files"][0]["source_copy"]).read_bytes() == updated_bytes
+        assert (initial_run.workdir / initial_run.snapshot["files"][0]["source_copy"]).read_bytes() == initial_bytes
+        assert wb.open_native_results(project, pv.id).request.argv[-1] == "--data=" + str(
+            (refreshed.workdir / "results" / "results.pvd").resolve()
+        )
+        wb.save_native_project(project)
+
+        reopened_wb = Workbench()
+        try:
+            reopened = reopened_wb.open_native_project(saved)
+            assert reopened.input_file(solver.id).revision == export.revision
+            assert reopened.input_file(solver.id).path == str(files["inp"].resolve())
+            assert reopened.input_file(solver.id).status == "ready"
+            selected = reopened_wb.selected_native_run(reopened, solver.id)
+            assert selected.id == refreshed.id and not selected.stale
+            assert reopened.nodes[solver.id].files["output"].path == str(refreshed.workdir / "model.frd")
+            old = {run.id: run for run in reopened_wb.native_runs(reopened, solver.id)}
+            assert old[middle_run.id].stale and old[initial_run.id].stale
+        finally:
+            reopened_wb.close()
     finally:
         wb.close()
 
 
 def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path):
-    wb, _jobs, project, _cad, pre, solver, _pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
+    """Exercise scalar CalculiX MDO using synthetic receipts, plus independent study and project copies."""
+    wb, _jobs, project, _cad, _pre, solver, _pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
     try:
         wb.save_native_project(project, tmp_path / "mdo_proj.json")
         service = wb.create_mdo_study(project=project, node_id=solver.id)
@@ -370,8 +414,21 @@ def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path):
         service.apply(service.prepare_apply(feasible_row.point_id))
         service.rerun_current()
         assert service.result_file(current=True).suffix in (".pvd", ".vtu")
-        service.save()
+        original_study_path = service.save()
+        original_study_bytes = original_study_path.read_bytes()
+        detached_path = service.save_as(tmp_path / "independent_study" / "study.json")
+        assert service.project is None
+        assert service.origin_association["study_file"] == str(original_study_path)
+        assert original_study_path.read_bytes() == original_study_bytes
+        assert project.nodes[solver.id].files["mdo_study"].path == str(original_study_path)
+        service.close()
+        detached = wb.open_mdo_study(detached_path)
+        assert detached.is_verified(actual_clone.point_id)
+        assert detached.study_file == detached_path
+        assert detached.result_file(actual_clone.point_id).is_relative_to(detached_path.with_suffix(".mdo-data"))
+        detached.close()
 
+        service = wb.open_mdo_study(original_study_path, project=project, node_id=solver.id)
         # Project SaveAs refuses while study lock is open, then succeeds cleanly once service is closed
         save_as_path = tmp_path / "copied_project" / "project.json"
         with pytest.raises(ValueError, match="MDO Studio"):
@@ -389,6 +446,7 @@ def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path):
 
 
 def test_d32_contract_boundaries_and_discipline_graph_gap(tmp_path: Path):
+    """Check the scalar MDO service boundary and the absence of multidisciplinary topology support."""
     wb = Workbench()
     try:
         # 1. MDOStudyService accepts only .inp, rejecting .pmx or .step directly
@@ -415,7 +473,9 @@ def test_d32_contract_boundaries_and_discipline_graph_gap(tmp_path: Path):
         with pytest.raises(ValueError, match="순환"):
             wb.connect_nodes(proj, pre.id, cad.id)
 
-        # 4. Multi-discipline DisciplineGraph module is future unimplemented spec
+        # An acyclic program-connection graph is separate from a coupled MDO discipline graph.
+        assert not hasattr(mdo, "DisciplineGraph")
+        assert not hasattr(svc2, "discipline_graph")
         assert importlib.util.find_spec("caelab.mdo.disciplines") is None
     finally:
         wb.close()

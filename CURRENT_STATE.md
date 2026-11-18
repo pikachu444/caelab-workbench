@@ -19,6 +19,12 @@
 
 - **Workbench 통합 브랜치 검증 (`QT_QPA_PLATFORM=offscreen`)**: 12개 회귀 스위트(`test_material_contracts.py`, `test_mdo_variables.py`, `test_mdo_constraints.py`, `test_mdo_imports.py`, `test_native_analysis_expert_bridge.py`, `test_expert_window.py`, `test_native_runs_gui.py`, `test_expert_chat.py`, `test_program_boundaries.py`, `test_expert_view_settings.py`, `test_native_evidence.py`, `test_native_discussions.py`) 실행 결과 **`282 passed, 2 warnings`**(경고 2건은 기존 NumPy 2.5 `vtkmodules/util/numpy_support.py:240` `DeprecationWarning`).
 
+## WT-ASSIST 로컬 수정 후보 (D08 · D09 · D32)
+
+- 전문가 창에서 실행 첨부 없이 이론·문헌을 질문할 수 있습니다. 계산 결과 분석에서 이론 전용 역할을 선택하면 전송을 막습니다. 네이티브 해석 창에서 전달한 자동 초안을 제외한 뒤 이론 질문을 작성할 수 있습니다. 기존 v1 대화를 열어 보기만 하면 원본을 보존하며, 첫 저장은 읽은 원본의 해시를 확인하고 같은 바이트의 백업을 남깁니다. 저장된 요청 문맥과 도구 기록은 다시 열 때 무결성을 확인합니다.
+- 한국어·영어 문헌 검색은 원질문의 조건과 수식을 보존합니다. 오프라인 코퍼스는 고정 원문의 판본·구간·해시를 인용에 기록하고 인덱스 바이트, 벡터, 라이선스 고지 파일을 검증합니다. 의미 평가와 해당 원문에 연결된 승인 기록이 있어야 검색 근거를 충분하다고 판정합니다.
+- D32는 합성 CAD/PMX/INP/FRD/DAT 자료로 프로그램 연결과 실행 인자, 입력 변경에 따른 기존 결과 무효화, 재출력·재실행·재열기, MDO 스터디 복사를 확인합니다. Windows의 실제 외부 프로그램 구동과 다분야 연성 해석은 별도 범위입니다.
+
 ## TRACK-3 MDO × 내장 SciPy PDE 솔버 폐루프 — 2026-11-10 구현 (2026-11-17 main 리베이스·통합)
 
 기준 SHA는 `1c1cacb`(리베이스 대상 `b82e445`), 작업 브랜치는 `feature/wb-mdo-pde-closed-loop`입니다.

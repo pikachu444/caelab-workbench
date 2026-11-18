@@ -73,6 +73,7 @@ def _v1_sample_document() -> dict:
 def _make_sample_corpus(tmp_path: Path) -> tuple[Path, Path, dict]:
     sources_dir = tmp_path / "corpus_src"
     sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / "LICENSE").write_bytes(b"Synthetic test fixture license notice")
 
     ccx_manual = (
         "# Hyperelastic Constitutive Theory\n"
@@ -493,6 +494,51 @@ def test_d08_expert_window_theory_mode_gui(tmp_path: Path, monkeypatch):
         wb.close()
 
 
+def test_d08_theory_can_send_with_unrelated_missing_attachment_and_reports_request_tampering(
+    tmp_path, monkeypatch,
+):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+    from apps.workbench_qt.expert_window import ExpertWindow
+
+    app = QApplication.instance() or QApplication([])
+    provider = _StubTheoryProvider()
+    monkeypatch.setattr(experts, "get_provider", lambda _pid=None: provider)
+    path = tmp_path / "discussion.json"
+    settings = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    window = ExpertWindow(path, view_settings=settings)
+    try:
+        source = tmp_path / "input.inp"
+        source.write_text("*HEADING\nPrivate attached case", encoding="utf-8")
+        evidence = window.workbench.import_expert_files(window.assets, files={"input": source}, solver_id="calculix")
+        window.document = discussions.attach_evidence(path, evidence, expected_revision=window.document["revision"])
+        (window.assets / evidence["files"][0]["stored_path"]).unlink()
+        window.role.setCurrentIndex(window.role.findData("theory"))
+        assert "실행 근거를 읽는 역할" in window.basis.text()
+        assert not window.ask_button.isEnabled()
+        window.scope_combo.setCurrentIndex(window.scope_combo.findData("theory"))
+        assert "첨부 자료를 모델에 전달하지 않습니다" in window.basis.text()
+        window._start_asset_verification()
+        assert window.ask_button.isEnabled()
+        window.question.setPlainText("What is a weak form?")
+        window.ask()
+        deadline = time.monotonic() + 5
+        while window._operation and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert window.document["turns"][-1]["status"] == "completed"
+        assert "Private attached case" not in provider.prompts[-1]
+        turn = window.document["turns"][-1]
+        (window.assets / turn["request_context_ref"]["path"]).write_bytes(b"tampered")
+        window.reload_document()
+        window.wait_for_asset_verification()
+        assert "보존된 요청 문맥" in window.asset_warning.text()
+        assert "request_context_ref" in window.asset_warning.toolTip()
+        assert window.ask_button.isEnabled()
+    finally:
+        window.close()
+
+
 # ------------------------------------------------------------------ D09 QueryPlan
 def test_d09_query_plan_ko_en_expansion_and_warnings():
     # NFKC applied only to search variants; original_text verbatim; removed_spans == ()
@@ -542,7 +588,7 @@ def test_d09_query_plan_ko_en_expansion_and_warnings():
 
 
 # ------------------------------------------------------------------ D09 Offline Corpus, CLI, Hybrid Retrieval & Decision
-def test_d09_corpus_verify_build_reuse_cancel_and_cli(tmp_path: Path):
+def test_d09_corpus_verify_build_reuse_cancel_and_cli(tmp_path: Path, monkeypatch):
     sources_dir, manifest_path, manifest_dict = _make_sample_corpus(tmp_path)
     out_root = tmp_path / "corpus_out"
 
@@ -566,6 +612,10 @@ def test_d09_corpus_verify_build_reuse_cancel_and_cli(tmp_path: Path):
     assert chunks_doc["rrf_k"] == 60
     assert chunks_doc["vector_dim"] == 512
     assert chunks_doc["vector_dtype"] == "float32"
+    staged_manifest = (idx_dir / "manifest.json").read_bytes()
+    assert receipt_build.manifest_sha256 == hashlib.sha256(staged_manifest).hexdigest()
+    assert receipt_build.source_statuses["aster-theory"] == "unreviewed"
+    assert (idx_dir / "licenses" / "LICENSE").read_bytes() == (sources_dir / "LICENSE").read_bytes()
 
     # Verify 1-based line and exact 0-based char spans reconstruct source slices identically
     src_texts = {
@@ -589,23 +639,31 @@ def test_d09_corpus_verify_build_reuse_cancel_and_cli(tmp_path: Path):
 
     # Cancellation during build cleans only its own tmpdir and keeps current.json untouched
     prior_pointer = (out_root / "current.json").read_bytes()
-    sentinel = out_root / "indexes" / "user_note.txt"
+    sibling_staging = out_root / "indexes" / ".tmp-corpus-unrelated"
+    sibling_staging.mkdir()
+    sentinel = sibling_staging / "user_note.txt"
     sentinel.write_text("do not delete", encoding="utf-8")
+    chunk_write = []
+    write = corpus._write_bytes_fsync
 
-    def cancel_on_third():
-        cancel_on_third.calls += 1
-        return cancel_on_third.calls >= 3
+    def capture_staged_write(path, data):
+        write(path, data)
+        if path.name == "chunks.json":
+            chunk_write.append(path)
+            assert path.is_file() and (path.parent / "manifest.json").is_file()
 
-    cancel_on_third.calls = 0
-    with pytest.raises(RuntimeError, match="cancelled|중단"):
-        corpus.build_corpus(manifest_path, output_root=out_root, check_cancelled=cancel_on_third)
+    with monkeypatch.context() as patch:
+        patch.setattr(corpus, "_write_bytes_fsync", capture_staged_write)
+        with pytest.raises(RuntimeError, match="cancelled|중단"):
+            corpus.build_corpus(manifest_path, output_root=out_root, check_cancelled=lambda: bool(chunk_write))
     assert (out_root / "current.json").read_bytes() == prior_pointer
     assert sentinel.read_text(encoding="utf-8") == "do not delete"
-    assert not any(p.name.startswith(".tmp-corpus-") for p in (out_root / "indexes").iterdir())
+    assert chunk_write and not chunk_write[0].parent.exists()
+    assert idx_dir.is_dir()
 
     # CLI verification via subprocess (--verify-only and --build)
     cli_out = tmp_path / "cli_out"
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PYTHONPATH"}
     res_v = subprocess.run(
         [sys.executable, "scripts/build_knowledge_index.py", "--manifest", str(manifest_path), "--output", str(cli_out), "--verify-only"],
         cwd=str(Path(__file__).resolve().parents[1]),
@@ -686,7 +744,8 @@ def test_d09_cross_lingual_search_and_retrieval_decisions(tmp_path: Path, monkey
         edition="2026",
     )
     assert dec_insuff.status == "insufficient"
-    assert dec_insuff.status != "out_of_scope"
+    assert "SOLVER_MISMATCH" in dec_insuff.missing_evidence
+    assert "NO_CANDIDATES" not in dec_insuff.missing_evidence
 
     # Wire through knowledge.search_knowledge_result via CAELAB_CORPUS_INDEX_DIR
     monkeypatch.setenv("CAELAB_CORPUS_INDEX_DIR", str(out_root))
@@ -704,3 +763,282 @@ def test_d09_cross_lingual_search_and_retrieval_decisions(tmp_path: Path, monkey
     finally:
         monkeypatch.delenv("CAELAB_CORPUS_INDEX_DIR", raising=False)
         knowledge._index_cache.clear()
+
+
+def test_theory_prompt_has_only_eligible_history_and_never_reads_native_fields():
+    prior = {"status": "completed", "question_scope": "theory", "evidence_sources": ["knowledge"]}
+    conversation = experts.Discussion(
+        template=experts.get_template("theory"),
+        provider=_StubTheoryProvider(),
+        summary_text="PRIVATE_RESULT",
+        log_tail="PRIVATE_LOG",
+        native_evidence={"run_id": "PRIVATE_RUN", "units": {"length": "PRIVATE_UNITS"}},
+        history=[
+            dict(prior, question="allowed history"),
+            dict(prior, question="PRIVATE_EMPTY", evidence_sources=[]),
+            dict(prior, question="PRIVATE_UNRECORDED", evidence_sources=None),
+            dict(prior, question="PRIVATE_FAILED", status="failed"),
+            dict(prior, question="PRIVATE_PENDING", status="pending"),
+            dict(prior, question="PRIVATE_BAD_SOURCE", evidence_sources=["result_summary"]),
+            dict(prior, question_scope="case_analysis", question="PRIVATE_CASE", evidence_name="PRIVATE_NAME"),
+            dict(prior, question="safe metadata omitted", run_id="PRIVATE_META", frame_index=9876),
+        ],
+        failures=[dict(prior, reason="PRIVATE_FAILURE")],
+    )
+    prompt = conversation.build_prompt("What is the weak form?")
+    assert "[근거 — 결과 요약]" not in prompt and "[현재 발언의 출처]" not in prompt
+    assert "result_summary" not in conversation.evidence_sources
+    assert "allowed history" in prompt and "safe metadata omitted" in prompt
+    assert "PRIVATE_" not in prompt and "9876" not in prompt
+
+
+def test_theory_scope_guards_and_prompt_only_transport(tmp_path, monkeypatch):
+    path = tmp_path / "discussion.json"
+    doc = discussions.create_discussion(path, question_scope="theory")
+    provider = _StubTheoryProvider()
+    provider.id = "openscience"
+    monkeypatch.setattr(experts, "get_provider", lambda _pid=None: provider)
+    ask = discussions.ask_discussion
+    with pytest.raises(ValueError, match="case_analysis"):
+        ask(path, "result", template_id="theory", question_scope="case_analysis", expected_revision=doc["revision"])
+    with pytest.raises(ValueError, match="case_analysis"):
+        ask(path, "result", template_id="theory", evidence_id="old", expected_revision=doc["revision"])
+    with pytest.raises(ValueError, match="theory"):
+        ask(path, "theory", template_id="material", evidence_id="old",
+            question_scope="theory", expected_revision=doc["revision"])
+    with pytest.raises(ValueError, match="근거"):
+        ask(path, "result", template_id="material", expected_revision=doc["revision"])
+    assert not provider.prompts
+    updated = ask(path, "What is the weak form?", template_id="theory", expected_revision=doc["revision"])
+    turn = updated["turns"][-1]
+    assert turn["status"] == "completed" and turn["question_scope"] == "theory"
+    assert turn["provider_capabilities"]["transport_mode"] == "prompt_only"
+    assert not discussions.discussion_issues(path)
+    (path.parent / "assets" / turn["request_context_ref"]["path"]).unlink()
+    (path.parent / "assets" / turn["tool_trace_ref"]["path"]).write_bytes(b"tampered")
+    issues = discussions.discussion_issues(path)
+    assert any("request_context_ref" in issue for issue in issues)
+    assert any("tool_trace_ref" in issue and "SHA256" in issue for issue in issues)
+
+
+def test_legacy_draft_conflicts_on_external_v1_edit_at_same_revision(tmp_path):
+    path = tmp_path / "discussion.json"
+    original = _v1_sample_document()
+    path.write_bytes(canonical_json_bytes(original))
+    stale_draft = discussions.load_discussion(path)
+    changed = canonical_json_bytes(dict(original, draft_question="External same-revision update"))
+    path.write_bytes(changed)
+    stale_draft["draft_question"] = "Local unsaved draft"
+    with pytest.raises(discussions.DiscussionConflict, match="v1"):
+        discussions.save_discussion(path, stale_draft, expected_revision=original["revision"])
+    assert path.read_bytes() == changed
+    assert not (tmp_path / "assets" / "migrations").exists()
+
+
+@pytest.mark.parametrize("action", ["open_document", "new_document", "close"])
+def test_leaving_untouched_v1_keeps_its_exact_bytes(tmp_path, monkeypatch, action):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication, QFileDialog
+    from apps.workbench_qt.expert_window import ExpertWindow
+
+    app = QApplication.instance() or QApplication([])
+    old_path = tmp_path / "old.json"
+    original = canonical_json_bytes(_v1_sample_document())
+    old_path.write_bytes(original)
+    next_path = tmp_path / "next.json"
+    if action == "open_document":
+        discussions.create_discussion(next_path)
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: (str(next_path), ""))
+    if action == "new_document":
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args: (str(next_path), ""))
+    window = ExpertWindow(old_path, view_settings=QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
+    try:
+        getattr(window, action)()
+        if action != "close":
+            assert window.path == next_path
+        assert old_path.read_bytes() == original
+        assert not (tmp_path / "assets" / "migrations").exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_d09_protected_operands_unicode_versions_and_non_cae():
+    import unicodedata
+
+    protect = query_language._protected_ranges
+    text = "How does *FRICTION affect contact pair? CalculiX *NODE PRINT reaction force"
+    assert [text[start:end] for start, end in protect(text)] == ["*FRICTION", "*NODE PRINT"]
+    text = "CalculiX *NODE PRINT reaction force 출력"
+    assert [text[start:end] for start, end in protect(text)] == ["*NODE PRINT"]
+    text = "Poisson's ratio 0.3이 3D 2D 1D rad/s"
+    assert [text[start:end] for start, end in protect(text)] == ["0.3", "3D", "2D", "1D", "rad/s"]
+    assert not protect("Poisson’s ratio")
+    assert not query_language.prepare_query("0.3이").warnings
+    nfd = unicodedata.normalize("NFD", "응력")
+    plan = query_language.prepare_query(nfd)
+    assert plan.original_text == nfd
+    assert plan.term_spans[0]["source_text"] == nfd
+    assert plan.term_spans[0]["matched_term"] == "응력"
+    condition = "Can this run without softening if J <= 0?"
+    plan = query_language.prepare_query(condition)
+    assert all("without softening" in entry.text and "if J <= 0" in entry.text for entry in plan.queries)
+    for version in ("2.23", "v2.23", "0.10.0"):
+        question = f"CalculiX {version}에서 약형은?"
+        requirements = query_language.extract_query_requirements(query_language.prepare_query(question))
+        assert next(req.expected for req in requirements if req.facet == "edition") == version
+    assert query_language.editions_match("2.23", "v2.23")
+    assert not query_language.editions_match("2.2", "2.23")
+    weather = query_language.prepare_query("What's the weather tomorrow?")
+    assert query_language.build_retrieval_decision(weather, [], explicit_facets={"solver": "general"}).status == "out_of_scope"
+    assert not query_language.classify_non_cae_intent(query_language.prepare_query("Explain Johnson-Cook."))[0]
+
+
+def test_d09_frozen_bilingual_covered_hit_at_five(tmp_path):
+    evidence = Path(__file__).resolve().parents[1] / "docs" / "specs" / "cae-research" / "evidence" / "C"
+    manifest, _ = corpus.load_corpus_manifest(evidence / "corpus-source-bundle.json")
+    assert len(manifest.sources) == 8
+    receipt = corpus.build_corpus(evidence / "corpus-source-bundle.json", output_root=tmp_path)
+    assert receipt.chunk_count == 16
+    assert set(receipt.source_statuses.values()) == {"unreviewed"}
+    index_dir = Path(receipt.index_dir)
+    assert (index_dir / "licenses" / "geos-LICENSE" / "LICENSE").is_file()
+    assert (index_dir / "licenses" / "geos-NOTICE" / "NOTICE").is_file()
+    labels = json.loads((evidence / "evaluation-question-bundle.json").read_bytes())
+    covered = [row for row in labels["evaluation"]["questions"] if row["expected_retrieval"] == "supported"]
+    assert len(covered) == 24 and {row["language"] for row in covered} == {"ko", "en"}
+    missed = []
+    for row in covered:
+        _, hits, _ = corpus.search_corpus(tmp_path, row["question"], explicit_facets=row["explicit_facets"])
+        if not set(row["expected_chunk_ids"]) & {hit.chunk_id for hit in hits}:
+            missed.append(row["id"])
+    assert len(covered) - len(missed) >= 22, missed
+
+
+def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span():
+    text = "Drucker-Prager yield condition"
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    reviewed_sha = "a" * 64
+    review = ArtifactRefV1(
+        id="review-1", role="source_review", path="reviews/approved.json",
+        sha256="e" * 64, size=12, format_id="cae-source-review-v1", producer=ProducerIdentity("pytest", "1"),
+    )
+    candidate = {
+        "citation": "geos-manual:chapter-1", "document_sha256": reviewed_sha, "edition": "v2.23",
+        "line_start": 12, "line_end": 12, "char_start": 80, "char_end": 80 + len(text),
+        "text": text, "text_sha256": digest, "solver_scope": ["geos", "general"],
+    }
+    plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield condition?")
+    requirements = query_language.extract_query_requirements(plan)
+
+    def assess(target, *, quote_start=0, approved=True, include_good=False):
+        quotes = [{"candidate_id": target["citation"], "start": quote_start, "end": len(text)}]
+        result = {"checks": [dict(requirement_id=req.requirement_id, relation="satisfied", quoted_spans=quotes)
+                             for req in requirements]}
+        candidates = [candidate, target] if include_good else [target]
+        return query_language.build_retrieval_decision(
+            plan, candidates, source_review_refs=[review],
+            approved_source_reviews={reviewed_sha: review} if approved else {},
+            assessment_profile_sha256="f" * 64, assessment_result=result,
+        )
+
+    assert assess(candidate).status == "supported"
+    assert assess(candidate, approved=False).status == "insufficient"
+    assert assess(candidate, quote_start=False).status == "insufficient"
+    for invalid in (
+        dict(solver_scope=["calculix"]), dict(edition="2.230"), dict(char_end=80),
+        dict(document_sha256="b" * 64),
+    ):
+        wrong = dict(candidate, citation="other:chunk", **invalid)
+        assert assess(wrong, include_good=True).status == "insufficient"
+
+
+def test_d09_rejects_corrupt_artifacts_and_refreshes_ask_cache(tmp_path, monkeypatch):
+    root, manifest, data = _make_sample_corpus(tmp_path)
+    out = tmp_path / "index"
+    first = corpus.build_corpus(manifest, output_root=out)
+    monkeypatch.setenv("CAELAB_CORPUS_INDEX_DIR", str(out))
+    query = "Drucker-Prager 팽창각"
+    result_a = knowledge.search_knowledge_result(query, solver="calculix")
+    assert result_a.corpus_revision == first.revision and "trial pressure" in result_a.entries[0].text
+
+    source = data["sources"][0]
+    source["solver_scope"] = ["calculix", "abaqus"]
+    path = root / source["local_relative_path"]
+    replacement = path.read_bytes().replace(b"trial pressure", b"updated pressure")
+    path.write_bytes(replacement)
+    source.update(sha256=hashlib.sha256(replacement).hexdigest(), byte_length=len(replacement))
+    data["revision"] = "r2"
+    manifest.write_bytes(canonical_json_bytes(data))
+    second = corpus.build_corpus(manifest, output_root=out)
+    result_b = knowledge.search_knowledge_result(query, solver="calculix")
+    assert result_b.corpus_revision == second.revision
+    entry = result_b.entries[0]
+    assert "updated pressure" in entry.text
+    assert entry.corpus_chunk.document_sha256 == source["sha256"]
+    assert entry.corpus_chunk.edition == source["edition"]
+    assert entry.solver_scope == ("calculix", "abaqus")
+    assert knowledge.search_knowledge_result(query, solver="abaqus").entries[0].solver_scope == entry.solver_scope
+    assert replacement.decode()[entry.corpus_chunk.char_start:entry.corpus_chunk.char_end] == entry.text
+
+    discussion_path = tmp_path / "discussion.json"
+    document = discussions.create_discussion(discussion_path, question_scope="theory")
+    provider = _StubTheoryProvider("[근거: " + knowledge.citation_id(entry) + "]")
+    monkeypatch.setattr(experts, "get_provider", lambda _pid=None: provider)
+    answered = discussions.ask_discussion(discussion_path, query, template_id="theory",
+                                        expected_revision=document["revision"])
+    turn = answered["turns"][-1]
+    assert turn["status"] == "completed"
+    citation = next(material for material in turn["provided_materials"]
+                    if material["citation_id"] == knowledge.citation_id(entry))
+    for key in ("edition", "document_sha256", "line_start", "line_end", "char_start", "char_end"):
+        assert citation[key] == getattr(entry.corpus_chunk, key)
+    stored_context = json.loads((tmp_path / "assets" / turn["request_context_ref"]["path"]).read_bytes())
+    assert stored_context["query_plan"]["original_text"] == query
+    assert turn["corpus_revision"] == second.revision
+
+    idx = Path(second.index_dir)
+    for relative in ("manifest.json", "chunks.json", "licenses/LICENSE"):
+        file = idx / relative
+        original = file.read_bytes()
+        file.write_bytes(original + b" ")
+        with pytest.raises(ValueError, match="INDEX_DIGEST_MISMATCH"):
+            corpus.load_corpus_bundle(out)
+        assert knowledge.search_knowledge_result(query).status == "error"
+        file.write_bytes(original)
+    (idx / "vectors.npy").unlink()
+    with pytest.raises(FileNotFoundError, match="vectors.npy"):
+        corpus.load_corpus_bundle(out)
+
+
+def test_d09_review_overlay_applies_per_source_and_image_only_fails(tmp_path):
+    from pypdf import PdfWriter
+    root, manifest, data = _make_sample_corpus(tmp_path)
+    out = tmp_path / "out"
+    review = tmp_path / "review.json"
+    first, second = data["sources"]
+    draft = {"schema_version": 1, "reviews": [
+        dict(source_id=first["source_id"], document_sha256=first["sha256"]),
+        dict(source_id=second["source_id"], document_sha256=second["sha256"], status="rejected"),
+    ]}
+    review.write_bytes(canonical_json_bytes(draft))
+    receipt = corpus.build_corpus(manifest, output_root=out, review_overlay_path=review)
+    assert receipt.source_statuses[first["source_id"]] == "unreviewed"
+    assert receipt.source_statuses[second["source_id"]] == "rejected"
+    index, _ = corpus.load_corpus_bundle(out)
+    assert {chunk.source_id for chunk in index.chunks} == {first["source_id"]}
+    draft["reviews"][0]["status"] = "approved"
+    review.write_bytes(canonical_json_bytes(draft))
+    approved = corpus.build_corpus(manifest, output_root=out, review_overlay_path=review)
+    assert approved.source_statuses[first["source_id"]] == "approved"
+
+    pdf = root / "image_only.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(pdf)
+    raw = pdf.read_bytes()
+    data["sources"] = [dict(first, local_relative_path=pdf.name,
+                            byte_length=len(raw), sha256=hashlib.sha256(raw).hexdigest())]
+    manifest.write_bytes(canonical_json_bytes(data))
+    with pytest.raises(ValueError, match="NO_EXTRACTABLE_CHUNKS"):
+        corpus.build_corpus(manifest, output_root=out, verify_only=True)
