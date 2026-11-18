@@ -572,6 +572,121 @@ def review_proposal(path, proposal_id, *, expected_revision: int, decision="chec
         raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
 
+_REQUEST_ARTIFACT_KEYS = ("request_context_ref", "request_artifact_ref", "request_artifact_sha256",
+                          "tool_trace_ref", "retrieval_trace_ref")
+
+
+def _read_request_json(asset_root, ref, turn_id, role):
+    artifact = ArtifactRefV1.from_dict(ref)
+    if artifact.role != role or not artifact.path.startswith(f"requests/{turn_id}/"):
+        raise ValueError("자료 역할 또는 요청 경로 불일치")
+    raw = (asset_root / validate_relative_artifact_path(artifact.path, root=asset_root)).read_bytes()
+    if not raw or len(raw) != artifact.size or hashlib.sha256(raw).hexdigest() != artifact.sha256:
+        raise ValueError("자료 바이트 또는 SHA256 불일치")
+    payload = json.loads(raw.decode("utf-8"), parse_constant=_reject_invalid_json_constant)
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("요청 자료는 비어 있지 않은 JSON 객체여야 합니다.")
+    identifiers = [payload[key] for key in ("request_id", "turn_id") if key in payload]
+    if not identifiers or any(identifier != turn_id for identifier in identifiers):
+        raise ValueError("요청 ID 불일치")
+    return payload
+
+
+def _reject_invalid_json_constant(value):
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
+def _turn_artifact_issues(document_id, turn, asset_root):
+    refs_present = any(turn.get(key) is not None for key in _REQUEST_ARTIFACT_KEYS)
+    completed = turn.get("status") == "completed"
+    # V1 and legacy reference-free case turns predate immutable request artifacts.
+    if not refs_present and not (completed and (
+        turn.get("question_scope") == "theory" or turn.get("schema_version") == 2 or "request_artifact_ref" in turn
+    )):
+        return []
+    turn_id = turn.get("id")
+    issues = []
+    context_ref = turn.get("request_context_ref")
+    trace_ref = turn.get("tool_trace_ref")
+    def report(key, error):
+        detail = "파일 누락 또는 접근 실패" if isinstance(error, OSError) else str(error)
+        issues.append(f"발언 {turn_id} {key} 무결성 확인 실패: {detail}")
+
+    try:
+        context = _read_request_json(asset_root, context_ref, turn_id, "request_context")
+        modern = context.get("schema") == "caelab.expert_request.v1"
+        if ("schema" in context and not modern) or not (
+            modern or type(context.get("schema_version")) is int and context["schema_version"] == 1
+        ):
+            raise ValueError("지원하지 않는 요청 문맥 스키마")
+        if context.get("discussion_id") != document_id:
+            raise ValueError("대화 ID 불일치")
+        if any(context.get(key) != turn.get(key) for key in ("question", "question_scope", "template_id")):
+            raise ValueError("요청 문맥과 발언 내용 또는 범위 불일치")
+        if modern and (
+            context.get("turn_id") != turn_id
+            or not {"corpus_revision", "index_sha256"} <= context.keys()
+            or context["corpus_revision"] != turn.get("corpus_revision")
+            or context["index_sha256"] != turn.get("index_sha256")
+            or (context["index_sha256"] is not None and not _sha_valid(context["index_sha256"]))
+        ):
+            raise ValueError("요청 문맥의 코퍼스 개정 또는 색인 SHA256 불일치")
+        if modern or any(key in turn for key in ("request_artifact_ref", "request_artifact_sha256")):
+            if turn.get("request_artifact_ref") != context_ref or turn.get("request_artifact_sha256") != context_ref["sha256"]:
+                report("request_artifact_ref", ValueError("요청 자료 별칭 또는 SHA256 불일치"))
+    except (OSError, ValueError, TypeError) as error:
+        report("request_context_ref", error)
+
+    if trace_ref is None and not completed and turn.get("retrieval_trace_ref") is None:
+        return issues
+    try:
+        trace = _read_request_json(asset_root, trace_ref, turn_id, "tool_trace")
+        if type(trace.get("schema_version")) is not int or trace["schema_version"] != 1:
+            raise ValueError("지원하지 않는 추적 스키마")
+        if trace.get("request_context_ref") != context_ref or trace.get("status") != turn.get("status"):
+            raise ValueError("추적의 요청 문맥 또는 상태 불일치")
+        if ("chunks" in trace or "retrieval_trace_ref" in turn) and turn.get("retrieval_trace_ref") != trace_ref:
+            report("retrieval_trace_ref", ValueError("추적 자료 별칭 불일치"))
+        events = trace.get("events")
+        if not isinstance(events, list) or not events:
+            raise ValueError("추적 이벤트가 없습니다.")
+        previous = None
+        for seq, event_ref in enumerate(events, 1):
+            event = _read_request_json(asset_root, event_ref, turn_id, "trace_event")
+            if type(event.get("seq")) is not int or event["seq"] != seq or event.get("previous_event_sha256") != previous:
+                raise ValueError("추적 이벤트 순서 또는 연결 해시 불일치")
+            if seq == 1 and event.get("request_context_sha256") != (context_ref or {}).get("sha256"):
+                raise ValueError("추적 이벤트의 요청 문맥 해시 불일치")
+            previous = event_ref["sha256"]
+        chunks = trace.get("chunks", [])
+        if not isinstance(chunks, list):
+            raise ValueError("추적 자료 조각 목록이 잘못되었습니다.")
+        stored_chunks = []
+        for chunk_ref in chunks:
+            chunk = _read_request_json(asset_root, chunk_ref, turn_id, "retrieval_chunks")
+            if not isinstance(chunk.get("chunks"), list) or not chunk["chunks"] or any(
+                not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip()
+                for item in chunk["chunks"]
+            ):
+                raise ValueError("추적 자료 조각이 비어 있습니다.")
+            stored_chunks.extend(chunk["chunks"])
+        if "chunks" in trace and stored_chunks != [
+            item for item in turn.get("provided_materials", []) if isinstance(item, dict) and item.get("source") == "knowledge"
+        ]:
+            raise ValueError("추적 자료 조각과 제공 근거 불일치")
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        report("tool_trace_ref", error)
+    return issues
+
+
+def request_artifact_issues(document, asset_root):
+    """Check immutable request and trace references against their owning turns."""
+    return [
+        issue for turn in document.get("turns", ())
+        for issue in _turn_artifact_issues(document["id"], turn, asset_root)
+    ]
+
+
 def discussion_issues(path, document=None) -> list[str]:
     """Read-only reopening diagnostics; no provider calls or transient document keys."""
     path = Path(path).resolve()
@@ -583,24 +698,7 @@ def discussion_issues(path, document=None) -> list[str]:
             issues.extend(f"근거 {identifier}: {issue}" for issue in verify_evidence(evidence, path.parent / "assets"))
             if any(item["role"] in {"input", "include"} for item in evidence["files"]):
                 issues.extend(f"근거 {identifier}: {issue}" for issue in _source_input_issues(evidence))
-        asset_root = path.parent / "assets"
-        for turn in document["turns"]:
-            requires_refs = turn.get("status") == "completed" and turn.get("question_scope") == "theory"
-            for key, role in (("request_context_ref", "request_context"), ("tool_trace_ref", "tool_trace")):
-                ref = turn.get(key)
-                if ref is None and not requires_refs:
-                    continue
-                try:
-                    artifact = ArtifactRefV1.from_dict(ref)
-                    if artifact.role != role:
-                        raise ValueError("자료 역할 불일치")
-                    raw = (asset_root / validate_relative_artifact_path(artifact.path, root=asset_root)).read_bytes()
-                    if len(raw) != artifact.size or hashlib.sha256(raw).hexdigest() != artifact.sha256:
-                        raise ValueError("자료 바이트 또는 SHA256 불일치")
-                except OSError:
-                    issues.append(f"발언 {turn.get('id')} {key} 무결성 확인 실패: 파일 누락 또는 접근 실패")
-                except (ValueError, TypeError) as error:
-                    issues.append(f"발언 {turn.get('id')} {key} 무결성 확인 실패: {error}")
+        issues.extend(request_artifact_issues(document, path.parent / "assets"))
         for proposal in document["proposals"]:
             try:
                 if not isinstance(proposal, dict):
@@ -625,6 +723,7 @@ def _provided_materials(discussion, evidence, origin):
                                 "page_start", "page_end")
                 } if chunk is not None else {}
                 materials.append({"source": source, "citation_id": experts.citation_id(entry),
+                                  "source_kind": entry.source_kind, "review_status": entry.review_status,
                                   "topic": entry.topic, "text": entry.text,
                                   "text_sha256": hashlib.sha256(entry.text.encode("utf-8")).hexdigest(),
                                   **provenance, **origin})
@@ -792,14 +891,11 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     question,
                     explicit_facets={"solver": evidence["solver_id"]} if evidence and evidence.get("solver_id") else None,
                 )
-                corpus_rev = None
-                corpus_snapshot = document.get("corpus_snapshot_ref")
-                if isinstance(corpus_snapshot, dict):
-                    corpus_rev = corpus_snapshot.get("revision")
-
                 request_context_payload = {
+                    "schema": "caelab.expert_request.v1",
                     "schema_version": 1,
                     "request_id": request_id,
+                    "turn_id": request_id,
                     "discussion_id": document["id"],
                     "question": question,
                     "question_scope": effective_scope,
@@ -812,18 +908,12 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     "retrieval_assessment_profile_ref": profile_ref,
                     "review_policy_id": review_policy_id,
                     "responds_to_review_ids": responds_list,
-                    "corpus_revision": corpus_rev,
+                    "corpus_revision": None,
+                    "index_sha256": None,
                     "created_at": now,
                 }
                 asset_root = path.parent / "assets"
-                request_context_ref = _write_immutable_request_json(
-                    asset_root,
-                    f"requests/{request_id}/request_context.json",
-                    f"request-context:{request_id}",
-                    "request_context",
-                    "cae-request-context-v1",
-                    request_context_payload,
-                )
+                request_context_ref = None
                 capability_limits = {
                     "read_policy_id": "cae-read-v1",
                     "role_policy_id": role_policy.policy_id,
@@ -854,14 +944,18 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     "citations": {"shown_ids": [], "unverified": [], "verified": []},
                     "responds_to_review_ids": responds_list,
                     "review_policy_id": review_policy_id,
-                    "request_context_ref": request_context_ref,
+                    "request_context_ref": None,
+                    "request_artifact_ref": None,
+                    "request_artifact_sha256": None,
                     "provider_capabilities": provider_caps,
                     "tool_trace_ref": None,
+                    "retrieval_trace_ref": None,
                     "retrieval_decisions": [],
                     "claims": [],
                     "answer_review_ids": [],
                     "evidence_pack_hash": None,
-                    "corpus_revision": corpus_rev,
+                    "corpus_revision": None,
+                    "index_sha256": None,
                     "budget_used": {"preparation_seconds": 0.0, "provider_seconds": 0.0, "total_seconds": 0.0, "tool_calls": 0, "rounds": 0},
                     "capability_limits": capability_limits,
                     "created_at": now,
@@ -901,8 +995,11 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
             except Exception:
                 pass
         stopped = threading.Event()
-        responses = queue.Queue(maxsize=1)
-        supplied = queue.Queue(maxsize=1)
+        # A cancelled caller can leave the preparation message unread. The worker
+        # can still post its one terminal result and exit.
+        responses = queue.Queue()
+        context_saved = threading.Event()
+        context = None
         provider_started = threading.Event()
         provider_deadline_box = [overall_deadline]
         provider_started_at_box = [None]
@@ -950,15 +1047,19 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 if not available:
                     responses.put(("unavailable", "", reason))
                     return
+                discussion.history = []
+                for prior_turn in history:
+                    checkpoint("prep")
+                    if prior_turn.get("status") == "completed" and not _turn_artifact_issues(
+                        document["id"], prior_turn, asset_root
+                    ):
+                        discussion.history.append(prior_turn)
                 prompt = discussion.build_prompt(question)
                 materials = _provided_materials(discussion, evidence, origin)
                 k_res = discussion.knowledge_result
                 retrieval_decisions = []
-                k_corpus_rev = corpus_rev
                 if "knowledge" in template.allowed_tools and k_res is not None:
                     used_plan = getattr(k_res, "query_plan", None) or query_plan
-                    if getattr(k_res, "corpus_revision", None):
-                        k_corpus_rev = k_res.corpus_revision
                     candidates = [
                         entry.corpus_chunk or {
                             "citation": experts.citation_id(entry),
@@ -973,14 +1074,6 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                         explicit_facets={"solver": k_res.solver} if k_res.solver else None,
                     )
                     retrieval_decisions.append(decision.to_dict())
-                pack_hash = canonical_sha256(
-                    {
-                        "request_context_sha256": request_context_ref["sha256"],
-                        "evidence_sources": list(discussion.evidence_sources),
-                        "provided_materials": materials,
-                        "shown_ids": list(discussion.knowledge_ids),
-                    }
-                )
                 context = {
                     "evidence_sources": list(discussion.evidence_sources),
                     "provided_materials": materials,
@@ -988,11 +1081,13 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     "knowledge_status": k_res.status if k_res else "not_requested",
                     "knowledge_error": k_res.error if k_res else None,
                     "retrieval_decisions": retrieval_decisions,
-                    "evidence_pack_hash": pack_hash,
-                    "corpus_revision": k_corpus_rev,
+                    "corpus_revision": k_res.corpus_revision if k_res else None,
+                    "index_sha256": k_res.index_digest if k_res else None,
                 }
                 checkpoint("prep")  # retrieval must not launch a provider after cancellation or prep timeout
-                supplied.put(context)
+                responses.put(context)
+                while not context_saved.wait(0.02):
+                    checkpoint("prep")
                 checkpoint("prep")
 
                 if on_stage is not None:
@@ -1019,6 +1114,15 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
             except Exception as error:
                 responses.put(("failed", "", f"{type(error).__name__}: {error}"))
 
+        def freeze_context(prepared):
+            payload = dict(request_context_payload)
+            if prepared is not None:
+                payload.update(corpus_revision=prepared["corpus_revision"], index_sha256=prepared["index_sha256"])
+            return _write_immutable_request_json(
+                asset_root, f"requests/{request_id}/request_context.json", f"request-context:{request_id}",
+                "request_context", "cae-request-context-v1", payload,
+            )
+
         threading.Thread(target=request, name=f"expert-{request_id}", daemon=True).start()
         while True:
             try:
@@ -1044,7 +1148,10 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
                 break
             try:
-                status, reply, error_text = responses.get(timeout=min(.05, max(0.001, remaining)))
+                message = responses.get(timeout=min(.05, max(0.001, remaining)))
+                prepared = isinstance(message, dict)
+                if not prepared:
+                    status, reply, error_text = message
                 now_mono = time.monotonic()
                 if check_cancelled is not None:
                     try:
@@ -1064,6 +1171,15 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 if now_mono >= overall_deadline:
                     status, reply, error_text = "timed_out", "", f"전문가 요청이 {overall_budget:g}초 제한을 넘었습니다."
                     break
+                if prepared:
+                    context = message
+                    try:
+                        request_context_ref = freeze_context(context)
+                    except (OSError, ValueError):
+                        stopped.set()
+                        raise
+                    context_saved.set()
+                    continue
                 break
             except queue.Empty:
                 pass
@@ -1091,15 +1207,21 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                 final_stage = "provider" if provider_started.is_set() else "preparation"
                 finished_at = utc_now()
                 final_turn.update(status=status, reply=reply, error=error_text, finished_at=finished_at, stage=final_stage)
-                try:
-                    context = supplied.get_nowait()
-                except queue.Empty:
-                    context = None
+                if request_context_ref is None:
+                    request_context_ref = freeze_context(context)
+                final_turn.update(request_context_ref=request_context_ref, request_artifact_ref=request_context_ref,
+                                  request_artifact_sha256=request_context_ref["sha256"])
                 if context is not None:
+                    final_turn["evidence_pack_hash"] = canonical_sha256({
+                        "request_context_sha256": request_context_ref["sha256"],
+                        "evidence_sources": context["evidence_sources"],
+                        "provided_materials": context["provided_materials"],
+                        "shown_ids": context["shown_ids"],
+                    })
                     final_turn.update({
                         key: context[key]
                         for key in ("evidence_sources", "provided_materials", "knowledge_status",
-                                    "knowledge_error", "retrieval_decisions", "evidence_pack_hash", "corpus_revision")
+                                    "knowledge_error", "retrieval_decisions", "corpus_revision", "index_sha256")
                     })
                     final_turn["citations"]["shown_ids"] = context["shown_ids"]
                 if status == "completed":
@@ -1153,7 +1275,14 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                         "finished_at": finished_at,
                     },
                 )
-                final_turn["tool_trace_ref"] = _write_immutable_request_json(
+                chunk_refs = []
+                retrieved = [item for item in final_turn["provided_materials"] if item["source"] == "knowledge"]
+                if retrieved:
+                    chunk_refs.append(_write_immutable_request_json(
+                        asset_root, f"requests/{request_id}/chunks.json", f"retrieval-chunks:{request_id}",
+                        "retrieval_chunks", "cae-retrieval-chunks-v1", {"request_id": request_id, "chunks": retrieved},
+                    ))
+                trace_ref = _write_immutable_request_json(
                     asset_root,
                     f"requests/{request_id}/trace.json",
                     f"trace:{request_id}",
@@ -1164,11 +1293,13 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                         "request_id": request_id,
                         "request_context_ref": request_context_ref,
                         "events": [ev1_ref, ev2_ref],
+                        "chunks": chunk_refs,
                         "tool_call_count": 0,
                         "status": status,
                         "budget_used": final_turn["budget_used"],
                     },
                 )
+                final_turn.update(tool_trace_ref=trace_ref, retrieval_trace_ref=trace_ref)
                 current["pending_request"] = None
                 return _write(path, current)
         except Timeout as error:

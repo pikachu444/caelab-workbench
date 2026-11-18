@@ -201,3 +201,15 @@ def test_openai_compatible_provider_uses_configured_finite_timeout(monkeypatch):
     provider.timeout_seconds = 60
     assert provider.discuss("mock") == "mock reply"
     assert calls == [60]
+
+
+
+def test_direct_theory_role_rejects_case_scope_before_provider_use():
+    class UntouchedProvider:
+        def availability(self):
+            pytest.fail("Invalid request must fail before any provider interaction")
+
+    discussion = Discussion(template=get_template("theory"), provider=UntouchedProvider(), question_scope="case_analysis")
+    for entry_point in (discussion.build_prompt, discussion.ask):
+        with pytest.raises(ValueError, match="theory role cannot be used with case_analysis"):
+            entry_point("Inspect the result")

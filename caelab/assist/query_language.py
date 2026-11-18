@@ -192,14 +192,29 @@ _SOLVER_PATTERNS: tuple[tuple[str, str], ...] = (
     ("abaqus", "abaqus"),
 )
 
-_EDITION_RE = re.compile(r"(?<![\w.])v?\d+\.\d+(?:\.\d+)*(?![0-9A-Za-z]|\.\d)", re.I)
+_DASHES = str.maketrans(dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212", "-"))
+_POSSESSIVE = re.compile(r"(\w+)['’]s\b", re.I)
+_CARD_MULTIWORD = (
+    "SOLID SECTION", "SHELL SECTION", "BEAM SECTION", "CONTACT PAIR", "SURFACE INTERACTION",
+    "SURFACE BEHAVIOR", "NODE PRINT", "NODE FILE", "EL PRINT", "EL FILE", "END STEP",
+    "INITIAL CONDITIONS", "MASS FLOW", "GAP CONDUCTANCE", "COUPLED TEMPERATURE-DISPLACEMENT",
+)
+_CARD = r"\*(?:" + "|".join(word.replace(" ", r"[ \t]+") for word in _CARD_MULTIWORD) + r"|[A-Z][A-Z0-9_]*)(?![A-Za-z0-9_])"
+_SOLVER_MENTION = re.compile(
+    r"(?<![0-9a-z])(?:" + "|".join(re.escape(alias) for alias, _ in _SOLVER_PATTERNS) + r")(?![0-9a-z])",
+    re.I,
+)
+_EDITION_RE = re.compile(r"(?<![0-9A-Za-z_.])v?\d+(?:\.\d+)*(?![0-9A-Za-z]|\.\d)", re.I)
+_UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol)"
+_EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
+_VERSION_MARKER = re.compile(r"(?:\b(?:version|ver\.?|edition)\s*[:=]?|버전|판본)\s*$", re.I)
 _PROTECTED_TOKEN_RE = re.compile(
-    r"\*[A-Z][A-Z0-9_]*(?![A-Za-z0-9_])(?:[ \t]+[A-Z][A-Z0-9_]*(?![A-Za-z0-9_]))*"
-    r"|(?<![A-Za-z0-9])(?i:3D|2D|1D)(?![A-Za-z0-9_])"
+    _CARD
+    + r"|(?<![A-Za-z0-9])(?i:3D|2D|1D)(?![A-Za-z0-9_])"
     r"|(?<![0-9A-Za-z])(?:[vV]\d+\.\d+(?:\.\d+)*|\d+(?:\.\d+){2,})(?!\.\d)"
     r"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?"
     r"|<=|>=|!=|==|<|>|="
-    r"|(?<![A-Za-z'’])(?i:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|kJ/mol|J/mol|PK1|VM|WLF|RF|LAW\d+|C3D\d+)(?![A-Za-z0-9_])"
+    + r"|(?<![A-Za-z'’])(?i:" + _UNIT_TOKEN + r"|PK1|VM|WLF|RF|LAW\d+|C3D\d+)(?![A-Za-z0-9_])"
     r"|(?i:\b(?:not|no|without|never|except|unless|only|before|after|when|if)\b)"
 )
 
@@ -384,14 +399,14 @@ _EN_STOPWORDS = frozenset(
 
 _NON_CAE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("weather", re.compile(r"(?:날씨|기온|강수|예보|weather|forecast|temperature\s+outside|rain\s+tomorrow)", re.I)),
-    ("cooking", re.compile(r"(?:요리|레시피|음식|김치찌개|파스타|recipe|(?<!johnson[-–— ])\bcook(?:ing)?\b|baking|ingredients)", re.I)),
+    ("cooking", re.compile(r"(?:요리|레시피|음식|김치찌개|파스타|recipe|조리법|(?<!johnson[- ])\bcook(?:ing)?\b|baking|ingredients)", re.I)),
     ("price_shopping", re.compile(r"(?:가격|할인|쇼핑|price|discount|buy\s+a|how\s+much\s+does)", re.I)),
     ("sports", re.compile(r"(?:축구|야구|농구|스포츠|경기\s*결과|soccer|football|baseball|basketball|sports\s+score)", re.I)),
-    ("translation", re.compile(r"(?:번역해|영어로\s*번역|translate\s+to|translation\s+of)", re.I)),
+    ("translation", re.compile(r"(?:번역해|영어로\s*번역|translate\b|translation\s+of)", re.I)),
     ("license_admin", re.compile(r"(?:운전면허|driver'?s\s+license)", re.I)),
     ("hospitality", re.compile(r"(?:식당|맛집|호텔|예약|restaurant|hotel|reservation|book\s+a\s+room)", re.I)),
-    ("finance", re.compile(r"(?:은행|계좌|주식|주가|선거|투표|bank\s+account|stock\s+price|election)", re.I)),
-    ("personal_misc", re.compile(r"(?:축사|비밀번호|패스워드|이메일\s*작성|메일\s*써|체스|영화\s*추천|아기\s*이름|강아지\s*이름|이름\s*지어|speech|password|chess|movie\s+recommend|baby\s+name|write\s+an\s+email)", re.I)),
+    ("finance", re.compile(r"(?:은행|계좌|주식|주가|선거|투표|bank\s+account|stock\s+price|exchange rate|credit card|신용카드|election)", re.I)),
+    ("personal_misc", re.compile(r"(?:축사|비밀번호|패스워드|이메일\s*작성|메일\s*써|체스|영화\s*추천|아기\s*이름|강아지\s*이름|이름\s*지어|speech|password|chess|movie\s+recommend|baby\s+name|write\s+an\s+email|이메일.{0,12}보내|graduation toast|wedding toast|haircut|movie reviews|(?:고양이)\s*이름|여권\s*갱신|sightseeing itinerary|\bcafe\b)", re.I)),
 )
 
 _UNSUPPORTED_SCRIPT_RE = re.compile(
@@ -438,12 +453,13 @@ def _nfkc_with_orig_map(text: str) -> tuple[str, list[tuple[int, int]]]:
     """Apply Unicode NFKC and track each NFKC codepoint back to [orig_start, orig_end)."""
     out_chars: list[str] = []
     mapping: list[tuple[int, int]] = []
-    for idx, ch in enumerate(text):
+    search_text = text.translate(_DASHES)
+    for idx, ch in enumerate(search_text):
         norm = unicodedata.normalize("NFKC", ch)
         for sub in norm:
             out_chars.append(sub)
             mapping.append((idx, idx + 1))
-    normalized = unicodedata.normalize("NFKC", text)
+    normalized = unicodedata.normalize("NFKC", search_text)
     if normalized == "".join(out_chars):
         return normalized, mapping
 
@@ -451,7 +467,7 @@ def _nfkc_with_orig_map(text: str) -> tuple[str, list[tuple[int, int]]]:
     # maps the composed character to the whole original range.
     prefix = ""
     mapping = []
-    for index, char in enumerate(text):
+    for index, char in enumerate(search_text):
         updated = unicodedata.normalize("NFKC", prefix + char)
         common = len(prefix)
         while common and prefix[:common] != updated[:common]:
@@ -519,6 +535,8 @@ def _match_glossary_spans(
     # Build index map from folded_lower back to nfkc_text when accent stripping is 1:1
     use_folded = len(folded_lower) == len(nfkc_text)
     haystack_en = folded_lower if use_folded else nfkc_text.lower()
+    # Match against a fixed-width view so possessive suffixes never move source spans.
+    haystack_en = _POSSESSIVE.sub(lambda m: m[1] + " " * (len(m[0]) - len(m[1])), haystack_en)
 
     taken = list(protected)
     matched: list[tuple[int, int, str, tuple[str, ...], str]] = []
@@ -539,7 +557,8 @@ def _match_glossary_spans(
                     matched.append((idx, end, term, targets, target_lang))
                 start = idx + 1
         else:
-            pattern = re.compile(rf"(?<![0-9A-Za-z]){re.escape(term)}(?![0-9A-Za-z])", re.IGNORECASE)
+            phrase = r"\s+".join(re.escape(word) for word in term.split(" "))
+            pattern = re.compile(rf"(?<![0-9A-Za-z]){phrase}(?![0-9A-Za-z])", re.IGNORECASE)
             for m in pattern.finditer(haystack_en):
                 idx, end = m.start(), m.end()
                 if not _overlaps(idx, end, taken):
@@ -584,7 +603,7 @@ def _find_unmatched_spans(
     unmatched: list[dict[str, Any]] = []
     for m in re.finditer(r"[A-Za-z\u00C0-\u024F\uAC00-\uD7AF][0-9A-Za-z\u00C0-\u024F\uAC00-\uD7AF_-]*", nfkc_text):
         s, e = m.start(), m.end()
-        if _overlaps(s, e, covered):
+        if _overlaps(s, e, covered) or (m[0].lower() == "s" and s and nfkc_text[s - 1] in "'’"):
             continue
         token = m.group(0)
         low = _fold_accents(token).lower()
@@ -711,75 +730,48 @@ def extract_query_requirements(
     ]
 
     facets = dict(explicit_facets or {})
-    # Auto-detect solver if not explicitly passed
-    if str(facets.get("solver") or "").casefold() in {"", "general"}:
-        low = text.lower()
-        for alias, canonical in _SOLVER_PATTERNS:
-            m = re.search(rf"(?<![0-9a-z]){re.escape(alias)}(?![0-9a-z])", low)
-            if m:
-                facets["solver"] = canonical
-                reqs.append(
-                    RetrievalRequirementV1(
-                        requirement_id="req-solver",
-                        original_span=(m.start(), m.end()),
-                        facet="solver",
-                        expected=text[m.start():m.end()],
-                        status="unverified",
-                        reason=f"명시된 솔버 '{canonical}' 일치 확인 필요",
-                    )
-                )
-                break
-    else:
-        solver_val = str(facets["solver"]).strip()
-        idx = text.lower().find(solver_val.lower())
-        span = (idx, idx + len(solver_val)) if idx >= 0 else (0, len(text))
-        reqs.append(
-            RetrievalRequirementV1(
-                requirement_id="req-solver",
-                original_span=span,
-                facet="solver",
-                expected=solver_val,
-                status="unverified",
-                reason=f"지정 솔버 '{solver_val}' 일치 확인 필요",
-            )
-        )
+    normalized, original_offsets = _nfkc_with_orig_map(text)
+    mentions = list(_SOLVER_MENTION.finditer(normalized))
+    solvers = {}
+    for match in mentions:
+        solver = normalize_solver(match[0])
+        solvers.setdefault(solver, match.span())
+    solver = normalize_solver(facets.get("solver"))
+    if solver and solver != "general":
+        solvers.setdefault(solver, (0, len(normalized)))
 
-    if facets.get("edition"):
-        ed = str(facets["edition"]).strip()
-        match = next((m for m in _EDITION_RE.finditer(text) if editions_match(m[0], ed)), None)
-        span = match.span() if match else (0, len(text))
-        reqs.append(
-            RetrievalRequirementV1(
-                requirement_id="req-edition",
-                original_span=span,
-                facet="edition",
-                expected=ed,
-                status="unverified",
-                reason=f"지정 판본 '{ed}' 일치 확인 필요",
-            )
-        )
-    else:
-        m_ed = next(
-            (m for m in _EDITION_RE.finditer(text)
-             if m[0].lower().startswith("v") or m[0].count(".") > 1
-             or re.search(r"(?:edition|version|버전|판본)\s*$", text[:m.start()], re.I)
-             or text.strip() == m[0] or (
-                 m[0].split(".")[0] != "0" and any(
-                     r.facet == "solver" and 0 <= m.start() - r.original_span[1] <= 3 for r in reqs
-                 )
-             )), None,
-        )
-        if m_ed:
-            reqs.append(
-                RetrievalRequirementV1(
-                    requirement_id="req-edition",
-                    original_span=(m_ed.start(), m_ed.end()),
-                    facet="edition",
-                    expected=m_ed.group(0),
-                    status="unverified",
-                    reason=f"명시된 판본 '{m_ed.group(0)}' 일치 확인 필요",
-                )
-            )
+    def original_span(start, end):
+        return original_offsets[start][0], original_offsets[end - 1][1]
+
+    for index, (solver, span) in enumerate(solvers.items()):
+        reqs.append(RetrievalRequirementV1(
+            requirement_id="req-solver" if index == 0 else f"req-solver-{index}",
+            original_span=original_span(*span), facet="solver", expected=solver,
+            status="unverified", reason=f"명시된 솔버 '{solver}' 일치 확인 필요",
+        ))
+
+    editions = {}
+    for match in _EDITION_RE.finditer(normalized):
+        if _EDITION_UNIT.match(normalized[match.end():]):
+            continue
+        prefix = normalized[:match.start()]
+        if (match[0][0].lower() == "v" or _VERSION_MARKER.search(prefix)
+                or any(m.end() <= match.start() and not prefix[m.end():].strip(" 	,(:")
+                       for m in mentions)):
+            version = match[0]
+            if not any(editions_match(version, current) for current in editions):
+                editions[version] = original_span(*match.span())
+    edition = facets.get("edition")
+    if isinstance(edition, str) and edition.strip():
+        edition = edition.strip()
+        if not any(editions_match(edition, current) for current in editions):
+            editions[edition] = (0, len(text))
+    for index, (edition, span) in enumerate(editions.items()):
+        reqs.append(RetrievalRequirementV1(
+            requirement_id="req-edition" if index == 0 else f"req-edition-{index}",
+            original_span=span, facet="edition", expected=edition,
+            status="unverified", reason=f"명시된 판본 '{edition}' 일치 확인 필요",
+        ))
 
     for neg_idx, m in enumerate(
         re.finditer(r"\b(?:not|no|without|never|except|unless)\b|(?:" + _KO_NEGATION_RE.pattern + ")", text, re.I)
@@ -817,11 +809,14 @@ def extract_query_requirements(
 def normalize_solver(solver: str | None) -> str | None:
     if not solver:
         return None
-    normalized = solver.casefold()
+    normalized = solver.strip().casefold()
     return dict(_SOLVER_PATTERNS).get(normalized, normalized)
 
 
-def editions_match(left: str, right: str) -> bool:
+def editions_match(left: str | None, right: str | None) -> bool:
+    if any(not value or value.strip().casefold() in {"", "unknown", "legacy_unknown"} for value in (left, right)):
+        return False
+
     def normalized(value):
         value = value.strip().casefold()
         return value.removeprefix("v") if _EDITION_RE.fullmatch(value) else value
@@ -833,7 +828,8 @@ def classify_non_cae_intent(plan: QueryPlan) -> tuple[bool, str]:
     """Return (is_non_cae, reason) ONLY for manifestly non-CAE questions without domain facets."""
     if plan.term_spans:
         return False, ""
-    low = plan.original_text.lower()
+    text = unicodedata.normalize("NFKC", plan.original_text.translate(_DASHES))
+    low = text.lower()
     if any(
         re.search(rf"(?<![0-9a-z]){re.escape(alias)}(?![0-9a-z])", low)
         for alias, _ in _SOLVER_PATTERNS
@@ -842,7 +838,7 @@ def classify_non_cae_intent(plan: QueryPlan) -> tuple[bool, str]:
     if re.search(r"\*[A-Za-z]+|LAW\d+|C3D\d+|FEM|FEA|CAE|PDE", plan.original_text, re.I):
         return False, ""
     for category, pattern in _NON_CAE_PATTERNS:
-        if pattern.search(plan.original_text):
+        if pattern.search(text):
             return True, f"CAE 영역과 무관한 일반 요청({category})으로 확인되었습니다."
     return False, ""
 
@@ -856,6 +852,9 @@ def _candidate_metadata(candidate: CorpusChunkSpec | Mapping[str, Any]) -> tuple
     edition = str(candidate.get("edition") or "unknown")
     facets = candidate.get("coverage_facets") or {}
     scope = tuple(str(x) for x in (facets.get("solver") or candidate.get("solver_scope") or ()))
+    if facets.get("solver") and candidate.get("solver_scope"):
+        declared = {normalize_solver(value) for value in candidate["solver_scope"]}
+        scope = tuple(value for value in scope if normalize_solver(value) in declared)
     text = str(candidate.get("text") or "")
     return cid, sha, edition, scope, text
 
@@ -878,6 +877,56 @@ def _has_valid_source_span(candidate: CorpusChunkSpec | Mapping[str, Any]) -> bo
         return False
 
 
+_TOPIC_GAPS = {
+    "radioss_cards": "missing_card_or_parameter",
+    "calculix_cards": "missing_card_or_parameter",
+    "contact_law": "missing_solver",
+    "damage_evolution": "missing_model_variant_or_original_source",
+    "material_identification": "missing_identification_data",
+    "safety_certification": "missing_safety_evidence",
+    "creep": "missing_material_test_data",
+    "anisotropy": "missing_model_variant_or_original_source",
+    "thermal": "missing_temperature_dependent_data",
+    "history": "unsupported_coupling",
+    "restart": "missing_restart_validation",
+    "buckling": "missing_buckling_model_or_result",
+    "measures": "missing_result_measure",
+    "mesh_quality": "missing_mesher_coverage",
+    "run_values": "missing_run_evidence",
+}
+_TOPIC_SIGNALS = {
+    "contact_law": r"contact.*penalty|접촉.*페널티|접촉.*penalty",
+    "damage_evolution": r"xia",
+    "material_identification": r"identifia\w+|유일성|계수.*유일",
+    "safety_certification": r"certif\w+|안전함.*승인|안전.*승인",
+    "creep": r"norton",
+    "thermal": r"temperature[- ]dependen|온도\s*의존",
+    "history": r"점성\s*(?:이력|내부상태)|viscous\s*(?:history|state)",
+    "restart": r"restart|재시작",
+    "buckling": r"buckling|좌굴",
+    "measures": r"engineering shear|tensor shear",
+    "mesh_quality": r"all[- ]hex",
+    "run_values": r"첨부하지 않은.*실행|unattached.*run",
+}
+
+
+def _coverage_gaps(plan, candidates, explicit_facets):
+    requested = (explicit_facets or {}).get("topics") or ()
+    if isinstance(requested, str):
+        requested = (requested,)
+    text = plan.original_text
+    topics = set(requested)
+    topics.update(topic for topic, pattern in _TOPIC_SIGNALS.items() if re.search(pattern, text, re.I))
+    if re.search(r"LAW\d+|" + _CARD, text):
+        solvers = {normalize_solver(match[0]) for match in _SOLVER_MENTION.finditer(text)}
+        topics.update(f"{solver}_cards" for solver in solvers if solver in {"radioss", "calculix"})
+    supplied = set()
+    for candidate in candidates:
+        facets = candidate.coverage_facets if isinstance(candidate, CorpusChunkSpec) else candidate.get("coverage_facets") or {}
+        supplied.update(facets.get("topics") or ())
+    return [_TOPIC_GAPS[topic] for topic in sorted(topics - supplied) if topic in _TOPIC_GAPS]
+
+
 def build_retrieval_decision(
     plan: QueryPlan,
     candidates: Sequence[CorpusChunkSpec | Mapping[str, Any]],
@@ -892,17 +941,27 @@ def build_retrieval_decision(
     approved_source_reviews: Mapping[str, ArtifactRefV1] | None = None,
 ) -> RetrievalDecisionV1:
     """Build a decision from assessment quotes and host-verified reviews keyed by document SHA256."""
+    if assessment_result is not None:
+        if assessment_trace_ref is None:
+            raise ValueError("A retrieval assessment requires assessment_trace_ref")
+        if not isinstance(assessment_trace_ref, ArtifactRefV1):
+            assessment_trace_ref = ArtifactRefV1.from_dict(assessment_trace_ref)
+        if assessment_trace_ref.size <= 0 or not assessment_trace_ref.role.endswith("_trace"):
+            raise ValueError("Retrieval assessment trace must be a non-empty trace artifact")
     query_plan_sha = canonical_sha256(plan.to_dict())
     reqs = extract_query_requirements(plan, explicit_facets)
 
     cand_summary = []
     for cand in candidates:
-        cid, sha, edition, scope, _text = _candidate_metadata(cand)
-        cand_summary.append({"candidate_id": cid, "source_sha256": sha, "edition": edition, "solver_scope": list(scope)})
+        cid, sha, edition, scope, text = _candidate_metadata(cand)
+        override = (candidate_solver_scopes or {}).get(cid)
+        cand_summary.append({"candidate_id": cid, "source_sha256": sha, "edition": edition,
+                             "solver_scope": list(scope), "scope_limit": list(override) if override is not None else None,
+                             "chunk_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()})
     cand_set_sha = canonical_sha256(cand_summary)
 
-    req_solver_canon = normalize_solver(next((r.expected for r in reqs if r.facet == "solver"), None))
-    req_edition = next((r.expected for r in reqs if r.facet == "edition"), None)
+    req_solvers = {normalize_solver(r.expected) for r in reqs if r.facet == "solver"}
+    req_editions = [r.expected for r in reqs if r.facet == "edition"]
 
     missing_evidence: list[str] = []
     limitations: list[str] = ["model_general_unverified"]
@@ -947,15 +1006,11 @@ def build_retrieval_decision(
     edition_mismatch_count = 0
     for cand in candidates:
         cid, sha, edition, scope, _text = _candidate_metadata(cand)
+        norm_scope = {normalize_solver(value) for value in scope}
         if candidate_solver_scopes and cid in candidate_solver_scopes:
-            scope = tuple(str(x) for x in candidate_solver_scopes[cid])
-        solver_ok = True
-        if req_solver_canon:
-            norm_scope = {s.lower() for s in scope}
-            solver_ok = req_solver_canon in norm_scope
-        edition_ok = True
-        if req_edition:
-            edition_ok = editions_match(req_edition, edition)
+            norm_scope &= {normalize_solver(value) for value in candidate_solver_scopes[cid]}
+        solver_ok = req_solvers <= norm_scope
+        edition_ok = all(editions_match(required, edition) for required in req_editions)
         if not solver_ok:
             solver_mismatch_count += 1
             checks.append(
@@ -965,7 +1020,7 @@ def build_retrieval_decision(
                     relation="irrelevant",
                     requirement_ids=(),
                     quoted_spans=(),
-                    reason=f"요청 솔버({req_solver_canon})와 후보 출처 범위({list(scope) or ['unknown']})가 다릅니다.",
+                    reason=f"요청 솔버({sorted(req_solvers)})와 후보 출처 범위({list(scope) or ['unknown']})가 다릅니다.",
                 )
             )
         elif not edition_ok:
@@ -977,7 +1032,7 @@ def build_retrieval_decision(
                     relation="irrelevant",
                     requirement_ids=(),
                     quoted_spans=(),
-                    reason=f"요청 판본({req_edition})과 후보 판본({edition})이 일치하지 않습니다.",
+                    reason=f"요청 판본({req_editions})과 후보 판본({edition})이 일치하지 않습니다.",
                 )
             )
         else:
@@ -998,17 +1053,24 @@ def build_retrieval_decision(
             )
 
     if candidates and solver_mismatch_count == len(candidates):
-        missing_evidence.extend(("SOLVER_MISMATCH", "SOLVER_COVERAGE_INSUFFICIENT"))
-    if candidates and edition_mismatch_count == len(candidates):
-        missing_evidence.append("EDITION_COVERAGE_INSUFFICIENT")
+        missing_evidence.extend(("SOLVER_MISMATCH", "SOLVER_COVERAGE_INSUFFICIENT", "missing_solver"))
+    if edition_mismatch_count and solver_mismatch_count + edition_mismatch_count == len(candidates):
+        missing_evidence.extend(("EDITION_COVERAGE_INSUFFICIENT", "edition_mismatch"))
+
+    missing_evidence.extend(_coverage_gaps(plan, candidates, explicit_facets))
 
     # If a validated semantic assessment payload is provided, strictly verify before considering 'supported'.
     if assessment_result is not None and source_review_refs and assessment_profile_sha256:
         out_of_scope = assessment_result.get("out_of_scope") or {}
-        if out_of_scope.get("is_non_cae") is True and out_of_scope.get("original_spans"):
-            status = "out_of_scope"
-            missing_evidence.append("NON_CAE_REQUEST")
-            limitations.append(str(out_of_scope.get("reason") or "비CAE 질의로 판정됨"))
+        if out_of_scope.get("is_non_cae") is True:
+            # A provider's span alone cannot establish a non-CAE intent.
+            spans = out_of_scope.get("original_spans")
+            valid_spans = isinstance(spans, list) and bool(spans) and all(
+                isinstance(span, Mapping) and type(span.get("start")) is int and type(span.get("end")) is int
+                and 0 <= span["start"] < span["end"] <= len(plan.original_text) for span in spans
+            )
+            status = "insufficient"
+            missing_evidence.append("NON_CAE_INTENT_UNVERIFIED" if valid_spans else "INVALID_ASSESSMENT_SPAN")
         else:
             raw_checks = assessment_result.get("checks") or []
             by_req = {c.get("requirement_id"): c for c in raw_checks if isinstance(c, dict)}

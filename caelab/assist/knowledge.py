@@ -56,6 +56,8 @@ class KnowledgeEntry:
     source_id: str = SOURCE_ID
     solver: str = ""
     corpus_chunk: CorpusChunkSpec | None = None
+    source_kind: str = "theory_note"
+    review_status: str = "unreviewed"
 
     @property
     def solver_scope(self) -> tuple[str, ...]:
@@ -73,6 +75,7 @@ class KnowledgeSearchResult:
     query_plan: QueryPlan | None = field(default=None, compare=False)
     corpus_revision: str | None = field(default=None, compare=False)
     mismatched_candidates: tuple[CorpusChunkSpec, ...] = field(default=(), compare=False)
+    index_digest: str | None = field(default=None, compare=False)
 
 
 # Canonical solver names and the spellings that identify them in
@@ -328,6 +331,8 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
         source_id=chunk.source_id,
         solver=chunk.solver,
         corpus_chunk=chunk.corpus_chunk,
+        source_kind=chunk.source_kind,
+        review_status=chunk.review_status,
     )
 
 
@@ -369,7 +374,8 @@ def search_knowledge_result(query: str, limit: int = 3,
     return KnowledgeSearchResult(
         "ok" if chunks else "no_material", [_to_entry(c) for c in chunks], resolved,
         query_plan=plan, corpus_revision=index.corpus_revision,
-        mismatched_candidates=tuple(mismatched_corpus_candidates(index, resolved, edition)) if not chunks else (),
+        mismatched_candidates=tuple(mismatched_corpus_candidates(index, plan, resolved, edition)) if not chunks else (),
+        index_digest=index.index_digest,
     )
 
 

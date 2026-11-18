@@ -9,11 +9,13 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import sys
+import time
 import uuid
 
 import numpy as np
 import pytest
 
+from caelab.artifact_refs import ArtifactRefV1, NumericResultV1, ProducerIdentity, ResultRefV1, canonical_sha256
 from caelab.assist import experts
 from caelab.connections import PROGRAMS, ProgramStatus, _status
 from caelab.jobs import BatchRun, LaunchRecord
@@ -66,7 +68,8 @@ class _E2EBoundaryJobs:
         components = [(k, 4, i // 3 + 1, i % 3 + 1, 0) for i, k in enumerate(("SXX", "SYY", "SZZ", "SXY", "SYZ", "SZX"))]
         text = _geometry()
         for inc_idx, factor in ((1, 0.5), (2, 1.0)):
-            text += _field([(n, [x * factor, 0, 0]) for n in (40, 10, 90, 25)], value=factor, increment=inc_idx)
+            displacement = [(n, [x * factor * (1.23456 if n == 90 else 1.0), 0, 0]) for n in (40, 10, 90, 25)]
+            text += _field(displacement, value=factor, increment=inc_idx)
             text += _field(
                 [(n, [10 * x * factor, 0, 0, 0, 0, 0]) for n in (40, 10, 90, 25)],
                 name="STRESS",
@@ -228,6 +231,8 @@ def _build_freecad_prepomax_calculix_project(tmp_path: Path):
         "*INCLUDE,INPUT=material.inc\n"
         "*BEAM SECTION,SECTION=RECT\n"
         "2.0, 2.0\n"
+        "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n"
+        "*ELEMENT,TYPE=C3D4\n1,1,2,3,4\n"
         "*STEP\n*STATIC\n*END STEP\n",
         encoding="utf-8",
     )
@@ -243,6 +248,50 @@ def _build_freecad_prepomax_calculix_project(tmp_path: Path):
     wb.connect_nodes(project, solver.id, pv.id)
     wb.connect_nodes(project, solver.id, pre_res.id)
     return wb, jobs, project, cad, pre, solver, pv, pre_res, dict(fcstd=fcstd, step=step, pmx=pmx, inc=inc, inp=inp)
+
+
+def _read_numeric_displacement(wb, run, node_id):
+    """Read exact receipt-backed VTU values through the same reader as Native Analysis."""
+    from apps.workbench_qt.native_result_view import _read_grid
+
+    producer = ProducerIdentity("caelab.native.results", "1")
+    receipt_bytes = (run.workdir / "job.json").read_bytes()
+    receipt = ArtifactRefV1(
+        id=run.id, role="native_receipt", path="job.json",
+        sha256=hashlib.sha256(receipt_bytes).hexdigest(), size=len(receipt_bytes),
+        format_id="native-run-json-v1", producer=producer,
+    )
+    frames = [wb.read_native_frame(run, index) for index in (0, 1)]
+    values = []
+    artifacts = []
+    for frame in frames:
+        grid = _read_grid(frame)
+        data = grid.GetPointData()
+        nodes = data.GetArray("NativeNodeId")
+        row, = [i for i in range(nodes.GetNumberOfTuples()) if nodes.GetValue(i) == node_id]
+        disp = data.GetArray("DISP")
+        component, = [i for i in range(disp.GetNumberOfComponents()) if disp.GetComponentName(i) == "D1"]
+        values.append(disp.GetComponent(row, component))
+        artifacts.append(ArtifactRefV1(
+            id=f"frame:{frame.frame['index']}", role="native_frame",
+            path=frame.path.relative_to(run.workdir).as_posix(), sha256=frame.sha256,
+            size=len(frame.payload), format_id="vtu", producer=producer,
+        ))
+    operator = {"id": "node_displacement_component", "parameters": {"node_id": node_id, "component": "D1"}}
+    ref = ResultRefV1(
+        source_run_id=run.id, source_node_id=run.node_id, source_receipt_sha256=receipt.sha256,
+        source_receipt_ref=receipt, operation_id=operator["id"], operation_manifest_sha256=canonical_sha256(operator),
+        dataset_id=run.id, dataset_manifest_sha256=canonical_sha256(run.result), source_artifacts=tuple(artifacts),
+        frame_id=None, field_id="DISP", component="D1", selection={"node_ids": [node_id]},
+        location={"association": "point"}, basis={"coordinate_system": "global"}, measure="displacement",
+        shear_convention="not_applicable", units={"length": frames[0].units["length"]},
+        geometry_state="reference", operator=operator, coverage={"frames": 2}, eligibility={"source": "recorded"},
+    )
+    return NumericResultV1(
+        ref=ref, values=tuple(values), values_ref=None,
+        sample_coordinates=tuple(frame.frame["value"] for frame in frames),
+        counts={"total": len(values), "valid": len(values)}, status="ok", operator_provenance=operator,
+    )
 
 
 def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, monkeypatch):
@@ -269,6 +318,12 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
         assert run.parse_state in {"readable", "partial"}
         assert Path(run.workdir, "results", "results.pvd").is_file()
         assert list(Path(run.workdir, "results").glob("*.vtu"))
+        numeric = _read_numeric_displacement(wb, run, node_id=90)
+        assert numeric.values == pytest.approx((1.23456, 2.46912))
+        assert numeric.sample_coordinates == pytest.approx((0.5, 1.0))
+        assert numeric.ref.units["length"] == "mm"
+        assert numeric.ref.source_run_id == run.id
+        assert NumericResultV1.from_dict(numeric.to_dict()) == numeric
 
         # Results launchers hand off .pvd to ParaView and .frd to PrePoMax
         wb.open_native_results(project, pv.id)
@@ -305,9 +360,15 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
         wb.close()
 
 
-def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path):
+def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkeypatch):
     """Invalidate old exports and receipts on STEP, PMX and INP edits, then reopen a fresh export/run."""
+    from PySide6.QtWidgets import QApplication
+    from apps.workbench_qt.native_analysis import NativeAnalysisWindow
+
+    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "native.ini"))
+    app = QApplication.instance() or QApplication([])
     wb, _jobs, project, cad, pre, solver, pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
+    auxiliary = None
     try:
         saved = wb.save_native_project(project, tmp_path / "stale_proj.json")
         initial_run = wb.submit_native(project, solver.id)
@@ -327,6 +388,9 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path):
 
         middle_run = wb.submit_native(project, solver.id)
         assert not wb.selected_native_run(project, solver.id).stale
+        auxiliary = NativeAnalysisWindow(saved, solver.id, Workbench())
+        auxiliary.timer.stop()
+        assert auxiliary.run_selector.currentData() == middle_run.id
         updated_bytes = initial_bytes.replace(b"2.0, 2.0", b"2.5, 2.0")
         assert updated_bytes != initial_bytes
         files["inp"].write_bytes(updated_bytes)
@@ -348,6 +412,16 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path):
             (refreshed.workdir / "results" / "results.pvd").resolve()
         )
         wb.save_native_project(project)
+        auxiliary.refresh_runs()
+        assert auxiliary.run_selector.currentData() == refreshed.id
+        assert auxiliary.run_selector.findData(middle_run.id) >= 0
+        assert auxiliary.close()
+        auxiliary = NativeAnalysisWindow(saved, solver.id, Workbench())
+        auxiliary.timer.stop()
+        assert auxiliary.run_selector.currentData() == refreshed.id
+        assert {auxiliary.run_selector.itemData(i) for i in range(auxiliary.run_selector.count())} == {
+            initial_run.id, middle_run.id, refreshed.id,
+        }
 
         reopened_wb = Workbench()
         try:
@@ -363,12 +437,23 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path):
         finally:
             reopened_wb.close()
     finally:
+        if auxiliary is not None:
+            auxiliary.close()
+        app.processEvents()
         wb.close()
 
 
-def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path):
+def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path, monkeypatch):
     """Exercise scalar CalculiX MDO using synthetic receipts, plus independent study and project copies."""
-    wb, _jobs, project, _cad, _pre, solver, _pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
+
+    monkeypatch.setenv("CAELAB_MDO_SETTINGS_PATH", str(tmp_path / "mdo.ini"))
+    app = QApplication.instance() or QApplication([])
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(_args[-1]))
+    wb, jobs, project, _cad, _pre, solver, _pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
+    studio = None
     try:
         wb.save_native_project(project, tmp_path / "mdo_proj.json")
         service = wb.create_mdo_study(project=project, node_id=solver.id)
@@ -393,6 +478,17 @@ def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path):
             {"disp": "mm", "mass_eall": "kg", "stress": "MPa"},
         )
         rows = [service._add_point({"WIDTH": val}) for val in np.linspace(1.2, 3.2, 10)]
+        # A literal connectivity change in the root deck is rejected by evaluation before dispatch.
+        original_deck = files["inp"].read_bytes()
+        launched = jobs.batch_count
+        files["inp"].write_bytes(original_deck.replace(b"1,1,2,3,4", b"1,1,2,4,3"))
+        assert files["inp"].read_bytes() != original_deck
+        try:
+            with pytest.raises(ValueError, match="Native root/INCLUDE changed"):
+                service.submit([rows[0].point_id])
+            assert jobs.batch_count == launched and rows[0].status == "PENDING"
+        finally:
+            files["inp"].write_bytes(original_deck)
         service.submit([r.point_id for r in rows])
         assert all(r.status == "COMPLETED" for r in rows)
 
@@ -440,8 +536,34 @@ def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path):
         assert str((tmp_path / "copied_project").resolve()) in reopened_study_ref.path
         reopened_mdo = wb.open_mdo_study(reopened_study_ref.path, project=reopened_proj, node_id=solver.id)
         assert reopened_mdo.is_verified(actual_clone.point_id)
-        reopened_mdo.close()
+        studio = MDOStudioWindow(service=reopened_mdo)
+        previous = studio.service.current_rerun_id
+        historical_runs = [attempt["run_id"] for attempt in studio.service.point_details(actual_clone.point_id).attempts]
+        assert historical_runs and previous
+        studio.select_point(actual_clone.point_id)
+        studio._rerun_current()
+        deadline = time.monotonic() + 10
+        while studio._busy and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        assert not studio._busy and not warnings
+        latest = studio.service.current_rerun_id
+        assert latest != previous
+        result = studio.service.result_file(current=True)
+        assert result.is_file()
+        assert [attempt["run_id"] for attempt in studio.service.point_details(actual_clone.point_id).attempts] == historical_runs
+        studio.service.view_state = studio._view_state()
+        studio.service.save()
+        assert studio.close()
+        studio = MDOStudioWindow(study_path=reopened_study_ref.path)
+        assert studio.service.current_rerun_id == latest
+        assert studio.service.result_file(current=True) == result
+        assert actual_clone.point_id in studio._selected_ids
+        assert [attempt["run_id"] for attempt in studio.service.point_details(actual_clone.point_id).attempts] == historical_runs
     finally:
+        if studio is not None:
+            studio.close()
+        app.processEvents()
         wb.close()
 
 

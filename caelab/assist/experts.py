@@ -307,9 +307,9 @@ class Discussion:
     evidence_sources: list = field(default_factory=list, init=False)
 
     def _is_theory_mode(self) -> bool:
-        if self.question_scope == "theory":
-            return True
-        return self.template.id == "theory"
+        if self.question_scope == "case_analysis" and self.template.id == "theory":
+            raise ValueError("theory role cannot be used with case_analysis request_scope")
+        return self.question_scope == "theory"
 
     def build_prompt(self, question: str) -> str:
         self.knowledge_ids = []  # citations are checked against this request only
@@ -356,11 +356,21 @@ class Discussion:
             if entries:
                 self.evidence_sources.append("knowledge")
                 knowledge_shown = True
-                parts += ["", "[근거 — 솔버 매뉴얼 지식 팩]"]
+                parts += ["", "[근거 — 문헌 지식 팩]"]
+                source_labels = {
+                    "solver_manual": "솔버 매뉴얼", "official_manual": "공식 매뉴얼",
+                    "official_source": "공식 소스 코드", "source_code": "소스 코드",
+                    "verification_case": "검증 사례", "theory_note": "이론 노트",
+                    "reviewed_note": "검토 노트", "paper": "논문", "user_document": "사용자 문서",
+                }
                 for entry in entries:
                     cid = citation_id(entry)
                     self.knowledge_ids.append(cid)
-                    parts.append(json.dumps({"citation": cid, "topic": entry.topic, "text": entry.text}, ensure_ascii=False))
+                    parts.append(json.dumps({
+                        "citation": cid, "source_kind": entry.source_kind,
+                        "source_type": source_labels.get(entry.source_kind, entry.source_kind),
+                        "review_status": entry.review_status, "topic": entry.topic, "text": entry.text,
+                    }, ensure_ascii=False))
             elif self.knowledge_result.status == "error":
                 parts += ["", "[지식 검색 오류 — 매뉴얼 근거를 가져오지 못함]",
                           self.knowledge_result.error or "검색 원인 미확인"]
@@ -434,12 +444,12 @@ class Discussion:
         unverified_citations} — an unavailable provider is a state,
         not an exception. Citations are checked against the knowledge
         entries this discussion actually showed the expert."""
+        theory_mode = self._is_theory_mode()
         ok, reason = self.provider.availability()
         if not ok:
             return {"available": False, "reply": reason, "proposals": [],
                     "unverified_citations": []}
         reply = self.provider.discuss(self.build_prompt(question))
-        theory_mode = self._is_theory_mode()
         proposals = [] if theory_mode else parse_proposals(reply)
         unverified = verify_citations(reply, self.knowledge_ids)
         self.history.append({"question": question, "reply": reply, "status": "completed",

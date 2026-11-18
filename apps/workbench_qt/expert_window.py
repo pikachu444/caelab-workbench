@@ -386,11 +386,14 @@ class ExpertWindow(QMainWindow):
         threading.Thread(target=worker, daemon=True).start()
 
     def _asset_state(self):
+        keys = ('request_context_ref', 'request_artifact_ref', 'request_artifact_sha256',
+                'tool_trace_ref', 'retrieval_trace_ref')
         request_refs = [
-            (turn.get('id'), turn.get('request_context_ref'), turn.get('tool_trace_ref'))
+            (turn.get('id'), *(turn.get(key) for key in keys))
             for turn in self.document.get('turns', [])
-            if turn.get('request_context_ref') is not None or turn.get('tool_trace_ref') is not None
-            or (turn.get('status') == 'completed' and turn.get('question_scope') == 'theory')
+            if any(turn.get(key) is not None for key in keys)
+            or (turn.get('status') == 'completed'
+                and (turn.get('question_scope') == 'theory' or turn.get('schema_version') == 2))
         ]
         return self.document.get('evidences'), self.document.get('proposals'), request_refs
 
@@ -454,11 +457,15 @@ class ExpertWindow(QMainWindow):
 
     def _remove_native_analysis_framing(self):
         draft_context = self.document.get('draft_context') or {}
-        draft_context.pop('native_analysis_framing', None)
-        framing, self._native_analysis_framing = self._native_analysis_framing, None
-        if framing and framing in self.question.toPlainText():
-            draft = self.question.toPlainText().replace(framing, '', 1).strip()
+        saved_framing = draft_context.pop('native_analysis_framing', None)
+        framing = self._native_analysis_framing or saved_framing
+        self._native_analysis_framing = None
+        if isinstance(framing, str) and framing:
+            text = self.question.toPlainText()
+            draft = text.replace(framing, '', 1).strip() if framing in text else ''
             self.question.setPlainText(draft)
+            if self.path:
+                self.document['draft_question'] = draft
             self._notice('계산 결과와 로그가 담긴 자동 초안을 제외했습니다. 이론 질문을 입력하세요.')
 
     def _on_scope_changed(self, _index=None):
@@ -1011,8 +1018,6 @@ class ExpertWindow(QMainWindow):
     def import_files(self):
         if not self._allow_attachment():
             return
-        if not self._ensure_document() or not self.save_document():
-            return
         names, _ = QFileDialog.getOpenFileNames(self, '입력, 결과, 로그 선택', '',
                                                '해석 자료 (*.inp *.frd *.dat *.log *.txt);;모든 파일 (*)')
         if not names:
@@ -1046,6 +1051,8 @@ class ExpertWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         form.addRow(buttons)
         if dialog.exec() == QDialog.Accepted:
+            if not self._ensure_document() or not self.save_document():
+                return
             solver_id = solver.currentData()
             units = {key: field.text().strip() for key, field in unit_fields.items() if field.text().strip()}
             assets = self.assets
@@ -1055,8 +1062,6 @@ class ExpertWindow(QMainWindow):
 
     def capture_run(self, _checked=False):
         if not self._allow_attachment():
-            return
-        if not self._ensure_document() or not self.save_document():
             return
         try:
             project = self.workbench.open_native_project(self.project_path)
@@ -1180,6 +1185,8 @@ class ExpertWindow(QMainWindow):
             run, frame_index = runs.currentData(), frames.currentData()
             if run is None or isinstance(frame_index, tuple):
                 return
+            if not self._ensure_document() or not self.save_document():
+                return
             assets = self.assets
             workbench = self.workbench
             self._start('attach', lambda: workbench.capture_expert_run(run, assets, frame_index=frame_index))
@@ -1291,7 +1298,8 @@ class ExpertWindow(QMainWindow):
                     problems = self._asset_issues
                     request_issues = [
                         issue for issue in problems
-                        if 'request_context_ref' in issue or 'tool_trace_ref' in issue
+                        if any(key in issue for key in ('request_context_ref', 'request_artifact_ref',
+                                                       'tool_trace_ref', 'retrieval_trace_ref'))
                     ] if ok else []
                     self.asset_warning.setToolTip('\n'.join(request_issues))
                     if not ok:

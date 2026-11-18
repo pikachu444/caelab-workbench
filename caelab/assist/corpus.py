@@ -24,6 +24,7 @@ from ..artifact_refs import (
 )
 from . import rag
 from .contracts import (
+    CORPUS_LEXICAL_PROFILE_ID,
     CORPUS_PROFILE_ID,
     CorpusChunkSpec,
     CorpusManifest,
@@ -160,7 +161,7 @@ def load_review_overlay(overlay_path: str | Path, manifest: CorpusManifest) -> d
             raise ValueError(f"Duplicate review overlay source: {sid!r}")
         seen_reviews.add(sid)
         status = rev.get("status", "unreviewed")
-        if status not in ("approved", "partial", "rejected", "unreviewed"):
+        if status not in ("approved", "partial", "rejected", "unreviewed", "review_required"):
             raise ValueError(f"reviews[{idx}].status is invalid: {status!r}")
         validated_reviews.append(dict(rev, status=status))
 
@@ -548,6 +549,7 @@ def build_corpus(
     output_root: str | Path,
     review_overlay_path: str | Path | None = None,
     verify_only: bool = False,
+    with_vectors: bool = True,
     check_cancelled: Callable[[], None] | None = None,
 ) -> CorpusReceipt:
     """Validate sources & reviews and atomically build/verify a cae-small-bm25-hash-v1 corpus index."""
@@ -583,6 +585,8 @@ def build_corpus(
             source_statuses[src.source_id] = "rejected"
             warnings.append(f"source_rejected:{src.source_id}")
             continue
+        if src.extraction_quality == "failed":
+            raise ValueError(f"SOURCE_EXTRACTION_FAILED: {src.source_id}")
         raw = _verify_source_bytes(src, source_root, embedded_sources.get(src.source_id))
         if raw is None:
             source_statuses[src.source_id] = "source_unavailable"
@@ -604,50 +608,40 @@ def build_corpus(
         source_statuses[src.source_id] = review_status
         if review_status != "approved":
             warnings.append(f"source_review_{review_status}:{src.source_id}")
+        if src.extraction_quality not in {"verified", "complete"}:
+            warnings.append(f"source_extraction_{src.extraction_quality}:{src.source_id}")
 
     embedder = rag.HashingEmbedder()
     reranker = rag.LexicalReranker()
 
-    if verify_only:
-        return CorpusReceipt(
-            corpus_id=manifest.corpus_id,
-            revision=manifest.revision,
-            manifest_sha256=manifest_sha,
-            verify_only=True,
-            status="verified",
-            profile_id=CORPUS_PROFILE_ID,
-            embedder_id=embedder.id,
-            reranker_id=reranker.id,
-            chunk_count=len(chunks),
-            source_count=len(manifest.sources),
-            index_digest=None,
-            index_dir=None,
-            current_pointer_path=None,
-            source_statuses=source_statuses,
-            warnings=tuple(warnings),
-        )
-
-    _check_cancel(check_cancelled)
-    # Build embeddings with cae-small-bm25-hash-v1 (hashing512 float32).
-    if chunks:
-        embed_inputs = [f"{' > '.join(c.section_path)}\n{c.text[:rag.EMBED_TEXT_CHARS]}" for c in chunks]
-        vectors = _validate_vectors(embedder.embed(embed_inputs), len(chunks))
-    else:
-        vectors = np.zeros((0, rag.HashingEmbedder.DIM), dtype=np.float32)
+    profile_id = CORPUS_PROFILE_ID if with_vectors else CORPUS_LEXICAL_PROFILE_ID
+    embedder_id = embedder.id if with_vectors else "none"
+    vectors_bytes = None
+    if with_vectors:
+        _check_cancel(check_cancelled)
+        if chunks:
+            embed_inputs = [f"{' > '.join(c.section_path)}\n{c.text[:rag.EMBED_TEXT_CHARS]}" for c in chunks]
+            vectors = _validate_vectors(embedder.embed(embed_inputs), len(chunks))
+        else:
+            vectors = np.zeros((0, rag.HashingEmbedder.DIM), dtype=np.float32)
+        vec_buf = io.BytesIO()
+        npy_format.write_array(vec_buf, vectors, version=(2, 0), allow_pickle=False)
+        vectors_bytes = vec_buf.getvalue()
 
     source_by_id = {src.source_id: src for src in manifest.sources}
     chunks_payload = {
         "schema_version": 1,
-        "profile_id": CORPUS_PROFILE_ID,
+        "profile_id": profile_id,
         "corpus_id": manifest.corpus_id,
         "corpus_revision": manifest.revision,
         "manifest_sha256": manifest_sha,
-        "embedder_id": embedder.id,
+        "embedder_id": embedder_id,
         "reranker_id": reranker.id,
         "bm25": {"k1": 1.5, "b": 0.75},
         "rrf_k": rag.RRF_K,
-        "vector_dim": rag.HashingEmbedder.DIM,
-        "vector_dtype": "float32",
+        "vector_dim": rag.HashingEmbedder.DIM if with_vectors else None,
+        "vector_dtype": "float32" if with_vectors else None,
+        "source_statuses": source_statuses,
         "chunks": [
             {
                 **chunk.to_dict(),
@@ -660,18 +654,17 @@ def build_corpus(
         ],
     }
 
-    vec_buf = io.BytesIO()
-    npy_format.write_array(vec_buf, vectors, version=(2, 0), allow_pickle=False)
-    vectors_bytes = vec_buf.getvalue()
     chunks_bytes = canonical_json_bytes(chunks_payload)
     reviews_bytes = canonical_json_bytes(overlay_data) if overlay_data is not None else None
 
     files_to_stage: dict[str, bytes] = {
         "manifest.json": manifest_bytes,
         "chunks.json": chunks_bytes,
-        "vectors.npy": vectors_bytes,
         **notices_to_stage,
     }
+    if vectors_bytes is not None:
+        files_to_stage["vectors.npy"] = vectors_bytes
+        files_to_stage["vector_meta.json"] = canonical_json_bytes(_vector_metadata(vectors_bytes, len(chunks)))
     if reviews_bytes is not None:
         files_to_stage["reviews.json"] = reviews_bytes
     for src in manifest.sources:
@@ -681,22 +674,35 @@ def build_corpus(
         if src.license["redistribution"] in _REDISTRIBUTABLE_VALUES and src.local_relative_path:
             files_to_stage[f"sources/{src.local_relative_path}"] = raw
 
-    index_digest = _index_digest(manifest, files_to_stage)
+    index_digest = _index_digest(manifest, files_to_stage, profile_id)
+
+    if verify_only:
+        with tempfile.TemporaryDirectory(prefix="caelab-corpus-verify-") as directory:
+            tmp_dir = Path(directory)
+            _stage_files(tmp_dir, files_to_stage, check_cancelled)
+            staged = _dir_snapshot(tmp_dir)
+            if _index_digest(manifest, staged, profile_id) != index_digest:
+                raise ValueError("STAGED_HASH_MISMATCH: corpus index")
+            _load_vectors(staged, tmp_dir, len(chunks), with_vectors)
+        return CorpusReceipt(
+            corpus_id=manifest.corpus_id, revision=manifest.revision, manifest_sha256=manifest_sha,
+            verify_only=True, status="verified_with_limitations" if warnings else "verified",
+            profile_id=profile_id, embedder_id=embedder_id, reranker_id=reranker.id,
+            chunk_count=len(chunks), source_count=len(manifest.sources), source_statuses=source_statuses,
+            warnings=tuple(warnings),
+        )
 
     indexes_dir = out_root / "indexes"
     indexes_dir.mkdir(parents=True, exist_ok=True)
     target_dir = indexes_dir / index_digest
     tmp_dir = Path(tempfile.mkdtemp(prefix=".tmp-corpus-", dir=indexes_dir))
     try:
-        for rel, payload in files_to_stage.items():
-            _check_cancel(check_cancelled)
-            rel_ok = validate_relative_artifact_path(rel, root=tmp_dir)
-            dest = tmp_dir / PurePosixPath(rel_ok)
-            _write_bytes_fsync(dest, payload)
-
-        _check_cancel(check_cancelled)
-        if _index_digest(manifest, _dir_snapshot(tmp_dir)) != index_digest:
+        _stage_files(tmp_dir, files_to_stage, check_cancelled)
+        staged = _dir_snapshot(tmp_dir)
+        if _index_digest(manifest, staged, profile_id) != index_digest:
             raise ValueError("STAGED_HASH_MISMATCH: corpus index")
+        _load_vectors(staged, tmp_dir, len(chunks), with_vectors)
+        _check_cancel(check_cancelled)
         status_out = "built"
         if target_dir.exists():
             if not target_dir.is_dir():
@@ -723,8 +729,8 @@ def build_corpus(
             "index_digest": index_digest,
             "index_relative_path": f"indexes/{index_digest}",
             "manifest_sha256": manifest_sha,
-            "profile_id": CORPUS_PROFILE_ID,
-            "embedder_id": embedder.id,
+            "profile_id": profile_id,
+            "embedder_id": embedder_id,
             "reranker_id": reranker.id,
             "chunk_count": len(chunks),
         }
@@ -740,8 +746,8 @@ def build_corpus(
         manifest_sha256=manifest_sha,
         verify_only=False,
         status=status_out,
-        profile_id=CORPUS_PROFILE_ID,
-        embedder_id=embedder.id,
+        profile_id=profile_id,
+        embedder_id=embedder_id,
         reranker_id=reranker.id,
         chunk_count=len(chunks),
         source_count=len(manifest.sources),
@@ -753,11 +759,42 @@ def build_corpus(
     )
 
 
-def _index_digest(manifest, files):
+def _stage_files(directory, files, check_cancelled):
+    for relative, payload in files.items():
+        _check_cancel(check_cancelled)
+        path = directory / validate_relative_artifact_path(relative, root=directory)
+        _write_bytes_fsync(path, payload)
+    _check_cancel(check_cancelled)
+
+
+def _vector_metadata(raw, chunk_count):
+    return {
+        "schema_version": 1, "embedder_id": rag.HashingEmbedder.id,
+        "shape": [chunk_count, rag.HashingEmbedder.DIM], "dtype": "float32",
+        "sha256": _sha256_bytes(raw),
+    }
+
+
+def _load_vectors(files, index_dir, chunk_count, with_vectors):
+    if not with_vectors:
+        if "vectors.npy" in files or "vector_meta.json" in files:
+            raise ValueError("Lexical-only index must not contain vector files")
+        return None
+    for name in ("vectors.npy", "vector_meta.json"):
+        if name not in files:
+            raise FileNotFoundError(f"Corpus {name} missing: {index_dir}")
+    raw = files["vectors.npy"]
+    vector_meta = _strict_json(files["vector_meta.json"], index_dir / "vector_meta.json")
+    if vector_meta != _vector_metadata(raw, chunk_count):
+        raise ValueError("VECTOR_METADATA_MISMATCH: vectors.npy")
+    return _validate_vectors(np.load(io.BytesIO(raw), allow_pickle=False), chunk_count)
+
+
+def _index_digest(manifest, files, profile_id=CORPUS_PROFILE_ID):
     return canonical_sha256({
         "corpus_id": manifest.corpus_id,
         "revision": manifest.revision,
-        "profile_id": CORPUS_PROFILE_ID,
+        "profile_id": profile_id,
         "files": {rel: _sha256_bytes(raw) for rel, raw in files.items()},
     })
 
@@ -769,7 +806,7 @@ def _chunk_solver_scope(chunk: CorpusChunkSpec) -> tuple[str, ...]:
     return scope
 
 
-def load_corpus_bundle(root_or_index_dir: str | Path) -> tuple[rag.HybridIndex, dict[str, Any]]:
+def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | None = None) -> tuple[rag.HybridIndex, dict[str, Any]]:
     """Verify every file from a single published index and load that same snapshot."""
     base = Path(root_or_index_dir).expanduser().resolve()
     index_dir = base
@@ -787,26 +824,37 @@ def load_corpus_bundle(root_or_index_dir: str | Path) -> tuple[rag.HybridIndex, 
         index_dir = base / validate_relative_artifact_path(pointer["index_relative_path"], root=base)
 
     files = _dir_snapshot(index_dir)
-    for filename in ("chunks.json", "manifest.json", "vectors.npy"):
+    for filename in ("chunks.json", "manifest.json"):
         if filename not in files:
             raise FileNotFoundError(f"Corpus {filename} missing: {index_dir}")
     manifest = CorpusManifest.from_dict(_strict_json(files["manifest.json"], index_dir / "manifest.json"))
-    digest = _index_digest(manifest, files)
-    if index_dir.name != digest or (pointer is not None and pointer["index_digest"] != digest):
-        raise ValueError("INDEX_DIGEST_MISMATCH: corpus index files differ from their published digest")
-
     meta = _strict_json(files["chunks.json"], index_dir / "chunks.json")
     if not isinstance(meta, dict) or type(meta.get("schema_version")) is not int or meta["schema_version"] != 1:
         raise ValueError("Invalid corpus chunks.json schema")
-    embedder_id = rag.HashingEmbedder().id
+    profile_id = meta.get("profile_id")
+    if profile_id not in (CORPUS_PROFILE_ID, CORPUS_LEXICAL_PROFILE_ID):
+        raise ValueError("Invalid corpus retrieval profile")
+    has_vectors = profile_id == CORPUS_PROFILE_ID
+    if with_vectors is not None and with_vectors != has_vectors:
+        raise ValueError("Corpus vector mode does not match the requested verification mode")
+    for filename in ("vectors.npy", "vector_meta.json") if has_vectors else ():
+        if filename not in files:
+            raise FileNotFoundError(f"Corpus {filename} missing: {index_dir}")
+    digest = _index_digest(manifest, files, profile_id)
+    if index_dir.name != digest or (pointer is not None and pointer["index_digest"] != digest):
+        raise ValueError("INDEX_DIGEST_MISMATCH: corpus index files differ from their published digest")
+
+    embedder_id = rag.HashingEmbedder.id if has_vectors else "none"
     reranker_id = rag.LexicalReranker().id
     manifest_sha = _sha256_bytes(files["manifest.json"])
     profile = {
-        "corpus_id": manifest.corpus_id, "profile_id": CORPUS_PROFILE_ID, "embedder_id": embedder_id,
+        "corpus_id": manifest.corpus_id, "profile_id": profile_id, "embedder_id": embedder_id,
         "reranker_id": reranker_id, "manifest_sha256": manifest_sha,
     }
     expected_meta = dict(profile, corpus_revision=manifest.revision, rrf_k=rag.RRF_K,
-                         bm25={"k1": 1.5, "b": 0.75}, vector_dim=rag.HashingEmbedder.DIM, vector_dtype="float32")
+                         bm25={"k1": 1.5, "b": 0.75},
+                         vector_dim=rag.HashingEmbedder.DIM if has_vectors else None,
+                         vector_dtype="float32" if has_vectors else None)
     if any(meta.get(key) != value for key, value in expected_meta.items()) or not isinstance(meta.get("chunks"), list):
         raise ValueError("Corpus chunks.json metadata does not match manifest or retrieval profile")
     if pointer is not None:
@@ -814,7 +862,10 @@ def load_corpus_bundle(root_or_index_dir: str | Path) -> tuple[rag.HybridIndex, 
         if any(pointer.get(key) != value for key, value in expected_pointer.items()):
             raise ValueError("Corpus pointer metadata does not match the verified index")
 
-    vectors = _validate_vectors(np.load(io.BytesIO(files["vectors.npy"]), allow_pickle=False), len(meta["chunks"]))
+    vectors = _load_vectors(files, index_dir, len(meta["chunks"]), has_vectors)
+    review_statuses = _verify_packaged_sources(manifest, files, index_dir)
+    if meta.get("source_statuses") != review_statuses:
+        raise ValueError("Source review metadata does not match the manifest and review overlay")
     sources = {source.source_id: source for source in manifest.sources}
     chunks = []
     citations = set()
@@ -827,16 +878,55 @@ def load_corpus_bundle(root_or_index_dir: str | Path) -> tuple[rag.HybridIndex, 
         source = sources.get(spec.source_id)
         if (source is None or spec.document_sha256 != source.sha256 or spec.edition != source.edition
                 or tuple(raw["solver_scope"]) != scope or not set(scope) <= set(source.solver_scope)
+                or raw.get("source_kind") != source.source_kind or raw.get("review_status") != review_statuses[spec.source_id]
+                or review_statuses[spec.source_id] in {"rejected", "source_unavailable"}
                 or spec.char_end - spec.char_start != len(spec.text) or spec.citation in citations):
             raise ValueError(f"Invalid corpus chunk provenance: {spec.citation}")
         citations.add(spec.citation)
         chunks.append(rag.Chunk(
             chunk_id=spec.chunk_id, source_id=spec.source_id, heading_path=spec.section_path, text=spec.text,
             solver=scope[0] if len(scope) == 1 else "", solver_scope=scope, corpus_chunk=spec,
+            source_kind=source.source_kind, review_status=review_statuses[spec.source_id],
         ))
     index = rag.HybridIndex(chunks=chunks, embedder_id=embedder_id, vectors=vectors,
                             corpus_revision=manifest.revision, index_digest=digest)
-    return index, dict(meta, index_digest=digest)
+    complete_reviews = all(
+        review_statuses[source.source_id] == "approved" and source.extraction_quality in {"verified", "complete"}
+        for source in manifest.sources
+    )
+    return index, dict(meta, index_digest=digest,
+                       verification_status="verified" if complete_reviews else "verified_with_limitations")
+
+
+def _verify_packaged_sources(manifest, files, index_dir):
+    sources = {source.source_id: source for source in manifest.sources}
+    reviews = {}
+    if "reviews.json" in files:
+        overlay = _strict_json(files["reviews.json"], index_dir / "reviews.json")
+        for review in overlay["reviews"]:
+            sid = review["source_id"]
+            if (sid not in sources or sid in reviews or review["document_sha256"] != sources[sid].sha256
+                    or review["status"] not in ("approved", "partial", "rejected", "unreviewed", "review_required")):
+                raise ValueError(f"Invalid packaged source review: {sid}")
+            reviews[sid] = review["status"]
+    statuses = {}
+    for sid, source in sources.items():
+        review_status = reviews.get(sid, source.review_status or "unreviewed")
+        if "rejected" in (review_status, source.review_status):
+            statuses[sid] = "rejected"
+            continue
+        if source.local_relative_path is None and source.extraction_quality == "source_unavailable":
+            statuses[sid] = "source_unavailable"
+            continue
+        if source.extraction_quality == "failed":
+            raise ValueError(f"SOURCE_EXTRACTION_FAILED: {sid}")
+        if source.license["redistribution"] in _REDISTRIBUTABLE_VALUES:
+            relative = f"sources/{source.local_relative_path}"
+            if relative not in files:
+                raise ValueError(f"PACKAGED_SOURCE_MISSING: {sid}")
+            _verify_bytes(files[relative], sid, source.sha256, source.byte_length)
+        statuses[sid] = review_status
+    return statuses
 
 
 def search_hybrid_with_plan(
@@ -853,7 +943,7 @@ def search_hybrid_with_plan(
     """Run cae-small-bm25-hash-v1 multi-query top-20 BM25 + vector RRF(k=60) + lexical rerank."""
     if not index.chunks or classify_non_cae_intent(plan)[0]:
         return []
-    if index.embedder_id and embedder.id != index.embedder_id:
+    if index.vectors is not None and index.embedder_id and embedder.id != index.embedder_id:
         raise ValueError(
             f"Query embedder {embedder.id!r} does not match index embedder {index.embedder_id!r}"
         )
@@ -867,9 +957,10 @@ def search_hybrid_with_plan(
         ):
             raise ValueError("Hashing fallback index requires float32 512-dim vectors")
 
+    requirements = _search_scope(plan, solver, edition)
     pool = [
         i for i, chunk in enumerate(index.chunks)
-        if _matches_scope(chunk, solver, edition)
+        if _matches_scope(chunk, requirements)
     ]
     if not pool:
         return []
@@ -937,23 +1028,32 @@ def search_corpus(
     )
     matched_specs = [chunk.corpus_chunk for chunk in hits]
     # Keep mismatches in the decision only, where their source tags explain the empty results.
-    decision_candidates = matched_specs or mismatched_corpus_candidates(index, target_solver, target_edition)
+    decision_candidates = matched_specs or mismatched_corpus_candidates(index, plan, target_solver, target_edition)
     decision = build_retrieval_decision(
         plan, decision_candidates, source_review_refs=source_review_refs, explicit_facets=facets or None,
     )
     return plan, matched_specs, decision
 
 
-def _matches_scope(chunk: rag.Chunk, solver: str | None, edition: str | None) -> bool:
-    return (
-        (solver in (None, "", "general") or chunk.matches_solver(solver))
-        and (not edition or chunk.corpus_chunk is None or editions_match(edition, chunk.corpus_chunk.edition))
-    )
+def _search_scope(plan, solver, edition):
+    return extract_query_requirements(plan, {"solver": solver, "edition": edition})
+
+
+def _matches_scope(chunk: rag.Chunk, requirements) -> bool:
+    for requirement in requirements:
+        if requirement.facet == "solver" and not chunk.matches_solver(requirement.expected):
+            return False
+        if requirement.facet == "edition" and (
+            chunk.corpus_chunk is None or not editions_match(requirement.expected, chunk.corpus_chunk.edition)
+        ):
+            return False
+    return True
 
 
 def mismatched_corpus_candidates(
-    index: rag.HybridIndex, solver: str | None, edition: str | None,
+    index: rag.HybridIndex, plan: QueryPlan, solver: str | None, edition: str | None,
 ) -> list[CorpusChunkSpec]:
-    if any(_matches_scope(chunk, solver, edition) for chunk in index.chunks):
+    requirements = _search_scope(plan, solver, edition)
+    if any(_matches_scope(chunk, requirements) for chunk in index.chunks):
         return []
     return [chunk.corpus_chunk for chunk in index.chunks if chunk.corpus_chunk is not None]

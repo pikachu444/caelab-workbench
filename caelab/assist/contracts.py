@@ -47,11 +47,15 @@ ROLE_POLICY_V1_ID = "cae-role-read-v1"
 ROLE_POLICY_V2_ID = "cae-role-read-v2"
 QUERY_POLICY_ID = "cae-query-ko-en-v1"
 CORPUS_PROFILE_ID = "cae-small-bm25-hash-v1"
+CORPUS_LEXICAL_PROFILE_ID = "cae-small-bm25-v1"
 
 QUERY_LANGUAGES = frozenset({"ko", "en", "mixed", "unsupported"})
 CORPUS_SOURCE_KINDS = frozenset(
     {
         "official_source",
+        "source_code",
+        "verification_case",
+        "theory_note",
         "paper",
         "solver_manual",
         "official_manual",
@@ -61,6 +65,9 @@ CORPUS_SOURCE_KINDS = frozenset(
 )
 _ENVELOPE_SOURCE_KIND_MAP: dict[str, str] = {
     "official_source": "official_source",
+    "source_code": "official_source",
+    "verification_case": "manual",
+    "theory_note": "manual",
     "paper": "paper",
     "solver_manual": "solver_manual",
     "official_manual": "solver_manual",
@@ -583,7 +590,7 @@ class CorpusSourceSpec:
                 f"CorpusSourceSpec.extraction_quality must be one of {sorted(_EXTRACTION_QUALITIES)}, got {self.extraction_quality!r}"
             )
 
-        if self.review_status not in (None, "approved", "partial", "rejected", "unreviewed"):
+        if self.review_status not in (None, "approved", "partial", "rejected", "unreviewed", "review_required"):
             raise ValueError(f"Invalid source review status: {self.review_status!r}")
 
     def to_dict(self) -> dict[str, Any]:
@@ -606,6 +613,13 @@ class CorpusSourceSpec:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CorpusSourceSpec:
+        if isinstance(data, Mapping) and "extraction_grade" in data:
+            data = dict(data)
+            grade = data.pop("extraction_grade")
+            grade = "failed" if grade == "fail" else grade
+            if "extraction_quality" in data and data["extraction_quality"] != grade:
+                raise ValueError("Conflicting corpus extraction_grade and extraction_quality")
+            data["extraction_quality"] = grade
         m = _require_exact_keys(
             data,
             {
@@ -879,7 +893,7 @@ class CorpusReceipt:
         _require_nonempty_str(self.revision, "CorpusReceipt.revision")
         _require_sha256(self.manifest_sha256, "CorpusReceipt.manifest_sha256")
         _require_bool(self.verify_only, "CorpusReceipt.verify_only")
-        if self.status not in {"verified", "built", "reused"}:
+        if self.status not in {"verified", "verified_with_limitations", "built", "reused"}:
             raise ValueError(f"Unsupported CorpusReceipt.status: {self.status!r}")
         _require_nonempty_str(self.profile_id, "CorpusReceipt.profile_id")
         _require_nonempty_str(self.embedder_id, "CorpusReceipt.embedder_id")
@@ -1114,6 +1128,8 @@ class RetrievalDecisionV1:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires source_review_refs")
             if self.assessment_profile_sha256 is None:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires assessment_profile_sha256")
+            if trace_ref is None or trace_ref.size <= 0 or not trace_ref.role.endswith("_trace"):
+                raise ValueError("RetrievalDecisionV1.status='supported' requires a valid assessment_trace_ref")
 
         object.__setattr__(self, "requirements", reqs)
         object.__setattr__(self, "candidate_checks", checks)

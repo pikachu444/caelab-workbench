@@ -54,6 +54,8 @@ class Chunk:
     solver: str = ""  # legacy single-solver index tag
     solver_scope: tuple[str, ...] = ()
     corpus_chunk: CorpusChunkSpec | None = None
+    source_kind: str = "theory_note"
+    review_status: str = "unreviewed"
 
     def matches_solver(self, solver: str) -> bool:
         scope = self.solver_scope or ((self.solver,) if self.solver else ())
@@ -220,7 +222,9 @@ def tokenize(text: str) -> list[str]:
     symbols (*NODE, C3D10); Korean words also yield bigrams so a
     question word matches inside a longer manual phrase."""
     tokens: list[str] = []
-    for raw in _TOKEN.findall((text or "").lower()):
+    text = re.sub(r"(\w+)['’]s\b", r"\1", (text or "").lower())
+    text = text.translate(str.maketrans(dict.fromkeys("‐‑‒–—―−", "-")))
+    for raw in _TOKEN.findall(text):
         tokens.append(raw)
         if re.fullmatch(r"[가-힣]+", raw) and len(raw) > 2:
             tokens.extend(raw[i: i + 2] for i in range(len(raw) - 1))
