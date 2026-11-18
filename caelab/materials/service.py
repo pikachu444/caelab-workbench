@@ -1076,7 +1076,7 @@ class CalibrationStudyService:
                 if other.split == "train" or other.split == fit.split:
                     continue
                 conflict = None
-                if fit.split == "train" and fit.replicate_group and fit.replicate_group == other.replicate_group:
+                if fit.replicate_group and fit.replicate_group == other.replicate_group:
                     conflict = "SHARED_REPLICATE_GROUP"
                 elif fit.source_ref.sha256 == other.source_ref.sha256 and source_rows(fit.experiment_id) & source_rows(other.experiment_id):
                     conflict = "OVERLAPPING_SOURCE_ROWS"
@@ -1476,6 +1476,7 @@ class CalibrationStudyService:
         selection: SelectionRecordV1,
         selection_procedure_sha256: str,
         holdout_experiments: Sequence[ExperimentSpec],
+        exposed_at: str,
     ) -> ArtifactRefV1:
         """Atomically persist holdout exposure event via fsync + os.replace BEFORE exposing holdout data (C4)."""
         event_id = uuid.uuid4().hex
@@ -1501,7 +1502,7 @@ class CalibrationStudyService:
                 }
                 for e in holdout_experiments
             ],
-            "exposed_at": utc_now(),
+            "exposed_at": exposed_at,
         }
         try:
             atomic_json(target, payload)
@@ -1526,6 +1527,7 @@ class CalibrationStudyService:
     def _verified_holdout_exposure(
         self, artifact: CalibrationEvaluationArtifact, entry: Mapping[str, Any],
         *, pending_refs: Sequence[Mapping[str, Any]] | None = None,
+        expected_exposed_at: str | None = None,
     ) -> tuple[dict[str, Any], SelectionRecordV1]:
         stage = "holdout_exposure"
         try:
@@ -1616,7 +1618,14 @@ class CalibrationStudyService:
                     or data.get("holdout_experiments") != expected
                 ):
                     raise ValueError("EXPOSURE_IDENTITY_MISMATCH")
-                datetime.fromisoformat(data["exposed_at"])
+                exposed_at = datetime.fromisoformat(data["exposed_at"])
+                if (
+                    exposed_at.tzinfo is None
+                    or exposed_at < datetime.fromisoformat(artifact.created_at)
+                    or exposed_at < datetime.fromisoformat(self._manifest["created_at"])
+                    or (expected_exposed_at is not None and data["exposed_at"] != expected_exposed_at)
+                ):
+                    raise ValueError("EXPOSURE_TIMESTAMP_MISMATCH")
                 return data, selection
             raise ValueError("EXPOSURE_RECORD_MISSING")
         except (KeyError, TypeError, ValueError) as exc:
@@ -1919,9 +1928,11 @@ class CalibrationStudyService:
             )
 
             exp_ref = None
+            exposed_at = None
             if artifact.holdout_exposed:
                 if selection_ref is None or frozen_selection is None:
                     raise MaterialStudyError("CORRUPT_ARTIFACT", "holdout_exposure", {"evaluation_id": eval_id})
+                exposed_at = utc_now()
                 exp_ref = self._record_holdout_exposure(
                     evaluation_id=eval_id,
                     content_revision=content_rev,
@@ -1931,6 +1942,7 @@ class CalibrationStudyService:
                     holdout_experiments=tuple(
                         exp for exp in holdout_exps if exp.experiment_id in artifact.executed_holdout_experiment_ids
                     ),
+                    exposed_at=exposed_at,
                 )
                 if not isinstance(exp_ref, ArtifactRefV1):
                     raise MaterialStudyError("CORRUPT_ARTIFACT", "holdout_exposure", {"evaluation_id": eval_id})
@@ -1963,7 +1975,7 @@ class CalibrationStudyService:
                 refs = new_manifest.setdefault("holdout_exposures", [])
                 refs.append(exp_ref.to_dict())
                 self._verified_holdout_exposure(
-                    artifact, new_manifest["evaluations"][eval_id], pending_refs=refs,
+                    artifact, new_manifest["evaluations"][eval_id], pending_refs=refs, expected_exposed_at=exposed_at,
                 )
             if artifact.state == "completed" and res_out.objective_eligible:
                 new_manifest["selected_evaluation_id"] = eval_id
@@ -2434,7 +2446,7 @@ class CalibrationStudyService:
                 or type(data["created_data_root"]) is not bool
                 or (data["created_data_root"] and root == manifest.parent)
                 or root == self._data_root and manifest != self._path
-                or data["state"] not in ("staging", "committing")
+                or data["state"] not in ("staging", "committing", "rollback_pending")
             ):
                 raise ValueError("COPY_JOURNAL_IDENTITY_MISMATCH")
             self._check_copy_root(root)
@@ -2624,28 +2636,92 @@ class CalibrationStudyService:
         journal_path.unlink(missing_ok=True)
         stage.rmdir()
 
-    def _remove_created_copy_root(self, journal: Mapping[str, Any], *, created_here: bool = False) -> None:
+    @staticmethod
+    def _copy_root_identity(root: Path) -> list[int]:
+        stat = root.stat()
+        return [stat.st_dev, stat.st_ino]
+
+    def _owns_copy_root(self, journal: Mapping[str, Any], root: Path) -> bool:
+        if self._owns_copy_directory(journal, root):
+            return True
+        marker = self._copy_owner_marker(journal, root)
+        # If marker creation failed, the rollback journal can still identify the directory created by mkdir.
+        identity = journal.get("created_root_identity")
+        return (journal["state"] == "rollback_pending" and not marker.exists() and not marker.is_symlink()
+                and bool(identity) and identity == self._copy_root_identity(root) and identity[1] != 0)
+
+    def _remove_created_copy_root(self, journal: Mapping[str, Any]) -> bool:
         dest, root, _ = _derive_study_paths(journal["destination_path"])
-        if not journal["created_data_root"] or dest.exists() or root == dest.parent or not root.is_dir():
-            return
+        if not journal["created_data_root"] or not root.exists():
+            return True
+        if dest.exists() or root == dest.parent or not root.is_dir():
+            return False
         self._check_copy_root(root)
         marker = self._copy_owner_marker(journal, root)
-        if not (created_here and not marker.exists()) and not self._owns_copy_directory(journal, root):
-            return
+        if not self._owns_copy_root(journal, root):
+            return False
+        marked = marker.is_file()
         # Remove only the transaction's empty dedicated root. A file from another owner
         # makes rmdir fail and leaves that owner’s data intact.
         if any(path.name not in ("study.lock", marker.name) for path in root.iterdir()):
-            return
+            return False
         lock_path = root / "study.lock"
-        if lock_path.exists():
-            try:
+        try:
+            if lock_path.exists():
                 with FileLock(lock_path, timeout=0, thread_local=False):
                     pass
-            except (Timeout, OSError):
-                return
-            lock_path.unlink(missing_ok=True)
-        marker.unlink(missing_ok=True)
-        root.rmdir()
+                lock_path.unlink(missing_ok=True)
+            marker.unlink(missing_ok=True)
+            root.rmdir()
+        except (Timeout, OSError):
+            if marked and root.is_dir() and not marker.exists():
+                _atomic_write_bytes(marker, self._copy_owner_digest(journal))
+            return False
+        return True
+
+    def _retry_copy_rollback(self, dest: Path, root: Path) -> None:
+        self._check_copy_root(root)
+        for journal_path in dest.parent.glob(".caemat-saveas-*/copy_journal.json"):
+            tx_id = journal_path.parent.name.removeprefix(".caemat-saveas-")
+            if len(tx_id) != 32 or any(ch not in "0123456789abcdef" for ch in tx_id):
+                continue
+            try:
+                journal = self._load_copy_journal(journal_path, tx_id)
+                if (
+                    journal["state"] != "rollback_pending" or not journal["created_data_root"]
+                    or journal["destination_path"] != str(dest) or journal["source_path"] != str(self._path)
+                    or not self._owns_copy_root(journal, root)
+                ):
+                    continue
+            except (KeyError, OSError, MaterialStudyError):
+                continue
+            lease = self._acquire_copy_lease(root, "save_as")
+            try:
+                self._discard_copy(journal_path, journal)
+            finally:
+                lease.release()
+            if self._remove_created_copy_root(journal):
+                self._clean_copy_stage(journal_path, journal)
+            return
+
+        # Earlier rollback could remove its stage while the destination lease was still held.
+        for marker in root.glob(".caemat-copy-*.owner"):
+            tx_id = marker.name.removeprefix(".caemat-copy-").removesuffix(".owner")
+            if len(tx_id) != 32 or any(ch not in "0123456789abcdef" for ch in tx_id):
+                continue
+            if marker.is_symlink() or (dest.parent / f".caemat-saveas-{tx_id}").exists():
+                continue
+            try:
+                record = json.loads(marker.read_bytes())
+                digest = record["manifest_sha256"]
+                if (
+                    record["transaction_id"] == tx_id and record["study_id"] == self.study_id
+                    and record["destination_path"] == str(dest) and isinstance(digest, str)
+                    and len(digest) == 64 and all(ch in "0123456789abcdef" for ch in digest)
+                ):
+                    self._remove_created_copy_root({**record, "created_data_root": True, "state": "rollback_pending"})
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
 
     def _clean_copy_markers(self, journal: Mapping[str, Any]) -> None:
         root = Path(journal["destination_data_root"])
@@ -2669,7 +2745,7 @@ class CalibrationStudyService:
                 "INVALID_PATH", "save_as",
                 {"reason": "CANNOT_SAVE_AS_INTO_SELF", "destination": str(dest_manifest)},
             )
-        if dest_manifest.exists() or (dest_data_root != dest_manifest.parent and dest_data_root.exists()):
+        if dest_manifest.exists():
             raise MaterialStudyError("DESTINATION_ALREADY_EXISTS", "save_as", {"destination": str(dest_manifest)})
 
         with self._state_lock:
@@ -2719,6 +2795,10 @@ class CalibrationStudyService:
                 })
 
         try:
+            if dest_data_root != dest_manifest.parent and dest_data_root.exists():
+                self._retry_copy_rollback(dest_manifest, dest_data_root)
+                if dest_data_root.exists():
+                    raise MaterialStudyError("DESTINATION_ALREADY_EXISTS", "save_as", {"destination": str(dest_manifest)})
             progress("started")
             progress("verifying_source")
             _check_no_symlinks_under(src_data_root)
@@ -2757,9 +2837,11 @@ class CalibrationStudyService:
             if dest_data_root != dest_manifest.parent:
                 dest_data_root.mkdir(exist_ok=False)
                 journal["created_data_root"] = True
+                journal["created_root_identity"] = self._copy_root_identity(dest_data_root)
                 _atomic_write_bytes(
                     self._copy_owner_marker(journal, dest_data_root), self._copy_owner_digest(journal),
                 )
+                atomic_json(journal_path, journal)
             dest_lease = self._acquire_copy_lease(dest_data_root, "save_as")
             journal["state"] = "committing"
             atomic_json(journal_path, journal)
@@ -2800,14 +2882,15 @@ class CalibrationStudyService:
             )
         except Exception:
             if not committed and stage_created:
+                if journal["created_data_root"]:
+                    journal["state"] = "rollback_pending"
+                    atomic_json(journal_path, journal)
                 if dest_lease is not None:
                     self._discard_copy(journal_path, journal)
                     dest_lease.release()
                     dest_lease = None
-                    self._remove_created_copy_root(journal)
-                else:
-                    self._remove_created_copy_root(journal, created_here=True)
-                self._clean_copy_stage(journal_path, journal)
+                if self._remove_created_copy_root(journal):
+                    self._clean_copy_stage(journal_path, journal)
             raise
         finally:
             if dest_lease is not None:
@@ -3080,15 +3163,22 @@ class CalibrationStudyService:
                 if action == "finish_save_as":
                     self._publish_copy(journal_path, journal)
                 else:
+                    if journal["created_data_root"] and not dest.exists():
+                        journal["state"] = "rollback_pending"
+                        atomic_json(journal_path, journal)
                     self._discard_copy(journal_path, journal)
                 if dest.is_file():
                     self._clean_copy_markers(journal)
-                self._clean_copy_stage(journal_path, journal)
+                    self._clean_copy_stage(journal_path, journal)
             finally:
                 if lease is not None:
                     lease.release()
-            if action == "discard_incomplete_copy":
-                self._remove_created_copy_root(journal)
+            if action == "discard_incomplete_copy" and journal_path.is_file():
+                if not self._remove_created_copy_root(journal):
+                    raise MaterialStudyError(
+                        "DESTINATION_ALREADY_EXISTS", "recover", {"reason": "ROLLBACK_PENDING", "path": str(root)},
+                    )
+                self._clean_copy_stage(journal_path, journal)
             return RecoveryReceipt(
                 transaction_id=transaction_id,
                 action=action,

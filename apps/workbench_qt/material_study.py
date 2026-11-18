@@ -1813,8 +1813,10 @@ class MaterialStudyWindow(QMainWindow):
                 return
         if event.inaxes not in (self.ax_curve, self.ax_resid):
             return
+        selected_rows = self.channel_summary_table.selectionModel().selectedRows()
+        selected_id = selected_rows[0].data(Qt.ItemDataRole.UserRole) if selected_rows else None
         hit = None
-        best_distance = math.inf
+        best_rank = (math.inf, 1)
         for line in event.inaxes.lines:
             if line not in self._plot_channels:
                 continue
@@ -1825,8 +1827,10 @@ class MaterialStudyWindow(QMainWindow):
             points = line.get_transform().transform(line.get_xydata()[indices])
             distances = np.sum((points - [event.x, event.y]) ** 2, axis=1)
             nearest = int(np.argmin(distances))
-            if distances[nearest] < best_distance:
-                best_distance = distances[nearest]
+            comparison_id = self._plot_channels[line][0]
+            rank = (distances[nearest], 0 if comparison_id == selected_id else 1)
+            if rank < best_rank:
+                best_rank = rank
                 hit = (line, int(indices[nearest]))
         if hit is not None:
             self._select_plot_comparison(*hit)

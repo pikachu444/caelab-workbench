@@ -929,7 +929,7 @@ def test_gui_apply_keeps_unedited_float64_cells(tmp_path: Path, monkeypatch: pyt
 def test_gui_plot_preserves_duplicate_comparisons_and_withholds_corrupt_arrays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from caelab.materials import residuals
+    from caelab.materials import experiments
 
     app = _get_app()
     study_path = _create_b3_study(tmp_path, with_val_holdout=False)
@@ -970,13 +970,16 @@ def test_gui_plot_preserves_duplicate_comparisons_and_withholds_corrupt_arrays(
             bbox = legend_text.get_window_extent(win.canvas.get_renderer())
             select_pixel((bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2, comp.id)
 
+            curve = next(line for line in win.ax_curve.lines if line.get_label().endswith(comp.id))
+            select_pixel(*win.ax_curve.transData.transform(curve.get_xydata()[20]), comp.id)
+
             artist = next(line for line in win.ax_resid.lines if line.get_label().endswith(comp.id))
             win.canvas.draw()
             select_pixel(*win.ax_resid.transData.transform(artist.get_xydata()[20]), comp.id)
             assert "정규화 잔차" in win.loss_summary_label.text()
 
         result = next(row for row in active.channel_results if row["comparison_id"] == second.id)
-        original_reader = residuals.read_safe_npy_v2
+        original_reader = experiments.npy_format.read_array
         for field, change_bytes in (
             ("residuals_ref", lambda data: data[:-1] + bytes([data[-1] ^ 1])),
             ("predicted_on_obs_ref", lambda data: data + b"!"),
@@ -984,14 +987,15 @@ def test_gui_plot_preserves_duplicate_comparisons_and_withholds_corrupt_arrays(
             rel = result[field]["path"]
             artifact = win.service.data_root / rel
             data = artifact.read_bytes()
+            corrupted = change_bytes(data)
 
-            def fail_on_unverified_load(path, **kwargs):
-                assert path != rel, "corrupt array reached the NPY loader"
-                return original_reader(path, **kwargs)
+            def fail_on_unverified_load(stream, **kwargs):
+                assert stream.getvalue() != corrupted, "corrupt array reached the NPY loader"
+                return original_reader(stream, **kwargs)
 
-            artifact.write_bytes(change_bytes(data))
+            artifact.write_bytes(corrupted)
             with monkeypatch.context() as patch:
-                patch.setattr(residuals, "read_safe_npy_v2", fail_on_unverified_load)
+                patch.setattr(experiments.npy_format, "read_array", fail_on_unverified_load)
                 win._redraw_plots()
             assert "손상" in win.status_bar.currentMessage()
             for axis in (win.ax_curve, win.ax_resid):
@@ -1002,6 +1006,28 @@ def test_gui_plot_preserves_duplicate_comparisons_and_withholds_corrupt_arrays(
             artifact.write_bytes(data)
             win._redraw_plots()
             assert any(line.get_label().endswith(second.id) for line in win.ax_resid.lines)
+
+        residual_path = win.service.data_root / result["residuals_ref"]["path"]
+        expected_curve = next(line.get_xydata().copy() for line in win.ax_resid.lines
+                              if line.get_label().endswith(second.id))
+        original_read_bytes = Path.read_bytes
+        reads = 0
+
+        def replace_after_read(path):
+            nonlocal reads
+            raw = original_read_bytes(path)
+            if path == residual_path:
+                reads += 1
+                path.write_bytes(b"replaced after verification read")
+            return raw
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "read_bytes", replace_after_read)
+            win._redraw_plots()
+        assert reads == 1
+        actual_curve = next(line.get_xydata() for line in win.ax_resid.lines
+                            if line.get_label().endswith(second.id))
+        np.testing.assert_array_equal(actual_curve, expected_curve)
     finally:
         win.close()
         app.processEvents()

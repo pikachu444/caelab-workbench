@@ -14,15 +14,17 @@ import tempfile
 from typing import Any
 
 import numpy as np
+from numpy.lib import format as npy_format
 
 from caelab.artifact_refs import (
     ArtifactRefV1,
     ProducerIdentity,
+    _SUPPORTED_NPY_MAGIC,
+    _canonicalize_ndarray,
     _to_plain_json,
     canonical_array_sha256,
     canonical_json_bytes,
     canonical_sha256,
-    read_safe_npy_v2,
     validate_relative_artifact_path,
     write_safe_npy_v2,
 )
@@ -845,6 +847,28 @@ def import_csv_experiment(
     )
 
 
+def _read_verified_array(ref: ArtifactRefV1, data_root: Path, *, stage: str) -> np.ndarray:
+    try:
+        validate_relative_artifact_path(ref.path, root=data_root)
+        target = data_root / ref.path
+        if not target.is_file():
+            raise ValueError("MISSING_ARRAY_ARTIFACT")
+        raw = target.read_bytes()
+        if len(raw) != ref.size or hashlib.sha256(raw).hexdigest() != ref.sha256:
+            raise ValueError("ARRAY_SHA256_MISMATCH")
+        with io.BytesIO(raw) as stream:
+            version = npy_format.read_magic(stream)
+            if version not in _SUPPORTED_NPY_MAGIC:
+                raise ValueError(f"Unsupported .npy format version: {version!r}")
+            stream.seek(0)
+            return _canonicalize_ndarray(npy_format.read_array(stream, allow_pickle=False))
+    except (OSError, ValueError, OverflowError) as exc:
+        raise MaterialStudyError(
+            "CORRUPT_ARTIFACT", stage,
+            {"reason": str(exc), "path": ref.path, "artifact_id": ref.id},
+        ) from exc
+
+
 def load_experiment_channel_arrays(
     channel_entry: Mapping[str, Any],
     *,
@@ -854,20 +878,5 @@ def load_experiment_channel_arrays(
     out: list[np.ndarray] = []
     for key in ("independent_ref", "values_ref", "sample_keys_ref", "mask_ref"):
         ref = ArtifactRefV1.from_dict(channel_entry[key])
-        target = (data_root / ref.path).resolve()
-        validate_relative_artifact_path(ref.path, root=data_root)
-        if not target.is_file():
-            raise MaterialStudyError(
-                "CORRUPT_ARTIFACT",
-                "load_experiment_channel_arrays",
-                {"reason": "MISSING_ARRAY_ARTIFACT", "path": ref.path, "artifact_id": ref.id},
-            )
-        actual_bytes = target.read_bytes()
-        if hashlib.sha256(actual_bytes).hexdigest() != ref.sha256 or len(actual_bytes) != ref.size:
-            raise MaterialStudyError(
-                "CORRUPT_ARTIFACT",
-                "load_experiment_channel_arrays",
-                {"reason": "ARRAY_SHA256_MISMATCH", "path": ref.path, "artifact_id": ref.id},
-            )
-        out.append(read_safe_npy_v2(ref.path, root=data_root))
+        out.append(_read_verified_array(ref, data_root, stage="load_experiment_channel_arrays"))
     return out[0], out[1], out[2], out[3]

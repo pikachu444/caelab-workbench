@@ -14,8 +14,6 @@ import numpy as np
 from caelab.artifact_refs import (
     ArtifactRefV1,
     _to_plain_json,
-    read_safe_npy_v2,
-    validate_relative_artifact_path,
 )
 from caelab.materials.contracts import (
     AssessmentResultV1,
@@ -26,7 +24,7 @@ from caelab.materials.contracts import (
     PredictionBundleV1,
     ScalarResponseSpecV1,
 )
-from caelab.materials.experiments import load_experiment_channel_arrays
+from caelab.materials.experiments import _read_verified_array, load_experiment_channel_arrays
 from caelab.materials.registry import MaterialStudyError
 from caelab.materials.units import QuantityUnitSpec, convert_frequency_angular, convert_values
 from caelab.mdo.constraints import ConstraintSpec, Feasibility, assess_constraints
@@ -179,27 +177,12 @@ def _verify_and_read_channel_ref(
 ) -> np.ndarray:
     if runtime_cache is not None:
         vcache = runtime_cache.setdefault("verified_arrays", {})
-        ckey = (ref.path, ref.sha256)
+        ckey = (ref.path, ref.sha256, ref.size)
         if ckey in vcache:
             return vcache[ckey]
-    validate_relative_artifact_path(ref.path, root=data_root)
-    target = (data_root / ref.path).resolve()
-    if not target.is_file():
-        raise MaterialStudyError(
-            "CORRUPT_ARTIFACT",
-            "residuals.read_channel",
-            {"reason": "MISSING_PREDICTION_ARRAY", "path": ref.path, "artifact_id": ref.id},
-        )
-    raw = target.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != ref.sha256 or len(raw) != ref.size:
-        raise MaterialStudyError(
-            "CORRUPT_ARTIFACT",
-            "residuals.read_channel",
-            {"reason": "PREDICTION_ARRAY_SHA256_MISMATCH", "path": ref.path, "artifact_id": ref.id},
-        )
-    arr = read_safe_npy_v2(ref.path, root=data_root)
+    arr = _read_verified_array(ref, data_root, stage="residuals.read_channel")
     if runtime_cache is not None and "_shared" in ref.path:
-        runtime_cache.setdefault("verified_arrays", {})[(ref.path, ref.sha256)] = arr
+        vcache[ckey] = arr
     return arr
 
 

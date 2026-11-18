@@ -730,7 +730,7 @@ def test_store01_locks_readonly_saveas_relink_and_recovery(tmp_path: Path) -> No
         rec_svc.close()
 
 
-@pytest.mark.parametrize("change", ["missing", "damaged", "wrong_evaluation"])
+@pytest.mark.parametrize("change", ["missing", "damaged", "wrong_evaluation", "early_exposure"])
 def test_holdout_event_must_verify_on_reopen_history_and_export(tmp_path, change):
     svc, study_path = _make_custom_study(tmp_path, _CustomLinearAdapter())
     registry = svc._registry
@@ -746,7 +746,10 @@ def test_holdout_event_must_verify_on_reopen_history_and_export(tmp_path, change
         event.write_bytes(b"{}")
     else:
         record = json.loads(event.read_bytes())
-        record["evaluation_id"] = "an-unrelated-evaluation"
+        if change == "early_exposure":
+            record["exposed_at"] = "1900-01-01T00:00:00Z"
+        else:
+            record["evaluation_id"] = "an-unrelated-evaluation"
         event.write_text(json.dumps(record), encoding="utf-8")
         manifest = json.loads(study_path.read_bytes())
         ref = manifest["holdout_exposures"][0]
@@ -1562,6 +1565,79 @@ def test_save_as_retry_after_standalone_root_setup_failure(tmp_path, monkeypatch
         assert svc.save_as(dest, expected_revision=svc.snapshot().document_revision).state == "committed"
 
 
+@pytest.mark.parametrize("fault", ["lease", "marker", "discard", "legacy_marker_only"])
+def test_save_as_retry_keeps_rollback_evidence_while_destination_lease_is_held(tmp_path, monkeypatch, fault):
+    import caelab.materials.service as material_service
+
+    svc, original = _make_custom_study(tmp_path, _CustomLinearAdapter())
+    dest = tmp_path / "retry.caemat.json"
+    dest_root = tmp_path / "retry.caemat-data"
+    contender = FileLock(dest_root / "study.lock", timeout=0)
+    write_bytes = material_service._atomic_write_bytes
+
+    def fail_lease(root, stage):
+        assert root == dest_root
+        contender.acquire()
+        raise MaterialStudyError("STUDY_LOCKED", stage)
+
+    def fail_marker(path, content):
+        if path.parent == dest_root:
+            contender.acquire()
+            raise OSError("marker write refused")
+        return write_bytes(path, content)
+
+    with svc:
+        revision = svc.snapshot().document_revision
+        try:
+            with monkeypatch.context() as patch:
+                if fault == "marker":
+                    patch.setattr(material_service, "_atomic_write_bytes", fail_marker)
+                    expected_failure = pytest.raises(OSError, match="marker write refused")
+                else:
+                    patch.setattr(svc, "_acquire_copy_lease", fail_lease)
+                    expected_failure = pytest.raises(MaterialStudyError, match="STUDY_LOCKED")
+                with expected_failure:
+                    svc.save_as(dest, expected_revision=revision)
+            assert svc.path == original
+            assert not dest.exists()
+            journal, = tmp_path.glob(".caemat-saveas-*/copy_journal.json")
+            record = json.loads(journal.read_bytes())
+            marker = dest_root / f".caemat-copy-{record['transaction_id']}.owner"
+            assert record["created_data_root"] is True
+            with pytest.raises(MaterialStudyError, match="STUDY_LOCKED"):
+                svc.save_as(dest, expected_revision=revision)
+            if fault == "discard":
+                contender.release()
+                remove_root = svc._remove_created_copy_root
+
+                def hold_during_discard(record):
+                    contender.acquire()
+                    return remove_root(record)
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(svc, "_remove_created_copy_root", hold_during_discard)
+                    with pytest.raises(MaterialStudyError, match="DESTINATION_ALREADY_EXISTS"):
+                        svc.recover("discard_incomplete_copy", record["transaction_id"],
+                                    destination=dest, expected_revision=revision)
+            assert journal.is_file()
+            assert marker.is_file() == (fault != "marker")
+        finally:
+            contender.release()
+
+        unrelated = dest_root / "unrelated.txt"
+        unrelated.write_text("keep me", encoding="utf-8")
+        with pytest.raises(MaterialStudyError, match="DESTINATION_ALREADY_EXISTS"):
+            svc.save_as(dest, expected_revision=revision)
+        assert unrelated.read_text(encoding="utf-8") == "keep me"
+        assert journal.is_file()
+        assert marker.is_file() == (fault != "marker")
+        unrelated.unlink()
+        if fault == "legacy_marker_only":
+            shutil.rmtree(journal.parent)
+        assert svc.save_as(dest, expected_revision=revision).state == "committed"
+        assert not journal.exists() and not marker.exists()
+
+
 def test_optimizer_exception_finalizes_failed_without_user_stop(tmp_path, monkeypatch):
     import caelab.materials.service as material_service
 
@@ -1708,6 +1784,7 @@ def test_exploration_after_direct_confirmation_can_freeze_its_own_lineage(tmp_pa
     ("evaluation_id", "another-evaluation"), ("selection_id", "another-selection"),
     ("content_revision", "foreign-revision"), ("parameter_set_sha256", "0" * 64),
     ("exposed_experiment_ids", ["unknown-holdout"]),
+    ("exposed_at", "1900-01-01T00:00:00Z"), ("exposed_at", "2999-01-01T00:00:00Z"),
 ])
 def test_confirmation_verifies_holdout_event_before_first_delivery(tmp_path, monkeypatch, field, bad_value):
     import caelab.materials.service as material_service
@@ -1901,6 +1978,42 @@ def test_holdout_disjoint_csv_rows_cannot_duplicate_validation_samples(tmp_path)
             )
         assert caught.value.details["reason"] == "OVERLAPPING_NORMALIZED_SAMPLES"
         assert not adapter.calls
+
+
+def test_holdout_and_validation_cannot_share_a_replicate_group(tmp_path):
+    adapter = _CustomLinearAdapter()
+    svc, _ = _make_custom_study(tmp_path, adapter)
+    with svc:
+        fit, val, hold = svc.comparisons()
+        template = svc.experiments()[0].channels[0]
+        for eid, split, temp, samples in (
+            ("validation_replicate", "validation", 303.15, [[7, 23], [8, 26]]),
+            ("holdout_replicate", "holdout", 313.15, [[9, 29], [10, 32]]),
+        ):
+            csv_path = tmp_path / f"{eid}.csv"
+            _write_csv(csv_path, ["x", "y"], samples)
+            svc.import_experiment(
+                csv_path, experiment_id=eid, split=split, channels=[template],
+                replicate_group="same-specimen", conditions={"temperature_K": temp},
+                expected_revision=svc.snapshot().document_revision,
+            )
+        svc.configure(
+            parameters=svc.parameters(),
+            comparisons=(fit, replace(val, experiment_id="validation_replicate"),
+                         replace(hold, experiment_id="holdout_replicate")),
+            expected_revision=svc.snapshot().document_revision,
+        )
+        result = svc.evaluate(expected_revision=svc.snapshot().document_revision, compute_identifiability=False)
+        assert result.state == "completed"
+        with pytest.raises(MaterialStudyError, match="DATA_RECIPE_INCOMPATIBLE") as caught:
+            svc.evaluate(
+                {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision, cache_policy="refresh",
+                execution_phase="confirmation", compute_identifiability=False,
+            )
+        assert caught.value.details == {
+            "reason": "SHARED_REPLICATE_GROUP", "experiment_id": "holdout_replicate",
+            "compared_with": "validation_replicate",
+        }
 
 
 def test_same_unit_split_samples_require_exact_coordinate_and_value():
