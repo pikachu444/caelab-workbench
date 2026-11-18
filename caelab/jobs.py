@@ -20,13 +20,15 @@ from typing import Callable, Sequence, Any, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from filelock import FileLock, Timeout as LockTimeout
+
 from .model.schema import StructuralModel
 from .connections import LaunchRequest, ProgramStatus
-from .process_entry import needs_external_gate, windows_gate_command
+from .process_entry import external_environment, needs_external_gate, windows_gate_command
 from .solvers.base import ResultSet, SolverConverter
 from .validate.checker import validate_model
 from .native.input_snapshot import snapshot_input
-from .native.run_store import NativeRun, RunStore, TERMINAL_STATES, utc_now
+from .native.run_store import NativeRun, RunStore, TERMINAL_STATES, atomic_json, utc_now
 from .project import FileReference, file_revision
 
 JOB_STATES = ("queued", "preparing", "running", "succeeded", "failed", "cancelled")
@@ -129,24 +131,69 @@ def _native_exited(process):
     return process.poll() is not None
 
 
-def _finish_owned(control, cancel=False):
+def _finish_owned(control, cancel=False, *, term_grace=.1, wait_timeout=3, confirm_tree=False):
     process, group = control["process"], control["group"]
     if group is not None:
-        try:
+        if confirm_tree:
+            group.finish(grace=0 if cancel else term_grace, timeout=wait_timeout)
+        else:
             group.close()  # only this Windows Job handle owns these descendants
-        finally:
-            control["group"] = None
+        control["group"] = None
     elif os.name == "posix" and process.returncode is None:
         try:
-            os.killpg(process.pid, signal.SIGTERM if cancel else signal.SIGKILL)
-            if cancel:
-                time.sleep(0.1)
-                os.killpg(process.pid, signal.SIGKILL)
+            graceful = cancel or confirm_tree
+            if cancel or not confirm_tree:
+                os.killpg(process.pid, signal.SIGTERM if graceful else signal.SIGKILL)
+            if graceful:
+                deadline = time.monotonic() + term_grace
+                while time.monotonic() < deadline and (
+                        _posix_group_alive(process.pid) if confirm_tree else not _native_exited(process)):
+                    time.sleep(.025)
+                if not confirm_tree or _posix_group_alive(process.pid):
+                    os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
     elif process.poll() is None:
         process.terminate()  # live Popen handle only; never a restored PID
-    return process.wait(timeout=3)
+    deadline = time.monotonic() + wait_timeout
+    code = process.wait(timeout=wait_timeout)
+    if confirm_tree and os.name == "posix":
+        while _posix_group_alive(process.pid):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("converter process group still has active descendants")
+            time.sleep(.025)
+    return code
+
+
+def _posix_group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    if sys.platform.startswith("linux"):
+        # Unreaped zombies preserve IDs but cannot hold files or run code.
+        for path in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                fields = path.read_text().rsplit(")", 1)[1].split()
+            except (OSError, IndexError, UnicodeError):
+                continue
+            if len(fields) > 2 and fields[2] == str(pgid) and fields[0] != "Z":
+                return True
+        return False
+    return True
+
+
+def _resume_owned_windows_process(process):
+    # Popen closes the initial thread handle. Resume only after assigning the
+    # suspended process to the Job Object, so it cannot spawn an unowned child.
+    import ctypes as c
+    from ctypes import wintypes as w
+
+    resume = c.WinDLL("ntdll").NtResumeProcess
+    resume.argtypes, resume.restype = [w.HANDLE], c.c_long
+    status = resume(w.HANDLE(int(process._handle)))
+    if status < 0:
+        raise OSError(f"Could not resume converter (NTSTATUS {status & 0xffffffff:#010x})")
 
 
 class _WindowsRunGroup:
@@ -167,6 +214,7 @@ class _WindowsRunGroup:
         self.api.AssignProcessToJobObject.argtypes = [w.HANDLE, w.HANDLE]
         self.api.CloseHandle.argtypes = [w.HANDLE]
         self.api.TerminateJobObject.argtypes = [w.HANDLE, w.UINT]
+        self.api.QueryInformationJobObject.argtypes = [w.HANDLE, c.c_int, w.LPVOID, w.DWORD, w.LPVOID]
         self.handle = self.api.CreateJobObjectW(None, None)
         if not self.handle:
             raise c.WinError(c.get_last_error())
@@ -196,6 +244,33 @@ class _WindowsRunGroup:
         if self.handle and not self.api.TerminateJobObject(self.handle, 126):
             import ctypes as c
             raise c.WinError(c.get_last_error())
+        self.close()
+
+    def finish(self, *, grace, timeout):
+        import ctypes as c
+        from ctypes import wintypes as w
+
+        class Accounting(c.Structure):
+            _fields_ = [("times", c.c_longlong * 4), ("page_faults", w.DWORD), ("total", w.DWORD),
+                        ("active", w.DWORD), ("terminated", w.DWORD)]
+
+        def active():
+            info = Accounting()
+            if not self.api.QueryInformationJobObject(self.handle, 1, c.byref(info), c.sizeof(info), None):
+                raise c.WinError(c.get_last_error())
+            return info.active
+
+        deadline = time.monotonic() + grace
+        while active() and time.monotonic() < deadline:
+            time.sleep(.025)
+        if active():
+            if not self.api.TerminateJobObject(self.handle, 126):
+                raise c.WinError(c.get_last_error())
+            deadline = time.monotonic() + timeout
+            while active():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("converter Job Object still has active descendants")
+                time.sleep(.025)
         self.close()
 
     def close(self):
@@ -270,6 +345,7 @@ class JobManager:
         self._native_lock = threading.RLock()
         self._native: dict[str, NativeRun] = {}
         self._controls: dict[str, dict] = {}
+        self._operations: dict[str, dict] = {}
         self._batch_lock = threading.RLock()
         self._batches: dict[str, BatchRun] = {}
         self._batch_controls: dict[str, dict] = {}
@@ -597,6 +673,269 @@ class JobManager:
             control["cancel"].set()
             return True
 
+    def submit_result_conversion(self, store: RunStore, plan: Mapping[str, Any], *,
+                                 timeout: float = 120.0, executor=None) -> dict:
+        """Start a registered conversion. An injected executor follows Popen's contract."""
+        from .artifact_refs import canonical_json_bytes
+        from .native.operations import (ACTIVE_OPERATIONS, artifact_path, find_active_duplicate, operation_dir,
+                                        recover_derived_operations)
+        from .result_readers import ResultError
+
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a positive finite duration in seconds")
+        plan = json.loads(canonical_json_bytes(plan))
+        if not isinstance(plan, dict) or not all(key in plan for key in
+                ("source_run_id", "source_node_id", "source_artifacts", "source_fingerprint",
+                 "source_input_revision", "profile", "reader_version", "reader_sha256", "executable", "plan_hash",
+                 "cache_key", "options", "units")):
+            raise ResultError("STALE_PLAN", "invalid conversion plan")
+        start = time.monotonic()
+        source_id = plan["source_run_id"]
+        op_id = uuid.uuid4().hex
+        folder = operation_dir(store, source_id, op_id)
+        with self._native_lock:
+            if self._closed:
+                raise ValueError("JobManager is closing")
+            for control in self._operations.values():
+                if (control["store"].root == store.root and control["plan"] == plan
+                        and control["receipt"]["state"] in ACTIVE_OPERATIONS
+                        and not control["cancel"].is_set()):
+                    return copy.deepcopy(control["receipt"])
+            published = time.monotonic() + .25
+            while True:
+                try:
+                    lease = store.lease()
+                    break
+                except ValueError as exc:
+                    if not isinstance(exc.__cause__, LockTimeout):
+                        raise
+                    duplicate = find_active_duplicate(store, plan)
+                    if duplicate is not None:
+                        return duplicate
+                    if time.monotonic() >= published:
+                        raise
+                    time.sleep(.01)
+            try:
+                recover_derived_operations(store)
+                receipt = {
+                    "schema_version": 1, "id": op_id, "source_run_id": source_id, "source_node_id": plan["source_node_id"],
+                    "operation_kind": "extract" if plan["profile"] == "VTU-1" else "convert",
+                    "state": "queued", "parse_state": "unparsed", "stage": "queued", "progress": 0.0,
+                    "created_at": utc_now(), "started_at": None, "finished_at": None,
+                    "source_receipt_ref": None, "source_receipt_sha256": None,
+                    "source_input_revision": plan["source_input_revision"], "source_mesh_revision": plan.get("source_mesh_revision"),
+                    "source_fingerprint": plan["source_fingerprint"],
+                    "source_artifacts": plan["source_artifacts"], "staged_artifacts": [], "outputs": [],
+                    "adapter": {"id": plan["profile"], "version": plan["reader_version"], "code_sha256": plan["reader_sha256"]},
+                    "reader_code_sha256": plan["reader_sha256"],
+                    "executable": plan["executable"], "plan_hash": plan["plan_hash"], "cache_key": plan["cache_key"],
+                    "units": plan["units"], "options": plan["options"], "execution": [], "pid": None,
+                    "returncode": None, "error": None, "warnings": [], "artifact_owners": {}, "dataset_ref": None,
+                    "dataset_manifest_sha256": None, "cleanup_failed": False,
+                    "reused_from_operation_id": None,
+                }
+                folder.mkdir(parents=True)
+                operation_lock = FileLock(artifact_path(folder, "operation.lock"), timeout=0, thread_local=False)
+                operation_lock.acquire()
+                control = {"cancel": threading.Event(), "process": None, "group": None, "store": store,
+                           "lease": lease, "operation_lock": operation_lock, "cleanup_failed": False, "plan": plan,
+                           "receipt": receipt, "folder": folder}
+                atomic_json(artifact_path(folder, "operation.json"), receipt)
+                worker = threading.Thread(target=self._run_result_conversion,
+                                          args=(control, start + timeout, executor or subprocess.Popen),
+                                          name=f"caelab-result-{op_id[:8]}", daemon=True)
+                control["thread"] = worker
+                self._operations[op_id] = control
+                worker.start()
+                return copy.deepcopy(receipt)
+            except Exception as exc:
+                self._operations.pop(op_id, None)
+                try:
+                    if "receipt" in locals() and folder.is_dir():
+                        receipt.update(state="failed", stage="failed", finished_at=utc_now(),
+                                       error={"code": "STARTUP_FAILED", "detail": str(exc)})
+                        atomic_json(folder / "operation.json", receipt)
+                finally:
+                    try:
+                        if "operation_lock" in locals():
+                            operation_lock.release()
+                    finally:
+                        lease.release()
+                raise
+
+    def operation_snapshot(self, store: RunStore, source_run_id: str, operation_id: str) -> dict | None:
+        from .native.operations import stored_snapshot
+
+        with self._native_lock:
+            control = self._operations.get(operation_id)
+            if (control is not None and control["store"].root == store.root
+                    and control["receipt"]["source_run_id"] == source_run_id):
+                return copy.deepcopy(control["receipt"])
+        return stored_snapshot(store, source_run_id, operation_id)
+
+    def cancel_operation(self, operation_id: str) -> bool:
+        from .native.operations import ACTIVE_OPERATIONS
+
+        with self._native_lock:
+            control = self._operations.get(operation_id)
+            if control is None or control["receipt"]["state"] not in ACTIVE_OPERATIONS:
+                return False
+            control["cancel"].set()
+            return True
+
+    def _run_conversion_step(self, control, step, env, executor, check, update):
+        from .native.operations import artifact_path
+        from .result_readers import ResultError
+
+        folder = control["folder"]
+        cwd = artifact_path(folder, step["cwd_relative"])
+        stdout = artifact_path(folder, step["stdout_target"])
+        stderr = artifact_path(folder, step["stderr_target"])
+        options = control["plan"]["options"]
+        logs = (folder / "operation.log", stderr)
+
+        def check_sizes():
+            if any(path.stat().st_size > options["max_log_bytes"] for path in logs):
+                raise ResultError("LOG_LIMIT_EXCEEDED", "converter log exceeded max_log_bytes")
+            pending = cwd / "history.csv"
+            if any(path.is_file() and path.stat().st_size > options["output_limit_bytes"]
+                   for path in (pending, stdout) if path not in logs):
+                raise ResultError("INVALID_DATASET", "converter exceeded the output size limit")
+
+        create_suspended = 0x00000004
+        config = ({"creationflags": subprocess.CREATE_NO_WINDOW | create_suspended}
+                  if os.name == "nt" else {"start_new_session": True})
+        try:
+            with stdout.open("ab") as log, stderr.open("ab") as err:
+                check()
+                process = executor(step["argv"], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                   stdout=log, stderr=err, shell=False, **config)
+                control["process"] = process
+                if os.name == "nt":
+                    control["group"] = _WindowsRunGroup(process)
+                    check()
+                    _resume_owned_windows_process(process)
+                update(pid=process.pid)
+                while not _native_exited(process):
+                    check()
+                    check_sizes()
+                    control["cancel"].wait(.025)
+        except OSError as exc:
+            raise ResultError("STARTUP_FAILED", str(exc)) from exc
+        check()
+        try:
+            code = _finish_owned(control, term_grace=5, wait_timeout=5, confirm_tree=True)
+        except Exception as exc:
+            raise ResultError("PROCESS_CLEANUP_FAILED", str(exc)) from exc
+        control["process"] = None
+        update(returncode=code)
+        check_sizes()
+        if code:
+            raise ResultError("CONVERTER_EXIT", f"converter exited with status {code}")
+
+    def _run_result_conversion(self, control, deadline, executor):
+        from .native.converters import converter_environment, prepare_conversion, receipt_owners, validate_oc_outputs, verify_source
+        from .native.operations import POST_PRODUCER, artifact, artifact_path, sha256_file, verify_artifact
+        from .result_readers import ResultError
+
+        store, folder, plan, receipt = (control[key] for key in ("store", "folder", "plan", "receipt"))
+        path = folder / "operation.json"
+        dataset_path = folder / "dataset.json"
+
+        def check():
+            if control["cancel"].is_set():
+                raise ResultError("CANCELLED", "result operation cancelled")
+            if time.monotonic() >= deadline:
+                raise ResultError("TIMEOUT", "result operation exceeded its deadline")
+
+        def update(**fields):
+            with self._native_lock:
+                updated = {**receipt, **fields}
+                atomic_json(path, updated)
+                receipt.update(fields)
+
+        def fail(error):
+            code = error.code if isinstance(error, ResultError) else "INVALID_DATASET"
+            if control["cancel"].is_set() and code != "PROCESS_CLEANUP_FAILED":
+                code = "CANCELLED"
+            state = {"CANCELLED": "cancelled", "TIMEOUT": "timed_out"}.get(code, "failed")
+            detail = error.detail if isinstance(error, ResultError) else str(error)
+            fields = {"state": state, "stage": state, "parse_state": "failed", "finished_at": utc_now(),
+                      "dataset_ref": None, "dataset_manifest_sha256": None,
+                      "cleanup_failed": control["cleanup_failed"], "error": {"code": code, "detail": detail}}
+            try:
+                dataset_path.unlink(missing_ok=True)
+                update(**fields)
+            except OSError as exc:
+                fields["error"]["detail"] += f" (cannot persist operation failure: {exc})"
+                receipt.update(fields)
+
+        failure = None
+        try:
+            check()
+            update(state="preparing", stage="preparing", started_at=utc_now(), progress=.1)
+            frozen, staged, steps = prepare_conversion(store, folder, plan, check)
+            env = {key: value for key, value in external_environment().items()
+                   if key.upper() not in {"PYTHONPATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"}}
+            env = converter_environment(plan, env)
+            for name in ("operation.log", "stderr.log"):
+                artifact_path(folder, name).touch()
+            execution = [{**step, "stdin_role": "devnull", "env_names": sorted(env),
+                          "tool_version": plan["executable"]["version"]} for step in steps]
+            update(state="running", stage="running", progress=.25, source_receipt_ref=frozen.to_dict(),
+                   source_receipt_sha256=frozen.sha256, staged_artifacts=[r.to_dict() for r in staged], execution=execution,
+                   artifact_owners=receipt_owners(receipt["source_run_id"], receipt["id"],
+                                                 plan["source_artifacts"], [frozen, *staged]))
+            for step in steps:
+                check()
+                executable = plan["executable"]
+                if sha256_file(Path(executable["path_audit"]), check) != executable["sha256"]:
+                    raise ResultError("STALE_PLAN", "converter executable changed")
+                self._run_conversion_step(control, step, env, executor, check, update)
+            check()
+            update(state="validating", stage="validating", parse_state="reading", progress=.7)
+            for ref in (frozen, *staged):
+                verify_artifact(folder, ref, check=check)
+            converted = validate_oc_outputs(folder, plan, check_cancelled=check)
+            output = converted["outputs"]
+            output.extend(artifact(folder, folder / name, role, "log", POST_PRODUCER, check=check)
+                          for name, role in (("operation.log", "operation_log"), ("stderr.log", "stderr_log")))
+            verify_source(store, plan, check)
+        except Exception as exc:
+            failure = exc
+            if control["process"] is not None:
+                try:
+                    _finish_owned(control, cancel=True, term_grace=5, wait_timeout=5, confirm_tree=True)
+                    control["process"] = None
+                except Exception as cleanup:
+                    control["cleanup_failed"] = True
+                    failure = ResultError("PROCESS_CLEANUP_FAILED", f"{exc}; {cleanup}")
+        with self._native_lock:
+            try:
+                if failure is not None:
+                    fail(failure)
+                else:
+                    check()
+                    atomic_json(dataset_path, converted["dataset"])
+                    dataset = artifact(folder, dataset_path, "dataset", "json", POST_PRODUCER, check=check)
+                    owners = receipt_owners(receipt["source_run_id"], receipt["id"], plan["source_artifacts"],
+                                            [frozen, *staged, *output, dataset])
+                    update(state="completed", stage="completed", progress=1.0, parse_state="readable", finished_at=utc_now(),
+                           outputs=[r.to_dict() for r in output], dataset_ref=dataset.to_dict(), artifact_owners=owners,
+                           dataset_manifest_sha256=converted["dataset_manifest_sha256"])
+            except Exception as exc:
+                fail(exc)
+            finally:
+                if not control["cleanup_failed"]:
+                    try:
+                        control["operation_lock"].release()
+                        control["lease"].release()
+                    except Exception as exc:
+                        control["cleanup_failed"] = True
+                        fail(ResultError("PROCESS_CLEANUP_FAILED", f"RunStore lease: {exc}"))
+                    else:
+                        self._operations.pop(receipt["id"], None)
+
     def batch_snapshot(self, batch_id: str) -> BatchRun | None:
         with self._batch_lock:
             batch = self._batches.get(batch_id)
@@ -897,11 +1236,16 @@ class JobManager:
                 if self._native[run_id].state not in TERMINAL_STATES or self._native[run_id].parse_state == "reading":
                     control["cancel"].set()
             threads = [control["thread"] for control in self._controls.values() if control["thread"] is not None]
+            for operation_id in self._operations:
+                self.cancel_operation(operation_id)
+            threads.extend(control["thread"] for control in self._operations.values())
         all_threads = threads + batch_threads
         for thread in all_threads:
             thread.join(max(0.0, deadline - time.monotonic()))
-        return not any(thread.is_alive() for thread in all_threads) and not any(
-            c["cleanup_failed"] or c['lease'].is_locked for c in self._controls.values())
+        with self._native_lock:
+            return not any(thread.is_alive() for thread in all_threads) and not any(
+                c["cleanup_failed"] or c['lease'].is_locked
+                for c in itertools.chain(self._controls.values(), self._operations.values()))
 
     def launch(self, request: LaunchRequest) -> LaunchRecord:
         """Retain this GUI process; creation never means calculation success."""

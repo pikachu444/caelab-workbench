@@ -1,0 +1,330 @@
+"""Registered numeric result queries over verified RunStore bundles."""
+
+from __future__ import annotations
+
+import re
+
+import numpy as np
+
+from ..artifact_refs import ArtifactRefV1, DatasetManifestV1, NumericResultV1, ResultRefV1, canonical_sha256, read_safe_npy_v2
+from ..result_readers import ResultError, no_checkpoint
+from ..result_readers import opencourant_history, vtk_fields
+from . import converters
+from .operations import (artifact_path, load_completed_operation, owning_store, read_object, resolve_result_ref,
+                         sha256_file, verify_artifact)
+from .run_store import RunStore
+
+_SPATIAL_READERS = {"OC-ANIM-1": vtk_fields.read_vtk, "VTU-1": vtk_fields.read_vtu}
+_OPERATORS = {"identity", "values", "min", "max", "mean", "norm"}
+_CANONICAL_OPERATOR = {"id": "identity", "version": "1", "params": {}}
+
+
+def _completed(store, operation_id, source_run_id, check):
+    if source_run_id is None:
+        if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
+            raise ResultError("PATH_ESCAPE", "invalid operation ID")
+        derived = artifact_path(store.root, ".derived")
+        runs = [path.parent.name for path in derived.glob(f"*/{operation_id}")]
+        if len(runs) != 1:
+            raise ResultError("SOURCE_CHANGED", "operation does not identify one source run")
+        source_run_id = runs[0]
+    return load_completed_operation(store, source_run_id, operation_id, check=check)
+
+
+def inspect_dataset(store: RunStore, operation_id_or_ref, *, source_run_id=None, consumer_kind=None,
+                    check_cancelled=None) -> DatasetManifestV1:
+    """Inspect a completed dataset by immutable reference or operation ID."""
+    if isinstance(operation_id_or_ref, ResultRefV1):
+        dataset = resolve_result_ref(store, operation_id_or_ref, check_cancelled=check_cancelled)["dataset"]
+    else:
+        _, _, dataset, _ = _completed(owning_store(store), operation_id_or_ref, source_run_id,
+                                      check_cancelled or no_checkpoint)
+    if consumer_kind not in (None, "field", "history"):
+        raise ResultError("UNSUPPORTED_CAPABILITY", str(consumer_kind))
+    if consumer_kind is not None and dataset.dataset_kind != consumer_kind:
+        raise ResultError("UNSUPPORTED_OBSERVABLE", f"{consumer_kind} consumer cannot read {dataset.dataset_kind}")
+    return dataset
+
+
+def _registered_output(folder, receipt, ref, check):
+    if ref.to_dict() not in receipt["outputs"]:
+        raise ResultError("HASH_MISMATCH", f"unregistered dataset artifact {ref.path}", availability="corrupt")
+    return verify_artifact(folder, ref, check=check)
+
+
+def _history_column(folder, receipt, field_id, check):
+    records = [ArtifactRefV1.from_dict(value) for value in receipt["outputs"]
+               if value["path"] == "outputs/history-columns.json"]
+    if len(records) != 1:
+        raise ResultError("INVALID_DATASET", "history column metadata is missing")
+    record = read_object(_registered_output(folder, receipt, records[0], check))
+    if type(record.get("schema_version")) is not int or record["schema_version"] != 1:
+        raise ResultError("UNSUPPORTED_CAPABILITY", "unknown history binding schema")
+    column = record.get("fields", {}).get(field_id)
+    if column is None:
+        raise ResultError("UNSUPPORTED_FIELD", field_id)
+    return column
+
+
+def _unit(receipt, dimension):
+    value = receipt["units"].get(dimension, receipt["units"].get("stress", "unknown") if dimension == "pressure" else "unknown")
+    if isinstance(value, dict):
+        return {**value, "symbol": value.get("symbol", value.get("unit", "unknown")), "dimension": dimension}
+    return {"symbol": value, "dimension": dimension}
+
+
+def _find_location(dataset, frame_id, field_id):
+    if dataset.dataset_kind == "history":
+        locations = [item for item in dataset.series if item.series_id == frame_id and field_id in item.field_ids]
+    else:
+        locations = [item for item in dataset.frames if item["frame_id"] == frame_id and
+                     (field_id in item["fields"] or field_id in item["element_fields"])]
+    if len(locations) != 1:
+        raise ResultError("UNSUPPORTED_FIELD", f"{frame_id}: {field_id}")
+    return locations[0]
+
+
+def _semantics(folder, receipt, dataset, frame_id, field_id, check):
+    item = _find_location(dataset, frame_id, field_id)
+    if dataset.dataset_kind == "history":
+        binding = _history_column(folder, receipt, field_id, check)["binding"]
+        association = {"Global": "global", "Solid": "element", "Node": "point"}[binding["output_type"]]
+        location = {"association": association}
+        if binding["output_type"] == "Node":
+            location["integration_point"] = "none"
+        if "integration_point" in binding:
+            location["integration_point"] = binding["integration_point"]
+        if binding["entity_id"] is not None:
+            location["entity_id"] = binding["entity_id"]
+        return item, location, binding["basis"], binding["measure"], (
+            "tensor" if binding["quantity"] == "stress" else "unknown"), {
+                "symbol": binding["unit"], "dimension": binding["unit_dimension"]}, "unknown", binding
+    association = "point" if field_id in item["fields"] else "element"
+    location = {"association": association}
+    if association == "point":
+        location["integration_point"] = "none"
+    layer = re.search(r"\((upper|lower|layer__[1-9][0-9]*)\)", field_id)
+    if layer:
+        location["layer"] = layer[1]
+    if "Stress" in field_id or field_id == "STRESS":
+        measure, dimension, shear = "Cauchy", "pressure", "tensor"
+    elif "Strain" in field_id or field_id == "TOSTRAIN":
+        measure, dimension, shear = "unknown", "strain", "unknown"
+    elif field_id in {"Displacement", "DISP"}:
+        measure, dimension, shear = "displacement", "length", "unknown"
+    elif field_id in {"Velocity", "VELO"}:
+        measure, dimension, shear = "velocity", "velocity", "unknown"
+    elif field_id in {"EROSION_STATUS", "Scalar:EROSION_STATUS"}:
+        measure, dimension, shear = "erosion_status", "dimensionless", "unknown"
+    else:
+        measure, dimension, shear = "unknown", "unknown", "unknown"
+    basis = "element_local" if field_id.startswith("2DELEM_") else "global"
+    return item, location, basis, measure, shear, _unit(receipt, dimension), item["geometry_state"], None
+
+
+def make_result_ref(store: RunStore, source_run_id: str, operation_id: str, frame_id: str, field_id: str,
+                    *, component=None, selection=None, basis=None, operator=None, coverage=None) -> ResultRefV1:
+    """Pin a user's exact frame, field and selection to the completed bundle."""
+    folder, receipt, dataset, _ = load_completed_operation(owning_store(store), source_run_id, operation_id)
+    _, location, native_basis, measure, shear, units, geometry, binding = _semantics(
+        folder, receipt, dataset, frame_id, field_id, no_checkpoint)
+    if binding is not None and component is None:
+        component = binding["component"]
+    default_operator = _CANONICAL_OPERATOR if binding is None else {"id": "curve_extract", "version": "1", "params": {}}
+    reason = "MEASURE_UNKNOWN" if measure == "unknown" else "PROFILE_NOT_PHYSICALLY_VERIFIED"
+    return ResultRefV1(
+        source_run_id=source_run_id, source_node_id=receipt["source_node_id"],
+        source_receipt_sha256=receipt["source_receipt_sha256"],
+        source_receipt_ref=ArtifactRefV1.from_dict(receipt["source_receipt_ref"]), operation_id=operation_id,
+        operation_manifest_sha256=canonical_sha256(receipt, exclude_keys=()), dataset_id=dataset.dataset_id,
+        dataset_manifest_sha256=canonical_sha256(dataset.to_dict(), exclude_keys=()),
+        source_artifacts=tuple(ArtifactRefV1.from_dict(item) for item in receipt["source_artifacts"]),
+        frame_id=frame_id, field_id=field_id, component=component, selection=selection or {},
+        location=location, basis={"kind": basis or native_basis}, measure=measure, shear_convention=shear,
+        units=units, geometry_state=geometry, operator=operator or default_operator, coverage=coverage or {},
+        eligibility={"fit": False, "reason_codes": [reason]},
+    )
+
+
+def _selection(store, folder, receipt, selection, location, check):
+    ids = selection.get("ids")
+    kind = selection.get("kind")
+    entity = {"point": "node", "element": "element"}.get(location["association"])
+    if "selection_id" in selection:
+        if ids is not None:
+            raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
+        selection_id = selection["selection_id"]
+        if (not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id)):
+            raise ResultError("PATH_ESCAPE", f"invalid selection ID {selection_id!r}")
+        paths = [artifact_path(store.root, f"selections/{selection_id}/{name}")
+                 for name in ("selection.json", "payload.json")]
+        existing = [path for path in paths if path.is_file()]
+        if not existing:
+            raise ResultError("OBSERVABLE_MISMATCH", f"missing selection {selection_id}")
+        reference = selection.get("artifact_ref")
+        if reference is not None:
+            ref = ArtifactRefV1.from_dict(reference)
+            verified = verify_artifact(store.root, ref, check=check)
+            if verified not in existing:
+                raise ResultError("OBSERVABLE_MISMATCH", "selection artifact does not belong to the selection")
+            existing = [verified]
+        for path in existing:
+            check()
+            try:
+                saved = read_object(path)
+            except (OSError, ValueError) as exc:
+                raise ResultError("SCHEMA_MISMATCH", f"selection {selection_id}: {exc}") from exc
+            if saved.get("schema", saved.get("schema_id")) != "caelab.selection.v1":
+                raise ResultError("SCHEMA_MISMATCH", "expected caelab.selection.v1")
+            aliases = {"node": {"node", "nodes", "node_ids"}, "element": {"element", "elements", "element_ids"}}
+            saved_kind = saved.get("entity_kind")
+            if not isinstance(saved_kind, str) or saved_kind not in aliases.get(entity, set()):
+                raise ResultError("OBSERVABLE_MISMATCH", "selection entity kind")
+            run_id = saved.get("run_id")
+            mesh_revision = saved.get("mesh_revision")
+            expected_revision = receipt.get("source_mesh_revision") or receipt["source_input_revision"]
+            if ((run_id is None and mesh_revision is None)
+                    or (run_id is not None and run_id != receipt["source_run_id"])
+                    or (mesh_revision is not None and mesh_revision != expected_revision)):
+                raise ResultError("SOURCE_MISMATCH", "selection run or mesh revision")
+            if "sha256" in selection and sha256_file(path, check) != selection["sha256"]:
+                raise ResultError("HASH_MISMATCH", "saved selection digest")
+            if not isinstance(saved.get("ids"), (list, tuple)) or (ids is not None and ids != saved["ids"]):
+                raise ResultError("SCHEMA_MISMATCH", "missing or conflicting selection ID lists")
+            ids = saved["ids"]
+    elif "artifact_ref" in selection:
+        if ids is not None:
+            raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
+        ref = ArtifactRefV1.from_dict(selection["artifact_ref"])
+        path = verify_artifact(folder, ref, check=check)
+        if ref.format_id == "npy-v2":
+            data = read_safe_npy_v2(path, root=folder)
+            if data.ndim != 1 or data.dtype.kind not in "iu":
+                raise ResultError("OBSERVABLE_MISMATCH", "selection artifact must contain integer IDs")
+            ids = data.tolist()
+        elif ref.format_id == "json":
+            ids = read_object(path).get("ids")
+        else:
+            raise ResultError("UNSUPPORTED_OBSERVABLE", "unsupported selection artifact format")
+    if ids is None and selection:
+        raise ResultError("OBSERVABLE_MISMATCH", "selection does not provide IDs")
+    if ids is not None and not isinstance(ids, (list, tuple)):
+        raise ResultError("SCHEMA_MISMATCH", "selection IDs must be a list")
+    expected = f"{entity}_ids" if entity else None
+    if kind not in (None, expected) or ("count" in selection and selection["count"] != len(ids)):
+        raise ResultError("OBSERVABLE_MISMATCH", "selection association or count")
+    return ids
+
+
+def _operator(ref):
+    op = ref.operator.get("id")
+    if (not isinstance(op, str) or ref.operator.get("version", "1") != "1"
+            or ref.operator.get("params", {}) or set(ref.operator) - {"id", "version", "params"}):
+        raise ResultError("UNSUPPORTED_OBSERVABLE", "unregistered operator or parameters")
+    return op
+
+
+def _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding):
+    if any(ref.location.get(key, "none" if key == "integration_point" else None) != expected
+           for key, expected in location.items()) or ref.geometry_state != geometry:
+        raise ResultError("SEMANTIC_MISMATCH", "result location or geometry state")
+    for key in ("integration_point", "ip"):
+        if key in ref.location and ref.location[key] != location.get("integration_point", "none"):
+            raise ResultError("SEMANTIC_MISMATCH", "unsupported integration point")
+    if ref.measure.casefold() != measure.casefold() or ref.shear_convention != shear:
+        raise ResultError("MEASURE_UNKNOWN", "result measure or shear convention is not verified")
+    if ref.eligibility.get("fit") or ref.eligibility.get("fit_eligible"):
+        raise ResultError("SEMANTIC_MISMATCH", "reader profile does not authorize fitting")
+    for key in ("dimension", "unit_dimension"):
+        if key in ref.units and ref.units[key] != units["dimension"]:
+            raise ResultError("SEMANTIC_MISMATCH", "result unit dimension differs from the field")
+    if ref.units.get("symbol", ref.units.get("unit", "unknown")) != units["symbol"]:
+        raise ResultError("UNIT_UNKNOWN", "result unit differs from the dataset declaration")
+    if "scale_to_si" in ref.units and ref.units["scale_to_si"] != units.get("scale_to_si"):
+        raise ResultError("UNIT_UNKNOWN", "result unit scale differs from the dataset declaration")
+    requested_basis = ref.basis.get("kind")
+    if requested_basis != basis and not (basis == "element_local" and requested_basis == "global"):
+        raise ResultError("UNSUPPORTED_BASIS", str(requested_basis))
+    if binding is not None and ref.component != binding["component"]:
+        raise ResultError("OBSERVABLE_MISMATCH", "history column component")
+
+
+def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live_stale=False) -> NumericResultV1:
+    """Read the pinned numeric selection with the reference preserved verbatim."""
+    check = check_cancelled or no_checkpoint
+    store = owning_store(store)
+    resolved = resolve_result_ref(store, ref, check_cancelled=check, live_stale=live_stale)
+    folder, receipt, dataset = (resolved[key] for key in ("operation_dir", "operation", "dataset"))
+    profile = receipt["adapter"]["id"]
+    if receipt["adapter"]["version"] != "1" or profile not in {*_SPATIAL_READERS, "OC-TH4-1"}:
+        raise ResultError("UNSUPPORTED_CAPABILITY", "unregistered numeric reader")
+    expected_reader = receipt.get("reader_code_sha256", receipt["adapter"].get("code_sha256"))
+    if (expected_reader != receipt["adapter"].get("code_sha256")
+            or converters.reader_code_sha256(profile, check) != expected_reader):
+        raise ResultError("HASH_MISMATCH", "active reader code differs from the operation receipt")
+    item, location, basis, measure, shear, units, geometry, binding = _semantics(
+        folder, receipt, dataset, ref.frame_id, ref.field_id, check)
+    _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding)
+    op = _operator(ref)
+    normalized = "identity" if op == "values" else op
+    base_operator = {"id": "curve_extract", "version": "1", "params": {}} if binding else _CANONICAL_OPERATOR
+    base_hash = canonical_sha256(ref.with_operator(base_operator).to_dict(), exclude_keys=())
+    requested_hash = canonical_sha256(ref.with_operator({"id": normalized, "version": "1", "params": {}}).to_dict(),
+                                      exclude_keys=())
+    coordinates = ()
+    audit = {"id": normalized, "version": "1", "params": {}, "base_quantity_ref_sha256": base_hash,
+             "requested_quantity_ref_sha256": requested_hash, "base_ref_sha256": base_hash,
+             "requested_ref_sha256": canonical_sha256(ref.to_dict(), exclude_keys=())}
+    eroded = ()
+    if dataset.dataset_kind == "history":
+        if profile != "OC-TH4-1" or op != "curve_extract" or ref.selection:
+            raise ResultError("UNSUPPORTED_OBSERVABLE", "history supports curve_extract over the original sample rows")
+        values_ref = ArtifactRefV1.from_dict(_history_column(folder, receipt, ref.field_id, check)["values_ref"])
+        arrays = []
+        for artifact in (item.coordinate_ref, item.source_row_index_ref, values_ref):
+            path = _registered_output(folder, receipt, artifact, check)
+            arrays.append(read_safe_npy_v2(path, root=folder))
+        times, rows, values = arrays
+        if (any(array.shape != (item.row_count,) for array in arrays)
+                or rows.dtype.kind not in "iu" or not np.array_equal(rows, np.arange(item.row_count))):
+            raise ResultError("INVALID_DATASET", "history artifact row counts or source indices")
+        opencourant_history._times(times)
+        opencourant_history.require_coverage(times, ref.coverage.get("time_interval"))
+        coordinates = tuple(map(float, times))
+        count = item.row_count
+        audit["column_binding"] = binding
+    else:
+        if profile not in _SPATIAL_READERS or op not in _OPERATORS:
+            raise ResultError("UNSUPPORTED_OBSERVABLE", "unregistered spatial reader or operator")
+        source = _registered_output(folder, receipt, ArtifactRefV1.from_dict(item["artifact_ref"]), check)
+        options = receipt["options"]
+        kwargs = {"exact_required_set": options.get("exact_required_set")}
+        if profile == "OC-ANIM-1":
+            kwargs["expected"] = options.get("expected_mesh")
+            kwargs["active_erosion_status"] = options.get("active_erosion_status", 0)
+        else:
+            kwargs["node_id_policy"] = options.get("node_id_policy")
+        grid = _SPATIAL_READERS[profile](source, check_cancelled=check, **kwargs)
+        metadata = vtk_fields.sample_metadata(grid)
+        if grid.time != item["time"] or any(item.get(key) != val for key, val in metadata.items()):
+            raise ResultError("HASH_MISMATCH", "frame TIME differs from its registered value")
+        ids = _selection(store, folder, receipt, ref.selection, location, check)
+        values, entity_ids, coverage = vtk_fields.query_field(
+            grid, ref.field_id, ids=ids, component=ref.component, operator=op, basis=ref.basis["kind"],
+            units={"unit": units["symbol"], "components": ref.units.get("components")}, check_cancelled=check,
+            include_coverage=True)
+        count = coverage["total"]
+        eroded = coverage["eroded_ids"]
+        values_ref = None
+        audit.update(entity_ids=entity_ids, shape=values.shape, frame_time=grid.time, **metadata)
+        if eroded:
+            audit["eroded_ids"] = eroded
+    if "expected" in ref.coverage and ref.coverage["expected"] != count:
+        raise ResultError("COVERAGE_INCOMPLETE", "valid sample count differs from expected coverage")
+    check()
+    reason_codes = (*(("MEASURE_UNKNOWN",) if measure == "unknown" else ()),
+                    *(("ERODED_ELEMENTS",) if eroded else ()))
+    return NumericResultV1(ref, tuple(map(float, np.ravel(values))), values_ref, coordinates,
+                           {"total": count, "valid": count - len(eroded), "expected": count,
+                            "missing": len(eroded), "eroded": len(eroded)},
+                           resolved["availability"], reason_codes=reason_codes, operator_provenance=audit)
