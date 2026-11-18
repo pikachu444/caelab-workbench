@@ -993,7 +993,8 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
                candidate_scopes=None, facets=None, out_of_scope=None, drop=(), invalid_quote=None,
                trace_ids=None, assessment_ids=None, gaps=(), question_plan=plan,
                response_format=None, trace_outcome=None, trace_format="cae-retrieval-trace-v1", trace_schema="caelab.retrieval_trace.v1",
-               trace_events=False, host_overrides=None, trace_overrides=None, companion=None, grouped=False):
+               trace_events=False, host_overrides=None, trace_overrides=None, companion=None, grouped=False,
+               recorded_review=None):
         candidates = [companion or candidate, target] if include_good else [target]
         probe = query_language.build_retrieval_decision(
             question_plan, candidates, explicit_facets=facets, candidate_solver_scopes=candidate_scopes,
@@ -1012,6 +1013,13 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
                 {"stage": "terminal", "status": trace_outcome},
             ]}
         trace_payload.update(trace_overrides or {})
+        if recorded_review is not None:
+            quote_span, relation = recorded_review
+            trace_payload["response"] = {
+                "checks": [{"requirement_id": req.requirement_id, "candidate_ids": [quote_span["candidate_id"]],
+                            "relation": relation, "quoted_spans": [quote_span], "reason": "recorded review"}
+                           for req in probe.requirements],
+            }
         raw = canonical_json_bytes(trace_payload)
         (tmp_path / "trace.json").write_bytes(raw)
         trace = ArtifactRefV1(
@@ -1115,6 +1123,19 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     for event in ({"kind": "solver_step"}, {"status": "completed"}):
         with pytest.raises(ValueError, match="trace events"):
             assess(candidate, trace_overrides={"events": [event]})
+    for events in ([{"stage": "search"}], [{"kind": "query_plan"}],
+                   [{"stage": "search"}, {"stage": "retrieval_completion"}],
+                   [{"stage": "prepare_query"}, {"stage": "candidate_selection"}]):
+        with pytest.raises(ValueError, match="trace events"):
+            assess(candidate, trace_overrides={"events": events})
+    assert assess(candidate, trace_overrides={"events": [
+        {"kind": "prepare_query"}, {"stage": "search"}, {"stage": "assessment"},
+    ]}).status == "supported"
+    for failure in ({"status": "error"}, {"error": "backend failed"}, {"errors": ["backend failed"]},
+                    {"insufficiency_reasons": ["review unavailable"]}, {"stage": "no_candidates"}):
+        assert assess(candidate, trace_overrides={"events": [
+            {"stage": "prepare_query"}, {"stage": "terminal", **failure},
+        ]}).status == "insufficient"
     for citation in ("unknown:chunk", {"candidate_id": "unknown:chunk"}):
         with pytest.raises(ValueError, match="unknown cited candidate"):
             assess(candidate, trace_overrides={"response": {"citations": [citation]}})
@@ -1126,6 +1147,15 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     assert assess(candidate, trace_overrides=recorded_stages).status == "supported"
     with pytest.raises(ValueError, match="outcome conflicts"):
         assess(candidate, trace_overrides={**recorded_stages, "selected_chunk_ids": []})
+    for outcome, stage, ids in (
+        ("candidates_selected", "no_candidates", [candidate["citation"]]),
+        ("insufficient", "no_candidates", [candidate["citation"]]),
+        ("out_of_scope", "candidates_selected", [candidate["citation"]]),
+        ("supported", "error", [candidate["citation"]]),
+    ):
+        with pytest.raises(ValueError, match="outcome conflicts"):
+            RetrievalTraceRecord(provider, ["prepare_query", stage], outcome, ids)
+    RetrievalTraceRecord(provider, ["prepare_query", "no_candidates"], "insufficient", [])
     with pytest.raises(ValueError, match="stage_events"):
         assess(candidate, trace_overrides={**recorded_stages, "stage_events": ["prepare_query", "solver_step"]})
     assert assess(candidate, trace_overrides={
@@ -1148,6 +1178,28 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
             assess(candidate, response_format=response_format, trace_overrides={"response": {"citations": [citation]}})
         with pytest.raises(ValueError, match="every requirement"):
             assess(candidate, response_format=response_format, trace_overrides={"response": {"checks": [check]}})
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    recorded_quote = {"candidate_id": candidate["citation"], "start": 0, "end": len(text)}
+    for trace_overrides in (
+        {"selected_chunk_ids": [candidate["citation"]]},
+        {"events": [{"stage": "prepare_query"},
+                    {"stage": "candidate_selection", "candidate_ids": [candidate["citation"]]},
+                    {"stage": "assessment"}]},
+        {"events": [{"stage": "response", "candidate_ids": [candidate["citation"]]}]},
+        {"response": {"citations": [recorded_quote]}},
+        {"response": {"requirement_id": "req-topic", "quoted_spans": [recorded_quote]}},
+    ):
+        assert assess(candidate, include_good=True, companion=other, trace_overrides=trace_overrides).status == "supported"
+        for response_format in ("frozen", None):
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(other, include_good=True, trace_overrides=trace_overrides, response_format=response_format)
+    assert assess(candidate, recorded_review=(recorded_quote, "satisfied")).status == "supported"
+    for trace_quote, relation, target in ((recorded_quote, "satisfied", other),
+                                         ({**recorded_quote, "end": 2}, "satisfied", candidate),
+                                         (recorded_quote, "missing", candidate)):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(target, include_good=True, companion=other if target is candidate else candidate,
+                   recorded_review=(trace_quote, relation))
     assert not query_language._has_valid_source_span(dict(candidate, page_start=5, page_end=2))
     assert not query_language._has_valid_source_span(dict(candidate, source_span={"char_start": True}))
     with pytest.raises(ValueError, match="trace identity"):
@@ -1380,8 +1432,8 @@ def test_assessment_quote_must_fit_the_claimed_page_of_a_pdf_chunk(tmp_path, mon
     review = ArtifactRefV1(id="review", role="source_review", path="review.json", sha256="d" * 64,
                            size=1, format_id="cae-source-review-v1", producer=producer)
 
-    def assess(provenance, trace_provenance=None, *, end=len("Weak form")):
-        span = {"candidate_id": spec.citation, "start": 0, "end": end}
+    def assess(provenance, trace_provenance=None, *, start=0, end=len("Weak form")):
+        span = {"candidate_id": spec.citation, "start": start, "end": end}
         event = {"kind": "retrieval_completion", "status": "completed"}
         if trace_provenance is not None:
             event["response"] = {"citations": [{**span, **trace_provenance}]}
@@ -1411,6 +1463,11 @@ def test_assessment_quote_must_fit_the_claimed_page_of_a_pdf_chunk(tmp_path, mon
     page_range = {"page_start": 1, "page_end": 1, "section_path": "Weak form"}
     assert assess(page_range, trace_provenance=page_range).status == "supported"
     assert assess({"page_start": 1, "page_end": 2}, end=len(spec.text)).status == "supported"
+    for true_page, start, end in ((1, 0, len("Weak form")), (2, spec.page_breaks[0], len(spec.text))):
+        with pytest.raises(ValueError, match="citation"):
+            assess({"page_start": 1, "page_end": 2}, start=start, end=end)
+        with pytest.raises(ValueError, match="citation"):
+            assess({"page": true_page}, trace_provenance={"page_start": 1, "page_end": 2}, start=start, end=end)
     for invalid in ({}, {"page": None}, {"page": 2}, {"page_start": 2, "page_end": 1},
                     {"page": 2, **page_range}, {"page": 1, "section_path": ["Forged clause"]}):
         with pytest.raises(ValueError, match="citation"):
@@ -1885,16 +1942,21 @@ def test_d09_comparison_editions_and_unmentioned_facet_spans(tmp_path, question)
     assert all(req.original_span is None for req in reqs if req.facet in facets)
 
 
-@pytest.mark.parametrize("question", [
-    "How do I extract displacement at node 42 in CalculiX?",
-    "Compare frames 42 and 43 in CalculiX",
-    "Do I need law 1 (CalculiX)?",
-    "절점 42 in CalculiX",
+@pytest.mark.parametrize(("question", "solver"), [
+    ("How do I extract displacement at node 42 in CalculiX?", "CalculiX"),
+    ("Compare frames 42 and 43 in CalculiX", "CalculiX"),
+    ("Do I need law 1 (CalculiX)?", "CalculiX"),
+    ("절점 42 in CalculiX", "CalculiX"),
+    ("Section 2.3 in CalculiX", "CalculiX"),
+    ("Figure 1.2 in CalculiX", "CalculiX"),
+    ("Equation 3.4 in Radioss", "Radioss"),
+    ("See fig. 1.2 (CalculiX)", "CalculiX"),
+    ("절 2.3 in CalculiX", "CalculiX"),
 ])
-def test_d09_entity_numbers_are_not_solver_editions(question):
+def test_d09_entity_numbers_are_not_solver_editions(question, solver):
     plan = query_language.prepare_query(question)
     requirements, owners = query_language.extract_query_scope(plan)
-    assert any(req.facet == "solver" and req.expected == "CalculiX" for req in requirements)
+    assert any(req.facet == "solver" and req.expected == solver for req in requirements)
     assert not owners
     assert not any(req.facet == "edition" for req in requirements)
 

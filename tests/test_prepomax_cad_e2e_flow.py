@@ -645,6 +645,16 @@ def test_template_deck_preserves_spaced_comments_with_tokens():
     assert deck.render({"E": 210}) == comments + "*ELASTIC\r\n210, 0.3\r\n"
 
 
+@pytest.mark.parametrize("comment", ["* * ignored", "* \t* ignored"])
+def test_d32_spaced_comment_preserves_static_period_validation(tmp_path, comment):
+    from caelab.mdo.native_endpoint import expected_static_endpoint
+
+    deck = tmp_path / "static.inp"
+    deck.write_text(f"*STEP\n*STATIC\n{comment}\n0.1, 2\n*END STEP\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="non-unit STATIC periods"):
+        expected_static_endpoint(deck)
+
+
 @pytest.mark.parametrize("element_header", ["*ELEMENT,TYPE=C3D4", "*ELEMENT ,TYPE=C3D4", "* ELEMENT,TYPE=C3D4", "*\tELE MENT,TYPE=C3D4"])
 @pytest.mark.parametrize("comment", ["", "* \t* included connectivity\n"])
 def test_d32_include_card_state_and_rendered_connectivity_guard(tmp_path, element_header, comment):

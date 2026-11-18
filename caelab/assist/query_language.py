@@ -21,7 +21,9 @@ from .contracts import (
     RetrievalDecisionV1,
     RetrievalRequirementV1,
     RetrievalTraceRecord,
+    _RETRIEVAL_TERMINAL_STAGES,
     _is_retrieval_event,
+    _retrieval_stage,
     _validate_embedding_provider,
 )
 
@@ -220,9 +222,11 @@ _PRE_SOLVER_EDITIONS = re.compile(
     re.I,
 )
 _PARENTHETIC_SOLVER_EDITION = re.compile(rf"(?<![\w.]){_EDITION_BEFORE_SOLVER}\s*\(\s*$", re.I)
-_ENTITY_NUMBER = re.compile(
-    r"\b(?:nodes?|elements?|parts?|steps?|modes?|frames?|pages?|lines?|section|chapter|figure|table|"
-    r"eq|equation|case|run|id|law|type|column|row|절점|요소|파트|단계|페이지|식)\s*(?:[.#:]\s*)?$", re.I,
+_ENTITY_PREFIX = re.compile(
+    r"\b(?:nodes?|elements?|parts?|steps?|modes?|frames?|pages?|lines?|cases?|runs?|ids?|laws?|types?|"
+    r"columns?|rows?|sections?|sec|chapters?|chap|ch|clauses?|tables?|tab|figures?|fig|equations?|eq|"
+    r"problems?|examples?|items?|articles?|appendix|appendices|절점|요소|파트|단계|페이지|절|장|항|표|그림|식|예제)"
+    r"\s*(?:[.#:]\s*)?$", re.I,
 )
 _UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|bar|mbar|psi|ksi|atm|rpm|deg|rad|MN|mJ|kJ|W|kW|C)"
 _EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
@@ -789,6 +793,11 @@ def extract_query_scope(plan, explicit_facets=None):
 
     editions = {}
     pre_solver_editions = {}
+
+    def is_entity_number(number, prefix):
+        return (not number.lower().startswith("v") and not _VERSION_MARKER.search(prefix)
+                and bool(_ENTITY_PREFIX.search(prefix)))
+
     for mention in mentions:
         prefix = normalized[:mention.start()]
         comparison = _PRE_SOLVER_EDITIONS.search(prefix)
@@ -798,6 +807,7 @@ def extract_query_scope(plan, explicit_facets=None):
             pre_solver_editions.update(
                 (number.span(), normalize_solver(mention[0]))
                 for number in _EDITION_RE.finditer(normalized, comparison.start(), comparison.end())
+                if not is_entity_number(number[0], normalized[:number.start()])
             )
     last_edition_end = None
     last_owner = None
@@ -805,7 +815,7 @@ def extract_query_scope(plan, explicit_facets=None):
         if _EDITION_UNIT.match(normalized[match.end():]):
             continue
         prefix = normalized[:match.start()]
-        if match[0].isdigit() and _ENTITY_NUMBER.search(prefix):
+        if is_entity_number(match[0], prefix):
             continue
         continued = last_edition_end is not None and re.fullmatch(
             r"\s*(?:(?:,\s*)?(?:and|or|versus|vs\.?|및|와|과)|,|/)\s*", prefix[last_edition_end:], re.I,
@@ -1114,9 +1124,10 @@ def _trace_objects(value):
 def _trace_blocks_support(value):
     states = {"decision", "status", "outcome", "relation", "scope_status", "retrieval_decision", "kind", "stage"}
     denied = ("insufficient", "out_of_scope", "missing", "unsatisfied", "uncertain",
-              "cancelled", "timed_out", "failed")
+              "cancelled", "timed_out", "failed", "error", "no_candidates")
     return (value.get("is_non_cae") is True or value.get("satisfied") is False
             or value.get("selected_chunk_ids") == []
+            or any(value.get(key) for key in ("insufficiency_reasons", "error", "errors"))
             or any(key in value and not value[key] for key in ("checks", "requirement_checks"))
             or any((key in states or key.startswith("req-")) and item in denied for key, item in value.items()))
 
@@ -1146,9 +1157,34 @@ def _validate_quote_provenance(value, provenance, span=None, *, require_page=Fal
 
     first, last = (value.get("page_start"), value.get("page_end")) if has_range else (page, page)
     if (type(first) is not int or type(last) is not int or first > last or first not in pages or last not in pages
-            or (has_page and (type(page) is not int or not page == first == last))
-            or (span is not None and not pages[first][0] <= span[0] < span[1] <= pages[last][1])):
+            or (has_page and (type(page) is not int or not page == first == last))):
         raise ValueError("Invalid retrieval assessment citation or quotation page")
+    if span is not None and not (
+        pages[first][0] <= span[0] < pages[first][1]
+        and pages[last][0] < span[1] <= pages[last][1]
+        and span[0] < span[1]
+    ):
+        raise ValueError("Invalid retrieval assessment citation or quotation page")
+
+
+_SELECTION_STAGES = {"candidate_selection", "select_candidates", "candidates_selected"}
+_REVIEW_STAGES = {"assessment", "retrieval_assessment", "decision", "retrieval_decision",
+                  "response", "retrieval_response", "requirement_checks"}
+_CANDIDATE_SUBSET_STAGES = _SELECTION_STAGES | _REVIEW_STAGES
+_INITIAL_STAGES = {"prepare_query", "query_plan", "retrieval_start", "retrieval"}
+_RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAGES - {"supported"}
+
+
+def _validate_trace_sequence(events, has_stage_events):
+    stages = [_retrieval_stage(event) for event in events]
+    if not set(stages) & (_RESULT_STAGES | {"retrieval"}):
+        raise ValueError("Retrieval assessment trace events must include a result")
+    if has_stage_events:
+        return
+    work_steps = [i for i, stage in enumerate(stages) if stage == "search" or stage in _SELECTION_STAGES]
+    if work_steps and (not _INITIAL_STAGES.intersection(stages[:work_steps[0]])
+                       or not _RESULT_STAGES.intersection(stages[work_steps[-1] + 1:])):
+        raise ValueError("Retrieval assessment trace events must start before search and record a terminal result")
 
 
 def _strict_assessment(payload, ref, root, identity, requirements, texts, provenance, question):
@@ -1173,10 +1209,27 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         return events
 
     events = validate_events(trace.get("events"))
-    trace_identity = {key: event[key] for event in (trace, *events) for key in identity if key in event}
-    if (trace_identity != identity
-            or any(event[key] != identity[key] for event in (trace, *events)
-                   for key in identity if key in event)):
+    _validate_trace_sequence(events, "stage_events" in trace)
+
+    all_candidate_ids = set(identity["candidate_ids"])
+
+    def declares_subset(record):
+        ids = record.get("candidate_ids")
+        return (record is not trace and isinstance(ids, list) and all(isinstance(cid, str) for cid in ids)
+                and set(ids) < all_candidate_ids
+                and any(isinstance(name, str) and name in _CANDIDATE_SUBSET_STAGES
+                        for name in (record.get("stage"), record.get("kind"))))
+
+    # The trace identifies the complete input set separately from any later selection.
+    trace_identity = {}
+    for record in (trace, *events):
+        for key, expected in identity.items():
+            if key not in record or (key == "candidate_ids" and declares_subset(record)):
+                continue
+            if record[key] != expected:
+                raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
+            trace_identity[key] = record[key]
+    if trace_identity != identity:
         raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
     trace_objects = list(_trace_objects(trace))
     if any(record[key] != identity[key] for record in trace_objects
@@ -1223,6 +1276,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     def validate_candidate_ids(ids):
         if not isinstance(ids, list) or any(not isinstance(cid, str) or cid not in texts for cid in ids):
             raise ValueError("Retrieval assessment contains an unknown cited candidate or invalid candidate_ids")
+        return set(ids)
 
     def validate_quotes(values):
         if not isinstance(values, list):
@@ -1250,10 +1304,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     or check["relation"] not in ("satisfied", "missing", "uncertain")
                     or not isinstance(check["reason"], str) or not check["reason"].strip()):
                 raise ValueError("Invalid retrieval assessment check")
-            validate_candidate_ids(check["candidate_ids"])
+            check_ids = validate_candidate_ids(check["candidate_ids"])
             quotes = validate_quotes(check["quoted_spans"])
             quoted_ids = {q[0] for q in quotes}
-            check_ids = set(check["candidate_ids"])
             if not quoted_ids <= check_ids or (check["relation"] == "satisfied" and (
                 not quoted_ids or check_ids != quoted_ids
             )):
@@ -1268,6 +1321,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     if "citations" in payload and validate_quotes(payload["citations"]) != checked_citations:
         raise ValueError("Retrieval assessment must link every citation")
 
+    cited_ids = {cid for cid, _, _ in checked_citations}
+    trace_quotes = set()
+    has_recorded_quotes = False
     for record in trace_objects:
         if record is not trace and "events" in record:
             validate_events(record["events"])
@@ -1286,17 +1342,32 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 _trace_blocks_support({"stage": event})
                 for event in record["stage_events"] if isinstance(event, str)
             )
-        for key in ("candidate_ids", "selected_chunk_ids"):
-            if key in record:
-                validate_candidate_ids(record[key])
-        for key in ("citations", "quoted_spans"):
-            if key in record:
-                validate_quotes(record[key])
+        if "candidate_ids" in record:
+            record_ids = validate_candidate_ids(record["candidate_ids"])
+            if declares_subset(record):
+                if record_ids and not cited_ids <= record_ids:
+                    raise ValueError("Retrieval assessment contradicts trace selection or review")
+                trace_blocks_support |= not record_ids
+        if "selected_chunk_ids" in record:
+            selected = validate_candidate_ids(record["selected_chunk_ids"])
+            if selected and not cited_ids <= selected:
+                raise ValueError("Retrieval assessment contradicts trace selection or review")
+        recorded_citations = {key: validate_quotes(record[key]) for key in ("citations", "quoted_spans")
+                              if key in record}
+        if recorded_citations:
+            has_recorded_quotes = True
+            for quotes in recorded_citations.values():
+                trace_quotes.update(quotes)
         for key in ("checks", "requirement_checks"):
             if key in record and record[key] != []:
-                _, recorded_citations = validate_checks(record[key])
-                if "citations" in record and validate_quotes(record["citations"]) != recorded_citations:
+                recorded_checks, recorded_spans = validate_checks(record[key])
+                if "citations" in recorded_citations and recorded_citations["citations"] != recorded_spans:
                     raise ValueError("Retrieval assessment trace must link every citation")
+                for rid, (check, quotes) in recorded_checks.items():
+                    supplied_check, supplied_quotes = by_req[rid]
+                    if (supplied_check["relation"] != check["relation"] or not supplied_quotes <= quotes
+                            or not set(supplied_check["candidate_ids"]) <= set(check["candidate_ids"])):
+                        raise ValueError("Retrieval assessment contradicts trace selection or review")
         if "candidate_id" in record:
             cid = record["candidate_id"]
             validate_candidate_ids([cid])
@@ -1304,6 +1375,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 quote({key: record[key] for key in allowed_quote_fields if key in record})
             elif _QUOTATION_PROVENANCE.intersection(record):
                 _validate_quote_provenance(record, provenance[cid])
+
+    if has_recorded_quotes and not checked_citations <= trace_quotes:
+        raise ValueError("Retrieval assessment contradicts trace selection or review")
 
     scope = payload["out_of_scope"]
     if (not isinstance(scope, Mapping) or set(scope) != {"is_non_cae", "original_spans", "reason"}

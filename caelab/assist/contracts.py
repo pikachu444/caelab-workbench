@@ -1008,11 +1008,13 @@ def _validate_embedding_provider(provider: Mapping[str, Any]) -> dict[str, Any]:
     return dict(data)
 
 
-_RETRIEVAL_TERMINAL_STAGES = frozenset({
-    "terminal", "completion", "complete", "completed", "finalize", "retrieval_completion",
-    "retrieval_decision", "select_candidates", "candidates_selected", "no_candidates", "supported",
-    "insufficient", "out_of_scope", "cancelled", "timed_out", "failed",
+_RETRIEVAL_FAILURE_STAGES = frozenset({
+    "no_candidates", "insufficient", "out_of_scope", "error", "failed", "cancelled", "timed_out",
 })
+_RETRIEVAL_TERMINAL_STAGES = _RETRIEVAL_FAILURE_STAGES | {
+    "terminal", "completion", "complete", "completed", "finalize", "retrieval_completion",
+    "retrieval_decision", "select_candidates", "candidates_selected", "supported",
+}
 _RETRIEVAL_STAGES = _RETRIEVAL_TERMINAL_STAGES | {
     "retrieval", "retrieval_assessment", "retrieval_response", "retrieval_start", "query_plan",
     "search", "candidate_selection", "assessment", "response", "requirement_checks", "decision",
@@ -1024,6 +1026,10 @@ def _is_retrieval_event(event: Any) -> bool:
     return (isinstance(event, Mapping) and bool({"kind", "stage"} & event.keys())
             and all(isinstance(event[key], str) and event[key] in _RETRIEVAL_STAGES
                     for key in ("kind", "stage", "step_kind", "step_type", "event_kind", "type") if key in event))
+
+
+def _retrieval_stage(event: Mapping[str, Any]) -> str | None:
+    return event.get("stage", event.get("kind"))
 
 
 @dataclass(frozen=True)
@@ -1050,15 +1056,17 @@ class RetrievalTraceRecord:
         if not all(isinstance(event, str) and event in _RETRIEVAL_STAGES or _is_retrieval_event(event)
                    for event in self.stage_events):
             raise ValueError("Invalid RetrievalTraceRecord.stage_events")
-        stages = [
-            event.get("stage", event.get("kind")) if isinstance(event, Mapping) else event
-            for event in self.stage_events
-        ]
-        if "prepare_query" not in stages[:-1] or stages[-1] not in _RETRIEVAL_TERMINAL_STAGES:
+        stages = [_retrieval_stage(event) if isinstance(event, Mapping) else event for event in self.stage_events]
+        terminal = stages[-1]
+        if "prepare_query" not in stages[:-1] or terminal not in _RETRIEVAL_TERMINAL_STAGES:
             raise ValueError("RetrievalTraceRecord.stage_events must include prepare_query and a terminal stage")
-        if ((outcome in ("supported", "candidates_selected") and not selected)
+        no_candidates = ("no_candidates", "insufficient", "out_of_scope")
+        if ((terminal == "no_candidates" and (outcome not in no_candidates or selected))
+                or (outcome in ("supported", "candidates_selected")
+                    and (terminal in _RETRIEVAL_FAILURE_STAGES or not selected))
+                or (terminal == "candidates_selected" and outcome in no_candidates)
                 or (outcome == "no_candidates" and selected)):
-            raise ValueError("RetrievalTraceRecord.outcome conflicts with selected_chunk_ids")
+            raise ValueError("RetrievalTraceRecord.outcome conflicts with terminal stage or selected_chunk_ids")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
