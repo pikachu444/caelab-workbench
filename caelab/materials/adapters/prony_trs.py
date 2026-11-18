@@ -409,6 +409,45 @@ def _extract_param_values(parameters: Mapping[str, Any] | Sequence[ParameterSpec
     return out
 
 
+_PRONY_PARAMETER_UNITS = {
+    "E0": QuantityUnitSpec("MPa", "stress"),
+    "a1": QuantityUnitSpec("", "dimensionless"),
+    "a2": QuantityUnitSpec("", "dimensionless"),
+    "tau1": QuantityUnitSpec("s", "time"),
+    "tau2": QuantityUnitSpec("s", "time"),
+    "C1": QuantityUnitSpec("", "dimensionless"),
+    "C2": QuantityUnitSpec("K", "temperature_difference"),
+    "Tref": QuantityUnitSpec("K", "absolute_temperature"),
+}
+
+
+def _canonical_prony_parameters(
+    parameters: Mapping[str, Any], units: Mapping[str, str],
+) -> dict[str, float]:
+    values = _extract_param_values(parameters)
+    for identifier, target in _PRONY_PARAMETER_UNITS.items():
+        if identifier not in values:
+            continue
+        source_unit = units.get(identifier, target.unit)
+        try:
+            values[identifier] = float(convert_values(
+                values[identifier], QuantityUnitSpec(source_unit, target.quantity_kind), target,
+            ))
+        except ValueError as exc:
+            raise MaterialStudyError(
+                "INVALID_PARAMETER", "prony_trs.parameters",
+                {"reason": "INVALID_PARAMETER_UNIT_OR_VALUE", "parameter": identifier,
+                 "unit": source_unit, "expected_unit": target.unit, "error": str(exc)},
+            ) from exc
+    return values
+
+
+def _request_parameters(request: MaterialEvaluationRequest) -> dict[str, float]:
+    return _canonical_prony_parameters(
+        request.physical_parameters, {spec.id: spec.unit for spec in request.parameter_specs},
+    )
+
+
 def _extract_temperature_K(exp: ExperimentSpec, stage: str) -> float:
     cond = exp.conditions
     if "temperature_K" in cond:
@@ -742,6 +781,8 @@ class PronyTRSAdapter:
                 {"expected": self.MODEL_ID, "got": model.model_id},
             )
         param_vals = _extract_param_values(parameters)
+        if not isinstance(parameters, Mapping):
+            param_vals = _canonical_prony_parameters(param_vals, {spec.id: spec.unit for spec in parameters})
         _, _, _, c1, c2, tref = _validate_physical_domain(param_vals, stage="prony_trs.validate")
 
         settings = numerical_settings or {}
@@ -787,15 +828,52 @@ class PronyTRSAdapter:
         parameters: Sequence[ParameterSpec],
         experiments: Sequence[ExperimentSpec],
         settings: Mapping[str, Any],
+        *,
+        physical_parameters: Mapping[str, Any] | None = None,
     ) -> None:
         stage = "prony_trs.wlf_provenance"
-        measured = any(
-            exp.source_kind == "experiment" and exp.conditions.get("provenance") != "synthetic_demo"
-            for exp in experiments
+        measured = tuple(
+            exp for exp in experiments
+            if exp.source_kind == "experiment" and exp.conditions.get("provenance") != "synthetic_demo"
         )
-        fixed = {p.id: p.default for p in parameters if p.role == "fixed" and p.id in ("C1", "C2", "Tref")}
-        if not measured or not fixed or len({_extract_temperature_K(exp, stage) for exp in experiments}) < 2:
+        if not measured:
             return
+        shift_ids = {"C1", "C2", "Tref"}
+        specs = {p.id: p for p in parameters if p.id in shift_ids}
+        if all(key in specs and specs[key].role == "free" for key in ("C1", "C2")):
+            return
+
+        shift_specs = tuple(specs.values())
+        raw_values = (
+            {key: physical_parameters[key] for key in specs if key in physical_parameters}
+            if physical_parameters is not None
+            else _extract_param_values(shift_specs)
+        )
+        if "Tref" not in raw_values:
+            raise MaterialStudyError("INVALID_PARAMETER", stage, {"reason": "MISSING_PARAMETER", "parameter": "Tref"})
+        tref = _canonical_prony_parameters(raw_values, {p.id: p.unit for p in shift_specs})["Tref"]
+        shifted_ids = []
+        for exp in measured:
+            # Invalid metadata is reported by the affected split's own validation.
+            try:
+                temperature = _extract_temperature_K(exp, stage)
+            except (MaterialStudyError, TypeError, ValueError):
+                continue
+            history = exp.conditions.get("temperature_history_K", ())
+            stress_path = any(ch.observable_id in ("stress_xx", "axial_stress") for ch in exp.channels)
+            if temperature != tref or (
+                stress_path and isinstance(history, Sequence)
+                and any(
+                    isinstance(t, (int, float)) and not isinstance(t, bool)
+                    and math.isfinite(t) and t > 0.0 and t != tref
+                    for t in history
+                )
+            ):
+                shifted_ids.append(exp.experiment_id)
+        if not shifted_ids:
+            return
+
+        fixed = {p.id: raw_values[p.id] for p in shift_specs if p.role == "fixed" and p.id in raw_values}
         provenance = settings.get("wlf_provenance")
         if (
             not isinstance(provenance, Mapping)
@@ -808,16 +886,25 @@ class PronyTRSAdapter:
                 for key, value in fixed.items()
             )
         ):
-            raise MaterialStudyError("WLF_PROVENANCE_REQUIRED", stage, {"fixed_parameters": fixed})
+            raise MaterialStudyError(
+                "WLF_PROVENANCE_REQUIRED", stage,
+                {"fixed_parameters": fixed, "experiment_ids": shifted_ids, "Tref_K": tref},
+            )
 
-    def plan(self, request: MaterialEvaluationRequest) -> EvaluationPlan:
-        self.validate_study_configuration(request.parameter_specs, request.experiments, request.numerical_settings)
-        self.validate(
+    def validate_request(self, request: MaterialEvaluationRequest) -> tuple[Mapping[str, Any], ...]:
+        self.validate_study_configuration(
+            request.parameter_specs, request.experiments, request.numerical_settings,
+            physical_parameters=request.physical_parameters,
+        )
+        return self.validate(
             request.model_descriptor,
-            request.physical_parameters,
+            _request_parameters(request),
             request.experiments,
             request.numerical_settings,
         )
+
+    def plan(self, request: MaterialEvaluationRequest) -> EvaluationPlan:
+        self.validate_request(request)
         exp_plans: list[dict[str, Any]] = []
         expected_artifacts: list[str] = [f"artifacts/pyvisco-provenance-{request.evaluation_id}.json"]
         for exp in request.experiments:
@@ -866,7 +953,7 @@ class PronyTRSAdapter:
         cancel_event: threading.Event | None = None,
     ) -> Mapping[str, Any]:
         prony_mod, shift_mod, pyvisco_status = _require_verified_pyvisco("prony_trs.execute")
-        param_vals = _extract_param_values(request.physical_parameters)
+        param_vals = _request_parameters(request)
         e0, a_arr, tau_arr, c1, c2, tref = _validate_physical_domain(param_vals, stage="prony_trs.execute")
         allow_extended = bool(request.numerical_settings.get("allow_extended_temperature_range", False))
 
@@ -1188,6 +1275,13 @@ class PronyTRSAdapter:
             "request_id": request.request_id,
             "evaluation_id": request.evaluation_id,
             "study_revision": request.study_revision,
+            "study_id": request.study_id,
+            "model_id": self.MODEL_ID,
+            "model_revision": self.MODEL_REVISION,
+            "adapter": self._identity,
+            "parameter_set_sha256": canonical_sha256(dict(request.physical_parameters), exclude_keys=()),
+            "execution_phase": request.execution_phase,
+            "numerical_settings_sha256": canonical_sha256(_to_plain_json(request.numerical_settings), exclude_keys=()),
             "experiments": exp_outputs,
             "artifacts": all_artifacts,
             "artifact_owners": artifact_owners,
@@ -1202,6 +1296,26 @@ class PronyTRSAdapter:
         data_root: Path,
         study_id: str,
     ) -> PredictionBundleV1:
+        expected = {
+            "request_id": plan.request_id,
+            "evaluation_id": plan.evaluation_id,
+            "study_revision": plan.study_revision,
+            "study_id": study_id,
+            "model_id": plan.model_id,
+            "model_revision": plan.model_revision,
+            "adapter": plan.adapter,
+            "parameter_set_sha256": canonical_sha256(dict(plan.physical_parameters), exclude_keys=()),
+            "execution_phase": plan.execution_phase,
+            "numerical_settings_sha256": canonical_sha256(_to_plain_json(plan.numerical_settings), exclude_keys=()),
+        }
+        mismatches = [key for key, value in expected.items() if artifacts.get(key) != value]
+        if plan.adapter != self._identity and "adapter" not in mismatches:
+            mismatches.append("adapter")
+        if mismatches:
+            raise MaterialStudyError(
+                "CORRUPT_ARTIFACT", "evaluate.collect",
+                {"reason": "PREDICTION_PROVENANCE_MISMATCH", "mismatched_fields": mismatches},
+            )
         exp_preds: list[ExperimentPredictionV1] = []
         for exp_entry in artifacts.get("experiments", ()):
             channels = tuple(
@@ -1236,11 +1350,14 @@ class PronyTRSAdapter:
 
         prov = artifacts.get("provenance", {})
         bundle = PredictionBundleV1(
-            evaluation_id=plan.evaluation_id,
-            request_id=plan.request_id,
-            study_revision=plan.study_revision,
-            model_revision=plan.model_revision,
-            adapter=self._identity,
+            evaluation_id=artifacts["evaluation_id"],
+            request_id=artifacts["request_id"],
+            study_revision=artifacts["study_revision"],
+            model_revision=artifacts["model_revision"],
+            adapter=artifacts["adapter"],
+            study_id=artifacts["study_id"],
+            model_id=artifacts["model_id"],
+            parameter_set_sha256=artifacts["parameter_set_sha256"],
             experiments=tuple(exp_preds),
             optimizer_scalars={},
             artifacts=tuple(artifacts.get("artifacts", ())),
@@ -1260,9 +1377,13 @@ class PronyTRSAdapter:
         export_id = f"export-{uuid.uuid4().hex[:12]}"
         pyvisco_status = verify_pyvisco_sources()
         params = dict(evaluation_artifact.get("physical_parameters", {}))
-        e0 = float(params.get("E0", 0.0))
-        a1 = float(params.get("a1", 0.0))
-        a2 = float(params.get("a2", 0.0))
+        units = dict(evaluation_artifact.get("parameter_units", {}))
+        formulation_parameters = _canonical_prony_parameters(
+            {key: params[key] for key in ("E0", "a1", "a2") if key in params}, units,
+        )
+        e0 = formulation_parameters.get("E0", 0.0)
+        a1 = formulation_parameters.get("a1", 0.0)
+        a2 = formulation_parameters.get("a2", 0.0)
         assessment = evaluation_artifact.get("assessment", {})
         assess_block = assessment.get("assessment", {}) if isinstance(assessment, Mapping) else {}
         split_checks = assess_block.get("split_checks", [])
@@ -1289,14 +1410,8 @@ class PronyTRSAdapter:
                 "equilibrium_modulus_MPa": e0 * (1.0 - a1 - a2),
             },
             "parameters": {
-                "E0": {"value": params.get("E0"), "unit": "MPa"},
-                "a1": {"value": params.get("a1"), "unit": ""},
-                "a2": {"value": params.get("a2"), "unit": ""},
-                "tau1": {"value": params.get("tau1"), "unit": "s"},
-                "tau2": {"value": params.get("tau2"), "unit": "s"},
-                "C1": {"value": params.get("C1"), "unit": ""},
-                "C2": {"value": params.get("C2"), "unit": "K"},
-                "Tref": {"value": params.get("Tref"), "unit": "K"},
+                key: {"value": params.get(key), "unit": units.get(key, canonical.unit)}
+                for key, canonical in _PRONY_PARAMETER_UNITS.items()
             },
             "provenance": {
                 "pyvisco_version": pyvisco_status.get("version"),

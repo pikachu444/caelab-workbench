@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 import csv
 import hashlib
 import io
+from itertools import islice
 import math
 import os
 from pathlib import Path
@@ -390,9 +391,22 @@ def _read_and_parse_csv(source_path: Path) -> tuple[bytes, str, list[str], list[
 
 
 def preview_csv_rows(source: str | Path, *, max_rows: int = 100) -> tuple[list[str], list[list[str]], int]:
-    """Read up to max_rows real CSV rows without altering data or dropping rows."""
-    _, _, headers, data_rows = _read_and_parse_csv(Path(source))
-    return headers, data_rows[:max(0, int(max_rows))], len(data_rows)
+    """Read a bounded preview. The row count is capped at max_rows + 1."""
+    limit = max(0, int(max_rows))
+    try:
+        with Path(source).open(encoding="utf-8-sig", newline="") as stream:
+            reader = csv.reader(stream)
+            headers = next(reader, [])
+            rows = list(islice(reader, limit + 1))
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise MaterialStudyError("INVALID_CSV", "preview_csv", {"reason": str(exc)}) from exc
+    if not headers or not rows or any(not col.strip() or "\x00" in col for col in headers):
+        raise MaterialStudyError("INVALID_CSV", "preview_csv", {"reason": "MISSING_HEADER_OR_DATA_ROWS"})
+    if len(set(headers)) != len(headers):
+        raise MaterialStudyError("INVALID_CSV", "preview_csv", {"reason": "DUPLICATE_HEADER_COLUMN"})
+    if any(len(row) != len(headers) or any("\x00" in col for col in row) for row in rows[:limit]):
+        raise MaterialStudyError("INVALID_CSV", "preview_csv", {"reason": "INVALID_PREVIEW_ROW"})
+    return headers, rows[:limit], len(rows)
 
 
 def _match_row_filter(row_dict: Mapping[str, str], row_filter: Mapping[str, Any]) -> bool:

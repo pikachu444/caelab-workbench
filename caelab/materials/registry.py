@@ -337,6 +337,7 @@ class CalibrationEvaluationArtifact:
     created_at: str = ""
     schema_version: int = 1
     holdout_exposed: bool = False
+    executed_holdout_experiment_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_schema_version_v1(self.schema_version)
@@ -372,6 +373,10 @@ class CalibrationEvaluationArtifact:
         _require_bool(self.holdout_exposed, "CalibrationEvaluationArtifact.holdout_exposed")
         if self.holdout_exposed and self.execution_phase != "confirmation":
             raise ValueError("Only a confirmation can expose holdout")
+        ids = _require_str_tuple(self.executed_holdout_experiment_ids, "executed_holdout_experiment_ids")
+        if ids and (not self.holdout_exposed or len(set(ids)) != len(ids)):
+            raise ValueError("Executed holdout experiments require exposure and unique IDs")
+        object.__setattr__(self, "executed_holdout_experiment_ids", ids)
         if self.prediction_bundle is not None and not isinstance(self.prediction_bundle, PredictionBundleV1):
             raise ValueError("CalibrationEvaluationArtifact.prediction_bundle must be None or PredictionBundleV1")
         if not isinstance(self.assessment, AssessmentResultV1):
@@ -429,6 +434,8 @@ class CalibrationEvaluationArtifact:
             "state": self.state,
             "cache_hit": self.cache_hit,
             "holdout_exposed": self.holdout_exposed,
+            **({"executed_holdout_experiment_ids": list(self.executed_holdout_experiment_ids)}
+               if self.executed_holdout_experiment_ids else {}),
             "prediction_bundle": None if self.prediction_bundle is None else self.prediction_bundle.to_dict(),
             "assessment": self.assessment.to_dict(),
             "channel_results": _to_plain_json(self.channel_results),
@@ -467,7 +474,10 @@ class CalibrationEvaluationArtifact:
             "diagnostics",
             "created_at",
         }
-        m = _require_exact_keys(data, required, optional={"holdout_exposed"}, context="CalibrationEvaluationArtifact")
+        m = _require_exact_keys(
+            data, required, optional={"holdout_exposed", "executed_holdout_experiment_ids"},
+            context="CalibrationEvaluationArtifact",
+        )
         _require_schema_version_v1(m["schema_version"])
         return cls(
             schema_version=1,
@@ -485,6 +495,7 @@ class CalibrationEvaluationArtifact:
             state=m["state"],
             cache_hit=m["cache_hit"],
             holdout_exposed=m.get("holdout_exposed", False),
+            executed_holdout_experiment_ids=m.get("executed_holdout_experiment_ids", ()),
             prediction_bundle=(
                 None if m["prediction_bundle"] is None else PredictionBundleV1.from_dict(m["prediction_bundle"])
             ),

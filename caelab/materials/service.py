@@ -733,8 +733,7 @@ class CalibrationStudyService:
         with self._state_lock:
             out = tuple(dict(entry) for entry in self._manifest.get("evaluations", {}).values())
         for item in out:
-            if item.get("execution_phase") == "confirmation":
-                self.evaluation(item["evaluation_id"])
+            self.evaluation(item["evaluation_id"])
         return out
 
     def experiments(self) -> tuple[ExperimentSpec, ...]:
@@ -1015,16 +1014,17 @@ class CalibrationStudyService:
         comparisons: Sequence[ComparisonSpec],
         assessment_policy: Mapping[str, Any],
     ) -> tuple[ComparisonSpec, ...]:
-        if execution_phase == "confirmation":
-            return tuple(comparisons)
         sel_policy = assessment_policy.get("selection_policy", {})
-        mode = sel_policy.get("mode", "training_only")
         val_comp_ids = set(sel_policy.get("validation_comparison_ids", ()))
         return tuple(
             c for c in comparisons
-            if c.required_for_fit or (
-                mode == "manual_with_validation" and c.split == "validation"
-                and c.required_for_validation and c.id in val_comp_ids
+            if c.split == "train" or (
+                c.split == "validation" and (
+                    c.id in val_comp_ids
+                    or execution_phase == "exploration" and not c.required_for_validation
+                )
+            ) or (
+                execution_phase == "confirmation" and c.split == "holdout"
             )
         )
 
@@ -1032,6 +1032,36 @@ class CalibrationStudyService:
     def _compared_experiments(experiments, comparisons) -> tuple[ExperimentSpec, ...]:
         ids = {comp.experiment_id for comp in comparisons}
         return tuple(exp for exp in experiments.values() if exp.experiment_id in ids)
+
+    def _check_independent_holdout(self, experiments: Sequence[ExperimentSpec]) -> None:
+        fit_sources = {e.source_ref.sha256 for e in experiments if e.split != "holdout"}
+        holdout_sources = {e.source_ref.sha256 for e in experiments if e.split == "holdout"}
+        shared = fit_sources & holdout_sources
+        recipes = {}
+        for exp in experiments:
+            if exp.source_ref.sha256 in shared:
+                ref = ArtifactRefV1.from_dict(self._manifest["experiment_sources"][exp.experiment_id]["recipe_ref"])
+                recipes[exp.experiment_id] = self._read_ref_json(ref, self._data_root, "holdout.independence")
+        for holdout in experiments:
+            if holdout.split != "holdout" or holdout.experiment_id not in recipes:
+                continue
+            hold = recipes[holdout.experiment_id]
+            for other in experiments:
+                if other.split == "holdout" or other.source_ref.sha256 != holdout.source_ref.sha256:
+                    continue
+                fit = recipes[other.experiment_id]
+                overlap = set(hold["source_rows"]) & set(fit["source_rows"])
+                identical = any(
+                    h["independent"] == f["independent"] and h["values"] == f["values"]
+                    for key, h in hold["array_sha256s"].items()
+                    if (f := fit["array_sha256s"].get(key)) is not None
+                )
+                if overlap or identical:
+                    raise MaterialStudyError(
+                        "DATA_RECIPE_INCOMPATIBLE", "holdout.independence",
+                        {"reason": "NON_INDEPENDENT_HOLDOUT", "experiment_id": holdout.experiment_id,
+                         "compared_with": other.experiment_id},
+                    )
 
     def _write_revision_json_ref(
         self,
@@ -1082,6 +1112,77 @@ class CalibrationStudyService:
             exclude_keys=(),
         )
 
+    def _matching_explorations(
+        self, content_revision: str, parameters: Mapping[str, Any], adapter: AdapterIdentity,
+        *, created_before: str | None = None,
+    ) -> tuple[str, ...]:
+        parameter_sha = canonical_sha256(dict(parameters), exclude_keys=())
+        cutoff = datetime.fromisoformat(created_before) if created_before is not None else None
+        matches = []
+        for eid, entry in self._manifest.get("evaluations", {}).items():
+            if (
+                entry["content_revision"] == content_revision and entry["execution_phase"] == "exploration"
+                and entry["state"] == "completed" and entry.get("fit_loss") is not None
+                and entry.get("parameter_values_sha256") == parameter_sha
+            ):
+                art = self.evaluation(eid)
+                if (
+                    art.adapter == adapter and dict(art.physical_parameters) == dict(parameters)
+                    and (cutoff is None or datetime.fromisoformat(art.created_at) <= cutoff)
+                ):
+                    matches.append(eid)
+        return tuple(matches)
+
+    def _read_frozen_selection(self, ref: ArtifactRefV1, content_revision: str) -> SelectionRecordV1:
+        revision = self._manifest["revisions"].get(content_revision, {})
+        if ref.to_dict() not in revision.get("selections", ()):
+            raise MaterialStudyError("SELECTION_MISMATCH", "evaluate.selection", {"reason": "SELECTION_NOT_INDEXED"})
+        raw = self._read_ref_json(ref, self._data_root, "evaluate.selection")
+        try:
+            rec = SelectionRecordV1.from_dict(raw)
+            if (
+                _sha256_bytes(canonical_json_bytes(rec.to_dict())) != ref.sha256
+                or canonical_sha256(dict(rec.physical_parameters), exclude_keys=()) != rec.parameter_values_sha256
+                or ref.id != f"sel:{rec.selection_id}" or ref.role != "selection_record"
+                or ref.path != f"revisions/{content_revision}/selections/{rec.selection_id}.json"
+                or rec.content_revision != content_revision or rec.study_id != self.study_id
+                or len(set(rec.source_evaluation_ids)) != len(rec.source_evaluation_ids)
+            ):
+                raise ValueError("FROZEN_SELECTION_DIGEST_OR_IDENTITY_MISMATCH")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise MaterialStudyError("SELECTION_MISMATCH", "evaluate.selection", {"reason": str(exc)}) from exc
+        return rec
+
+    def _find_selection(
+        self, content_revision: str, parameters: Mapping[str, Any], adapter: AdapterIdentity,
+        *, source_evaluation_id: str | None = None,
+    ) -> ArtifactRefV1 | None:
+        revision = self._manifest["revisions"].get(content_revision, {})
+        target_hash = canonical_sha256(dict(parameters), exclude_keys=())
+        sources = self._matching_explorations(content_revision, parameters, adapter)
+        for item in reversed(revision.get("selections", ())):
+            ref = ArtifactRefV1.from_dict(item)
+            rec = self._read_frozen_selection(ref, content_revision)
+            same_lineage = (
+                rec.source_evaluation_ids == sources if source_evaluation_id is None
+                else source_evaluation_id in rec.source_evaluation_ids
+            )
+            if (
+                same_lineage and rec.adapter == adapter and rec.parameter_values_sha256 == target_hash
+                and dict(rec.physical_parameters) == dict(parameters)
+            ):
+                return ref
+        return None
+
+    def find_frozen_selection(self, evaluation_id: str) -> ArtifactRefV1 | None:
+        art = self.evaluation(evaluation_id)
+        revision = self.snapshot().content_revision
+        if art.execution_phase != "exploration" or art.content_revision != revision:
+            return None
+        return self._find_selection(
+            revision, art.physical_parameters, art.adapter, source_evaluation_id=evaluation_id,
+        )
+
     def _create_selection_record(
         self,
         *,
@@ -1107,7 +1208,7 @@ class CalibrationStudyService:
         )
         norm_ref = self._write_revision_json_ref(
             content_revision=content_revision,
-            rel_subpath="normalization.json",
+            rel_subpath=f"normalization/{selection_id}.json",
             payload=norm_payload,
             artifact_id=f"norm:{content_revision[:16]}",
             role="normalization_policy",
@@ -1142,19 +1243,10 @@ class CalibrationStudyService:
         param_sha = canonical_sha256(_to_plain_json(physical_parameters), exclude_keys=())
         num_sha = canonical_sha256(_to_plain_json(numerical_settings), exclude_keys=())
 
-        # Matching prior exploration evaluations with identical parameters and content_revision
-        matching_eval_ids: list[str] = []
-        for ev_id, ev_meta in self._manifest.get("evaluations", {}).items():
-            if ev_meta.get("content_revision") != content_revision:
-                continue
-            if ev_meta.get("execution_phase") != "exploration":
-                continue
-            if ev_meta.get("state") != "completed" or ev_meta.get("fit_loss") is None:
-                continue
-            if ev_meta.get("parameter_values_sha256") == param_sha and self.evaluation(ev_id).adapter == adapter.identity:
-                matching_eval_ids.append(ev_id)
-
-        ordered = self._compared_experiments(experiments, comparisons)
+        matching_eval_ids = self._matching_explorations(content_revision, physical_parameters, adapter.identity)
+        ordered = self._compared_experiments(experiments, self._phase_comparisons(
+            execution_phase="confirmation", comparisons=comparisons, assessment_policy=assessment_policy,
+        ))
         train_revs = tuple(
             {"experiment_id": e.experiment_id, "experiment_revision": e.experiment_revision}
             for e in ordered
@@ -1217,30 +1309,44 @@ class CalibrationStudyService:
         adapter: MaterialAdapter,
         physical_parameters: Mapping[str, float],
         numerical_settings: Mapping[str, Any],
-        holdout_experiments: Sequence[ExperimentSpec],
+        compared_experiments: Sequence[ExperimentSpec],
+        comparisons: Sequence[ComparisonSpec],
+        assessment_policy: Mapping[str, Any],
+        optimization_config: Mapping[str, Any] | None,
     ) -> tuple[SelectionRecordV1, str]:
-        raw = self._read_ref_json(selection_ref, self._data_root, "evaluate.selection")
-        rec = SelectionRecordV1.from_dict(raw)
-        for ref in (rec.normalization_ref, rec.assessment_policy_ref, rec.selection_policy_ref):
-            self._read_ref_json(ref, self._data_root, "evaluate.selection")
-        param_sha = canonical_sha256(_to_plain_json(physical_parameters), exclude_keys=())
-        num_sha = canonical_sha256(_to_plain_json(numerical_settings), exclude_keys=())
-        expected_hold = tuple(
-            {"experiment_id": e.experiment_id, "experiment_revision": e.experiment_revision}
-            for e in holdout_experiments
+        rec = self._read_frozen_selection(selection_ref, content_revision)
+        self._read_ref_json(rec.normalization_ref, self._data_root, "evaluate.selection")
+        policy = self._read_ref_json(rec.assessment_policy_ref, self._data_root, "evaluate.selection")
+        selection_policy = self._read_ref_json(rec.selection_policy_ref, self._data_root, "evaluate.selection")
+        expected_selection_policy = {
+            "schema_version": 1,
+            **_to_plain_json(assessment_policy["selection_policy"]),
+            "optimization_config_sha256": (
+                None if optimization_config is None else canonical_sha256(optimization_config, exclude_keys=())
+            ),
+            "comparisons_sha256": canonical_sha256([c.to_dict() for c in comparisons], exclude_keys=()),
+        }
+
+        def revisions(split: str):
+            return tuple({"experiment_id": e.experiment_id, "experiment_revision": e.experiment_revision}
+                         for e in compared_experiments if e.split == split)
+
+        actual_sources = self._matching_explorations(
+            content_revision, physical_parameters, adapter.identity, created_before=rec.created_at,
         )
         if (
-            rec.study_id != self.study_id
-            or rec.content_revision != content_revision
-            or rec.model_revision != model_descriptor.model_revision
-            or rec.adapter != adapter.identity
-            or rec.parameter_values_sha256 != param_sha
-            or rec.numerical_settings_sha256 != num_sha
-            or rec.holdout_experiment_revisions != expected_hold
+            rec.model_revision != model_descriptor.model_revision or rec.adapter != adapter.identity
+            or dict(rec.physical_parameters) != dict(physical_parameters)
+            or rec.parameter_values_sha256 != canonical_sha256(dict(physical_parameters), exclude_keys=())
+            or rec.numerical_settings_sha256 != canonical_sha256(_to_plain_json(numerical_settings), exclude_keys=())
+            or policy != _to_plain_json(assessment_policy) or selection_policy != expected_selection_policy
+            or rec.source_evaluation_ids != actual_sources
+            or rec.training_experiment_revisions != revisions("train")
+            or rec.validation_experiment_revisions != revisions("validation")
+            or rec.holdout_experiment_revisions != revisions("holdout")
         ):
             raise MaterialStudyError(
-                "SELECTION_MISMATCH",
-                "evaluate",
+                "SELECTION_MISMATCH", "evaluate",
                 {"reason": "FROZEN_SELECTION_DOES_NOT_MATCH_REQUEST", "selection_id": rec.selection_id},
             )
         proc_sha = self._selection_procedure_sha256(
@@ -1259,7 +1365,6 @@ class CalibrationStudyService:
         self,
         *,
         holdout_experiments: Sequence[ExperimentSpec],
-        selection_id: str,
         parameter_sha: str,
         content_revision: str,
     ) -> None:
@@ -1273,8 +1378,8 @@ class CalibrationStudyService:
             if not indexed.get("holdout_exposed") and not artifact.holdout_exposed:
                 continue
             event, prior = self._verified_holdout_exposure(artifact, indexed)
-            identity = (prior.selection_id, prior.parameter_values_sha256, prior.content_revision)
-            if identity == (selection_id, parameter_sha, content_revision):
+            identity = (prior.parameter_values_sha256, prior.content_revision)
+            if identity == (parameter_sha, content_revision):
                 continue
             shared = source_hashes.intersection(item["source_sha256"] for item in event["holdout_experiments"])
             if shared:
@@ -1346,7 +1451,10 @@ class CalibrationStudyService:
             selection_ref = artifact.selection_ref
             if selection_ref is None or entry.get("selection_ref") != selection_ref.to_dict():
                 raise ValueError("SELECTION_REFERENCE_MISMATCH")
-            selection = SelectionRecordV1.from_dict(self._read_ref_json(selection_ref, self._data_root, stage))
+            try:
+                selection = self._read_frozen_selection(selection_ref, artifact.content_revision)
+            except MaterialStudyError as exc:
+                raise ValueError("EXPOSURE_SELECTION_INVALID") from exc
             for ref in (selection.normalization_ref, selection.assessment_policy_ref, selection.selection_policy_ref):
                 self._read_ref_json(ref, self._data_root, stage)
             actual_sha = canonical_sha256(_to_plain_json(artifact.physical_parameters), exclude_keys=())
@@ -1373,6 +1481,11 @@ class CalibrationStudyService:
             ]
             if not expected or len(expected) != len(selection.holdout_experiment_revisions):
                 raise ValueError("HOLDOUT_REVISION_MISMATCH")
+            executed = set(artifact.executed_holdout_experiment_ids)
+            if executed:
+                expected = [item for item in expected if item["experiment_id"] in executed]
+                if len(expected) != len(executed):
+                    raise ValueError("EXECUTED_HOLDOUT_NOT_SELECTED")
             refs = self._manifest.get("holdout_exposures", ())
             indexed_ref = entry.get("holdout_exposure_ref")
             if indexed_ref is not None:
@@ -1443,18 +1556,51 @@ class CalibrationStudyService:
             ev_entry = self._manifest.get("evaluations", {}).get(eval_id)
             if not ev_entry or not ev_entry.get("artifact_ref"):
                 return None
-            ref = ArtifactRefV1.from_dict(ev_entry["artifact_ref"])
-        if self._verify_ref(ref, self._data_root) is not None:
+            request_id = ev_entry.get("request_id")
+        artifact = self.evaluation(eval_id)
+        bundle = artifact.prediction_bundle
+        # Old records remain readable, but lack independent request and producer identity.
+        if request_id is None:
             return None
-        try:
-            art_dict = json.loads((self._data_root / ref.path).read_text(encoding="utf-8"))
-            art = CalibrationEvaluationArtifact.from_dict(art_dict)
-        except Exception:
-            return None
-        for nested in self._nested_artifact_refs(art_dict):
+        manifest = self._manifest
+        planned = self._compared_experiments(
+            self._experiments_map(), self._phase_comparisons(
+                execution_phase="exploration", comparisons=self._comparisons(),
+                assessment_policy=manifest["assessment_policy"],
+            ),
+        )
+        revisions = {exp.experiment_id: exp.experiment_revision for exp in planned}
+        params = dict(artifact.physical_parameters)
+        actual_key = compute_candidate_cache_key(
+            content_revision=artifact.content_revision,
+            model_revision=artifact.model_revision,
+            adapter_id=artifact.adapter.id,
+            adapter_version=artifact.adapter.version,
+            implementation_sha256=artifact.adapter.implementation_sha256,
+            physical_parameters=params,
+            numerical_settings=artifact.numerical_settings,
+            execution_phase=artifact.execution_phase,
+            planned_experiments=planned,
+        )
+        if (
+            actual_key != cache_key or artifact.content_revision != manifest["content_revision"]
+            or artifact.adapter.to_dict() != manifest["adapter"]
+            or artifact.model_id != manifest["model"]["model_id"]
+            or artifact.model_revision != manifest["model"]["model_revision"]
+            or artifact.state != "completed" or not artifact.assessment.objective["eligible"]
+            or artifact.execution_phase != "exploration"
+            or bundle is None or bundle.evaluation_id != artifact.evaluation_id or bundle.request_id != request_id
+            or bundle.study_id != self.study_id or bundle.study_revision != artifact.content_revision
+            or bundle.model_id != artifact.model_id or bundle.model_revision != artifact.model_revision
+            or bundle.adapter != artifact.adapter
+            or bundle.parameter_set_sha256 != canonical_sha256(params, exclude_keys=())
+            or any(revisions.get(exp.experiment_id) != exp.experiment_revision for exp in bundle.experiments)
+        ):
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluate.cache", {"reason": "PREDICTION_PROVENANCE_MISMATCH"})
+        for nested in self._nested_artifact_refs(artifact.to_dict()):
             if self._verify_ref(nested, self._data_root) is not None:
-                return None
-        return art
+                raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluate.cache", {"path": nested.path})
+        return artifact
 
     def evaluate(
         self,
@@ -1511,7 +1657,7 @@ class CalibrationStudyService:
             holdout_exps = tuple(e for e in planned_exps if e.split == "holdout")
             validate_study = getattr(adapter, "validate_study_configuration", None)
             if validate_study is not None:
-                validate_study(param_specs, tuple(experiments.values()), numerical_settings)
+                validate_study(param_specs, planned_exps, numerical_settings, physical_parameters=full_phys)
             if AdapterIdentity.from_dict(self._manifest["adapter"]) != adapter.identity:
                 if execution_phase == "confirmation":
                     raise MaterialStudyError(
@@ -1528,11 +1674,12 @@ class CalibrationStudyService:
             eval_id = f"eval-{uuid.uuid4().hex[:16]}"
             req_id = f"req-{eval_id}"
             cancel_event = threading.Event()
+            stop_event = threading.Event()
             self._busy_operation = "evaluate"
             self._active_operation_id = op_id
             self._active_campaign_id = op_id
             self._active_cancel_event = cancel_event
-            self._active_stop_event = cancel_event
+            self._active_stop_event = stop_event
             self._active_workers.add(threading.current_thread())
             start_doc_rev = self._document_revision
             study_id = self.study_id
@@ -1555,15 +1702,13 @@ class CalibrationStudyService:
             frozen_selection = None
             param_sha = canonical_sha256(_to_plain_json(full_phys), exclude_keys=())
             if execution_phase == "confirmation":
-                selection_id = uuid.uuid4().hex
-                if selection_ref is not None:
-                    frozen = SelectionRecordV1.from_dict(
-                        self._read_ref_json(selection_ref, data_root, "evaluate.selection")
-                    )
-                    selection_id = frozen.selection_id
+                selection_ref = selection_ref or self._find_selection(content_rev, full_phys, adapter.identity)
+                selection_id = (
+                    self._read_frozen_selection(selection_ref, content_rev).selection_id
+                    if selection_ref is not None else uuid.uuid4().hex
+                )
                 self._detect_holdout_reuse(
                     holdout_experiments=holdout_exps,
-                    selection_id=selection_id,
                     parameter_sha=param_sha,
                     content_revision=content_rev,
                 )
@@ -1575,7 +1720,10 @@ class CalibrationStudyService:
                         adapter=adapter,
                         physical_parameters=full_phys,
                         numerical_settings=numerical_settings,
-                        holdout_experiments=holdout_exps,
+                        compared_experiments=planned_exps,
+                        comparisons=comparisons,
+                        assessment_policy=assessment_policy,
+                        optimization_config=opt_config,
                     )
                 else:
                     frozen_selection, selection_ref, proc_sha = self._create_selection_record(
@@ -1591,6 +1739,14 @@ class CalibrationStudyService:
                         optimization_config=opt_config,
                         selection_id=selection_id,
                     )
+                    manifest = json.loads(json.dumps(self._manifest))
+                    manifest["revisions"][content_rev].setdefault("selections", []).append(selection_ref.to_dict())
+                    start_doc_rev = self._commit_manifest_unlocked(manifest, "evaluate.freeze")
+                self._check_independent_holdout(self._compared_experiments(
+                    experiments, (*phase_comparisons, *self._phase_comparisons(
+                        execution_phase="exploration", comparisons=comparisons, assessment_policy=assessment_policy,
+                    )),
+                ))
             else:
                 selection_ref = None
 
@@ -1610,6 +1766,8 @@ class CalibrationStudyService:
             if cache_policy == "reuse" and execution_phase == "exploration" and not cancel_event.is_set():
                 cached = self._lookup_cached_evaluation(cache_key)
                 if cached is not None:
+                    self._seal_active_termination()
+                if cached is not None and not cancel_event.is_set() and not stop_event.is_set():
                     with self._state_lock:
                         cached_ref = ArtifactRefV1.from_dict(
                             self._manifest["evaluations"][cached.evaluation_id]["artifact_ref"]
@@ -1664,6 +1822,8 @@ class CalibrationStudyService:
                 policy_ref=ap_ref,
                 data_root=data_root,
                 cancel_event=cancel_event,
+                stop_event=stop_event,
+                finalize=self._seal_active_termination,
                 compute_identifiability=compute_identifiability,
             )
 
@@ -1675,7 +1835,9 @@ class CalibrationStudyService:
                     selection_ref=selection_ref,
                     selection=frozen_selection,
                     selection_procedure_sha256=proc_sha,
-                    holdout_experiments=holdout_exps,
+                    holdout_experiments=tuple(
+                        exp for exp in holdout_exps if exp.experiment_id in artifact.executed_holdout_experiment_ids
+                    ),
                 )
             self._check_disk_cas(start_doc_rev, "evaluate")
             new_manifest = json.loads(json.dumps(self._manifest))
@@ -1688,6 +1850,7 @@ class CalibrationStudyService:
             new_manifest["evaluations"][eval_id] = {
                 "evaluation_id": eval_id,
                 "campaign_id": None,
+                "request_id": req_id,
                 "content_revision": content_rev,
                 "state": artifact.state,
                 "execution_phase": execution_phase,
@@ -1815,7 +1978,10 @@ class CalibrationStudyService:
             planned_exps = self._compared_experiments(experiments, phase_comparisons)
             validate_study = getattr(adapter, "validate_study_configuration", None)
             if validate_study is not None:
-                validate_study(param_specs, tuple(experiments.values()), numerical_settings)
+                validate_study(
+                    param_specs, planned_exps, numerical_settings,
+                    physical_parameters=resolve_parameter_values(param_specs),
+                )
             config_dict = _opt_config_to_dict(opt_cfg)
             setup_manifest = json.loads(json.dumps(self._manifest))
             setup_manifest["adapter"] = adapter.identity.to_dict()
@@ -1882,7 +2048,7 @@ class CalibrationStudyService:
                     }
                 )
 
-            def _on_eval_recorded(art: CalibrationEvaluationArtifact, ref: ArtifactRefV1, pt_id: str) -> None:
+            def _on_eval_recorded(art: CalibrationEvaluationArtifact, ref: ArtifactRefV1, pt_id: str, req_id: str) -> None:
                 cache_k = compute_candidate_cache_key(
                     content_revision=content_rev,
                     model_revision=descriptor.model_revision,
@@ -1898,6 +2064,7 @@ class CalibrationStudyService:
                 m["evaluations"][art.evaluation_id] = {
                     "evaluation_id": art.evaluation_id,
                     "campaign_id": campaign_id,
+                    "request_id": req_id,
                     "content_revision": content_rev,
                     "state": art.state,
                     "execution_phase": "exploration",
@@ -1938,66 +2105,55 @@ class CalibrationStudyService:
                 on_progress=on_progress,
             )
 
-            opt_result = mdo_optimize(
-                problem,
-                batch_eval,
-                opt_cfg,
-                cancel=lambda: cancel_event.is_set() or stop_event.is_set(),
-            )
+            optimizer_error = None
+            opt_result = None
+            try:
+                opt_result = mdo_optimize(
+                    problem,
+                    batch_eval,
+                    opt_cfg,
+                    cancel=lambda: cancel_event.is_set() or stop_event.is_set(),
+                )
+            except Exception as exc:
+                optimizer_error = exc
+            self._seal_active_termination()
 
-            # Determine CampaignReceipt state & termination_reason per C7
+            raw_reason = opt_result.termination_reason if opt_result is not None else "FAILED"
             if cancel_event.is_set():
-                final_state = "cancelled"
-                term_reason = "USER_CANCEL"
+                final_state, term_reason = "cancelled", "USER_CANCEL"
             elif stop_event.is_set():
-                final_state = "stopped"
-                term_reason = "USER_STOP"
-            elif opt_result.termination_reason == "FAILED":
-                final_state = "failed"
-                term_reason = "FAILED"
-            elif opt_result.termination_reason == "NO_VALID_EVALUATIONS":
-                final_state = "failed"
-                term_reason = "NO_VALID_EVALUATIONS"
+                final_state, term_reason = "stopped", "USER_STOP"
+            elif optimizer_error is not None or raw_reason in ("FAILED", "CANCELLED"):
+                final_state, term_reason = "failed", "OPTIMIZER_FAILED"
+            elif raw_reason == "NO_VALID_EVALUATIONS":
+                final_state, term_reason = "failed", raw_reason
             else:
-                final_state = "completed"
-                term_reason = str(opt_result.termination_reason)
+                final_state, term_reason = "completed", str(raw_reason)
 
-            # Map selected point IDs to evaluation IDs (never fabricating new candidates on stop!)
-            selected_eval_ids: list[str] = []
             point_to_eval = batch_eval.point_to_evaluation
-            for pt_id in opt_result.selected_ids:
-                if pt_id in point_to_eval:
-                    selected_eval_ids.append(point_to_eval[pt_id])
-
-            if not selected_eval_ids and opt_result.actual_archive:
-                feasible = [p for p in opt_result.actual_archive if p.feasible]
-                if feasible:
-                    best_pt = min(feasible, key=lambda p: (float(p.objectives[0]), p.point_id))
-                    if best_pt.point_id in point_to_eval:
-                        selected_eval_ids.append(point_to_eval[best_pt.point_id])
-
-            # Ensure final selected evaluation updates selected_evaluation_id when not cancelled/failed
+            selected_eval_ids = [
+                point_to_eval[pt_id] for pt_id in opt_result.selected_ids if pt_id in point_to_eval
+            ] if opt_result is not None and final_state in ("completed", "stopped") else []
             best_selected_eval = selected_eval_ids[0] if selected_eval_ids else None
             if final_state == "stopped":
                 old_id = self._manifest.get("selected_evaluation_id")
                 old = self._manifest["evaluations"].get(old_id, {})
-                new = self._manifest["evaluations"].get(best_selected_eval, {})
-                old_loss, new_loss = old.get("fit_loss"), new.get("fit_loss")
-                if old.get("state") == "completed" and old_loss is not None and (
-                    new_loss is None or old.get("content_revision") != content_rev or old_loss <= new_loss
-                ):
+                if old.get("state") == "completed" and old.get("fit_loss") is not None:
                     best_selected_eval = old_id
                     selected_eval_ids = [old_id]
-            budget_dict = {
-                "dispatched_requests": opt_result.budget_usage.dispatched_requests,
-                "dispatcher_calls": opt_result.budget_usage.dispatcher_calls,
-                "cache_hits": opt_result.budget_usage.cache_hits + batch_eval.cache_hits,
-                "duplicate_proposals": opt_result.budget_usage.duplicate_proposals,
-                "predictions": opt_result.budget_usage.predictions,
-                "native_attempts": opt_result.budget_usage.native_attempts,
-                "failures": opt_result.budget_usage.failures,
-                "elapsed_seconds": opt_result.budget_usage.elapsed_seconds,
-            }
+            budget_dict = {}
+            if opt_result is not None:
+                usage = opt_result.budget_usage
+                budget_dict = {
+                    "dispatched_requests": usage.dispatched_requests,
+                    "dispatcher_calls": usage.dispatcher_calls,
+                    "cache_hits": usage.cache_hits,
+                    "duplicate_proposals": usage.duplicate_proposals,
+                    "predictions": usage.predictions,
+                    "native_attempts": usage.native_attempts,
+                    "failures": usage.failures,
+                    "elapsed_seconds": usage.elapsed_seconds,
+                }
 
             m_final = json.loads(json.dumps(self._manifest))
             final_record = {
@@ -2005,18 +2161,22 @@ class CalibrationStudyService:
                 "content_revision": content_rev,
                 "state": final_state,
                 "termination_reason": term_reason,
-                "raw_optimizer_termination_reason": opt_result.termination_reason,
+                "raw_optimizer_termination_reason": raw_reason,
                 "evaluation_ids": list(batch_eval.evaluation_ids),
                 "selected_ids": list(selected_eval_ids),
                 "budget_usage": budget_dict,
                 "started_at": started_at,
                 "finished_at": utc_now(),
             }
+            if optimizer_error is not None:
+                final_record["optimizer_error"] = str(optimizer_error)
             m_final["campaigns"][campaign_id] = final_record
             if best_selected_eval is not None and final_state in ("completed", "stopped"):
                 m_final["selected_evaluation_id"] = best_selected_eval
             self._commit_manifest_unlocked(m_final, "optimize.finish")
             atomic_json(campaign_path, final_record)
+            if final_state == "failed" and isinstance(optimizer_error, MaterialStudyError) and optimizer_error.code == "CORRUPT_ARTIFACT":
+                raise optimizer_error
 
             return CampaignReceipt(
                 campaign_id=campaign_id,
@@ -2039,6 +2199,12 @@ class CalibrationStudyService:
             if past is not None:
                 return CancelReceipt(campaign_id=campaign_id, accepted=False, state=str(past.get("state", "completed")))
             return CancelReceipt(campaign_id=campaign_id, accepted=False, state="not_active")
+
+    def _seal_active_termination(self) -> None:
+        # Linearize the last accepted Stop or Cancel before choosing a terminal state.
+        with self._state_lock:
+            self._active_stop_event = None
+            self._active_cancel_event = None
 
     def cancel(self, campaign_id: str) -> CancelReceipt:
         with self._state_lock:
@@ -2074,13 +2240,48 @@ class CalibrationStudyService:
         ):
             raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"evaluation_id": evaluation_id})
 
-        if ev_entry.get("holdout_exposed") or art.holdout_exposed:
-            self._verified_holdout_exposure(art, ev_entry)
-        elif art.execution_phase == "confirmation" and (
-            art.assessment.assessment["holdout_status"] != "not_assessed"
-            or any(ch.get("split") == "holdout" for ch in art.channel_results)
-            or ev_entry.get("holdout_exposure_ref")
-        ):
+        revision = self._manifest.get("revisions", {}).get(content_rev, {})
+        splits = {exp["experiment_id"]: exp["split"] for exp in revision.get("experiments", ())}
+        holdout_payload = set()
+        if art.prediction_bundle is not None:
+            bundle = art.prediction_bundle
+            linked_refs = set()
+            for prediction in bundle.experiments:
+                if prediction.experiment_id not in splits:
+                    raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"reason": "UNKNOWN_PREDICTION_EXPERIMENT"})
+                if splits[prediction.experiment_id] == "holdout":
+                    holdout_payload.add(prediction.experiment_id)
+                linked_refs.update(self._nested_artifact_refs(prediction.to_dict()))
+            if any(
+                ref not in linked_refs
+                and (ref.format_id.startswith("application/x-npy") or ref.path.lower().endswith(".npy"))
+                for ref in bundle.artifacts
+            ):
+                raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"reason": "UNOWNED_PREDICTION_ARRAY"})
+        for channel in art.channel_results:
+            eid = channel.get("experiment_id")
+            if channel.get("split") == "holdout" or splits.get(eid) == "holdout":
+                holdout_payload.add(eid)
+        for channel in art.assessment.assessment.get("channel_checks", ()):
+            eid = channel.get("experiment_id")
+            if (channel.get("split") == "holdout" or splits.get(eid) == "holdout") and any(
+                channel.get(key) is not None for key in ("loss", "rmse", "max_abs_error")
+            ):
+                holdout_payload.add(eid)
+        claimed = bool(ev_entry.get("holdout_exposed") or art.holdout_exposed or ev_entry.get("holdout_exposure_ref"))
+        assessment = art.assessment.assessment
+        holdout_summary = assessment["holdout_status"] == "pass" or any(
+            check.get("split") == "holdout" and (
+                check.get("status") == "pass" or check.get("independent_validation_satisfied")
+                or any(check.get(key) is not None for key in ("loss", "rmse", "max_abs_error"))
+            )
+            for check in assessment["split_checks"] if isinstance(check, Mapping)
+        )
+        if claimed and art.execution_phase == "confirmation":
+            event, _ = self._verified_holdout_exposure(art, ev_entry)
+            if not holdout_payload.issubset({item["experiment_id"] for item in event["holdout_experiments"]}):
+                raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"reason": "UNVERIFIED_HOLDOUT_EXPERIMENT"})
+        elif claimed or holdout_payload or holdout_summary:
             raise MaterialStudyError(
                 "CORRUPT_ARTIFACT", "evaluation",
                 {"evaluation_id": evaluation_id, "reason": "HOLDOUT_EXPOSURE_MISSING"},
@@ -2494,6 +2695,16 @@ class CalibrationStudyService:
                     dest_lease.release()
                     dest_lease = None
                     self._remove_created_copy_root(journal)
+                elif journal["created_data_root"] and not dest_manifest.exists():
+                    # mkdir succeeded in this call, but no data could have been published.
+                    # Only discard the transaction marker and an empty directory.
+                    self._check_copy_root(dest_data_root)
+                    self._copy_owner_marker(journal, dest_data_root).unlink(missing_ok=True)
+                    try:
+                        dest_data_root.rmdir()
+                    except OSError:
+                        if not any(dest_data_root.iterdir()):
+                            raise
                 self._clean_copy_stage(journal_path, journal)
             raise
         finally:
@@ -2805,6 +3016,8 @@ class CalibrationStudyService:
             # Calling self.evaluation() enforces Holdout Seal before returning/exporting any holdout metrics!
             art = self.evaluation(evaluation_id)
             eval_payload = art.to_dict()
+            revision = self._manifest["revisions"].get(art.content_revision, {})
+            eval_payload["parameter_units"] = {p["id"]: p["unit"] for p in revision.get("parameters", ())}
             eval_payload["sources"] = [
                 {"experiment_id": e.experiment_id, "split": e.split, "source_ref": e.source_ref.to_dict()}
                 for e in exps

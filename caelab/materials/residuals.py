@@ -335,7 +335,7 @@ def interpolate_to_observed_grid(
         x_pred.shape == x_obs.shape
         and sk_pred.shape == sample_keys_obs.shape
         and np.array_equal(sk_pred, sample_keys_obs)
-        and np.allclose(x_pred, x_obs, rtol=1e-12, atol=1e-15)
+        and np.array_equal(x_pred, x_obs)
     ):
         return y_pred.astype(np.float64, copy=True)
 
@@ -409,7 +409,7 @@ def build_normalization_payload(
 
     entries: list[dict[str, Any]] = []
     for comp in comparisons:
-        if not (comp.required_for_fit or comp.split == "validation" and comp.required_for_validation):
+        if comp.split == "holdout":
             continue
         exp = experiments[comp.experiment_id]
         ch_entry = experiment_data[comp.experiment_id][comp.observable_id]
@@ -506,52 +506,50 @@ def _compute_constraints_and_scalars(
     if not constraint_specs:
         return all_scalars, "NOT_ASSESSED", constraint_checks, False, reason_codes
 
-    # Check if any required scalar in constraint_specs is invalid/missing
-    eval_values: dict[str, Any] = {}
-    for k, v in physical_parameters.items():
-        if not isinstance(v, (bool, str)):
-            eval_values[k] = float(v)
-    for k, v in all_scalars.items():
-        if v is not None:
-            eval_values[k] = float(v)
-    eval_units = dict(parameter_units)
-    eval_units.update({key: scalar_units[key] for key, value in all_scalars.items() if value is not None})
+    numeric_parameters = {
+        key: float(value) for key, value in physical_parameters.items() if not isinstance(value, (bool, str))
+    }
+    statuses: set[str] = set()
+    invalid = False
     for spec in constraint_specs:
-        if spec.response_id is not None and all_scalars.get(spec.response_id) is None and spec.response_id in eval_values:
-            all_scalars[spec.response_id] = eval_values[spec.response_id]
-
-    assessment = assess_constraints(eval_values, constraint_specs, valid=True, units=eval_units)
-    if assessment.feasibility is None:
-        for cspec in constraint_specs:
-            constraint_checks.append(
-                {
-                    "constraint_id": cspec.id,
-                    "response_id": cspec.response_id,
-                    "kind": cspec.kind,
-                    "limit": cspec.limit,
-                    "value": all_scalars.get(cspec.response_id) if cspec.response_id else None,
-                    "status": "NOT_ASSESSED",
-                }
+        response = spec.response_id
+        values, units = numeric_parameters, parameter_units
+        missing_output = False
+        if response in scalar_units:
+            value = all_scalars.get(response)
+            missing_output = value is None and any(
+                output.response_id == response and output.source_kind == "adapter_scalar"
+                for output in registered_responses
             )
-        reason_codes.append("CONSTRAINT_RESPONSE_INVALID")
-        return all_scalars, "NOT_ASSESSED", constraint_checks, True, reason_codes
+            values = {response: value} if value is not None else {}
+            units = {response: scalar_units[response]}
+        elif response in numeric_parameters:
+            all_scalars[response] = numeric_parameters[response]
 
-    for idx, cspec in enumerate(constraint_specs):
-        norm_res = float(assessment.normalized_residuals[idx])
-        c_status = "FEASIBLE" if norm_res <= 0.0 else ("MARGINAL" if norm_res <= cspec.marginal_band / cspec.scale else "INFEASIBLE")
-        constraint_checks.append(
-            {
-                "constraint_id": cspec.id,
-                "response_id": cspec.response_id,
-                "kind": cspec.kind,
-                "limit": cspec.limit,
-                "value": eval_values.get(cspec.response_id) if cspec.response_id else None,
-                "raw_residual": float(assessment.raw_residuals[idx]),
-                "normalized_residual": norm_res,
-                "status": c_status,
-            }
-        )
-    return all_scalars, assessment.feasibility.value, constraint_checks, False, reason_codes
+        result = assess_constraints(values, (spec,), valid=True, units=units)
+        check = {
+            "constraint_id": spec.id, "response_id": response, "kind": spec.kind,
+            "limit": spec.limit, "value": values.get(response),
+        }
+        if result.feasibility is None:
+            status = "INFEASIBLE" if missing_output else "NOT_ASSESSED"
+            invalid = True
+        else:
+            norm_res = float(result.normalized_residuals[0])
+            status = (
+                "FEASIBLE" if norm_res <= 0.0
+                else "MARGINAL" if norm_res <= spec.marginal_band / spec.scale
+                else "INFEASIBLE"
+            )
+            check.update(raw_residual=float(result.raw_residuals[0]), normalized_residual=norm_res)
+        check["status"] = status
+        constraint_checks.append(check)
+        statuses.add(status)
+
+    if invalid:
+        reason_codes.append("CONSTRAINT_RESPONSE_INVALID")
+    status = next(s for s in ("INFEASIBLE", "NOT_ASSESSED", "MARGINAL", "FEASIBLE") if s in statuses)
+    return all_scalars, status, constraint_checks, invalid, reason_codes
 
 
 def evaluate_bundle_residuals(
@@ -573,7 +571,7 @@ def evaluate_bundle_residuals(
     extra_split_checks: Sequence[Mapping[str, Any]] = (),
     extra_warnings: Sequence[str] = (),
     failure_reason_codes: Sequence[str] = (),
-    holdout_failures: Mapping[str, str] | None = None,
+    split_failures: Mapping[str, str] | None = None,
     runtime_cache: dict[str, Any] | None = None,
 ) -> ResidualEvaluationOutput:
     """Compute host residuals, split/adequacy verdicts, and strict AssessmentResultV1 (C4/C5)."""
@@ -625,17 +623,17 @@ def evaluate_bundle_residuals(
             continue
 
         holdout_confirmation = comp.split == "holdout" and execution_phase == "confirmation"
-        missing_status = "fail" if holdout_confirmation else "not_assessed"
+        missing_status = "fail" if holdout_confirmation or comp.split == "validation" else "not_assessed"
         if comp.experiment_id not in planned_set or comp.experiment_id not in bundle_exps:
             ch_status = missing_status
-            ch_reasons = [(holdout_failures or {}).get(comp.experiment_id, "EXPERIMENT_NOT_EXECUTED")]
+            ch_reasons = [(split_failures or {}).get(comp.experiment_id, "EXPERIMENT_NOT_EXECUTED")]
             if comp.required_for_fit:
                 fit_invalid = True
                 fit_channel_statuses.append("not_assessed")
                 reason_codes.append("REQUIRED_FIT_EXPERIMENT_MISSING")
             elif comp.required_for_validation:
                 if comp.split == "validation":
-                    validation_channel_statuses.append("not_assessed")
+                    validation_channel_statuses.append(missing_status)
                 elif comp.split == "holdout":
                     holdout_channel_statuses.append(missing_status)
             channel_checks.append(
@@ -665,7 +663,7 @@ def evaluate_bundle_residuals(
                 reason_codes.extend(ch_reasons)
             elif comp.required_for_validation:
                 if comp.split == "validation":
-                    validation_channel_statuses.append("not_assessed")
+                    validation_channel_statuses.append(missing_status)
                 elif comp.split == "holdout":
                     holdout_channel_statuses.append(missing_status)
             channel_checks.append(
@@ -695,7 +693,7 @@ def evaluate_bundle_residuals(
                 reason_codes.append("COVERAGE_INCOMPLETE")
             elif comp.required_for_validation:
                 if comp.split == "validation":
-                    validation_channel_statuses.append("not_assessed")
+                    validation_channel_statuses.append(missing_status)
                 elif comp.split == "holdout":
                     holdout_channel_statuses.append(missing_status)
             channel_checks.append(
@@ -754,7 +752,7 @@ def evaluate_bundle_residuals(
                     {"reason": "NONFINITE_CHANNEL_METRIC", "comparison_id": comp.id},
                 )
         except Exception as exc:
-            if not holdout_confirmation and not isinstance(exc, MaterialStudyError):
+            if comp.split == "train" and not isinstance(exc, MaterialStudyError):
                 raise
             code = exc.code if isinstance(exc, MaterialStudyError) else "INTEGRATION_FAILED"
             if comp.required_for_fit:
@@ -763,7 +761,7 @@ def evaluate_bundle_residuals(
                 reason_codes.append(code)
             elif comp.required_for_validation:
                 if comp.split == "validation":
-                    validation_channel_statuses.append("not_assessed")
+                    validation_channel_statuses.append(missing_status)
                 elif comp.split == "holdout":
                     holdout_channel_statuses.append(missing_status)
             channel_checks.append(

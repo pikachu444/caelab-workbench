@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from caelab.artifact_refs import canonical_sha256, read_safe_npy_v2
 from caelab.materials import (
     CalibrationStudyService,
     ComparisonSpec,
@@ -24,7 +26,8 @@ from caelab.materials.adapters.prony_trs import (
     PronyTRSAdapter,
     verify_pyvisco_sources,
 )
-from caelab.materials.registry import MaterialStudyError
+from caelab.materials.experiments import import_csv_experiment
+from caelab.materials.registry import MaterialEvaluationRequest, MaterialStudyError
 from caelab.mdo.optimize import OptimizationConfig
 
 
@@ -225,7 +228,10 @@ def test_b3_synthetic_regression_dma_and_relaxation_slsqp(tmp_path: Path) -> Non
         svc.configure(
             parameters=svc.parameters(),
             comparisons=comps,
-            assessment_policy={"selection_policy": {"mode": "training_only", "validation_comparison_ids": []}},
+            assessment_policy={"selection_policy": {
+                "mode": "manual_with_validation",
+                "validation_comparison_ids": [comparison.id for comparison in comps if comparison.split == "validation"],
+            }},
             user_constraints=(),
             expected_revision=svc.snapshot().document_revision,
         )
@@ -464,7 +470,14 @@ def test_pyvisco_rejects_wrong_version_even_when_both_hashes_match(monkeypatch):
 
 def test_measured_multitemperature_wlf_fixed_values_require_bound_provenance(tmp_path):
     csv_file = tmp_path / "dma.csv"
-    _write_csv(csv_file, ["frequency_Hz", "storage_MPa"], [[1, 70], [2, 80]])
+    train_frequency = [1.0, 2.0]
+    holdout_frequency = [1.4, 4.0]
+    training_storage, _ = _dma_exact(2 * math.pi * np.asarray(train_frequency) * _wlf(313.15))
+    holdout_storage, _ = _dma_exact(2 * math.pi * np.asarray(holdout_frequency) * _wlf(303.15))
+    _write_csv(csv_file, ["frequency_Hz", "storage_MPa", "temperature_K", "split"], [
+        *[[f, y, 313.15, "train"] for f, y in zip(train_frequency, training_storage)],
+        *[[f, y, 303.15, "holdout"] for f, y in zip(holdout_frequency, holdout_storage)],
+    ])
     obs = ObservableSpec(
         id="E_storage", quantity_kind="storage_modulus", unit="MPa", measure="viscoelastic",
         component_order=("E_storage",),
@@ -475,14 +488,15 @@ def test_measured_multitemperature_wlf_fixed_values_require_bound_provenance(tmp
     )
     with CalibrationStudyService.create(tmp_path / "measured.caemat.json", name="DMA", model="B-VIS-TRS-1") as svc:
         comps = []
-        for eid, split, temperature in (("run A", "train", 293.15), ("run_A", "holdout", 303.15)):
+        for eid, split, temperature in (("run A", "train", 313.15), ("run_A", "holdout", 303.15)):
             svc.import_experiment(
                 csv_file, experiment_id=eid, channels=[ch], split=split, conditions={"temperature_K": temperature},
+                row_filter={"split": split},
                 expected_revision=svc.snapshot().document_revision,
             )
             comps.append(ComparisonSpec(
                 id=eid, experiment_id=eid, observable_id=obs.id, split=split, scale=10,
-                required_for_fit=split == "train", required_for_validation=split == "holdout", acceptance_limit=10,
+                required_for_fit=split == "train", required_for_validation=split == "holdout", acceptance_limit=1e-16,
             ))
 
         def configure(settings):
@@ -492,8 +506,9 @@ def test_measured_multitemperature_wlf_fixed_values_require_bound_provenance(tmp
             )
 
         rev = configure({})
-        with pytest.raises(MaterialStudyError, match="WLF_PROVENANCE_REQUIRED"):
+        with pytest.raises(MaterialStudyError, match="WLF_PROVENANCE_REQUIRED") as missing:
             svc.evaluate(expected_revision=rev.document_revision, compute_identifiability=False)
+        assert missing.value.details["experiment_ids"] == ["run A"]
         with pytest.raises(MaterialStudyError, match="WLF_PROVENANCE_REQUIRED"):
             svc.optimize(expected_revision=rev.document_revision)
         fixed = {p.id: p.default for p in svc.parameters() if p.id in ("C1", "C2", "Tref")}
@@ -504,11 +519,164 @@ def test_measured_multitemperature_wlf_fixed_values_require_bound_provenance(tmp
         provenance = {**fixed, "source": "lab data report 12"}
         rev = configure({"wlf_provenance": provenance})
         receipt = svc.evaluate(
+            {"E0": 100.0, "a1": 0.2, "a2": 0.3, "tau1": 0.1, "tau2": 10.0},
             expected_revision=rev.document_revision, cache_policy="refresh",
             execution_phase="confirmation", compute_identifiability=False,
         )
         result = svc.evaluation(receipt.evaluation_id)
         assert result.state == "completed"
+        assert result.assessment.assessment["holdout_status"] == "pass"
         assert dict(result.numerical_settings["wlf_provenance"]) == provenance
         refs = [exp.channels[0].values_ref.path for exp in result.prediction_bundle.experiments]
         assert len(set(refs)) == 2
+
+
+
+def test_prony_converts_declared_parameter_units_and_preserves_historical_export(tmp_path):
+    time_s = np.array([0.0, 0.025, 0.12, 0.65, 2.0, 11.0])
+    expected_kpa = _relax_exact(time_s) * 1000.0
+    csv_file = tmp_path / "relaxation.csv"
+    _write_csv(csv_file, ["time_s", "modulus_kPa"], list(zip(time_s, expected_kpa)))
+    obs = ObservableSpec(
+        id="E_relax", quantity_kind="relaxation_modulus", unit="kPa", measure="viscoelastic",
+        component_order=("E_relax",),
+    )
+    channel = ExperimentChannelSpec(
+        observable_id=obs.id, observable=obs, column_name="modulus_kPa", source_unit="kPa",
+        independent_column="time_s", independent_unit="s",
+    )
+    with CalibrationStudyService.create(tmp_path / "mixed.caemat.json", name="Mixed units", model="B-VIS-TRS-1") as svc:
+        svc.import_experiment(
+            csv_file, experiment_id="relaxation", channels=[channel], split="train",
+            conditions={"temperature_K": 293.15}, expected_revision=svc.snapshot().document_revision,
+        )
+        comparisons = [ComparisonSpec(
+            id="fit", experiment_id="relaxation", observable_id=obs.id, split="train", scale=1000.0,
+            required_for_fit=True, acceptance_limit=1e-16,
+        )]
+        original = svc.parameters()
+        overrides = {
+            "E0": {"unit": "GPa", "lower": 0.01, "upper": 1.0, "default": 0.1},
+            "tau1": {"unit": "ms", "lower": 1.0, "upper": 300.0, "default": 100.0},
+            "tau2": {"default": 10.0},
+            "a1": {"default": 0.2},
+            "a2": {"default": 0.3},
+            "C2": {"unit": "degC"},
+            "Tref": {"unit": "degC", "lower": -73.15, "upper": 226.85, "default": 20.0},
+        }
+        params = [replace(spec, **overrides.get(spec.id, {})) for spec in original]
+        rev = svc.configure(parameters=params, comparisons=comparisons, expected_revision=svc.snapshot().document_revision)
+        receipt = svc.evaluate(expected_revision=rev.document_revision, compute_identifiability=False)
+        result = svc.evaluation(receipt.evaluation_id)
+        assert result.state == "completed"
+        assert result.assessment.objective["fit_loss"] < 1e-20
+        assert result.assessment.assessment["constraint_status"] == "FEASIBLE"
+        assert result.optimizer_scalars["prony_tau_ratio"] == pytest.approx(100.0)
+        assert result.optimizer_scalars["prony_e_inf"] == pytest.approx(50.0)
+        bundle = result.prediction_bundle
+        assert bundle.study_id == svc.study_id
+        assert bundle.model_id == "B-VIS-TRS-1"
+        assert bundle.parameter_set_sha256 == canonical_sha256(dict(result.physical_parameters), exclude_keys=())
+        values = read_safe_npy_v2(bundle.experiments[0].channels[0].values_ref.path, root=svc.data_root)
+        np.testing.assert_allclose(values[:, 0], expected_kpa, atol=1e-8, rtol=0.0)
+        assert result.physical_parameters["E0"] == 0.1
+        assert result.physical_parameters["tau1"] == 100.0
+
+        # Extra check that later unit edits cannot change a prior evaluation's units.
+        changed = svc.configure(
+            parameters=original, comparisons=comparisons, expected_revision=svc.snapshot().document_revision,
+        )
+        report_file = tmp_path / "report.json"
+        svc.export(receipt.evaluation_id, report_file, expected_revision=changed.document_revision)
+        report = json.loads(report_file.read_bytes())
+        assert report["parameters"]["E0"] == {"value": 0.1, "unit": "GPa"}
+        assert report["parameters"]["tau1"] == {"value": 100.0, "unit": "ms"}
+        assert report["parameters"]["Tref"] == {"value": 20.0, "unit": "degC"}
+        assert report["formulation"]["equilibrium_modulus_MPa"] == pytest.approx(50.0)
+
+
+
+def test_missing_unplanned_holdout_temperature_does_not_prevent_prony_exploration(tmp_path):
+    training_csv, holdout_csv = tmp_path / "train.csv", tmp_path / "holdout.csv"
+    omega = 2 * math.pi * np.array([1.0, 2.0])
+    train_storage, _ = _dma_exact(omega)
+    _write_csv(training_csv, ["frequency_Hz", "storage_MPa"], list(zip([1.0, 2.0], train_storage)))
+    _write_csv(holdout_csv, ["frequency_Hz", "storage_MPa"], [[3.0, 76.0], [4.0, 81.0]])
+    obs = ObservableSpec(id="E_storage", quantity_kind="storage_modulus", unit="MPa", measure="viscoelastic")
+    channel = ExperimentChannelSpec(
+        observable_id=obs.id, observable=obs, column_name="storage_MPa", source_unit="MPa",
+        independent_column="frequency_Hz", independent_unit="Hz",
+    )
+    with CalibrationStudyService.create(tmp_path / "preflight.caemat.json", name="Preflight", model="B-VIS-TRS-1") as svc:
+        for source, split, conditions in (
+            (training_csv, "train", {"temperature_K": 293.15}),
+            (holdout_csv, "holdout", {}),
+        ):
+            svc.import_experiment(
+                source, experiment_id=split, channels=[channel], split=split,
+                conditions=conditions, expected_revision=svc.snapshot().document_revision,
+            )
+        comparisons = [
+            ComparisonSpec(id="fit", experiment_id="train", observable_id=obs.id, split="train", scale=10.0,
+                           required_for_fit=True, acceptance_limit=1e-16),
+            ComparisonSpec(id="test", experiment_id="holdout", observable_id=obs.id, split="holdout", scale=10.0,
+                           required_for_validation=True, acceptance_limit=1e-16),
+        ]
+        svc.configure(parameters=svc.parameters(), comparisons=comparisons, expected_revision=svc.snapshot().document_revision)
+        evaluated = svc.evaluate(
+            {"E0": 100.0, "a1": 0.2, "a2": 0.3, "tau1": 0.1, "tau2": 10.0},
+            expected_revision=svc.snapshot().document_revision, compute_identifiability=False,
+        )
+        assert evaluated.state == "completed"
+        evaluation = svc.evaluation(evaluated.evaluation_id)
+        assert evaluation.assessment.assessment["fit_status"] == "pass"
+        assert {experiment.experiment_id for experiment in evaluation.prediction_bundle.experiments} == {"train"}
+
+
+
+def test_prony_collect_rejects_predictions_from_a_different_candidate(tmp_path):
+    data_root = tmp_path / "data"
+    source = tmp_path / "relaxation.csv"
+    _write_csv(source, ["time_s", "modulus_MPa"], [[0.0, 100.0], [0.1, 80.0], [1.0, 60.0]])
+    obs = ObservableSpec(
+        id="E_relax", quantity_kind="relaxation_modulus", unit="MPa", measure="viscoelastic",
+        component_order=("E_relax",),
+    )
+    imported = import_csv_experiment(
+        source, study_id="study", data_root=data_root, experiment_id="source",
+        channels=[ExperimentChannelSpec(
+            observable_id=obs.id, observable=obs, column_name="modulus_MPa", source_unit="MPa",
+            independent_column="time_s", independent_unit="s",
+        )],
+        conditions={"temperature_K": 293.15},
+    )
+    adapter = PronyTRSAdapter()
+    model = adapter.descriptor()
+    request_a = MaterialEvaluationRequest(
+        request_id="request-a", evaluation_id="eval-a", study_id="study", study_revision="revision",
+        model_descriptor=model, parameter_specs=model.parameter_specs,
+        physical_parameters={**{spec.id: spec.default for spec in model.parameter_specs}, "E0": 100.0},
+        experiments=(imported.spec,), experiment_data={imported.spec.experiment_id: imported.channel_arrays},
+    )
+    request_b = replace(
+        request_a, request_id="request-b", evaluation_id="eval-b",
+        physical_parameters={**request_a.physical_parameters, "E0": 120.0},
+    )
+    plan_a, plan_b = adapter.plan(request_a), adapter.plan(request_b)
+    executed_a = adapter.execute(plan_a, request_a, data_root=data_root, study_id="study")
+    executed_b = adapter.execute(plan_b, request_b, data_root=data_root, study_id="study")
+
+    with pytest.raises(MaterialStudyError, match="CORRUPT_ARTIFACT") as mismatch:
+        adapter.collect(plan_b, executed_a, data_root=data_root, study_id="study")
+    assert mismatch.value.stage == "evaluate.collect"
+    assert "parameter_set_sha256" in mismatch.value.details["mismatched_fields"]
+
+    matching_ids = replace(plan_b, request_id=plan_a.request_id, evaluation_id=plan_a.evaluation_id)
+    with pytest.raises(MaterialStudyError, match="CORRUPT_ARTIFACT") as changed_parameters:
+        adapter.collect(matching_ids, executed_a, data_root=data_root, study_id="study")
+    assert changed_parameters.value.details["mismatched_fields"] == ["parameter_set_sha256"]
+
+    bundle_b = adapter.collect(plan_b, executed_b, data_root=data_root, study_id="study")
+    assert bundle_b.request_id == "request-b"
+    values = read_safe_npy_v2(bundle_b.experiments[0].channels[0].values_ref.path, root=data_root)
+    assert values[0, 0] == pytest.approx(120.0)

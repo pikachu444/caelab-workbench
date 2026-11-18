@@ -16,7 +16,9 @@ import numpy as np
 import pytest
 
 PySide6 = pytest.importorskip("PySide6")
+from matplotlib.backend_bases import MouseEvent
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -39,6 +41,7 @@ from caelab.materials import (
     QuantityUnitSpec,
 )
 from caelab.materials.adapters import prony_trs
+from apps.workbench_qt import material_study
 from apps.workbench_qt.material_study import (
     ExperimentImportDialog,
     MaterialStudyWindow,
@@ -139,6 +142,10 @@ def _create_b3_study(root: Path, *, with_val_holdout: bool = True) -> Path:
         svc.configure(
             parameters=svc.parameters(),
             comparisons=comps,
+            assessment_policy={"selection_policy": {
+                "mode": "manual_with_validation" if with_val_holdout else "training_only",
+                "validation_comparison_ids": [c.id for c in comps if c.split == "validation"],
+            }},
             numerical_settings={
                 "wlf_provenance": {"source": "GUI test fixture generating inputs", "C1": 5.0, "C2": 100.0, "Tref": 293.15},
             },
@@ -215,17 +222,16 @@ def test_gui_layout_korean_font_design_laws_and_no_forbidden_strings(tmp_path: P
         if Path("C:/Windows/Fonts/malgun.ttf").is_file():
             assert "malgun" in app.font().family().lower() or "맑은" in app.font().family()
 
-        # Central workspace >= 70% window area and left dock <= 30% width
+        assert win.control_dock.width() <= int(win.width() * 0.30)
+        assert win.central_workspace.width() >= int(win.width() * 0.70)
+        # The plots and tools live in the same central work area.
         win_area = win.width() * win.height()
         central_area = win.central_workspace.width() * win.central_workspace.height()
         assert central_area >= 0.70 * win_area, (central_area, win_area)
-        assert win.control_dock.width() <= 0.30 * win.width(), (win.control_dock.width(), win.width())
 
-        # Combo boxes use AdjustToContents and status badges have no narrow max width
+        # Combo boxes use AdjustToContents.
         for combo in win.findChildren(QComboBox):
             assert combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToContents
-        for lbl in (win.badge_fit, win.badge_val, win.badge_hold, win.badge_const, win.loss_summary_label):
-            assert lbl.maximumWidth() >= 320
 
         assert win.study_tree.textElideMode() == Qt.TextElideMode.ElideNone
         assert not win.study_tree.header().stretchLastSection()
@@ -238,6 +244,14 @@ def test_gui_layout_korean_font_design_laws_and_no_forbidden_strings(tmp_path: P
                 assert child.toolTip(0) and not child.text(0).endswith("...")
         assert win.ax_curve.get_xlabel() == "주파수 (Hz)"
         assert win.ax_curve.get_ylabel() == "탄성계수 (MPa)"
+
+        win.detail_tabs.setCurrentIndex(1)
+        app.processEvents()
+        for table in (win.param_table, win.constraint_table):
+            metrics = QFontMetrics(table.font())
+            for row in range(table.rowCount()):
+                label = table.item(row, 0).text()
+                assert metrics.horizontalAdvance(label) + 6 <= table.columnWidth(0), label
 
         # 150-row CSV previews at most 100 rows in the preview table
         assert win.exp_preview_table.rowCount() == 100
@@ -254,6 +268,7 @@ def test_gui_layout_korean_font_design_laws_and_no_forbidden_strings(tmp_path: P
         dlg = ExperimentImportDialog(big_csv, parent=win)
         try:
             assert dlg.preview_table.rowCount() == 100
+            assert any("101행 이상" in label.text() for label in dlg.findChildren(QLabel))
             for combo in dlg.findChildren(QComboBox):
                 assert combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToContents
             payload = dlg.build_import_kwargs()
@@ -266,7 +281,9 @@ def test_gui_layout_korean_font_design_laws_and_no_forbidden_strings(tmp_path: P
         app.processEvents()
 
 
-def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(tmp_path: Path) -> None:
+def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Run eval -> optimize -> theme toggle -> confirmation holdout through MaterialStudyWindow."""
     app = _get_app()
     study_path = _create_b3_study(tmp_path, with_val_holdout=True)
@@ -351,7 +368,12 @@ def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(tmp_path:
         assert len({line.get_marker() for line in training}) >= 3
         assert len({line.get_linestyle() for line in training}) >= 3
 
-        # Retry of the same frozen selection uses the same immutable reference.
+        # Reselecting the exploration point reuses the same immutable selection.
+        for row in range(win.history_table.rowCount()):
+            if win.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == selected_exploration:
+                win.history_table.selectRow(row)
+                break
+        assert win._active_eval_artifact.execution_phase == "exploration"
         win.on_confirm_holdout()
         assert win.wait_for_idle(timeout=60.0)
         assert win._active_eval_artifact.selection_ref == confirmation.selection_ref
@@ -368,9 +390,45 @@ def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(tmp_path:
             win.plot_selector.setCurrentIndex(idx)
             app.processEvents()
 
+        # Leave the confirmation selected, then revoke the proof on disk before
+        # any history refresh. Plot redraw must not open either holdout array kind.
+        holdout_id = "dma_32315"
+        holdout_preview = win.preview_exp_combo.findData(holdout_id)
+        win.preview_exp_combo.setCurrentIndex(holdout_preview)
+        assert win.exp_preview_table.rowCount() > 0
+        win.plot_selector.setCurrentIndex(0)
+        assert any(line.get_label().startswith("보류") for line in win.ax_resid.lines)
+
+        observed_entries = win.service._manifest["experiment_data"][holdout_id].values()
+        holdout_observed_paths = {entry["values_ref"]["path"] for entry in observed_entries}
+        protected = {
+            ref["path"] for channel in win._active_eval_artifact.channel_results
+            if channel["experiment_id"] == holdout_id
+            for key, ref in channel.items() if key.endswith("_ref")
+        }
+        read_array = material_study.read_safe_npy_v2
+        load_observed = material_study.load_experiment_channel_arrays
+
+        def read_non_holdout(path, **kwargs):
+            assert path not in protected
+            return read_array(path, **kwargs)
+
+        def load_non_holdout(entry, **kwargs):
+            assert entry["values_ref"]["path"] not in holdout_observed_paths
+            return load_observed(entry, **kwargs)
+
         exposure_meta = win.service._manifest["evaluations"][win._selected_eval_id]
         exposure_ref = exposure_meta["holdout_exposure_ref"]
         (win.service.data_root / exposure_ref["path"]).unlink()
+        with monkeypatch.context() as patch:
+            patch.setattr(material_study, "read_safe_npy_v2", read_non_holdout)
+            patch.setattr(material_study, "load_experiment_channel_arrays", load_non_holdout)
+            win._redraw_plots()
+            assert not any(line.get_label().startswith("보류") for line in win.ax_curve.lines)
+            assert not any(line.get_label().startswith("보류") for line in win.ax_resid.lines)
+            assert win.exp_preview_table.rowCount() == 0
+            assert "손상" in win.loss_summary_label.text()
+
         exposure_meta["holdout_exposed"] = False
         win._refresh_all()
         row = win.history_table.selectionModel().selectedRows()[0].row()
@@ -479,8 +537,29 @@ def test_gui_drafts_failed_history_and_selected_view_state(tmp_path: Path, monke
 
         with monkeypatch.context() as patch:
             patch.setattr(prony_trs.PronyTRSAdapter, "execute", fail_execute)
-            win.service.evaluate(None, expected_revision=win.service.snapshot().document_revision, cache_policy="refresh")
-        win._refresh_all()
+            win.param_table.item(0, 1).setText("91")
+            win.on_evaluate()
+            assert win.wait_for_idle(timeout=30)
+        assert win._selected_eval_id == good_id
+        assert "실패" in win.status_bar.currentMessage() and "완료" not in win.status_bar.currentMessage()
+
+        began = threading.Event()
+
+        def wait_for_cancel(*args, cancel_event, **kwargs):
+            began.set()
+            if not cancel_event.wait(timeout=10):
+                raise AssertionError("evaluation did not receive cancellation")
+            raise MaterialStudyError("CANCELLED", "test")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(prony_trs.PronyTRSAdapter, "execute", wait_for_cancel)
+            win.param_table.item(0, 1).setText("92")
+            win.on_evaluate()
+            assert began.wait(timeout=10)
+            win.on_cancel()
+            assert win.wait_for_idle(timeout=30)
+        assert win._selected_eval_id == good_id
+        assert "취소" in win.status_bar.currentMessage() and "완료" not in win.status_bar.currentMessage()
         win.history_table.selectRow(1)
         failed_id = win._selected_eval_id
         assert failed_id != good_id
@@ -509,13 +588,24 @@ def test_gui_drafts_failed_history_and_selected_view_state(tmp_path: Path, monke
 
         win.param_table.item(0, 1).setText("95")
         win.param_table.item(0, 4).setText("10")
+        tau2_row = next(i for i, spec in enumerate(win.service.parameters()) if spec.id == "tau2")
+        assert win.param_table.item(tau2_row, 8).flags() & Qt.ItemFlag.ItemIsEditable
+        win.param_table.item(tau2_row, 3).setText("연동")
+        win.param_table.item(tau2_row, 8).setText("50 * tau1")
+        assert all(win.comparison_table.item(0, col).flags() & Qt.ItemFlag.ItemIsEditable for col in range(2, 8))
+        win.comparison_table.item(0, 2).setText("120")
+        win.comparison_table.item(0, 3).setText("0.25")
         win.comparison_table.item(0, 4).setText("사다리꼴")
+        win.comparison_table.item(0, 5).setText("아니요")
         win.comparison_table.item(0, 7).setText("0.001")
         win.on_save_study()
         assert not win._draft_dirty
         assert win.service.parameters()[0].default == 95.0
-        assert win.service.comparisons()[0].sample_weights_policy == "trapezoidal"
-        assert win.service.comparisons()[0].acceptance_limit == 0.001
+        linked = win.service.parameters()[tau2_row]
+        assert linked.role == "linked" and linked.expression == "50 * tau1" and linked.dependencies == ("tau1",)
+        comparison = win.service.comparisons()[0]
+        assert comparison.scale == 120.0 and comparison.weight == 0.25 and not comparison.required_for_fit
+        assert comparison.sample_weights_policy == "trapezoidal" and comparison.acceptance_limit == 0.001
 
         # Save the view of a row other than the service's selected result.
         win.history_table.selectRow(1)
@@ -693,6 +783,92 @@ def test_gui_save_as_reports_committed_copy_when_draft_write_fails(tmp_path: Pat
         assert "복사본은 저장했습니다" in warnings[-1]
         assert original.read_bytes() == original_document
         assert win.service.parameters()[0].default == 90
+    finally:
+        win.close()
+        app.processEvents()
+
+
+
+def test_gui_curve_click_export_and_verified_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _get_app()
+    study_path = _create_b3_study(tmp_path, with_val_holdout=False)
+    win = MaterialStudyWindow(study_path=study_path)
+    try:
+        win.resize(1440, 900)
+        win.show()
+        app.processEvents()
+        win.on_evaluate()
+        assert win.wait_for_idle(timeout=30)
+        active = win._active_eval_artifact
+        exp_idx = next(i for i in range(win.plot_selector.count()) if win.plot_selector.itemData(i) == ("exp", "dma_29315"))
+        win.plot_selector.setCurrentIndex(exp_idx)
+        win.canvas.draw()
+        for axis, suffix in ((win.ax_curve, "E'"), (win.ax_resid, "E''")):
+            artist = next(line for line in axis.lines if line.get_label().endswith(suffix))
+            x, y = artist.get_xydata()[20]
+            sx, sy = axis.transData.transform((x, y))
+            event = MouseEvent("button_press_event", win.canvas, sx, sy, button=1)
+            win.canvas.callbacks.process("button_press_event", event)
+            selected = win.channel_summary_table.selectionModel().selectedRows()
+            assert len(selected) == 1
+            assert win.channel_summary_table.item(selected[0].row(), 0).text() == "dma_29315"
+            assert win.channel_summary_table.item(selected[0].row(), 1).text().endswith(f"({suffix})")
+            assert "정규화 잔차" in win.loss_summary_label.text() and "채널 손실" in win.loss_summary_label.text()
+            assert win.detail_tabs.currentIndex() == 3
+
+        target = tmp_path / "export_report.json"
+        messages = []
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_kw: (str(target), ""))
+        monkeypatch.setattr(QMessageBox, "information", lambda _parent, _title, message: messages.append(message))
+        win.on_export_report()
+        assert win.wait_for_idle(timeout=30)
+        report = json.loads(target.read_text(encoding="utf-8"))
+        assert report["evaluation_id"] == active.evaluation_id
+        assert report["parameters"]["E0"]["value"] == active.physical_parameters["E0"]
+        assert messages and "보고서를 저장했습니다" in win.status_bar.currentMessage()
+
+        entry = win.service._manifest["evaluations"][active.evaluation_id]
+        artifact = win.service.data_root / entry["artifact_ref"]["path"]
+        altered = json.loads(artifact.read_bytes())
+        altered["assessment"]["assessment"]["fit_status"] = "pass"
+        artifact.write_text(json.dumps(altered, ensure_ascii=False), encoding="utf-8")
+        win._refresh_all()
+        assert win.history_table.item(0, 2).text() == "기록 손상"
+        assert win.history_table.item(0, 4).text() == "미확인"
+        assert win.history_table.item(0, 3).text() == "미확인"
+        assert "손상" in win.loss_summary_label.text()
+    finally:
+        win.close()
+        app.processEvents()
+
+
+
+def test_gui_validation_flag_and_unnamed_experiment_labels(tmp_path: Path) -> None:
+    app = _get_app()
+    path = _create_b3_study(tmp_path)
+    with CalibrationStudyService.open(path) as service:
+        template = service.experiments()[0].channels[0]
+        unnamed = service.import_experiment(
+            tmp_path / "dma_29315.csv",
+            channels=[template],
+            split="train",
+            conditions={"temperature_K": 293.15},
+            expected_revision=service.snapshot().document_revision,
+        )
+    win = MaterialStudyWindow(study_path=path)
+    try:
+        preview_idx = win.preview_exp_combo.findData(unnamed.experiment_id)
+        assert win.preview_exp_combo.itemText(preview_idx).startswith("실험 7")
+        assert unnamed.experiment_id not in win.preview_exp_combo.itemText(preview_idx)
+        validation_row = next(i for i, spec in enumerate(win.service.comparisons()) if spec.split == "validation")
+        validation_cell = win.comparison_table.item(validation_row, 6)
+        assert validation_cell.flags() & Qt.ItemFlag.ItemIsEditable
+        validation_cell.setText("아니요")
+        win.on_save_study()
+        assert not win.service.comparisons()[validation_row].required_for_validation
+        assert not win._draft_dirty
+        duplicate = MaterialStudyError("INVALID_CONFIGURATION", "import", {"reason": "DUPLICATE_EXPERIMENT_ID"})
+        assert "같은 이름" in material_study._human_error(duplicate)
     finally:
         win.close()
         app.processEvents()
