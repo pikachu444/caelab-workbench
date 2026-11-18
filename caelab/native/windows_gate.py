@@ -18,10 +18,11 @@ from caelab.process_entry import external_environment
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) not in (3, 4):
+    if len(args) not in (3, 4, 5):
         return 2
     gate, payload, log_path = args[:3]
-    acknowledgement = Path(args[3]) if len(args) == 4 else None
+    acknowledgement = Path(args[3]) if len(args) >= 4 else None
+    stderr_path = Path(args[4]) if len(args) == 5 else None
     acknowledged = False
 
     def acknowledge(receipt):
@@ -44,10 +45,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 125
             time.sleep(.02)
 
-    output = None
+    output = error_output = None
     try:
         environment = external_environment()
-        if os.name == "nt" and getattr(sys, "frozen", False):
+        if os.name == "nt" and (stderr_path is not None or getattr(sys, "frozen", False)):
             import ctypes
             # The bootloader installed a bundle directory. Restore default
             # searching in this gate only; the GUI parent's DLL state is intact.
@@ -58,9 +59,12 @@ def main(argv: list[str] | None = None) -> int:
                 raise ctypes.WinError(ctypes.get_last_error())
         if log_path != "-":
             output = Path(log_path).open("ab", buffering=0)
+        if stderr_path is not None:
+            error_output = stderr_path.open("ab", buffering=0)
         stdout = subprocess.DEVNULL if acknowledgement is not None and output is None else output
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stdout,
-                                   stderr=subprocess.STDOUT, env=environment, shell=False,
+                                   stderr=error_output if stderr_path is not None else subprocess.STDOUT,
+                                   env=environment, shell=False,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if acknowledgement is not None:
             acknowledge({'started': True, 'pid': process.pid})
@@ -68,12 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         detail = f"{type(error).__name__}: {error}"
         acknowledge({'started': False, 'error': detail[:900]})
-        if output is not None:
-            output.write(f"External launch failed: {detail}\n".encode("utf-8", errors="replace"))
+        diagnostic = error_output if stderr_path is not None else output
+        if diagnostic is not None:
+            diagnostic.write(f"External launch failed: {detail}\n".encode("utf-8", errors="replace"))
         return 126
     finally:
         if output is not None:
             output.close()
+        if error_output is not None:
+            error_output.close()
 
 
 if __name__ == "__main__":

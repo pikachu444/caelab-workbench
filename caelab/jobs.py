@@ -196,36 +196,6 @@ def _resume_owned_windows_process(process):
         raise OSError(f"Could not resume converter (NTSTATUS {status & 0xffffffff:#010x})")
 
 
-_WINDOWS_CONVERTER_SPAWN_LOCK = threading.Lock()
-
-
-def _start_windows_converter(control, executor, argv, kwargs):
-    import ctypes as c
-    from ctypes import wintypes as w
-
-    api = c.WinDLL("kernel32", use_last_error=True)
-    api.GetDllDirectoryW.argtypes, api.GetDllDirectoryW.restype = [w.DWORD, w.LPWSTR], w.DWORD
-    api.SetDllDirectoryW.argtypes, api.SetDllDirectoryW.restype = [w.LPCWSTR], w.BOOL
-    with _WINDOWS_CONVERTER_SPAWN_LOCK:
-        size = api.GetDllDirectoryW(0, None)
-        previous = c.create_unicode_buffer(max(1, size))
-        if size:
-            c.set_last_error(0)
-            copied = api.GetDllDirectoryW(size, previous)
-            if (copied == 0 and c.get_last_error()) or copied >= size:
-                raise OSError("could not read the current DLL search directory")
-        if not api.SetDllDirectoryW(None):
-            raise c.WinError(c.get_last_error())
-        try:
-            # Windows inherits the DLL directory at creation. The child stays
-            # suspended until it joins the owned Job Object.
-            control["process"] = executor(argv, **kwargs)
-        finally:
-            if not api.SetDllDirectoryW(previous.value or None):
-                raise c.WinError(c.get_last_error())
-        return control["process"]
-
-
 class _WindowsRunGroup:
     """Kernel Job ownership, with solver release gated until assignment succeeds."""
     def __init__(self, process):
@@ -724,29 +694,33 @@ class JobManager:
         source_id = plan["source_run_id"]
         op_id = uuid.uuid4().hex
         folder = operation_dir(store, source_id, op_id)
-        with self._native_lock:
-            if self._closed:
-                raise ValueError("JobManager is closing")
-            for control in self._operations.values():
-                if (control["store"].root == store.root and control["plan"] == plan
-                        and control["receipt"]["state"] in ACTIVE_OPERATIONS
-                        and not control["cancel"].is_set()):
-                    return copy.deepcopy(control["receipt"])
-            published = time.monotonic() + 2.5
-            while True:
+        published = start + max(timeout, 5.0)
+        while True:
+            with self._native_lock:
+                if self._closed:
+                    raise ValueError("JobManager is closing")
+                for control in self._operations.values():
+                    if (control["store"].root == store.root and control["plan"] == plan
+                            and control["receipt"]["state"] in ACTIVE_OPERATIONS
+                            and not control["cancel"].is_set()):
+                        return copy.deepcopy(control["receipt"])
                 try:
                     lease = store.lease()
                     break
                 except ValueError as exc:
                     if not isinstance(exc.__cause__, LockTimeout):
                         raise
-                    duplicate = find_active_duplicate(store, plan)
-                    if duplicate is not None:
-                        return duplicate
-                    if time.monotonic() >= published:
-                        raise
-                    time.sleep(.025)
+                    busy = exc
+            duplicate = find_active_duplicate(store, plan)
+            if duplicate is not None:
+                return duplicate
+            if time.monotonic() >= published:
+                raise busy
+            time.sleep(.025)
+        with self._native_lock:
             try:
+                if self._closed:
+                    raise ValueError("JobManager is closing")
                 recover_derived_operations(store)
                 receipt = {
                     "schema_version": 1, "id": op_id, "source_run_id": source_id, "source_node_id": plan["source_node_id"],
@@ -820,7 +794,7 @@ class JobManager:
             return True
 
     def _run_conversion_step(self, control, step, env, executor, check, update):
-        from .native.operations import artifact_path
+        from .native.operations import artifact_path, read_object
         from .result_readers import ResultError
 
         folder = control["folder"]
@@ -841,17 +815,25 @@ class JobManager:
         create_suspended = 0x00000004
         config = ({"creationflags": subprocess.CREATE_NO_WINDOW | create_suspended}
                   if os.name == "nt" else {"start_new_session": True})
+        gate = acknowledgement = None
         try:
             with stdout.open("ab") as log, stderr.open("ab") as err:
                 check()
                 kwargs = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=err, shell=False, **config)
-                process = (_start_windows_converter(control, executor, step["argv"], kwargs) if os.name == "nt"
-                           else executor(step["argv"], **kwargs))
+                argv = step["argv"]
+                if os.name == "nt":
+                    nonce = uuid.uuid4().hex
+                    gate = artifact_path(folder, f".converter-{nonce}.lock")
+                    acknowledgement = artifact_path(folder, f".converter-{nonce}.json")
+                    argv = [*windows_gate_command(gate, argv, stdout, acknowledgement), str(stderr)]
+                    kwargs["stdout"] = subprocess.DEVNULL
+                process = executor(argv, **kwargs)
                 control["process"] = process
                 if os.name == "nt":
                     control["group"] = _WindowsRunGroup(process)
                     check()
                     _resume_owned_windows_process(process)
+                    gate.touch()
                 update(pid=process.pid)
                 while not _native_exited(process):
                     check()
@@ -867,6 +849,16 @@ class JobManager:
         control["process"] = None
         update(returncode=code)
         check_sizes()
+        if acknowledgement is not None:
+            try:
+                started = read_object(acknowledgement)
+            except (OSError, ValueError) as exc:
+                raise ResultError("STARTUP_FAILED", "converter gate did not record its launch") from exc
+            finally:
+                gate.unlink(missing_ok=True)
+                acknowledgement.unlink(missing_ok=True)
+            if started.get("started") is not True:
+                raise ResultError("STARTUP_FAILED", str(started.get("error", "converter gate could not launch")))
         if code:
             raise ResultError("CONVERTER_EXIT", f"converter exited with status {code}")
 
@@ -1277,11 +1269,12 @@ class JobManager:
                                       wait_timeout=min(5, remaining / 2), confirm_tree=True)
                         control["process"] = None
                     if "operation_lock" in control:
+                        control["operation_lock"].release()
+                    control["lease"].release()
+                    if "operation_lock" in control:
                         receipt = {**control["receipt"], "cleanup_failed": False}
                         atomic_json(control["folder"] / "operation.json", receipt)
                         control["receipt"].update(receipt)
-                        control["operation_lock"].release()
-                    control["lease"].release()
                 except Exception:
                     continue
                 control["cleanup_failed"] = False

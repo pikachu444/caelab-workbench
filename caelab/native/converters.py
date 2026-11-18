@@ -51,10 +51,28 @@ def _install_root(options, executable, profile):
         filenames = {name, name + ".exe", name + "_win64.exe", name + "_linux64", name + "_linux64_gf"}
         directories = {"exec", "bin", f"output_converters/{name}", f"output_converters/{name}/bin"}
         if executable.name.lower() in filenames and executable.parent.relative_to(root).as_posix().lower() in directories:
-            return root
+            if options.get("allow_custom_executable") is True or _executable_header(executable):
+                return root
     if options.get("allow_custom_executable") is True:
         return None
     raise ResultError("UNTRUSTED_CONVERTER_EXECUTABLE", str(executable))
+
+
+def _executable_header(path):
+    with path.open("rb") as stream:
+        header = stream.read(128)
+        if os.name == "nt":
+            if len(header) < 64 or not header.startswith(b"MZ"):
+                return False
+            offset = int.from_bytes(header[60:64], "little")
+            if offset < 64 or offset + 24 > path.stat().st_size:
+                return False
+            stream.seek(offset)
+            return stream.read(4) == b"PE\0\0"
+        if header.startswith(b"\x7fELF"):
+            return (len(header) >= 52 and header[5] in (1, 2)
+                    and (header[4] == 1 or header[4] == 2 and len(header) >= 64))
+        return len(header) >= 8 and header.startswith(b"#!") and bool(header[2:].splitlines()[0].strip())
 
 
 def converter_environment(plan, environment):
@@ -160,7 +178,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
     if not paths:
         return None, [], {}
     verify_original_decks(root, receipt, check, code="SOURCE_CHANGED")
-    nodes, elements, parts, shell_properties, solid_properties = {}, {}, {}, {}, {}
+    nodes, elements, parts = {}, {}, {}
+    shell_properties, solid_properties, materials = {}, {}, {}
     history = []
     topology = {"SHELL": (9, 4), "SH3N": (5, 3), "BRICK": (12, 8), "TETRA4": (10, 4), "TETRA": (10, 4)}
 
@@ -200,7 +219,10 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                         raise ValueError(f"degenerate {head} connectivity is unsupported")
                     add(elements, str(eid), {"part_id": part, "cell_type": kind, "node_ids": conn})
             elif head == "PART":
-                add(parts, int(card[1]), int(rows[1][:10].strip() or rows[1].split()[0]))
+                prop, material = _rad_fields(rows[1], (10, 10), int)
+                add(parts, int(card[1]), (prop, material))
+            elif head == "MAT" and len(card) >= 3:
+                add(materials, int(card[2]), card[1])
             elif head == "PROP" and len(card) >= 3:
                 if card[1] in {"SHELL", "TYPE1"} and animation:
                     add(shell_properties, int(card[2]), int(rows[3][:10].strip() or "0"))
@@ -225,15 +247,20 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
         shells = {eid: element for eid, element in elements.items() if element["cell_type"] in {5, 9}}
         solids = {eid: element for eid, element in elements.items() if element["cell_type"] in {10, 12}}
         formulations = {eid: "hex8_1pt" for eid, element in solids.items() if element["cell_type"] == 12
-                        and solid_properties.get(parts.get(element["part_id"])) == 1}
+                        and solid_properties.get(parts.get(element["part_id"], (None, None))[0]) == 1}
         mesh = None
         if animation:
             node_ids = set(map(int, nodes))
             if not nodes or not elements or any(set(element["node_ids"]) - node_ids for element in elements.values()):
                 raise ValueError("saved RAD deck is missing supported node or element definitions")
+            shell_nip_by_id = {}
+            for eid, element in shells.items():
+                prop, material = parts[element["part_id"]]
+                nip = shell_properties[prop]
+                # The pinned Starter resets LAW1 layer counts greater than one.
+                shell_nip_by_id[eid] = 0 if nip > 1 and materials.get(material) in {"LAW1", "ELAST"} else nip
             mesh = {"node_coordinates": nodes, "elements": elements, "shell_ids": sorted(map(int, shells)),
-                    "solid_ids": sorted(map(int, solids)),
-                    "shell_nip": {eid: shell_properties[parts[element["part_id"]]] for eid, element in shells.items()}}
+                    "solid_ids": sorted(map(int, solids)), "shell_nip_by_id": shell_nip_by_id}
         return mesh, history, formulations
     except (OSError, ValueError, IndexError, KeyError) as exc:
         if isinstance(exc, ResultError):
@@ -246,11 +273,12 @@ def _confirm_mesh(expected, authoritative):
         if not isinstance(expected, Mapping):
             raise ResultError("SOURCE_MISMATCH", "invalid caller source mesh")
         for key, value in expected.items():
-            native_key = "node_coordinates" if key == "node_coords" else key
+            native_key = {"node_coords": "node_coordinates", "shell_nip": "shell_nip_by_id",
+                          "shell_layers": "shell_nip_by_id"}.get(key, key)
             native_value = authoritative.get(native_key)
             if native_key in {"shell_ids", "solid_ids"} and isinstance(value, (list, tuple)) and native_value is not None:
                 value = sorted(value)
-            if native_key == "shell_nip" and type(value) is int and isinstance(native_value, dict):
+            if native_key == "shell_nip_by_id" and type(value) is int and isinstance(native_value, dict):
                 value = dict.fromkeys(native_value, value)
             if native_key in authoritative and value != native_value:
                 raise ResultError("SOURCE_MISMATCH", f"caller {key} differs from the saved RAD snapshot")
@@ -332,26 +360,20 @@ def _plan(store, source_run_id, profile, executable, frame_ids, options, *, chec
             raise ResultError("PROGRAM_UNAVAILABLE", str(executable)) from exc
     if profile == "OC-ANIM-1":
         recovered, _, _ = _rad_snapshot_metadata(source, receipt, check, animation=True)
-        recorded_mesh = receipt["snapshot"].get("expected_mesh")
-        if recovered is not None:
-            _confirm_mesh(recorded_mesh, recovered)
-        authoritative = recovered or recorded_mesh
-        mesh = (_confirm_mesh(options.get("expected_mesh"), authoritative) if authoritative is not None
-                else options.get("expected_mesh"))
-        if isinstance(mesh, Mapping) and "node_coords" in mesh and "node_coordinates" not in mesh:
-            mesh = {**mesh, "node_coordinates": mesh["node_coords"]}
-        if not isinstance(mesh, Mapping) or not mesh.get("node_coordinates") or not mesh.get("elements"):
-            raise ResultError("SOURCE_MISMATCH", "OC-ANIM-1 requires verified source node and element maps")
-        options["expected_mesh"] = mesh
-        erosion = options.get("erosion_active_value", options.pop("active_erosion_status", None))
-        if erosion is not None and (type(erosion) is not int or erosion not in {0, 1}):
+        if recovered is None:
+            raise ResultError("SOURCE_MISMATCH", "OC-ANIM-1 requires an archived RAD mesh")
+        _confirm_mesh(receipt["snapshot"].get("expected_mesh"), recovered)
+        options["expected_mesh"] = _confirm_mesh(options.get("expected_mesh"), recovered)
+        erosion = options.get("erosion_active_value", vtk_fields.OC_EROSION_ACTIVE_VALUE)
+        if type(erosion) is not int or erosion not in {0, 1}:
             raise ResultError("INVALID_DATASET", "erosion_active_value must be 0 or 1")
         options["erosion_active_value"] = erosion
     if profile == "OC-TH4-1":
         _, bindings, formulations = _rad_snapshot_metadata(source, receipt, check, animation=False)
-        if bindings:
-            options["source_bindings"] = bindings
-            options["solid_formulation"] = formulations
+        if not bindings:
+            raise ResultError("SOURCE_MISMATCH", "OC-TH4-1 requires /TH bindings from the archived RAD deck")
+        options["source_bindings"] = bindings
+        options["solid_formulation"] = formulations
     plan = {
         "schema_version": 1, "profile": profile, "reader_version": "1", "source_run_id": source_run_id,
         "source_node_id": receipt["node_id"], "source_input_revision": receipt.get("input_revision"),
@@ -518,10 +540,11 @@ def validate_oc_outputs(operation_dir: Path, plan: Mapping, *, check_cancelled=N
             elif profile == "VTU-1":
                 target = artifact_path(folder, f"inputs/in{index:03d}.vtu")
                 _nonempty(target, limit)
-                grid = vtk_fields.read_vtu(target, exact_required_set=plan["options"].get("exact_required_set"),
+                required = plan["options"].get("exact_required_set")
+                grid = vtk_fields.read_vtu(target, exact_required_set=required,
                                            node_id_policy=plan["options"].get("node_id_policy"), check_cancelled=check)
-                if not vtk_fields.nodal_fields(grid):
-                    raise ResultError("SCHEMA_MISMATCH", "VTU has no queryable nodal physics fields")
+                if not required:
+                    vtk_fields.require_vtu_samples(grid)
             else:
                 raise ResultError("UNSUPPORTED_CAPABILITY", profile)
             ref = artifact(folder, target, "frame_output", "vtk-legacy" if profile == "OC-ANIM-1" else "vtu",

@@ -17,16 +17,31 @@ from . import ResultError, no_checkpoint
 _PRODUCER = ProducerIdentity("OC-TH4-1", "1")
 _STRESS = dict(zip(("SX", "SY", "SZ", "SXY", "SYZ", "SXZ"), ("xx", "yy", "zz", "xy", "yz", "xz")))
 _STRAIN = dict(zip(("EPSX", "EPSY", "EPSZ", "EPSXY", "EPSYZ", "EPSXZ"), ("xx", "yy", "zz", "xy", "yz", "xz")))
+_STRAIN.update(EPSXX="xx", EPSYY="yy", EPSZZ="zz")
 _SOLID = {"DENS": ("density", "density", "current_density"), "VOL": ("volume", "volume", "current_volume"),
           "MASS": ("mass", "mass", "mass"), "ENER": ("energy", "energy", "element_energy"),
           "IE": ("internal_energy_density", "energy_density", "per_initial_volume"),
           "BULK": ("bulk_viscosity", "stress", "native_bulk_viscosity")}
-_GROUP = re.compile(r"(.+?) ([1-9][0-9]*) (.+)")
 _CODE = re.compile(r"[A-Za-z0-9_*+|/-]+")
+_BINDING_KEYS = (
+    "schema_version", "column_index", "raw_header", "normalized_header", "group_title", "output_type",
+    "entity_id", "entity_title", "variable_code", "source_titles_pair_index", "quantity", "component",
+    "measure", "basis", "unit", "operator",
+)
 
 
 def _normalized(value):
     return " ".join(value.split())
+
+
+def _entity_header(header, group_titles):
+    for title in sorted(group_titles, key=lambda name: (-len(name), name)):
+        prefix = title + " "
+        if header.startswith(prefix):
+            match = re.fullmatch(r"([1-9][0-9]*) (.+)", header[len(prefix):])
+            if match:
+                return title, int(match[1]), match[2]
+    return None
 
 
 def read_titles(titles_path: Path, *, check_cancelled=None) -> dict:
@@ -125,6 +140,14 @@ def _quantity(kind, code):
 def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exact_required_set=None,
                          expected_bindings=None, source_bindings=None, solid_formulation=None, units=None) -> tuple[dict, ...]:
     """Match entity columns against the positional TITLES pairs and fixed requests."""
+    columns = _bind_history_columns(titles_meta, raw_headers, expected_columns=expected_columns,
+                                    exact_required_set=exact_required_set, expected_bindings=expected_bindings,
+                                    source_bindings=source_bindings, solid_formulation=solid_formulation, units=units)
+    return tuple({key: column[key] for key in _BINDING_KEYS} for column in columns)
+
+
+def _bind_history_columns(titles_meta, raw_headers, *, expected_columns, exact_required_set,
+                          expected_bindings, source_bindings, solid_formulation, units):
     normalized = _headers(raw_headers)
     pairs = titles_meta["pairs"]
     first = len(normalized) - len(pairs)
@@ -139,13 +162,14 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
         if (not isinstance(request, (list, tuple)) or any(
                 not isinstance(item, dict) or not keys <= item.keys() or
                 not item.keys() <= keys | {"entity_title", "output_type"} or type(item["entity_id"]) is not int
+                or not isinstance(item["group_title"], str) or not item["group_title"]
                 for item in request)):
             raise ResultError("SOURCE_MISMATCH", "invalid source history requests")
     group_titles = {"BRIC", "NODE"} | {item["group_title"] for request in requests for item in request}
     for index, header in enumerate(normalized[1:], 1):
-        group = _GROUP.fullmatch(header)
+        group = _entity_header(header, group_titles)
         if index < first:
-            if group and group[1] in group_titles:
+            if group:
                 raise ResultError("INVALID_DATASET", "entity column is missing a TITLES pair")
             entry = _GLOBAL.get(header)
             if entry is None:
@@ -159,11 +183,13 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
             kind, code, title = pair["output_type"], pair["variable_code"], pair["title"]
             group_kind = {0: "NODE", 1: "BRIC"}.get(kind)
             suffix = " " + code
-            if (group is None or (group_kind is not None and group[1] in {"BRIC", "NODE"} and group[1] != group_kind)
-                    or not group[3].endswith(suffix)):
+            if group is None and requests:
+                raise ResultError("SOURCE_MISMATCH", f"unexpected history group: {header!r}")
+            if (group is None or (not requests and group_kind is not None and group[0] != group_kind)
+                    or not group[2].endswith(suffix)):
                 raise ResultError("INVALID_DATASET", f"TITLES pair {pair_index} does not bind {header!r}")
-            group_title = group[1]
-            entity_id, entity = int(group[2]), group[3][:-len(suffix)]
+            group_title, entity_id, variable_title = group
+            entity = variable_title[:-len(suffix)]
             if not entity or (title and title not in {entity, header}):
                 raise ResultError("INVALID_DATASET", f"TITLES title does not bind {header!r}")
             identity = (kind, group_title, entity_id, code)
@@ -246,7 +272,7 @@ def extract_history(csv_path: Path, titles_path: Path, request_spec) -> DatasetM
     check = request_spec.get("check_cancelled") or no_checkpoint
     titles = read_titles(titles_path, check_cancelled=check)
     table = read_th_csv(csv_path, check_cancelled=check)
-    bindings = bind_history_columns(titles, table["raw_header"], **{
+    bindings = _bind_history_columns(titles, table["raw_header"], **{
         key: request_spec.get(key) for key in ("expected_columns", "exact_required_set", "expected_bindings", "source_bindings",
                                               "solid_formulation", "units")})
     if not bindings:
@@ -260,12 +286,7 @@ def extract_history(csv_path: Path, titles_path: Path, request_spec) -> DatasetM
         index = binding["column_index"]
         field_id = binding["normalized_header"]
         ref = _npy(root, output / f"history-column-{index}.npy", table["values"][:, index], "history_values")
-        group_kind, entity_kind = {"Global": ("global", "global"), "Solid": ("BRIC", "element"),
-                                   "Node": ("NODE", "node")}[binding["output_type"]]
-        frozen_binding = {key: binding[key] for key in (
-            "column_index", "raw_header", "entity_id", "group_title", "variable_code", "component")}
-        frozen_binding.update(group_kind=group_kind, entity_kind=entity_kind, quantity_id=binding["quantity"],
-                              supported=True, reason=None)
+        frozen_binding = {key: binding[key] for key in _BINDING_KEYS}
         semantics = {key: binding[key] for key in ("measure", "basis", "unit", "unit_dimension",
                                                     "integration_point") if key in binding}
         fields[field_id] = {"binding": frozen_binding, "semantics": semantics, "values_ref": ref.to_dict()}

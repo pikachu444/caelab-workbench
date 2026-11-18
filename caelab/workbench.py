@@ -24,12 +24,18 @@ if TYPE_CHECKING:
 
 
 def _source_metadata_changed(item: dict) -> bool:
-    current = fingerprint(item["source_path"])
+    path = item.get("source_path")
+    if not path:
+        return False
+    current = fingerprint(path)
     if current is None:
         return True
     # WSL remounts can assign a different device number to the same file.
     # Keep full device identity for collection races, but not saved-run freshness.
-    return any(current[key] != item["stat"].get(key) for key in
+    saved = item.get("stat")
+    if not isinstance(saved, dict):
+        return False  # read_result independently verifies the snapshot's working-file SHA.
+    return any(current[key] != saved.get(key) for key in
                ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino"))
 
 

@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -45,31 +46,36 @@ MESH = {
 }
 
 
-def _vtk(*, missing=(), replacements=None, permutation=tuple(range(7))):
+def _vtk(*, missing=(), replacements=None, permutation=tuple(range(7)), extra_shell=False):
     points, ids = np.array(ORIGINAL_POINTS), np.arange(11, 18)
     u = np.array([[3, 4, 0], [3, 4, 0], [3, 4, 0], [0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 0, 2]])
     indices = [permutation.index(i) for i in range(7)]
     triangles = [indices[i] for i in (0, 1, 2, 2)]
     solid = indices[3:]
+    cell_count = 3 if extra_shell else 2
+    triangle_row = "4 " + " ".join(map(str, triangles))
     data = [
         "# vtk DataFile Version 3.0", "synthetic animation", "ASCII", "DATASET UNSTRUCTURED_GRID",
         "FIELD FieldData " + ("1" if "TIME" in missing else "2"),
         *([] if "TIME" in missing else ["TIME 1 1 double", "0.125"]),
         "CYCLE 1 1 int", "0", "POINTS 7 float",
         *(" ".join(map(str, points[i] + u[i])) for i in permutation),
-        "CELLS 2 10", "4 " + " ".join(map(str, triangles)), "4 " + " ".join(map(str, solid)),
-        "CELL_TYPES 2", "5 10",
+        f"CELLS {cell_count} {5 * cell_count}", triangle_row, "4 " + " ".join(map(str, solid)),
+        *([triangle_row] if extra_shell else []),
+        f"CELL_TYPES {cell_count}", "5 10 5" if extra_shell else "5 10",
         "POINT_DATA 7", "SCALARS NODE_ID int 1", "LOOKUP_TABLE default",
         " ".join(str(ids[i]) for i in permutation),
         "VECTORS Displacement float", *(" ".join(map(str, u[i])) for i in permutation),
         "VECTORS Velocity float", *(" ".join(map(str, u[i] * 2)) for i in permutation),
-        "CELL_DATA 2", "SCALARS ELEMENT_ID int 1", "LOOKUP_TABLE default", "101 202",
-        "SCALARS PART_ID int 1", "LOOKUP_TABLE default", "10 20",
-        "SCALARS 2DELEM int 1", "LOOKUP_TABLE default", "1 0",
-        "SCALARS 3DELEM int 1", "LOOKUP_TABLE default", "0 1",
+        f"CELL_DATA {cell_count}", "SCALARS ELEMENT_ID int 1", "LOOKUP_TABLE default", "101 202 303" if extra_shell else "101 202",
+        "SCALARS PART_ID int 1", "LOOKUP_TABLE default", "10 20 30" if extra_shell else "10 20",
+        "SCALARS 2DELEM int 1", "LOOKUP_TABLE default", "1 0 1" if extra_shell else "1 0",
+        "SCALARS 3DELEM int 1", "LOOKUP_TABLE default", "0 1 0" if extra_shell else "0 1",
     ]
     for name, values in TENSORS.items():
         if name not in missing:
+            if extra_shell:
+                values = (*values, values[0])
             data.extend((f"TENSORS {name} float", *(f"{v} 0 0 0 0 0 0 0 0" for v in values)))
     output = "\n".join(data) + "\n"
     for before, after in (replacements or {}).items():
@@ -110,6 +116,7 @@ def _vtu(vector="3 4 0 0 0 2 0 2 0 2 0 0", coverage="1 1 1 1"):
     ((), {"CELL_TYPES 2\n5 10": "CELL_TYPES 2\n5 12"}, "INVALID_CONNECTIVITY"),
     ((), {"4 0 1 2 2": "4 0 1 1 2"}, "INVALID_CONNECTIVITY"),
     ((), {"4 0 1 2 2": "4 0 0 2 2"}, "INVALID_CONNECTIVITY"),
+    ((), {"4 3 4 5 6": "4 4 3 5 6"}, "SOURCE_MISMATCH"),
     ((), {"CELL_DATA 2": "SCALARS Coverage_Displacement int 1\nLOOKUP_TABLE default\n1 1 1 0 1 1 1\nCELL_DATA 2"},
      "PARTIAL_REQUIRED_FIELD"),
     ((), {"TENSORS 3DELEM_Stress float\n0 0": "TENSORS 3DELEM_Stress float\n9 0"}, "OBSERVABLE_MISMATCH"),
@@ -267,6 +274,16 @@ def _fixture_animation(tmp_path, program=None, *, name="caseA001", options=None)
         program = f"import sys\nsys.stdout.write({_vtk()!r})\nprint('converter diagnostic', file=sys.stderr)"
     payload = program.encode("ascii")
     store, source = _run(tmp_path, {name: gzip.compress(payload) if name.endswith(".gz") else payload})
+    deck = _rad_mesh_deck()
+    (source / "fixture.rad").write_bytes(deck)
+    live = tmp_path / "fixture.rad"
+    live.write_bytes(deck)
+    digest = hashlib.sha256(deck).hexdigest()
+    job = json.loads((source / "job.json").read_bytes())
+    job["snapshot"]["files"] = [{"source_copy": "fixture.rad", "execution_path": "fixture.rad",
+                                "original_sha256": digest, "executed_sha256": digest,
+                                "source_path": str(live), "stat": {}}]
+    atomic_json(source / "job.json", job)
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"],
                            {"allow_custom_executable": True, "expected_mesh": MESH, **(options or {})})
     return store, source, plan
@@ -314,8 +331,9 @@ def test_job_conversion_and_saveas_keep_the_same_result_ref(tmp_path, monkeypatc
     assert (folder / "stderr.log").read_text().strip() == "converter diagnostic"
     assert (folder / "outputs/frame-001.vtk").read_text().startswith("# vtk DataFile")
     assert (folder / "inputs/inA001").exists() and (folder / "inputs/inA001.gz").exists()
-    assert len(launched) == 1 and launched[0][0] == [sys.executable, "inA001"]
-    kwargs = launched[0][1]
+    ((argv, kwargs),) = launched
+    command = json.loads(argv[-4]) if os.name == "nt" else argv
+    assert command == [sys.executable, "inA001"]
     assert kwargs["shell"] is False and kwargs["stdin"] == subprocess.DEVNULL
     assert not {"PYTHONPATH", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH"} & kwargs["env"].keys()
     assert kwargs["cwd"] == folder / "inputs"
@@ -335,7 +353,8 @@ def test_job_conversion_and_saveas_keep_the_same_result_ref(tmp_path, monkeypatc
 
 def test_history_job_and_registered_curve_query(tmp_path, manager):
     program = f"from pathlib import Path\nimport sys\nPath(sys.argv[1] + '.csv').write_bytes({HISTORY.encode()!r})"
-    store, _ = _run(tmp_path, {"sampleT01": program.encode(), "sampleT01_TITLES": TITLES})
+    store, source = _run(tmp_path, {"sampleT01": program.encode(), "sampleT01_TITLES": TITLES})
+    _snapshot_sidecar(source, _th_deck("BRIC", ("SX",), "hex", node=True), tmp_path / "working.rad")
     plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable,
                            options={"expected_columns": ["BRIC 101 hex SX", "NODE 12 n12 DX"],
                                     "allow_custom_executable": True, "solid_formulation": "hex8_1pt"})
@@ -347,7 +366,7 @@ def test_history_job_and_registered_curve_query(tmp_path, manager):
     result = read_result(store, ref)
     assert result.ref is ref and ref.geometry_state == "unknown"
     assert result.sample_coordinates == (0, 1, 3) and result.values == (0, 2, 5)
-    assert result.operator_provenance["column_binding"]["entity_kind"] == "element"
+    assert result.operator_provenance["column_binding"]["output_type"] == "Solid"
     with pytest.raises(ResultError, match="UNSUPPORTED_OBSERVABLE"):
         inspect_dataset(store, ref, consumer_kind="field")
     with pytest.raises(ResultError, match="UNSUPPORTED_OBSERVABLE"):
@@ -467,6 +486,9 @@ def test_recovery_quarantines_unlocked_partial_files(tmp_path, manager):
     (folder / "dataset.json").touch()
     with store.lease():
         assert manager.operation_snapshot(store, ROOT_ID, operation_id)["state"] == "validating"
+    assert manager.operation_snapshot(store, ROOT_ID, operation_id)["state"] == "validating"
+    assert (folder / "some.vtk.part").exists() and (folder / "dataset.json").exists()
+    store.recover()
     receipt = manager.operation_snapshot(store, ROOT_ID, operation_id)
     assert receipt["state"] == "failed" and receipt["error"]["code"] == "INTERRUPTED"
     assert (folder / "some.vtk.interrupted").exists()
@@ -483,6 +505,18 @@ def test_gunzip_limit_and_missing_titles_are_enforced(tmp_path, manager):
     assert not (operation_dir(store, ROOT_ID, receipt["id"]) / "inputs/inA001").exists()
     with pytest.raises(ResultError, match="UNSUPPORTED_OBSERVABLE"):
         plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable)
+
+
+def test_opencourant_planning_requires_saved_deck_authority(tmp_path):
+    store, source = _run(tmp_path, {"caseA001": b"animation", "caseT01": b"history", "caseT01_TITLES": TITLES})
+    with pytest.raises(ResultError, match="SOURCE_MISMATCH"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"],
+                        {"allow_custom_executable": True, "expected_mesh": MESH})
+    _snapshot_sidecar(source, _rad_mesh_deck(), tmp_path / "working.rad")
+    with pytest.raises(ResultError, match="SOURCE_MISMATCH"):
+        plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable,
+                        options={"allow_custom_executable": True, "solid_formulation": "hex8_1pt",
+                                 "expected_columns": ["BRIC 101 hex SX"]})
 
 
 def test_close_cancels_active_conversion(tmp_path, manager):
@@ -520,7 +554,7 @@ def test_shell_layer_default_and_reference_rounding(tmp_path):
 
 
 def test_eroded_stresses_are_missing_and_raw_status_is_queryable(tmp_path, manager):
-    vtk = _vtk().replace("SCALARS 3DELEM int 1", "SCALARS EROSION_STATUS int 1\nLOOKUP_TABLE default\n0 1\nSCALARS 3DELEM int 1")
+    vtk = _vtk().replace("SCALARS 3DELEM int 1", "SCALARS EROSION_STATUS int 1\nLOOKUP_TABLE default\n1 0\nSCALARS 3DELEM int 1")
     store, _, plan = _fixture_animation(tmp_path, f"print({vtk!r})")
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
     assert receipt["state"] == "completed", receipt["error"]
@@ -531,11 +565,11 @@ def test_eroded_stresses_are_missing_and_raw_status_is_queryable(tmp_path, manag
         assert dict(result.counts) == {"total": 1, "valid": 0, "expected": 1, "missing": 1, "eroded": 1}
         assert result.operator_provenance["eroded_ids"] == (202,)
     status = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "EROSION_STATUS", selection={"ids": [202]})
-    assert read_result(store, status).values == (1,)
+    assert read_result(store, status).values == (0,)
     path = tmp_path / "official.vtk"
     path.write_text(vtk, encoding="ascii")
-    official = read_vtk(path, active_erosion_status=1)
-    assert query_field(official, "3DELEM_Stress", component="xx", operator="mean")[0] == 12
+    overridden = read_vtk(path, erosion_active_value=0)
+    assert query_field(overridden, "3DELEM_Stress", component="xx", operator="mean")[0] == 12
 
 
 @pytest.mark.parametrize(("array", "analysis_type", "time", "kind"), [
@@ -600,7 +634,7 @@ def test_history_requires_matching_source_entities_and_formulation(tmp_path):
         bind_history_columns(titles, headers, solid_formulation={"101": "hex8_1pt"}, expected_bindings=expected)
     bindings = bind_history_columns(titles, headers, solid_formulation={"101": "hex8_1pt"},
         expected_bindings=[*expected, {"entity_id": 12, "group_title": "NODE", "variable_code": "DX"}])
-    assert bindings[1]["integration_point"] == "ip1"
+    assert bindings[1]["entity_id"] == 101 and bindings[1]["quantity"] == "stress"
 
 
 def _rad_mesh_deck(nip=5):
@@ -629,6 +663,7 @@ def test_manifest_deck_selection_semantics_and_reader_digest(tmp_path, monkeypat
     selection_file = store.root / "selections" / "s1" / "payload.json"
     saved = {"schema": "caelab.selection.v1", "entity_kind": "node", "ids": [11], "run_id": ROOT_ID,
              "mesh_revision": job["input_revision"]}
+    saved["revision_sha256"] = hashlib.sha256(canonical_json_bytes({"selection": saved, "payload": [11]})).hexdigest()
     atomic_json(selection_file, saved)
     ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x",
                           selection={"selection_id": "s1", "count": 1})
@@ -647,6 +682,9 @@ def test_manifest_deck_selection_semantics_and_reader_digest(tmp_path, monkeypat
                     replace(ref, eligibility={"fit_eligible": True}),
                     replace(ref, eligibility={"query": False}),
                     replace(ref, basis={"kind": "global", "orientation_sha256": "a" * 64}),
+                    replace(ref, basis={"kind": "global", "orientation_sha256": ""}),
+                    replace(ref, basis={"kind": "local", "orientation_sha256": ""}),
+                    replace(ref, location={**ref.location, "entity_id": 999}),
                     replace(ref, location={"association": "point", "layer": "middle"})):
         with pytest.raises(ResultError, match="SEMANTIC_MISMATCH"):
             read_result(store, invalid)
@@ -716,9 +754,14 @@ def test_verify_plan_preserves_deadline_and_requires_trusted_converter(tmp_path,
     tool = tmp_path / "exec" / "anim_to_vtk_win64.exe"
     tool.parent.mkdir()
     tool.write_bytes(b"fixture")
+    with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], {"install_root": str(tmp_path)})
+    plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"],
+                    {"install_root": str(tmp_path), "allow_custom_executable": True})
+    shutil.copyfile(sys.executable, tool)
     trusted = plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"],
                               options={"expected_mesh": MESH, "install_root": str(tmp_path)})
-    assert trusted["options"]["erosion_active_value"] == plan["options"]["erosion_active_value"] is None
+    assert trusted["options"]["erosion_active_value"] == plan["options"]["erosion_active_value"] == 1
     if os.name == "nt":
         env = converters.converter_environment(trusted, {"Path": "original"})
         assert env["PATH"].split(os.pathsep)[0] == str(tool.parent)
@@ -766,6 +809,12 @@ def test_unconfirmed_cleanup_keeps_store_lease_and_publishes_no_dataset(tmp_path
             store.lease()
         assert not manager.close()
     assert jobs._finish_owned is real_finish
+    control = manager._operations[queued["id"]]
+    for lock in (control["operation_lock"], control["lease"]):
+        with monkeypatch.context() as patch:
+            patch.setattr(lock, "release", unconfirmed)
+            assert not manager.close()
+            assert manager.operation_snapshot(store, ROOT_ID, queued["id"])["cleanup_failed"]
     assert manager.close()
     assert queued["id"] not in manager._operations
     assert not manager.operation_snapshot(store, ROOT_ID, queued["id"])["cleanup_failed"]
@@ -783,22 +832,23 @@ def test_solid_strain_uses_native_shear_order(tmp_path):
         assert query_field(grid, "3DELEM_Strain", component=name)[0].tolist() == [number]
 
 
-def _snapshot_sidecar(source, deck, live_path):
-    for relative in ("input/frozen.inc", "input/exec.inc"):
+def _snapshot_sidecar(source, deck, live_path, *, suffix=".inc"):
+    original, execution = f"input/frozen{suffix}", f"input/exec{suffix}"
+    for relative in (original, execution):
         target = source / relative
         target.parent.mkdir(exist_ok=True)
         target.write_bytes(deck)
     digest = hashlib.sha256(deck).hexdigest()
     live_path.write_bytes(deck)
     atomic_json(source / "input/snapshot.json", {"files": [{
-        "source_path": str(live_path), "source_copy": "input/frozen.inc", "execution_path": "input/exec.inc",
+        "source_path": str(live_path), "source_copy": original, "execution_path": execution,
         "original_sha256": digest, "executed_sha256": digest}]})
 
 
 @pytest.mark.parametrize("nip", [0, 5])
 def test_saved_rad_authority_shell_layers_and_live_deck(tmp_path, manager, nip):
-    missing = tuple(name for name in TENSORS if name.startswith("2DELEM") and
-                    (name != "2DELEM_Stress_(layer__1)_" if nip == 0 else "layer__3" in name))
+    missing = tuple(name for name in TENSORS if "layer__" in name and
+                    ("layer__1" not in name if nip == 0 else "layer__3" in name))
     vtk = _vtk(missing=missing)
     store, source = _run(tmp_path, {"caseA001": f"print({vtk!r})".encode()})
     live = tmp_path / "working.inc"
@@ -807,7 +857,7 @@ def test_saved_rad_authority_shell_layers_and_live_deck(tmp_path, manager, nip):
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], opts)
     mesh = plan["options"]["expected_mesh"]
     assert mesh["shell_ids"] == [101] and mesh["solid_ids"] == [202]
-    assert mesh["shell_nip"] == {"101": nip}
+    assert mesh["shell_nip_by_id"] == {"101": nip}
     with pytest.raises(ResultError, match="SOURCE_MISMATCH"):
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"],
                         {**opts, "expected_mesh": {"shell_ids": [202], "solid_ids": [101]}})
@@ -830,17 +880,48 @@ def test_saved_rad_authority_shell_layers_and_live_deck(tmp_path, manager, nip):
     project = SimpleNamespace(path=tmp_path / "project.json", run_store=store.root, run_store_expected=True,
                               nodes={NODE: node}, input_file=lambda _: None)
     workbench = Workbench()
-    assert read_result(workbench._run_store(project), ref).status == "stale"
+    assert read_result(workbench._run_store(project), ref, live_stale=False).status == "stale"
+    node.program_id = "opencourant"
+    job = json.loads((source / "job.json").read_bytes())
+    project.input_file = lambda _: SimpleNamespace(path=job["input_path"], stale=False,
+                                                   units=job["units"], unit_source=job["unit_source"])
+    assert read_result(workbench._run_store(project), ref, live_stale=False).status == "available"
     live.write_bytes(b"edits to the working include")
-    assert read_result(store, ref).status == "stale"
+    assert read_result(store, ref, live_stale=False).status == "stale"
     (source / "input/exec.inc").write_bytes(b"corrupt archived execution copy")
     with pytest.raises(ResultError, match="HASH_MISMATCH"):
         read_result(store, ref)
 
 
-@pytest.mark.parametrize(("statuses", "active", "value"), [("1 1", None, [12]), ("0 1", None, []),
-                                                        ("1 1", 0, []), ("0 1", 1, [12])])
-def test_erosion_rule_is_explicit_or_data_based(tmp_path, statuses, active, value):
+def test_dat_snapshot_preserves_effective_nip_per_shell(tmp_path, manager):
+    rows = ("/MAT/LAW1/1\nelastic\n/MAT/LAW2/2\nplastic\n/PART/30\nsecond shell\n         7         2\n"
+            "/SH3N/30\n" + "".join(f"{i:10d}" for i in (303, 11, 12, 13)) + "\n/END\n").encode()
+    deck = _rad_mesh_deck().replace(b"/END\n", rows)
+    vtk = _vtk(extra_shell=True)
+    store, source = _run(tmp_path, {"caseA001": f"print({vtk!r})".encode()})
+    _snapshot_sidecar(source, deck, tmp_path / "mesh.dat", suffix=".dat")
+    plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"],
+                           {"allow_custom_executable": True, "exact_required_set": []})
+    assert plan["options"]["expected_mesh"]["shell_nip_by_id"] == {"101": 0, "303": 5}
+    receipt = _wait(manager, store, submit_conversion(manager, store, plan))
+    assert receipt["state"] == "completed", receipt["error"]
+    field = "2DELEM_Stress_(layer__3)_"
+    ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", field, component="xx", selection={"ids": [303]})
+    assert read_result(store, ref).values == (5,)
+    membrane = make_result_ref(store, ROOT_ID, receipt["id"], "A001", field, component="xx", selection={"ids": [101]})
+    with pytest.raises(ResultError, match="COVERAGE_INCOMPLETE"):
+        read_result(store, membrane)
+    path = tmp_path / "missing-face.vtk"
+    missing = tuple(name for name in TENSORS if "upper" in name or ("layer__" in name and "layer__1" not in name))
+    path.write_text(_vtk(missing=missing), encoding="ascii")
+    with pytest.raises(ResultError, match="SCHEMA_MISMATCH"):
+        read_vtk(path, expected={**MESH, "shell_nip_by_id": {"101": 0}}, exact_required_set=[])
+
+
+@pytest.mark.parametrize(("statuses", "active", "value"), [("1 1", None, [12]), ("0 1", None, [12]),
+                                                        ("0 0", None, []), ("1 2", None, []),
+                                                        ("0 0", 0, [12]), ("0 1", 0, [])])
+def test_erosion_rule_matches_producer_unless_explicitly_overridden(tmp_path, statuses, active, value):
     marker = "SCALARS EROSION_STATUS int 1\nLOOKUP_TABLE default\n" + statuses + "\n"
     path = tmp_path / "erosion.vtk"
     path.write_text(_vtk().replace("SCALARS 3DELEM int 1", marker + "SCALARS 3DELEM int 1"), encoding="ascii")
@@ -858,38 +939,68 @@ def test_vtu_timevalue_precedes_time_and_empty_coverage_is_invalid(tmp_path, man
     assert grid.time == .75 and sample_metadata(grid)["time_source"] == "TimeValue"
     zero = _vtu(coverage="0 0 0 0")
     path.write_text(zero, encoding="ascii")
+    grid = read_vtu(path)
     with pytest.raises(ResultError, match="COVERAGE_INCOMPLETE"):
-        read_vtu(path)
+        query_field(grid, "DISP")
+    with pytest.raises(ResultError, match="COVERAGE_INCOMPLETE"):
+        read_vtu(path, exact_required_set=["DISP"])
     store, _ = _run(tmp_path, {"zero.vtu": zero.encode()}, solver="calculix")
     plan = plan_conversion(store, ROOT_ID, "VTU-1", frame_ids=["zero.vtu"], options={"exact_required_set": ["DISP"]})
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
     assert receipt["state"] == "failed" and receipt["error"]["code"] == "COVERAGE_INCOMPLETE"
+    plan = plan_conversion(store, ROOT_ID, "VTU-1", frame_ids=["zero.vtu"])
+    receipt = _wait(manager, store, submit_conversion(manager, store, plan))
+    assert receipt["state"] == "failed" and receipt["error"]["code"] == "COVERAGE_INCOMPLETE"
+
+
+def test_optional_vtu_zero_coverage_does_not_block_required_or_requested_field(tmp_path, manager):
+    optional = ('<DataArray Name="Acceleration" type="Float64" NumberOfComponents="3">'
+                '0 0 0 0 0 0 0 0 0 0 0 0</DataArray>'
+                '<DataArray Name="Coverage_Acceleration" type="Int64">0 0 0 0</DataArray>')
+    data = _vtu().replace("</PointData>", optional + "</PointData>")
+    store, _ = _run(tmp_path, {"covered.vtu": data.encode()}, solver="calculix")
+    plan = plan_conversion(store, ROOT_ID, "VTU-1", frame_ids=["covered.vtu"],
+                           options={"exact_required_set": ["DISP"]})
+    receipt = _wait(manager, store, submit_conversion(manager, store, plan))
+    assert receipt["state"] == "completed", receipt["error"]
+    ref = make_result_ref(store, ROOT_ID, receipt["id"], "covered.vtu", "DISP", component="x")
+    assert read_result(store, ref).values == (3, 0, 0, 2)
+    optional_ref = make_result_ref(store, ROOT_ID, receipt["id"], "covered.vtu", "Acceleration", component="x")
+    with pytest.raises(ResultError, match="COVERAGE_INCOMPLETE"):
+        read_result(store, optional_ref)
+
+
+def _th_deck(group, codes, title, *, node=False):
+    return ("/PART/10\nbrick\n         7         1\n/PROP/SOLID/7\nsolid\n         1\n/BRICK/10\n"
+            + "".join(f"{i:10d}" for i in [101, *range(1, 9)])
+            + f"\n/TH/BRIC/7\n{group}\n" + "".join(f"{code:10s}" for code in codes) + f"\n{101:10d}{'':10s}{title}\n"
+            + (f"/TH/NODE/8\nNODE\nDX\n{12:10d}{'':10s}n12\n" if node else "") + "/END\n").encode()
 
 
 def test_th_metadata_from_brick_deck_and_frozen_binding_payload(tmp_path, manager):
-    deck = ("/PART/10\nbrick\n         7         1\n/PROP/SOLID/7\nsolid\n         1\n/BRICK/10\n"
-            + "".join(f"{i:10d}" for i in [101, *range(1, 9)])
-            + "\n/TH/BRIC/7\nBRIC\nSX        VOL       \n       101          hex\n/END\n").encode()
-    csv = "time,BRIC 101 hex SX,BRIC 101 hex VOL\n0,1,10\n1,2,11\n"
-    titles = "".join(f"{1:10d}\n{code:10s}\n" for code in ("SX", "VOL")).encode()
+    deck = _th_deck("Zone 2", ("EPSXX", "VOL"), "Body 3")
+    csv = "time,Zone 2 101 Body 3 EPSXX,Zone 2 101 Body 3 VOL\n0,1,10\n1,2,11\n"
+    titles = "".join(f"{1:10d}\n{code:10s}\n" for code in ("EPSXX", "VOL")).encode()
     program = f"from pathlib import Path\nPath('history.csv').write_text({csv!r})".encode()
     store, source = _run(tmp_path, {"caseT01": program, "caseT01_TITLES": titles})
     _snapshot_sidecar(source, deck, tmp_path / "working.inc")
     plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options={"allow_custom_executable": True})
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
     assert receipt["state"] == "completed", receipt["error"]
-    stress = make_result_ref(store, ROOT_ID, receipt["id"], "history:all", "BRIC 101 hex SX")
-    volume = make_result_ref(store, ROOT_ID, receipt["id"], "history:all", "BRIC 101 hex VOL")
-    assert stress.location["integration_point"] == "ip1"
+    strain = make_result_ref(store, ROOT_ID, receipt["id"], "history:all", "Zone 2 101 Body 3 EPSXX")
+    volume = make_result_ref(store, ROOT_ID, receipt["id"], "history:all", "Zone 2 101 Body 3 VOL")
+    assert strain.location["integration_point"] == "ip1"
     assert "integration_point" not in volume.location
     assert read_result(store, volume).values == (10., 11.)
-    binding = read_result(store, stress).operator_provenance["column_binding"]
-    assert set(binding) == {"column_index", "raw_header", "group_kind", "entity_kind", "entity_id", "group_title",
-                            "variable_code", "quantity_id", "component", "supported", "reason"}
+    binding = read_result(store, strain).operator_provenance["column_binding"]
+    assert set(binding) == {"schema_version", "column_index", "raw_header", "normalized_header", "group_title",
+                            "output_type", "entity_id", "entity_title", "variable_code", "source_titles_pair_index",
+                            "quantity", "component", "measure", "basis", "unit", "operator"}
+    assert (binding["entity_id"], binding["entity_title"], binding["component"]) == (101, "Body 3", "xx")
     extra_titles = {"pairs": (*read_titles(source / "caseT01_TITLES")["pairs"],
                              {"output_type": 1, "variable_code": "SX", "title": ""})}
     with pytest.raises(ResultError, match="unexpected history column"):
-        bind_history_columns(extra_titles, ["time", "BRIC 101 hex SX", "BRIC 101 hex VOL", "BRIC 999 wrong SX"],
+        bind_history_columns(extra_titles, ["time", "Zone 2 101 Body 3 EPSXX", "Zone 2 101 Body 3 VOL", "BRIC 999 wrong SX"],
                              source_bindings=plan["options"]["source_bindings"], solid_formulation={"101": "hex8_1pt"})
 
 
@@ -912,6 +1023,20 @@ def test_saved_selection_payload_and_recomputed_revision_are_pinned(tmp_path, ma
     save([11])
     ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x", selection={"selection_id": "s2"})
     assert read_result(store, ref).values == (3,)
+    legacy = replace(ref, selection={"selection_id": "s2"})
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, ResultRefV1.from_dict(legacy.to_dict()))
+    hashless = json.loads(descriptor.read_bytes())
+    hashless.pop("revision_sha256")
+    atomic_json(descriptor, hashless)
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, ref)
+    save([11])
+    (store.root / "payload.json").write_bytes(payload.read_bytes())
+    payload.unlink()
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, ref)
+    save([11])
     payload.write_bytes(b"[15]")
     with pytest.raises(ResultError, match="HASH_MISMATCH"):
         read_result(store, ref)
@@ -928,6 +1053,10 @@ def test_save_as_rejects_orphaned_and_incomplete_terminal_operations(tmp_path, s
     folder.mkdir(parents=True)
     if state is None:
         (folder / "dataset.json").write_text("{}")
+        with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+            inspect_dataset(store, op_id)
+        assert (folder / "dataset.json").is_file()
+        assert not (folder / "dataset.json.orphaned").exists()
     else:
         atomic_json(folder / "operation.json", {"schema_version": 1, "source_run_id": ROOT_ID,
                                                "id": op_id, "state": state})
@@ -935,6 +1064,23 @@ def test_save_as_rejects_orphaned_and_incomplete_terminal_operations(tmp_path, s
         store.copy_to(tmp_path / "refused")
     if state is None:
         assert (folder / "dataset.json.orphaned").is_file()
+
+
+def test_completed_receipt_accepts_top_level_or_result_manifest_reference(tmp_path, manager):
+    store, _, plan = _fixture_animation(tmp_path)
+    receipt = _wait(manager, store, submit_conversion(manager, store, plan))
+    assert receipt["state"] == "completed", receipt["error"]
+    path = operation_dir(store, ROOT_ID, receipt["id"]) / "operation.json"
+    receipt.pop("result")
+    atomic_json(path, receipt)
+    assert inspect_dataset(store, receipt["id"]).dataset_id == plan["cache_key"]
+    receipt["result"] = {"dataset_manifest_ref": receipt.pop("dataset_ref"),
+                         "dataset_manifest_sha256": receipt.pop("dataset_manifest_sha256")}
+    atomic_json(path, receipt)
+    assert inspect_dataset(store, receipt["id"]).dataset_id == plan["cache_key"]
+    atomic_json(path, {**receipt, "result": {}})
+    with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+        inspect_dataset(store, receipt["id"])
 
 
 def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypatch, manager):
@@ -956,9 +1102,9 @@ def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypa
     with ThreadPoolExecutor(2) as pool:
         first = pool.submit(submit_conversion, manager, store, plan)
         assert entered.wait(5)
-        duplicate = pool.submit(submit_conversion, other, RunStore(store.root), plan)
+        duplicate = pool.submit(submit_conversion, other, RunStore(store.root), plan, timeout=5)
         try:
-            time.sleep(.6)
+            time.sleep(2.8)
             assert not duplicate.done()
         finally:
             release.set()
@@ -985,9 +1131,8 @@ def test_posix_grace_tracks_descendants_after_the_leader_exits(monkeypatch):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows DLL search path")
-def test_windows_converter_inherits_default_dll_search_and_restores_parent(tmp_path):
+def test_windows_converter_resets_dll_search_in_child_only(tmp_path, manager):
     import ctypes as c
-    from caelab.jobs import _start_windows_converter
 
     api = c.WinDLL("kernel32", use_last_error=True)
     buffer = c.create_unicode_buffer(4096)
@@ -995,14 +1140,19 @@ def test_windows_converter_inherits_default_dll_search_and_restores_parent(tmp_p
     initial = buffer.value
     assert api.SetDllDirectoryW(c.c_wchar_p(str(tmp_path)))
     try:
-        def executor(*args, **kwargs):
-            return subprocess.Popen(*args, **kwargs)
-
-        code = ("import ctypes as c; "
+        code = ("import ctypes as c; import sys; "
                 "b=c.create_unicode_buffer(4096); c.windll.kernel32.GetDllDirectoryW(len(b), b); "
-                "raise SystemExit(bool(b.value))")
-        process = _start_windows_converter({}, executor, [sys.executable, "-c", code], {})
-        assert process.wait(timeout=10) == 0
+                f"assert not b.value, b.value; print('child stderr', file=sys.stderr); print({_vtk()!r})")
+        store, _, plan = _fixture_animation(tmp_path, code)
+
+        def executor(argv, **kwargs):
+            api.GetDllDirectoryW(len(buffer), buffer)
+            assert buffer.value == str(tmp_path)
+            return subprocess.Popen(argv, **kwargs)
+
+        receipt = _wait(manager, store, submit_conversion(manager, store, plan, executor=executor))
+        assert receipt["state"] == "completed", receipt["error"]
+        assert (operation_dir(store, ROOT_ID, receipt["id"]) / "stderr.log").read_text().strip() == "child stderr"
         api.GetDllDirectoryW(len(buffer), buffer)
         assert buffer.value == str(tmp_path)
     finally:

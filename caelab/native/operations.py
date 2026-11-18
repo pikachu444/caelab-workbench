@@ -187,7 +187,7 @@ def verify_original_decks(source, record, check=no_checkpoint, *, code="HASH_MIS
 def snapshot_deck_paths(source, record):
     for item in _deck_entries(record["snapshot"]):
         relative = item["execution_path"] or item["source_copy"]
-        if relative and Path(relative).suffix.lower() in {".rad", ".inc"}:
+        if relative and Path(relative).suffix.lower() in {".rad", ".inc", ".dat"}:
             yield artifact_path(source, relative)
 
 
@@ -215,6 +215,24 @@ def _live_input_changed(data, check):
     return False
 
 
+def _completed_manifest(receipt):
+    result = receipt.get("result")
+    for record in (result, receipt):
+        if not isinstance(record, dict):
+            continue
+        digest = record.get("dataset_manifest_sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            continue
+        try:
+            ref = ArtifactRefV1.from_dict(record.get("dataset_manifest_ref") or record.get("dataset_ref"))
+        except (ValueError, TypeError):
+            continue
+        if ref.path == "dataset.json":
+            return ref, digest
+    raise ResultError("CORRUPT_OPERATION", "completed operation lacks a valid dataset manifest reference",
+                      availability="corrupt")
+
+
 def _read_receipt(folder, source_run_id, operation_id):
     try:
         data = read_object(artifact_path(folder, "operation.json"))
@@ -232,8 +250,8 @@ def _read_receipt(folder, source_run_id, operation_id):
     if (data.get("id") != operation_id or data.get("source_run_id") != source_run_id
             or not isinstance(state, str) or state not in ACTIVE_OPERATIONS | TERMINAL_OPERATIONS | _LEGACY_TERMINAL_OPERATIONS):
         raise ResultError("CORRUPT_OPERATION", "operation identity or state", availability="corrupt")
-    if state == "completed" and not isinstance(data.get("result"), dict):
-        raise ResultError("CORRUPT_OPERATION", "completed operation is missing its result", availability="corrupt")
+    if state == "completed":
+        _completed_manifest(data)
     if state in {"failed", "cancelled"}:
         error = data.get("error")
         if not isinstance(error, dict) or any(not isinstance(error.get(key), str) or not error[key]
@@ -327,22 +345,7 @@ def verify_derived_datasets(store):
 
 def stored_snapshot(store: RunStore, source_run_id: str, operation_id: str):
     folder = operation_dir(store, source_run_id, operation_id)
-    receipt = _read_receipt(folder, source_run_id, operation_id)
-    if receipt is None or receipt["state"] not in ACTIVE_OPERATIONS:
-        return receipt
-    try:
-        lease = store.lease()
-    except ValueError as exc:
-        if isinstance(exc.__cause__, Timeout):
-            return receipt
-        raise
-    try:
-        receipt = _read_receipt(folder, source_run_id, operation_id)
-        if receipt is not None and receipt["state"] in ACTIVE_OPERATIONS:
-            return _interrupt(folder, receipt)
-        return receipt
-    finally:
-        lease.release()
+    return _read_receipt(folder, source_run_id, operation_id)
 
 
 def plan_conversion(store: RunStore, source_run_id: str, converter_id: str, converter_exe=None,
@@ -385,7 +388,7 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
         pinned = ArtifactRefV1.from_dict(receipt["source_receipt_ref"])
         inputs = tuple(ArtifactRefV1.from_dict(ref) for ref in receipt["source_artifacts"])
         staged = tuple(ArtifactRefV1.from_dict(ref) for ref in receipt["staged_artifacts"])
-        manifest = ArtifactRefV1.from_dict(receipt["dataset_ref"])
+        manifest, expected_digest = _completed_manifest(receipt)
         outputs = tuple(ArtifactRefV1.from_dict(ref) for ref in receipt["outputs"])
         refs = (pinned, manifest, *staged, *outputs, *inputs)
         owners = {key: ArtifactOwner.from_dict(value) for key, value in receipt["artifact_owners"].items()}
@@ -413,10 +416,11 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
                 raise ValueError(f"wrong source owner for {ref.id}")
             verify_artifact(source, ref, check=check)
         dataset = DatasetManifestV1.from_dict(read_object(folder / manifest.path))
-        if receipt["result"].get("dataset_id") != dataset.dataset_id:
+        result = receipt.get("result") or {}
+        if isinstance(result, dict) and result.get("dataset_id", dataset.dataset_id) != dataset.dataset_id:
             raise ResultError("CORRUPT_OPERATION", "completed result does not identify its dataset", availability="corrupt")
         digest = canonical_sha256(dataset.to_dict(), exclude_keys=())
-        if receipt.get("dataset_manifest_sha256") != digest:
+        if expected_digest != digest:
             raise ResultError("HASH_MISMATCH", "canonical dataset manifest", availability="corrupt")
         refs_by_id = {ref.id: ref for ref in outputs}
         nested = [ArtifactRefV1.from_dict(frame["artifact_ref"]) for frame in dataset.frames]
@@ -424,12 +428,11 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
             nested.extend((series.coordinate_ref, series.source_row_index_ref))
         if any(refs_by_id.get(ref.id) != ref for ref in nested):
             raise ResultError("HASH_MISMATCH", "dataset references an unregistered artifact", availability="corrupt")
-        if live_stale is None:
-            context = store.live_stale
-            stale = (context is not None and context(live)) or _live_input_changed(live, check)
-        else:
-            stale = live_stale(live) if callable(live_stale) else live_stale
-        return folder, receipt, dataset, bool(live.get("stale") or stale)
+        context = store.live_stale
+        project_stale = context(live) if context is not None else False
+        working_stale = _live_input_changed(live, check)
+        caller_stale = live_stale(live) if callable(live_stale) else live_stale
+        return folder, receipt, dataset, bool(live.get("stale") or project_stale or working_stale or caller_stale)
     except ResultError:
         raise
     except (ValueError, KeyError, TypeError) as exc:

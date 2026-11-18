@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
@@ -13,6 +14,8 @@ from xml.etree import ElementTree as ET
 import numpy as np
 
 from . import ResultError, no_checkpoint
+
+OC_EROSION_ACTIVE_VALUE = 1
 
 _WIDTHS = {1: 1, 3: 2, 5: 3, 8: 4, 9: 4, 10: 4, 11: 8, 12: 8, 13: 6,
            14: 5, 21: 3, 22: 6, 23: 8, 24: 10, 25: 20, 26: 15, 27: 13}
@@ -44,7 +47,8 @@ class FieldGrid:
     element_ids: np.ndarray | None = None
     part_ids: np.ndarray | None = None
     component_names: dict = field(default_factory=dict)
-    active_erosion_status: int = 0
+    active_erosion_status: int = OC_EROSION_ACTIVE_VALUE
+    shell_nip_by_id: dict[int, int] = field(default_factory=dict)
 
     @property
     def reference_points(self) -> np.ndarray:
@@ -325,12 +329,39 @@ def tensor_fields(grid):
 def nodal_fields(grid):
     return {name for name, array in grid.point_data.items()
             if (name not in {"NODE_ID", "NativeNodeId", "node_id", "vtkGhostType"}
-                and not name.startswith("Coverage_") and np.isfinite(array).any()
+                and not name.startswith("Coverage_")
                 and (name not in {"DISP", "Displacement", "VELO", "Velocity"} or array.shape[1] == 3))}
 
 
 def erosion_field(grid):
     return next((name for name in ("EROSION_STATUS", "Scalar:EROSION_STATUS") if name in grid.cell_data), None)
+
+
+def _valid_nodal_rows(grid, name):
+    data = grid.point_data[name]
+    valid = np.isfinite(data).all(axis=1)
+    coverage = grid.point_data.get("Coverage_" + name)
+    if coverage is not None:
+        if coverage.shape != (len(data), 1) or not np.isin(coverage, [0, 1]).all():
+            raise ResultError("SCHEMA_MISMATCH", f"invalid VTU coverage for {name}")
+        valid &= coverage[:, 0] == 1
+    return valid
+
+
+def require_vtu_samples(grid):
+    fields = nodal_fields(grid)
+    if not fields:
+        raise ResultError("SCHEMA_MISMATCH", "VTU has no queryable nodal physics fields")
+    if not any(_valid_nodal_rows(grid, name).any() for name in sorted(fields)):
+        raise ResultError("COVERAGE_INCOMPLETE", "VTU has zero valid nodal samples")
+
+
+def _shell_layer_mask(grid, name):
+    layer = re.search(r"^2DELEM_\w+_\(layer__([1-9][0-9]*)\)", name)
+    if layer is None or not grid.shell_nip_by_id:
+        return np.ones(len(grid.cells), dtype=bool)
+    return np.array([max(1, grid.shell_nip_by_id.get(int(entity), 0)) >= int(layer[1])
+                     for entity in grid.element_ids], dtype=bool)
 
 
 def _scalar(grid, *names):
@@ -386,13 +417,9 @@ def _validate_identity(grid, expected):
         if set(oracle) != set(grid.element_ids):
             raise ResultError("SOURCE_MISMATCH", "ELEMENT_ID set")
         for element, part, kind, cell in zip(grid.element_ids, grid.part_ids, grid.cell_types, grid.cells):
-            actual = {"part_id": int(part), "cell_type": int(kind),
-                      "node_ids": [int(grid.node_ids[i]) for i in cell]}
-            registered = oracle[element]
-            if kind == 10:
-                actual["node_ids"] = sorted(actual["node_ids"])
-                registered = {**registered, "node_ids": sorted(registered["node_ids"])}
-            if actual != registered:
+            saved = oracle[element]
+            if (part != saved["part_id"] or kind != saved["cell_type"]
+                    or tuple(grid.node_ids[i] for i in cell) != tuple(saved["node_ids"])):
                 raise ResultError("SOURCE_MISMATCH", f"topology or part for element {element}")
 
 
@@ -402,8 +429,8 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
     check = check_cancelled or no_checkpoint
     grid = _read(path, _legacy, check)
     if erosion_active_value is None:
-        erosion_active_value = active_erosion_status
-    if erosion_active_value is not None and (type(erosion_active_value) is not int or erosion_active_value not in {0, 1}):
+        erosion_active_value = OC_EROSION_ACTIVE_VALUE if active_erosion_status is None else active_erosion_status
+    if type(erosion_active_value) is not int or erosion_active_value not in {0, 1}:
         raise ResultError("INVALID_DATASET", "erosion_active_value must be 0 or 1")
     # anim_to_vtk emits a repeated fourth connectivity index for triangles.
     if len(grid.cells) == len(grid.cell_types):
@@ -429,27 +456,22 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
     tensors = tensor_fields(grid)
     required = set(exact_required_set or ())
     if masks["2DELEM"].any():
-        nip = (expected or {}).get("shell_nip", (expected or {}).get("shell_layers"))
-        if isinstance(nip, dict):
-            shell_ids = grid.element_ids[masks["2DELEM"]]
+        source = expected or {}
+        nip = source.get("shell_nip_by_id", source.get("shell_nip", source.get("shell_layers")))
+        shell_ids = tuple(map(int, grid.element_ids[masks["2DELEM"]]))
+        if isinstance(nip, Mapping):
             try:
-                counts = [nip[str(shell)] if str(shell) in nip else nip[int(shell)] for shell in shell_ids]
+                counts = {shell: nip[str(shell)] if str(shell) in nip else nip[shell] for shell in shell_ids}
             except KeyError as exc:
                 raise ResultError("SOURCE_MISMATCH", "missing shell integration count") from exc
-            if any(type(count) is not int or count < 0 for count in counts):
-                raise ResultError("SOURCE_MISMATCH", "invalid shell integration count")
-            nip = max(counts)
-        if nip is not None and (type(nip) is not int or nip < 0):
-            raise ResultError("SOURCE_MISMATCH", "invalid shell integration count")
-        faces = {"2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)"}
-        detected = any(name in tensors for name in faces) or any(
-            re.search(r"layer__[2-9][0-9]*|layer__1[0-9]+", name) for name in tensors)
-        multi = (nip is not None and nip >= 2) or (nip is None and detected)
-        if multi:
-            required.update(faces)
-            required.update(f"2DELEM_Stress_(layer__{i})_" for i in range(1, max(5, nip or 0) + 1))
         else:
-            required.add("2DELEM_Stress_(layer__1)_")
+            counts = dict.fromkeys(shell_ids, 5 if nip is None else nip)
+        if any(type(count) is not int or count < 0 for count in counts.values()):
+            raise ResultError("SOURCE_MISMATCH", "invalid shell integration count")
+        grid.shell_nip_by_id = counts
+        required.update({"2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)"})
+        for count in set(counts.values()):
+            required.update(f"2DELEM_Stress_(layer__{i})_" for i in range(1, max(1, count) + 1))
     if exact_required_set is None and masks["3DELEM"].any():
         required.add("3DELEM_Stress")
     available = grid.point_data.keys() | grid.cell_data.keys() | grid.field_data.keys()
@@ -460,9 +482,9 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
     erosion = erosion_field(grid)
     if erosion is not None:
         status = grid.cell_data[erosion]
-        if status.shape != (m, 1) or not np.isin(status, [0, 1]).all():
+        if status.shape != (m, 1):
             raise ResultError("SCHEMA_MISMATCH", f"{erosion} must be scalar")
-        grid.active_erosion_status = int(np.all(status == 1)) if erosion_active_value is None else erosion_active_value
+        grid.active_erosion_status = erosion_active_value
         active = status[:, 0] == grid.active_erosion_status
     else:
         active = np.ones(m, dtype=bool)
@@ -475,7 +497,7 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
             if name.startswith("Coverage_"):
                 covered = name[9:]
                 if covered in required or covered.rstrip("_") in required or covered in {"Displacement", "Velocity"}:
-                    mask = (masks[covered[:6]] & active) if covered in tensors else slice(None)
+                    mask = (masks[covered[:6]] & active & _shell_layer_mask(grid, covered)) if covered in tensors else slice(None)
                     if data.shape[1] != 1 or np.any(data[mask] != 1):
                         raise ResultError("PARTIAL_REQUIRED_FIELD", name)
     for family, mask in masks.items():
@@ -514,22 +536,13 @@ def read_vtu(path, *, exact_required_set=None, node_id_policy=None, entity="node
     if grid.time is None and _scalar(grid, "Native_analysis_type", "analysis_type")[1] == 1:
         _, time = _scalar(grid, "Native_value")
         grid.time = float(time) if time is not None else None
-    candidates = {name for name in grid.point_data
-                  if name not in {"NODE_ID", "NativeNodeId", "node_id", "vtkGhostType"} and not name.startswith("Coverage_")}
-    for name in candidates:
-        check()
-        data = grid.point_data[name]
-        valid = np.isfinite(data).all(axis=1)
-        coverage = grid.point_data.get("Coverage_" + name)
-        if coverage is not None:
-            if coverage.shape != (len(data), 1) or not np.isin(coverage, [0, 1]).all():
-                raise ResultError("SCHEMA_MISMATCH", f"invalid VTU coverage for {name}")
-            valid &= coverage[:, 0] == 1
-        if not valid.any():
-            raise ResultError("COVERAGE_INCOMPLETE", f"{name} has zero valid samples")
     missing = set(exact_required_set or ()) - nodal_fields(grid)
     if missing:
         raise ResultError("SCHEMA_MISMATCH", f"missing queryable VTU fields: {', '.join(sorted(missing))}")
+    for name in exact_required_set or ():
+        check()
+        if not _valid_nodal_rows(grid, name).any():
+            raise ResultError("COVERAGE_INCOMPLETE", f"{name} has zero valid samples")
 
     def grid_ids(arrays, names, rows, *, required, ordinal=False):
         found = [name for name in names if name in arrays]
@@ -612,6 +625,13 @@ def query_field(grid, field_id, *, ids=None, component=None, operator="values", 
         indices = np.array([id_rows[entity] for entity in ids], dtype=np.intp)
     if not len(indices) or not allowed[indices].all():
         raise ResultError("OBSERVABLE_MISMATCH", "selection crosses the field's association or element family")
+    if not point and not erosion:
+        supported = _shell_layer_mask(grid, field_id)[indices]
+        if not supported.any() or (ids is not None and not supported.all()):
+            raise ResultError("COVERAGE_INCOMPLETE", f"{field_id} is outside the selected shells' integration points")
+        indices = indices[supported]
+    if point and grid.profile == "VTU-1" and not _valid_nodal_rows(grid, field_id)[indices].all():
+        raise ResultError("COVERAGE_INCOMPLETE", field_id)
     total = len(indices)
     eroded_ids = ()
     erosion_name = erosion_field(grid)
