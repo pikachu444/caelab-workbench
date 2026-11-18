@@ -12,29 +12,13 @@ from ..artifact_refs import ArtifactRefV1, DatasetManifestV1, NumericResultV1, R
 from ..result_readers import ResultError, no_checkpoint
 from ..result_readers import opencourant_history, vtk_fields
 from . import converters
-from .operations import (artifact_path, decode_json, load_completed_operation, owning_store, read_object, resolve_result_ref,
+from .operations import (_original_reader, artifact_path, decode_json, load_completed_operation, owning_store, read_object, resolve_result_ref,
                          sha256_file, verify_artifact, with_input_snapshot)
 from .run_store import RunStore
 
 _SPATIAL_READERS = {"OC-ANIM-1": vtk_fields.read_vtk, "VTU-1": vtk_fields.read_vtu}
 _OPERATORS = {"identity", "values", "min", "max", "mean", "norm"}
 _CANONICAL_OPERATOR = {"id": "identity", "version": "1", "params": {}}
-# Source bytes at 5e59f175, for LF and CRLF checkouts.
-_ORIGINAL_FIELD_READERS = {
-    "3d5c291d80078f4653e776c1aedc5234f1c9a0bd6cbe58a1e482a121fab14f76",
-    "35613ec816b8f7c63fd8dbc266413fc9c070ca48677e67bf48d0bcb713ebe593",
-}
-_ORIGINAL_HISTORY_READERS = {
-    "7dd090b12f1935023a192c80facd74b29eeaf8a431d68b669ec8dbee62890b1e",
-    "5a24dc667268e875451adc20982e5432c4515fe9647dae550f94527d66cb9363",
-}
-
-
-def _original_reader(receipt):
-    adapter = receipt["adapter"]
-    readers = _ORIGINAL_HISTORY_READERS if adapter["id"] == "OC-TH4-1" else _ORIGINAL_FIELD_READERS
-    return (receipt.get("result") is None and "dataset_manifest_sha256" not in receipt
-            and ("reader_code_sha256" not in receipt or adapter.get("code_sha256") in readers))
 
 
 def _completed(store, operation_id, source_run_id, check):
@@ -102,13 +86,13 @@ def _find_location(dataset, frame_id, field_id):
     return locations[0]
 
 
-def _require_archived_isolid1(store, folder, receipt, entity_id, check):
+def _require_archived_one_point_hex8(store, folder, receipt, entity_id, check):
     source = artifact_path(store.root, receipt["source_run_id"])
     frozen = read_object(artifact_path(folder, receipt["source_receipt_ref"]["path"]))
     frozen = with_input_snapshot(frozen, artifact_path(folder, "inputs/input-snapshot.json"))
     _, _, formulations = converters._rad_snapshot_metadata(source, frozen, check, animation=False)
     if formulations.get(str(entity_id)) != "hex8_1pt":
-        raise ResultError("UNSUPPORTED_OBSERVABLE", "archived Isolid1 HEX8 evidence is required for IPpoint")
+        raise ResultError("UNSUPPORTED_OBSERVABLE", "archived one-point Lagrangian HEX8 evidence is required for IPpoint")
 
 
 def _semantics(store, folder, receipt, dataset, frame_id, field_id, check):
@@ -124,7 +108,7 @@ def _semantics(store, folder, receipt, dataset, frame_id, field_id, check):
             quantity = binding["quantity"]
             units = {"symbol": binding["unit"]}
             if association == "element" and quantity in {"stress", "strain"}:
-                _require_archived_isolid1(store, folder, receipt, binding["entity_id"], check)
+                _require_archived_one_point_hex8(store, folder, receipt, binding["entity_id"], check)
                 location["integration_point"] = "IPpoint"
                 units["dimension"] = "pressure" if quantity == "stress" else "strain"
             shear = "tensor" if quantity == "stress" else "unknown"
@@ -134,7 +118,7 @@ def _semantics(store, folder, receipt, dataset, frame_id, field_id, check):
             location["integration_point"] = "none"
         if "integration_point" in semantics:
             if association == "element" and _original_reader(receipt):
-                _require_archived_isolid1(store, folder, receipt, binding["entity_id"], check)
+                _require_archived_one_point_hex8(store, folder, receipt, binding["entity_id"], check)
             location["integration_point"] = semantics["integration_point"]
         return item, location, semantics["basis"], semantics["measure"], (
             "tensor" if binding["quantity"] == "stress" else "unknown"), {
@@ -176,7 +160,10 @@ def make_result_ref(store: RunStore, source_run_id: str, operation_id: str, fram
     default_operator = _CANONICAL_OPERATOR if binding is None else {"id": "curve_extract", "version": "1", "params": {}}
     reason = "MEASURE_UNKNOWN" if measure == "unknown" else "PROFILE_NOT_PHYSICALLY_VERIFIED"
     selection = selection or {}
-    if _selection_id(selection) is not None:
+    selection_id = _selection_id(selection)
+    if _original_reader(receipt) and _legacy_payload_reference(selection, selection_id) is not None:
+        _selection(store, folder, receipt, selection, location, no_checkpoint, legacy=True)
+    elif selection_id is not None:
         _, revision, payload_sha = _saved_selection(store, receipt, selection, location, no_checkpoint,
                                                     pinning=True)
         selection = {**selection, "revision_sha256": revision}
@@ -242,6 +229,24 @@ def _selection_id(selection):
     return selection_id
 
 
+def _selection_reference(selection):
+    for scope in (selection, selection.get("entity_selection_ref", {})):
+        for key in ("artifact_ref", "payload_ref"):
+            if key in scope:
+                return scope[key]
+    return None
+
+
+def _legacy_payload_reference(selection, selection_id):
+    entity_ref = selection.get("entity_selection_ref", {})
+    if "revision_sha256" in selection or "revision_sha256" in entity_ref:
+        return None
+    reference = _selection_reference(selection)
+    if reference is None and selection_id is not None and "sha256" in entity_ref:
+        reference = {"path": "payload.json", "sha256": entity_ref["sha256"]}
+    return reference
+
+
 def _selection_digest(descriptor, payload):
     return canonical_sha256({"selection": {k: v for k, v in descriptor.items() if k != "revision_sha256"},
                              "payload": payload}, exclude_keys=())
@@ -297,9 +302,7 @@ def _saved_selection(store, receipt, selection, location, check, *, pinning=Fals
     if "sha256" in selection and file_sha != selection["sha256"]:
         raise ResultError("HASH_MISMATCH", "saved selection digest")
     payload_ref = saved.get("payload_ref")
-    entity_ref = selection.get("entity_selection_ref", {})
-    reference = selection.get("artifact_ref", selection.get("payload_ref",
-                              (entity_ref or {}).get("artifact_ref", (entity_ref or {}).get("payload_ref"))))
+    reference = _selection_reference(selection)
     if payload_ref is None:
         payload = saved.get("ids")
         if reference is not None:
@@ -328,15 +331,26 @@ def _saved_selection(store, receipt, selection, location, check, *, pinning=Fals
     return ids, digest, payload_sha
 
 
-def _legacy_selection_payload(store, folder, receipt, selection_id, digest, location, check):
-    if not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id):
+def _legacy_selection_payload(store, folder, receipt, selection, selection_id, reference, location, check):
+    if selection_id is not None and (not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id)):
         raise ResultError("PATH_ESCAPE", f"invalid selection ID {selection_id!r}")
+    if not isinstance(reference, Mapping):
+        raise ResultError("SCHEMA_MISMATCH", "invalid legacy selection reference")
+    digest, path = reference.get("sha256"), reference.get("path")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ResultError("HASH_MISMATCH", "legacy selection has no payload byte digest")
-    for root in (store.root, folder):
-        directory = artifact_path(root, f"selections/{selection_id}")
+    source = selection.get("selection_source", selection.get("entity_selection_ref", {}).get("selection_source"))
+    roots = (folder,) if source == "operation" else (store.root,) if source in ("store", "run_store") else (store.root, folder)
+    directories = []
+    for root in roots:
+        if selection_id is not None and isinstance(path, str) and "/" not in path:
+            directories.append(artifact_path(root, f"selections/{selection_id}"))
+            if _selection_reference(selection) is None:
+                continue  # A historical digest without a path pins the selected ID's payload.
+        directories.append(root)
+    for directory in directories:
         try:
-            _, payload = _selection_payload(directory, {"path": "payload.json", "sha256": digest}, check)
+            _, payload = _selection_payload(directory, reference, check)
         except ResultError as exc:
             if exc.code == "HASH_MISMATCH":
                 continue
@@ -364,13 +378,12 @@ def _selection(store, folder, receipt, selection, location, check, *, legacy=Fal
     kind = selection.get("kind")
     entity = {"point": "node", "element": "element"}.get(location["association"])
     selection_id = _selection_id(selection)
-    entity_ref = selection.get("entity_selection_ref", {})
-    if selection_id is not None:
+    reference = _legacy_payload_reference(selection, selection_id) if legacy else None
+    if reference is not None or selection_id is not None:
         if ids is not None:
             raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
-        if (legacy and "sha256" in entity_ref and "revision_sha256" not in entity_ref
-                and "revision_sha256" not in selection):
-            ids = _legacy_selection_payload(store, folder, receipt, selection_id, entity_ref["sha256"], location, check)
+        if reference is not None:
+            ids = _legacy_selection_payload(store, folder, receipt, selection, selection_id, reference, location, check)
         else:
             ids, digest, _ = _saved_selection(store, receipt, selection, location, check)
             _verify_selection_revision(selection, digest)

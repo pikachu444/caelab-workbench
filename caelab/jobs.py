@@ -791,8 +791,13 @@ class JobManager:
                 check_deadline()
                 # Duplicate scans recognize active receipts only after this
                 # lock exists, so a timed-out queued write cannot be reused.
-                operation_lock = FileLock(artifact_path(folder, "operation.lock"), timeout=0, thread_local=False)
-                operation_lock.acquire()
+                remaining = max(0.0, deadline - time.monotonic())
+                operation_lock = FileLock(artifact_path(folder, "operation.lock"), timeout=remaining, thread_local=False)
+                try:
+                    operation_lock.acquire()
+                except LockTimeout as exc:
+                    raise ResultError("TIMEOUT", "conversion deadline elapsed waiting for the operation lock") from exc
+                check_deadline()
                 control = {"cancel": threading.Event(), "process": None, "group": None, "store": store,
                            "lease": lease, "operation_lock": operation_lock, "cleanup_failed": False, "plan": plan,
                            "plan_identity": identity, "receipt": receipt, "folder": folder}
@@ -800,6 +805,7 @@ class JobManager:
                                           args=(control, deadline, executor or subprocess.Popen),
                                           name=f"caelab-result-{op_id[:8]}", daemon=True)
                 control["thread"] = worker
+                check_deadline()
                 self._operations[op_id] = control
                 worker.start()
                 return copy.deepcopy(receipt)

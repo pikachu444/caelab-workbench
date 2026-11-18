@@ -137,24 +137,30 @@ def _matches_pinned_windows_member(root, executable, digest, check):
     if trusted is not None:
         check()
         return trusted == digest
-    names = {relative, f"opencourant/{relative}", f"opencourant_win64/{relative}"}
+    names = {relative, *(f"{prefix}/{relative}" for prefix in
+                         ("opencourant", "opencourant_win64", "openradioss", "openradioss_win64"))}
     for directory in dict.fromkeys((root, root.parent, root.parent.parent)):
         check()
-        try:
-            # Hash and open the same archive handle before trusting a member.
-            with (directory / "OpenCourant_win64.zip").open("rb") as stream:
-                if _stream_sha256(stream, check) != key[0]:
-                    continue
-                with zipfile.ZipFile(stream) as archive:
-                    matches = [member for member in archive.infolist() if member.filename.lower() in names]
-                    if len(matches) != 1:
+        candidates = (directory / "OpenCourant_win64.zip", directory / "OpenRadioss_win64.zip",
+                      *sorted(directory.glob("OpenCourant_win64*.zip")),
+                      *sorted(directory.glob("OpenRadioss_win64*.zip")))
+        for candidate in dict.fromkeys(candidates):
+            check()
+            try:
+                # Hash and open the same archive handle before trusting a member.
+                with candidate.open("rb") as stream:
+                    if _stream_sha256(stream, check) != key[0]:
                         continue
-                    with archive.open(matches[0]) as member:
-                        trusted = _stream_sha256(member, check)
-        except (OSError, zipfile.BadZipFile):
-            continue
-        _VERIFIED_WINDOWS_MEMBERS[key] = trusted
-        return trusted == digest
+                    with zipfile.ZipFile(stream) as archive:
+                        matches = [member for member in archive.infolist() if member.filename.lower() in names]
+                        if len(matches) != 1:
+                            continue
+                        with archive.open(matches[0]) as member:
+                            trusted = _stream_sha256(member, check)
+            except (OSError, zipfile.BadZipFile):
+                continue
+            _VERIFIED_WINDOWS_MEMBERS[key] = trusted
+            return trusted == digest
     return False
 
 
@@ -225,19 +231,24 @@ def _history_paths(registered):
 
 
 def _rad_cards(paths, check):
-    for path in paths:
+    for index, path in enumerate(paths):
+        included = index > 0
         card = None
         rows = []
         with path.open(encoding="utf-8-sig") as stream:
             for line in stream:
                 check()
                 text = line.lstrip()
+                if included and re.match(r"#enddata\b", text, re.I):
+                    break
                 if text.startswith("//") and text.upper().startswith("//SUBMODEL"):
                     raise ResultError("SOURCE_MISMATCH", "transformed RAD submodels are unsupported")
                 if text.startswith("/") and not text.startswith("//"):
                     if card:
                         yield card, rows
                     card, rows = text.strip().upper().strip("/").split("/"), []
+                    if not included and card[0] == "END":
+                        break
                 elif card and not text.startswith(("#", "$", "//")):
                     rows.append(line.rstrip("\r\n"))
         if card:
@@ -264,6 +275,7 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
     nodes, elements, parts = {}, {}, {}
     shell_properties, solid_properties, materials = {}, {}, {}
     history = []
+    lagrangian = True
     topology = {"SHELL": (9, 4), "SH3N": (5, 3), "BRICK": (12, 8), "TETRA4": (10, 4), "TETRA": (10, 4)}
 
     def add(table, key, value):
@@ -274,6 +286,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
     try:
         for card, rows in _rad_cards(paths, check):
             head = card[0]
+            if head in {"ALE", "EULER", "UPWM"}:
+                lagrangian = False
             if head == "NODE" and animation:
                 if len(card) > 1 and int(card[1]) != 0:
                     raise ValueError("local RAD node units are unsupported")
@@ -311,7 +325,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                     add(shell_properties, int(card[2]), int(rows[3][:10].strip() or "0"))
                 elif card[1] in {"SOLID", "TYPE14"}:
                     row = rows[1]
-                    add(solid_properties, int(card[2]), (int(row[:10].strip() or "0"), int(row[20:30].strip() or "0")))
+                    isolid, ismstr, iale = (int(row[start:start + 10].strip() or "0") for start in (0, 10, 20))
+                    add(solid_properties, int(card[2]), isolid in {1, 2, 24} and ismstr in {0, 4} and iale == 0)
             elif not animation and head == "TH" and len(card) >= 3 and card[1] in {"BRIC", "NODE"}:
                 title = " ".join(rows[0].split())
                 codes = []
@@ -330,8 +345,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                                    for code in codes)
         shells = {eid: element for eid, element in elements.items() if element["cell_type"] in {5, 9}}
         solids = {eid: element for eid, element in elements.items() if element["cell_type"] in {10, 12}}
-        formulations = {eid: "hex8_1pt" for eid, element in solids.items() if element["cell_type"] == 12
-                        and solid_properties.get(parts.get(element["part_id"], (None, None))[0]) == (1, 0)}
+        formulations = {eid: "hex8_1pt" for eid, element in solids.items() if lagrangian and element["cell_type"] == 12
+                        and solid_properties.get(parts.get(element["part_id"], (None, None))[0])}
         mesh = None
         if animation:
             node_ids = set(map(int, nodes))
@@ -345,7 +360,10 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                 prop, material = parts[part]
                 if prop not in shell_properties or material not in materials:
                     raise ValueError(f"shell {eid} cannot resolve property {prop} or material {material}")
-                nip = max(0, shell_properties[prop])
+                raw_nip = shell_properties[prop]
+                if raw_nip < -1:
+                    raise ValueError(f"shell {eid} uses invalid negative NIP {raw_nip}")
+                nip = 0 if raw_nip == -1 else raw_nip
                 law = materials[material]
                 law_number = re.fullmatch(r"LAW([0-9]+)", law)
                 law_id = int(law_number[1]) if law_number else _MATERIAL_ALIASES.get(law)

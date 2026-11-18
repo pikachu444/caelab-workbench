@@ -22,6 +22,26 @@ _LEGACY_TERMINAL_OPERATIONS = {"timed_out", "interrupted"}
 INPUT_SNAPSHOT = "input/snapshot.json"
 _ID = re.compile(r"[0-9a-f]{32}")
 _CHUNK = 1024 * 1024
+# Reader source hashes from 5e59f175, for LF and CRLF checkouts.
+_ORIGINAL_FIELD_READERS = {
+    "3d5c291d80078f4653e776c1aedc5234f1c9a0bd6cbe58a1e482a121fab14f76",
+    "35613ec816b8f7c63fd8dbc266413fc9c070ca48677e67bf48d0bcb713ebe593",
+}
+_ORIGINAL_HISTORY_READERS = {
+    "7dd090b12f1935023a192c80facd74b29eeaf8a431d68b669ec8dbee62890b1e",
+    "5a24dc667268e875451adc20982e5432c4515fe9647dae550f94527d66cb9363",
+}
+
+
+def _original_reader(receipt):
+    adapter = receipt.get("adapter", {})
+    if not isinstance(adapter, Mapping):
+        return False
+    readers = _ORIGINAL_HISTORY_READERS if adapter.get("id") == "OC-TH4-1" else _ORIGINAL_FIELD_READERS
+    code = adapter.get("code_sha256")
+    return ("dataset_ref" in receipt and receipt.get("result") is None and "dataset_manifest_sha256" not in receipt
+            and "reader_code_sha256" not in receipt and code in readers
+            and receipt.get("adapter_code_sha256", code) in readers)
 
 
 class _TerminalResultConflict(ResultError):
@@ -447,7 +467,7 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
         fixed_record = with_input_snapshot(fixed_job, snapshot_copy)
         fingerprint = receipt["source_fingerprint"]
         modern_fingerprint = source_fingerprint(fixed_record)
-        legacy_fingerprint = (expected_digest is None
+        legacy_fingerprint = (expected_digest is None and _original_reader(receipt)
                               and source_fingerprint(fixed_job, legacy=True) == fingerprint)
         if (fixed_record.get("id") != source_run_id or fixed_record.get("node_id") != receipt["source_node_id"]
                 or pinned.sha256 != receipt["source_receipt_sha256"]

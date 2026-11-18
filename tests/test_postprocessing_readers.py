@@ -799,17 +799,22 @@ def test_verify_plan_preserves_deadline_and_requires_trusted_converter(tmp_path,
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows converter release archive")
-@pytest.mark.parametrize("archive_level", [0, 1, 2])
-def test_windows_converter_must_match_member_of_trusted_release(tmp_path, monkeypatch, archive_level):
+@pytest.mark.parametrize(("archive_level", "archive_name", "prefix"), [
+    (0, "OpenCourant_win64.zip", "OpenCourant"),
+    (1, "OpenRadioss_win64.zip", "OpenRadioss"),
+    (2, "OpenRadioss_win64_20261011.zip", "OpenRadioss_win64"),
+    (1, "OpenCourant_win64_20261011.zip", "OpenCourant_win64"),
+])
+def test_windows_converter_must_match_member_of_trusted_release(tmp_path, monkeypatch, archive_level, archive_name, prefix):
     monkeypatch.setattr(converters, "_VERIFIED_WINDOWS_MEMBERS", {})
     store, _, _ = _fixture_animation(tmp_path)
     install = tmp_path / "distribution" / "OpenCourant"
     tool = install / "exec" / "anim_to_vtk_win64.exe"
     tool.parent.mkdir(parents=True)
     shutil.copyfile(sys.executable, tool)
-    archive = (install, install.parent, install.parent.parent)[archive_level] / "OpenCourant_win64.zip"
+    archive = (install, install.parent, install.parent.parent)[archive_level] / archive_name
     with zipfile.ZipFile(archive, "w") as package:
-        package.write(tool, "OpenCourant/exec/anim_to_vtk_win64.exe")
+        package.write(tool, f"{prefix}/exec/anim_to_vtk_win64.exe")
     opts = {"install_root": str(install)}
     with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts)
@@ -1037,11 +1042,13 @@ def test_shell_nip_uses_starter_material_alias(tmp_path, alias, effective):
 @pytest.mark.parametrize(("material", "effective"), [("LAW1", 0), ("JOHNS", 3)])
 def test_shell_nip_resolves_verified_mat_include_and_normalizes_negative_n(tmp_path, material, effective):
     store, source = _run(tmp_path, {"caseA001": b"fixture"})
-    _snapshot_sidecar(source, _rad_mesh_deck(-1, material=None), tmp_path / "main.key", suffix=".key")
+    root = _rad_mesh_deck(-1, material=None) + b"/MAT/LAW1/1\nignored after END\n"
+    _snapshot_sidecar(source, root, tmp_path / "main.key", suffix=".key")
     opts = {"allow_custom_executable": True}
     with pytest.raises(ResultError, match="SOURCE_MISMATCH.*material"):
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], opts)
-    _snapshot_sidecar(source, f"/MAT/{material}/1\nsteel\n".encode(), tmp_path / "steel.mat",
+    include = f"/MAT/{material}/1\nsteel\n  #EndData end of include\n/MAT/LAW1/1\nignored duplicate\n".encode()
+    _snapshot_sidecar(source, include, tmp_path / "steel.mat",
                       suffix=".mat", append=True)
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], opts)
     assert plan["options"]["expected_mesh"]["shell_nip_by_id"] == {"101": effective}
@@ -1052,6 +1059,15 @@ def test_vtk_normalizes_negative_shell_nip(tmp_path):
     layers = [f"2DELEM_Stress_(layer__{layer})_" for layer in (2, 3, 4, 5)]
     path.write_text(_vtk(missing=layers), encoding="ascii")
     assert read_vtk(path, expected={"shell_nip_by_id": {"101": -1}}).shell_nip_by_id == {101: 0}
+    with pytest.raises(ResultError, match="invalid shell integration count"):
+        read_vtk(path, expected={"shell_nip_by_id": {"101": -2}})
+
+
+def test_shell_deck_rejects_negative_nip_other_than_global_integration_switch(tmp_path):
+    store, source = _run(tmp_path, {"caseA001": b"fixture"})
+    _snapshot_sidecar(source, _rad_mesh_deck(-2), tmp_path / "working.rad")
+    with pytest.raises(ResultError, match="SOURCE_MISMATCH.*invalid negative NIP -2"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], {"allow_custom_executable": True})
 
 
 @pytest.mark.parametrize(("requested", "plastic"), [(5, 5), (0, 3)])
@@ -1146,11 +1162,11 @@ def test_optional_vtu_zero_coverage_does_not_block_required_or_requested_field(t
         read_result(store, optional_ref)
 
 
-def _th_deck(group, codes, title, *, node=False, isolid=1):
-    return (f"/PART/10\nbrick\n         7         1\n/PROP/SOLID/7\nsolid\n{isolid:10d}\n/BRICK/10\n"
+def _th_deck(group, codes, title, *, node=False, isolid=1, ismstr=0, iale=0, motion=""):
+    return (f"/PART/10\nbrick\n         7         1\n/PROP/SOLID/7\nsolid\n{isolid:10d}{ismstr:10d}{iale:10d}\n/BRICK/10\n"
             + "".join(f"{i:10d}" for i in [101, *range(1, 9)])
             + f"\n/TH/BRIC/7\n{group}\n" + "".join(f"{code:10s}" for code in codes) + f"\n{101:10d}{'':10s}{title}\n"
-            + (f"/TH/NODE/8\nNODE\nDX\n{12:10d}{'':10s}n12\n" if node else "") + "/END\n").encode()
+            + (f"/TH/NODE/8\nNODE\nDX\n{12:10d}{'':10s}n12\n" if node else "") + motion + "/END\n").encode()
 
 
 def test_th_metadata_from_brick_deck_and_frozen_binding_payload(tmp_path, manager):
@@ -1195,21 +1211,31 @@ def test_history_uses_exact_archived_request_with_overlapping_group_titles(tmp_p
         ("Zone 2", 101, "beam", "yz"), ("Zone 2", 101, "beam", "xy")]
 
 
-@pytest.mark.parametrize("isolid", [None, 1, 2])
-def test_retained_legacy_ip_history_requires_archived_isolid1(tmp_path, monkeypatch, manager, isolid):
+@pytest.mark.parametrize(("isolid", "ismstr", "iale", "motion", "supported"), [
+    (None, 0, 0, "", False), (1, 0, 0, "", True), (2, 4, 0, "", True), (24, 0, 0, "", True),
+    (17, 0, 0, "", False), (1, 1, 0, "", False), (1, 4, 1, "", False),
+    (1, 0, 0, "/ALE/MAT\n         1\n", False), (1, 0, 0, "/EULER/MAT\n         1\n", False),
+    (1, 0, 0, "/UPWM\n", False),
+])
+def test_retained_legacy_ip_history_requires_archived_lagrangian_one_point_hex8(
+        tmp_path, monkeypatch, manager, isolid, ismstr, iale, motion, supported):
     field = "BRIC 101 hex SX"
     csv = f"time,{field}\n0,1\n1,2\n"
     titles = f"{1:10d}\n{'SX':10s}\n".encode()
     program = f"from pathlib import Path\nPath('history.csv').write_text({csv!r})".encode()
     store, source = _run(tmp_path, {"caseT01": program, "caseT01_TITLES": titles})
+    opts = {"allow_custom_executable": True}
     if isolid is not None:
-        _snapshot_sidecar(source, _th_deck("BRIC", ("SX",), "hex", isolid=isolid), tmp_path / "working.inc")
+        deck = _th_deck("BRIC", ("SX",), "hex", isolid=isolid, ismstr=ismstr, iale=iale, motion=motion)
+        _snapshot_sidecar(source, deck, tmp_path / "working.inc")
+        native_plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options=opts)
+        assert native_plan["options"]["solid_formulation"] == ({"101": "hex8_1pt"} if supported else {})
     with monkeypatch.context() as patch:
-        if isolid != 1:
+        if not supported:
             bindings = [{"group_title": "BRIC", "entity_id": 101, "entity_title": "hex",
                          "output_type": "Solid", "variable_code": "SX"}]
             patch.setattr(converters, "_rad_snapshot_metadata", lambda *args, **kwargs: (None, bindings, {"101": "hex8_1pt"}))
-        plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options={"allow_custom_executable": True})
+        plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options=opts)
         receipt = _wait(manager, store, submit_conversion(manager, store, plan))
         assert receipt["state"] == "completed", receipt["error"]
     modern = make_result_ref(store, ROOT_ID, receipt["id"], "history:all", field)
@@ -1223,14 +1249,16 @@ def test_retained_legacy_ip_history_requires_archived_isolid1(tmp_path, monkeypa
     history_ref.update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
     for key in ("dataset_manifest_sha256", "result", "reader_code_sha256"):
         receipt.pop(key)
+    original_reader = "7dd090b12f1935023a192c80facd74b29eeaf8a431d68b669ec8dbee62890b1e"
+    receipt["adapter"]["code_sha256"] = receipt["adapter_code_sha256"] = original_reader
     atomic_json(folder / "operation.json", receipt)
     historical = replace(modern, operation_manifest_sha256=hashlib.sha256(canonical_json_bytes(receipt)).hexdigest(),
                          dataset_manifest_sha256=receipt["dataset_ref"]["sha256"],
                          location={**modern.location, "integration_point": "IPpoint"})
-    if isolid == 1:
+    if supported:
         assert read_result(store, historical).values == (1, 2)
     else:
-        with pytest.raises(ResultError, match="UNSUPPORTED_OBSERVABLE.*Isolid1"):
+        with pytest.raises(ResultError, match="UNSUPPORTED_OBSERVABLE.*one-point Lagrangian HEX8"):
             read_result(store, historical)
 
 
@@ -1351,11 +1379,25 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
         inspect_dataset(store, receipt["id"])
     legacy_reader = "35613ec816b8f7c63fd8dbc266413fc9c070ca48677e67bf48d0bcb713ebe593"
     receipt["adapter"]["code_sha256"] = receipt["reader_code_sha256"] = receipt["adapter_code_sha256"] = legacy_reader
+    receipt_path = folder / "operation.json"
+    atomic_json(receipt_path, receipt)
+    with pytest.raises(ResultError, match="original receipt identity mismatch"):
+        inspect_dataset(store, receipt["id"])
+    receipt.pop("reader_code_sha256")
+    for field in ("code_sha256", "adapter_code_sha256"):
+        bad = {**receipt, "adapter": dict(receipt["adapter"])}
+        target = bad["adapter"] if field == "code_sha256" else bad
+        target[field] = "b" * 64
+        atomic_json(receipt_path, bad)
+        with pytest.raises(ResultError, match="original receipt identity mismatch"):
+            inspect_dataset(store, receipt["id"])
+        atomic_json(receipt_path, {**bad, "source_fingerprint": plan["source_fingerprint"]})
+        unrecognized_reader = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement")
+        with pytest.raises(ResultError, match="HASH_MISMATCH.*reader code"):
+            read_result(store, unrecognized_reader)
     if canonical:
         receipt["dataset_ref"]["sha256"] = digest
-        receipt.pop("reader_code_sha256")
-        receipt["adapter"]["code_sha256"] = "b" * 64
-    atomic_json(folder / "operation.json", receipt)
+    atomic_json(receipt_path, receipt)
     store.recover()
     saved = tmp_path / "saved"
     store.copy_to(saved)
@@ -1375,8 +1417,25 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
     digest = hashlib.sha256(operation_payload.read_bytes()).hexdigest()
     selection_ref = replace(historical_ref, selection={"entity_selection_ref": {"id": "set1", "sha256": digest}})
     assert read_result(store, selection_ref).values == (3,)
+    full = converters.artifact(folder, operation_payload, "selection", "json", converters.POST_PRODUCER).to_dict()
+    short = {"path": "payload.json", "sha256": digest}
+    for selection in (
+        {"artifact_ref": full},
+        {"artifact_ref": full, "selection_source": "operation"},
+        {"selection_id": "set1", "payload_ref": short, "selection_source": "operation"},
+        {"entity_selection_ref": {"id": "set1", "artifact_ref": full, "selection_source": "operation"}},
+        {"entity_selection_ref": {"payload_ref": full}},
+    ):
+        assert read_result(store, replace(historical_ref, selection=selection)).values == (3,)
+    new_ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x",
+                              selection={"artifact_ref": full, "selection_source": "operation"})
+    assert read_result(store, new_ref).values == (3,)
     operation_payload.replace(root_payload)
     assert read_result(store, selection_ref).values == (3,)
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, new_ref)
+    root_ref = replace(historical_ref, selection={"payload_ref": full, "selection_source": "store"})
+    assert read_result(store, root_ref).values == (3,)
     atomic_json(root_payload, {"ids": [13]})
     with pytest.raises(ResultError, match="HASH_MISMATCH"):
         read_result(store, selection_ref)
@@ -1461,6 +1520,41 @@ def test_initial_queue_write_after_deadline_is_rolled_back(tmp_path, manager, mo
         submit_conversion(manager, store, plan, timeout=.04)
     assert len(written) == 1 and not written[0].parent.exists()
     assert not manager._operations
+    with store.lease():
+        pass
+
+
+@pytest.mark.parametrize("contended", [False, True])
+def test_operation_lock_deadline_rolls_back_without_starting_worker(tmp_path, manager, monkeypatch, contended):
+    import caelab.jobs as jobs
+
+    store, _, plan = _fixture_animation(tmp_path)
+    make_lock = jobs.FileLock
+    pending = []
+    starts = []
+
+    def operation_lock(path, *, timeout, thread_local):
+        assert 0 <= timeout <= .04
+        lock = make_lock(path, timeout=timeout, thread_local=thread_local)
+        acquire = lock.acquire
+
+        def acquire_and_delay():
+            if contended:
+                raise jobs.LockTimeout(str(path))
+            acquire()
+            time.sleep(.12)
+
+        monkeypatch.setattr(lock, "acquire", acquire_and_delay)
+        pending.append((path, lock))
+        return lock
+
+    monkeypatch.setattr(jobs, "FileLock", operation_lock)
+    monkeypatch.setattr(manager, "_run_result_conversion", lambda *args: starts.append(args))
+    with pytest.raises(ResultError, match="TIMEOUT"):
+        submit_conversion(manager, store, plan, timeout=.04)
+    (path, lock), = pending
+    assert not lock.is_locked and not path.parent.exists()
+    assert not starts and not manager._operations
     with store.lease():
         pass
 
