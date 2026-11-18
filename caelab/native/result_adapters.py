@@ -13,7 +13,7 @@ from ..result_readers import ResultError, no_checkpoint
 from ..result_readers import opencourant_history, vtk_fields
 from . import converters
 from .operations import (artifact_path, decode_json, load_completed_operation, owning_store, read_object, resolve_result_ref,
-                         sha256_file, verify_artifact)
+                         sha256_file, verify_artifact, with_input_snapshot)
 from .run_store import RunStore
 
 _SPATIAL_READERS = {"OC-ANIM-1": vtk_fields.read_vtk, "VTU-1": vtk_fields.read_vtu}
@@ -34,7 +34,7 @@ def _original_reader(receipt):
     adapter = receipt["adapter"]
     readers = _ORIGINAL_HISTORY_READERS if adapter["id"] == "OC-TH4-1" else _ORIGINAL_FIELD_READERS
     return (receipt.get("result") is None and "dataset_manifest_sha256" not in receipt
-            and adapter.get("code_sha256") in readers)
+            and ("reader_code_sha256" not in receipt or adapter.get("code_sha256") in readers))
 
 
 def _completed(store, operation_id, source_run_id, check):
@@ -102,7 +102,16 @@ def _find_location(dataset, frame_id, field_id):
     return locations[0]
 
 
-def _semantics(folder, receipt, dataset, frame_id, field_id, check):
+def _require_archived_isolid1(store, folder, receipt, entity_id, check):
+    source = artifact_path(store.root, receipt["source_run_id"])
+    frozen = read_object(artifact_path(folder, receipt["source_receipt_ref"]["path"]))
+    frozen = with_input_snapshot(frozen, artifact_path(folder, "inputs/input-snapshot.json"))
+    _, _, formulations = converters._rad_snapshot_metadata(source, frozen, check, animation=False)
+    if formulations.get(str(entity_id)) != "hex8_1pt":
+        raise ResultError("UNSUPPORTED_OBSERVABLE", "archived Isolid1 HEX8 evidence is required for IPpoint")
+
+
+def _semantics(store, folder, receipt, dataset, frame_id, field_id, check):
     item = _find_location(dataset, frame_id, field_id)
     if dataset.dataset_kind == "history":
         column = _history_column(folder, receipt, field_id, check)
@@ -112,14 +121,20 @@ def _semantics(folder, receipt, dataset, frame_id, field_id, check):
         if binding["entity_id"] is not None:
             location["entity_id"] = binding["entity_id"]
         if "semantics" not in column and _original_reader(receipt):
-            if association == "element":
+            quantity = binding["quantity"]
+            units = {"symbol": binding["unit"]}
+            if association == "element" and quantity in {"stress", "strain"}:
+                _require_archived_isolid1(store, folder, receipt, binding["entity_id"], check)
                 location["integration_point"] = "IPpoint"
-            shear = "tensor" if binding["quantity"] == "stress" else "unknown"
-            return item, location, binding["basis"], binding["measure"], shear, {"symbol": binding["unit"]}, "unknown", binding
+                units["dimension"] = "pressure" if quantity == "stress" else "strain"
+            shear = "tensor" if quantity == "stress" else "unknown"
+            return item, location, binding["basis"], binding["measure"], shear, units, "unknown", binding
         semantics = column["semantics"]
         if association == "point":
             location["integration_point"] = "none"
         if "integration_point" in semantics:
+            if association == "element" and _original_reader(receipt):
+                _require_archived_isolid1(store, folder, receipt, binding["entity_id"], check)
             location["integration_point"] = semantics["integration_point"]
         return item, location, semantics["basis"], semantics["measure"], (
             "tensor" if binding["quantity"] == "stress" else "unknown"), {
@@ -155,7 +170,7 @@ def make_result_ref(store: RunStore, source_run_id: str, operation_id: str, fram
     store = owning_store(store)
     folder, receipt, dataset, _ = load_completed_operation(store, source_run_id, operation_id)
     _, location, native_basis, measure, shear, units, geometry, binding = _semantics(
-        folder, receipt, dataset, frame_id, field_id, no_checkpoint)
+        store, folder, receipt, dataset, frame_id, field_id, no_checkpoint)
     if binding is not None and component is None:
         component = binding["component"]
     default_operator = _CANONICAL_OPERATOR if binding is None else {"id": "curve_extract", "version": "1", "params": {}}
@@ -313,15 +328,52 @@ def _saved_selection(store, receipt, selection, location, check, *, pinning=Fals
     return ids, digest, payload_sha
 
 
-def _selection(store, receipt, selection, location, check, *, legacy_inline=False):
+def _legacy_selection_payload(store, folder, receipt, selection_id, digest, location, check):
+    if not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id):
+        raise ResultError("PATH_ESCAPE", f"invalid selection ID {selection_id!r}")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ResultError("HASH_MISMATCH", "legacy selection has no payload byte digest")
+    for root in (store.root, folder):
+        directory = artifact_path(root, f"selections/{selection_id}")
+        try:
+            _, payload = _selection_payload(directory, {"path": "payload.json", "sha256": digest}, check)
+        except ResultError as exc:
+            if exc.code == "HASH_MISMATCH":
+                continue
+            raise
+        except ValueError as exc:
+            raise ResultError("SCHEMA_MISMATCH", "invalid legacy selection payload") from exc
+        if not isinstance(payload, dict):
+            return payload
+        schema = payload.get("schema", payload.get("schema_id"))
+        if schema not in (None, "caelab.selection.v1"):
+            raise ResultError("SCHEMA_MISMATCH", "expected caelab.selection.v1")
+        entity_kinds = {"point": ("node", "nodes", "node_ids"), "element": ("element", "elements", "element_ids")}
+        if "entity_kind" in payload and payload["entity_kind"] not in entity_kinds.get(location["association"], ()):
+            raise ResultError("OBSERVABLE_MISMATCH", "selection entity kind")
+        expected_revision = receipt.get("source_mesh_revision") or receipt["source_input_revision"]
+        if (payload.get("run_id") not in (None, receipt["source_run_id"])
+                or payload.get("mesh_revision") not in (None, expected_revision)):
+            raise ResultError("SOURCE_MISMATCH", "selection run or mesh revision")
+        return payload.get("ids")
+    raise ResultError("HASH_MISMATCH", "legacy selection payload is missing or its bytes changed")
+
+
+def _selection(store, folder, receipt, selection, location, check, *, legacy=False, legacy_inline=False):
     ids = selection.get("ids")
     kind = selection.get("kind")
     entity = {"point": "node", "element": "element"}.get(location["association"])
-    if _selection_id(selection) is not None:
+    selection_id = _selection_id(selection)
+    entity_ref = selection.get("entity_selection_ref", {})
+    if selection_id is not None:
         if ids is not None:
             raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
-        ids, digest, _ = _saved_selection(store, receipt, selection, location, check)
-        _verify_selection_revision(selection, digest)
+        if (legacy and "sha256" in entity_ref and "revision_sha256" not in entity_ref
+                and "revision_sha256" not in selection):
+            ids = _legacy_selection_payload(store, folder, receipt, selection_id, entity_ref["sha256"], location, check)
+        else:
+            ids, digest, _ = _saved_selection(store, receipt, selection, location, check)
+            _verify_selection_revision(selection, digest)
     elif ids is not None:
         _verify_selection_revision(selection, _selection_digest(selection, ids), required=not legacy_inline)
     if ids is None and selection:
@@ -386,14 +438,15 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
     profile = receipt["adapter"]["id"]
     if receipt["adapter"]["version"] != "1" or profile not in {*_SPATIAL_READERS, "OC-TH4-1"}:
         raise ResultError("UNSUPPORTED_CAPABILITY", "unregistered numeric reader")
-    expected_reader = receipt.get("reader_code_sha256", receipt["adapter"].get("code_sha256"))
+    adapter_sha = receipt["adapter"].get("code_sha256")
+    expected_reader = receipt.get("reader_code_sha256", adapter_sha)
     active_reader = converters.reader_code_sha256(profile, check)
     original_reader = resolved["legacy_manifest"] and _original_reader(receipt)
-    if (expected_reader != receipt["adapter"].get("code_sha256")
+    if (expected_reader != adapter_sha
             or not original_reader and active_reader != expected_reader):
         raise ResultError("HASH_MISMATCH", "active reader code differs from the operation receipt")
     item, location, basis, measure, shear, units, geometry, binding = _semantics(
-        folder, receipt, dataset, ref.frame_id, ref.field_id, check)
+        store, folder, receipt, dataset, ref.frame_id, ref.field_id, check)
     _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding, item)
     op = _operator(ref)
     normalized = "identity" if op == "values" else op
@@ -441,7 +494,8 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
         if (grid.time != item["time"] and (not original_reader or item["time"] is not None)
                 or any(item.get(key) != val for key, val in metadata.items() if key in item or not original_reader)):
             raise ResultError("HASH_MISMATCH", "frame TIME differs from its registered value")
-        ids = _selection(store, receipt, ref.selection, location, check, legacy_inline=original_reader)
+        ids = _selection(store, folder, receipt, ref.selection, location, check,
+                         legacy=resolved["legacy_manifest"], legacy_inline=original_reader)
         if location["association"] == "point" and "entity_id" in ref.location:
             entity_id = ref.location["entity_id"]
             if type(entity_id) is not int or entity_id <= 0 or (ids is not None and tuple(ids) != (entity_id,)):

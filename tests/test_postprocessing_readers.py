@@ -650,14 +650,15 @@ def test_history_requires_matching_source_entities_and_formulation(tmp_path):
     assert bindings[1]["entity_id"] == 101 and bindings[1]["quantity"] == "stress"
 
 
-def _rad_mesh_deck(nip=5):
+def _rad_mesh_deck(nip=5, *, material="LAW2"):
     return ("#RADIOSS STARTER\n/NODE\n" + "".join(
         f"{i:10d}{x:20}{y:20}{z:20}\n" for i, (x, y, z) in enumerate(ORIGINAL_POINTS, 11))
         + "/SH3N/10\n" + "".join(f"{i:10d}" for i in (101, 11, 12, 13)) + "\n"
         + "/TETRA4/20\n" + "".join(f"{i:10d}" for i in (202, 14, 15, 16, 17)) + "\n"
         + "/PART/10\nshell part\n         7         1\n/PART/20\nsolid part\n         8         1\n"
         + "/PROP/SHELL/7\nshell\n        24\n                   0\n"
-        + f"{nip:10d}\n/PROP/SOLID/8\nsolid\n         1\n/END\n").encode()
+        + f"{nip:10d}\n/PROP/SOLID/8\nsolid\n         1\n"
+        + (f"/MAT/{material}/1\nmaterial\n" if material else "") + "/END\n").encode()
 
 
 def test_manifest_deck_selection_semantics_and_reader_digest(tmp_path, monkeypatch, manager):
@@ -798,20 +799,25 @@ def test_verify_plan_preserves_deadline_and_requires_trusted_converter(tmp_path,
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows converter release archive")
-def test_windows_converter_must_match_member_of_trusted_release(tmp_path, monkeypatch):
+@pytest.mark.parametrize("archive_level", [0, 1, 2])
+def test_windows_converter_must_match_member_of_trusted_release(tmp_path, monkeypatch, archive_level):
+    monkeypatch.setattr(converters, "_VERIFIED_WINDOWS_MEMBERS", {})
     store, _, _ = _fixture_animation(tmp_path)
-    tool = tmp_path / "exec" / "anim_to_vtk_win64.exe"
-    tool.parent.mkdir()
+    install = tmp_path / "distribution" / "OpenCourant"
+    tool = install / "exec" / "anim_to_vtk_win64.exe"
+    tool.parent.mkdir(parents=True)
     shutil.copyfile(sys.executable, tool)
-    archive = tmp_path / "OpenCourant_win64.zip"
+    archive = (install, install.parent, install.parent.parent)[archive_level] / "OpenCourant_win64.zip"
     with zipfile.ZipFile(archive, "w") as package:
         package.write(tool, "OpenCourant/exec/anim_to_vtk_win64.exe")
-    opts = {"install_root": str(tmp_path)}
+    opts = {"install_root": str(install)}
     with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts)
     monkeypatch.setattr(converters, "_PINNED_WINDOWS_ZIP_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts)
     assert plan["executable"]["sha256"] == hashlib.sha256(tool.read_bytes()).hexdigest()
+    archive.unlink()
+    assert plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], opts) == plan
     with tool.open("ab") as binary:
         binary.write(b"modified but still executable")
     with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
@@ -905,7 +911,7 @@ def test_solid_strain_uses_native_shear_order(tmp_path):
         assert query_field(grid, "3DELEM_Strain", component=name)[0].tolist() == [number]
 
 
-def _snapshot_sidecar(source, deck, live_path, *, suffix=".inc"):
+def _snapshot_sidecar(source, deck, live_path, *, suffix=".inc", append=False):
     original, execution = f"input/frozen{suffix}", f"input/exec{suffix}"
     for relative in (original, execution):
         target = source / relative
@@ -913,7 +919,9 @@ def _snapshot_sidecar(source, deck, live_path, *, suffix=".inc"):
         target.write_bytes(deck)
     digest = hashlib.sha256(deck).hexdigest()
     live_path.write_bytes(deck)
-    atomic_json(source / "input/snapshot.json", {"files": [{
+    sidecar = source / "input/snapshot.json"
+    files = json.loads(sidecar.read_bytes())["files"] if append else []
+    atomic_json(sidecar, {"files": [*files, {
         "source_path": str(live_path), "source_copy": original, "execution_path": execution,
         "original_sha256": digest, "executed_sha256": digest}]})
 
@@ -925,7 +933,7 @@ def test_saved_rad_authority_shell_layers_and_live_deck(tmp_path, manager, nip):
     vtk = _vtk(missing=missing)
     store, source = _run(tmp_path, {"caseA001": f"print({vtk!r})".encode()})
     live = tmp_path / "working.inc"
-    _snapshot_sidecar(source, _rad_mesh_deck(nip), live)
+    _snapshot_sidecar(source, _rad_mesh_deck(nip, material="LAW1" if nip == 0 else "LAW2"), live)
     opts = {"allow_custom_executable": True, "exact_required_set": []}
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], opts)
     mesh = plan["options"]["expected_mesh"]
@@ -993,7 +1001,8 @@ def test_workbench_run_list_checks_working_deck_hash_even_without_metadata_chang
     assert workbench.jobs.close()
 
 
-def test_workbench_marks_only_the_run_with_a_corrupt_input_sidecar_stale(tmp_path):
+@pytest.mark.parametrize("sidecar_content", ["{", '{"files":[null]}', '{"files":[],"prerequisites":[null]}'])
+def test_workbench_marks_only_the_run_with_a_corrupt_input_sidecar_stale(tmp_path, sidecar_content):
     from types import SimpleNamespace
     from caelab.workbench import Workbench
 
@@ -1004,14 +1013,14 @@ def test_workbench_marks_only_the_run_with_a_corrupt_input_sidecar_stale(tmp_pat
     store.write(broken)
     sidecar = broken.workdir / "input/snapshot.json"
     sidecar.parent.mkdir()
-    sidecar.write_text("{", encoding="ascii")
+    sidecar.write_text(sidecar_content, encoding="ascii")
     reference = SimpleNamespace(path=healthy.input_path, stale=False, units=healthy.units, unit_source=healthy.unit_source)
     project = SimpleNamespace(path=tmp_path / "project.json", run_store=store.root, run_store_expected=True,
                               nodes={NODE: SimpleNamespace(program_id=healthy.solver_id)}, input_file=lambda _: reference)
     workbench = Workbench()
     runs = {run.id: run for run in workbench.native_runs(project)}
     assert not runs[healthy.id].stale
-    assert runs[bad_id].stale and "스냅샷" in runs[bad_id].stale_reason
+    assert runs[bad_id].stale and runs[bad_id].stale_reason
     assert workbench.jobs.close()
 
 
@@ -1020,17 +1029,36 @@ def test_workbench_marks_only_the_run_with_a_corrupt_input_sidecar_stale(tmp_pat
                                                  ("VOID", 0), ("GLOBAL_REINFORCED_CONCRETE", 0)])
 def test_shell_nip_uses_starter_material_alias(tmp_path, alias, effective):
     store, source = _run(tmp_path, {"caseA001": b"fixture"})
-    mat_card = f"/MAT/{alias}/1\nmaterial\n/END\n".encode()
-    _snapshot_sidecar(source, _rad_mesh_deck(0).replace(b"/END\n", mat_card), tmp_path / "work.rad")
+    _snapshot_sidecar(source, _rad_mesh_deck(0, material=alias), tmp_path / "work.rad")
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], {"allow_custom_executable": True})
     assert plan["options"]["expected_mesh"]["shell_nip_by_id"] == {"101": effective}
+
+
+@pytest.mark.parametrize(("material", "effective"), [("LAW1", 0), ("JOHNS", 3)])
+def test_shell_nip_resolves_verified_mat_include_and_normalizes_negative_n(tmp_path, material, effective):
+    store, source = _run(tmp_path, {"caseA001": b"fixture"})
+    _snapshot_sidecar(source, _rad_mesh_deck(-1, material=None), tmp_path / "main.key", suffix=".key")
+    opts = {"allow_custom_executable": True}
+    with pytest.raises(ResultError, match="SOURCE_MISMATCH.*material"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], opts)
+    _snapshot_sidecar(source, f"/MAT/{material}/1\nsteel\n".encode(), tmp_path / "steel.mat",
+                      suffix=".mat", append=True)
+    plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], opts)
+    assert plan["options"]["expected_mesh"]["shell_nip_by_id"] == {"101": effective}
+
+
+def test_vtk_normalizes_negative_shell_nip(tmp_path):
+    path = tmp_path / "shell.vtk"
+    layers = [f"2DELEM_Stress_(layer__{layer})_" for layer in (2, 3, 4, 5)]
+    path.write_text(_vtk(missing=layers), encoding="ascii")
+    assert read_vtk(path, expected={"shell_nip_by_id": {"101": -1}}).shell_nip_by_id == {101: 0}
 
 
 @pytest.mark.parametrize(("requested", "plastic"), [(5, 5), (0, 3)])
 def test_dat_snapshot_preserves_effective_nip_per_shell(tmp_path, manager, requested, plastic):
     rows = ("/MAT/LAW1/1\nelastic\n/MAT/LAW2/2\nplastic\n/PART/30\nsecond shell\n         7         2\n"
             "/SH3N/30\n" + "".join(f"{i:10d}" for i in (303, 11, 12, 13)) + "\n/END\n").encode()
-    deck = _rad_mesh_deck(requested).replace(b"/END\n", rows)
+    deck = _rad_mesh_deck(requested, material=None).replace(b"/END\n", rows)
     vtk = _vtk(extra_shell=True)
     store, source = _run(tmp_path, {"caseA001": f"print({vtk!r})".encode()})
     _snapshot_sidecar(source, deck, tmp_path / "mesh.dat", suffix=".dat")
@@ -1118,8 +1146,8 @@ def test_optional_vtu_zero_coverage_does_not_block_required_or_requested_field(t
         read_result(store, optional_ref)
 
 
-def _th_deck(group, codes, title, *, node=False):
-    return ("/PART/10\nbrick\n         7         1\n/PROP/SOLID/7\nsolid\n         1\n/BRICK/10\n"
+def _th_deck(group, codes, title, *, node=False, isolid=1):
+    return (f"/PART/10\nbrick\n         7         1\n/PROP/SOLID/7\nsolid\n{isolid:10d}\n/BRICK/10\n"
             + "".join(f"{i:10d}" for i in [101, *range(1, 9)])
             + f"\n/TH/BRIC/7\n{group}\n" + "".join(f"{code:10s}" for code in codes) + f"\n{101:10d}{'':10s}{title}\n"
             + (f"/TH/NODE/8\nNODE\nDX\n{12:10d}{'':10s}n12\n" if node else "") + "/END\n").encode()
@@ -1165,6 +1193,45 @@ def test_history_uses_exact_archived_request_with_overlapping_group_titles(tmp_p
     assert [(b["group_title"], b["entity_id"], b["entity_title"], b["component"]) for b in bindings] == [
         ("Zone", 2, "101 beam", "xx"), ("Zone 2", 101, "beam", "xz"),
         ("Zone 2", 101, "beam", "yz"), ("Zone 2", 101, "beam", "xy")]
+
+
+@pytest.mark.parametrize("isolid", [None, 1, 2])
+def test_retained_legacy_ip_history_requires_archived_isolid1(tmp_path, monkeypatch, manager, isolid):
+    field = "BRIC 101 hex SX"
+    csv = f"time,{field}\n0,1\n1,2\n"
+    titles = f"{1:10d}\n{'SX':10s}\n".encode()
+    program = f"from pathlib import Path\nPath('history.csv').write_text({csv!r})".encode()
+    store, source = _run(tmp_path, {"caseT01": program, "caseT01_TITLES": titles})
+    if isolid is not None:
+        _snapshot_sidecar(source, _th_deck("BRIC", ("SX",), "hex", isolid=isolid), tmp_path / "working.inc")
+    with monkeypatch.context() as patch:
+        if isolid != 1:
+            bindings = [{"group_title": "BRIC", "entity_id": 101, "entity_title": "hex",
+                         "output_type": "Solid", "variable_code": "SX"}]
+            patch.setattr(converters, "_rad_snapshot_metadata", lambda *args, **kwargs: (None, bindings, {"101": "hex8_1pt"}))
+        plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options={"allow_custom_executable": True})
+        receipt = _wait(manager, store, submit_conversion(manager, store, plan))
+        assert receipt["state"] == "completed", receipt["error"]
+    modern = make_result_ref(store, ROOT_ID, receipt["id"], "history:all", field)
+    folder = operation_dir(store, ROOT_ID, receipt["id"])
+    history_path = folder / "outputs/history-columns.json"
+    columns = json.loads(history_path.read_bytes())
+    columns["fields"][field].pop("semantics")
+    atomic_json(history_path, columns)
+    history_ref = next(ref for ref in receipt["outputs"] if ref["path"] == "outputs/history-columns.json")
+    raw = history_path.read_bytes()
+    history_ref.update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+    for key in ("dataset_manifest_sha256", "result", "reader_code_sha256"):
+        receipt.pop(key)
+    atomic_json(folder / "operation.json", receipt)
+    historical = replace(modern, operation_manifest_sha256=hashlib.sha256(canonical_json_bytes(receipt)).hexdigest(),
+                         dataset_manifest_sha256=receipt["dataset_ref"]["sha256"],
+                         location={**modern.location, "integration_point": "IPpoint"})
+    if isolid == 1:
+        assert read_result(store, historical).values == (1, 2)
+    else:
+        with pytest.raises(ResultError, match="UNSUPPORTED_OBSERVABLE.*Isolid1"):
+            read_result(store, historical)
 
 
 def test_saved_selection_payload_and_recomputed_revision_are_pinned(tmp_path, manager):
@@ -1279,10 +1346,15 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
     }
     receipt["source_fingerprint"] = hashlib.sha256(canonical_json_bytes(legacy_identity)).hexdigest()
     assert receipt["source_fingerprint"] != plan["source_fingerprint"]
+    atomic_json(folder / "operation.json", {**receipt, "dataset_manifest_sha256": digest})
+    with pytest.raises(ResultError, match="original receipt identity mismatch"):
+        inspect_dataset(store, receipt["id"])
     legacy_reader = "35613ec816b8f7c63fd8dbc266413fc9c070ca48677e67bf48d0bcb713ebe593"
     receipt["adapter"]["code_sha256"] = receipt["reader_code_sha256"] = receipt["adapter_code_sha256"] = legacy_reader
     if canonical:
         receipt["dataset_ref"]["sha256"] = digest
+        receipt.pop("reader_code_sha256")
+        receipt["adapter"]["code_sha256"] = "b" * 64
     atomic_json(folder / "operation.json", receipt)
     store.recover()
     saved = tmp_path / "saved"
@@ -1296,6 +1368,18 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
     for quantity_ref in (ref, historical_ref):
         assert resolve_result_ref(store, quantity_ref)["availability"] == "available"
     assert read_result(RunStore(saved), historical_ref).values == (3,)
+    operation_payload = folder / "selections" / "set1" / "payload.json"
+    root_payload = store.root / "selections" / "set1" / "payload.json"
+    atomic_json(operation_payload, {"ids": [11]})
+    atomic_json(root_payload, {"ids": [12]})
+    digest = hashlib.sha256(operation_payload.read_bytes()).hexdigest()
+    selection_ref = replace(historical_ref, selection={"entity_selection_ref": {"id": "set1", "sha256": digest}})
+    assert read_result(store, selection_ref).values == (3,)
+    operation_payload.replace(root_payload)
+    assert read_result(store, selection_ref).values == (3,)
+    atomic_json(root_payload, {"ids": [13]})
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, selection_ref)
     deck = source / "fixture.rad"
     archived_deck = deck.read_bytes()
     deck.write_bytes(archived_deck + b"changed")
@@ -1333,6 +1417,52 @@ def test_conversion_lease_wait_uses_short_caller_timeout(tmp_path, manager):
         with pytest.raises(ResultError, match="TIMEOUT"):
             submit_conversion(manager, store, plan, timeout=.1)
         assert time.monotonic() - start < 1
+
+
+def test_same_manager_publication_lock_respects_submission_deadline(tmp_path, manager):
+    store, _, plan = _fixture_animation(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_lock():
+        with manager._native_lock:
+            entered.set()
+            release.wait(1)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    try:
+        assert entered.wait(2)
+        start = time.monotonic()
+        with pytest.raises(ResultError, match="TIMEOUT.*publication lock"):
+            submit_conversion(manager, store, plan, timeout=.025)
+        assert time.monotonic() - start < .18
+    finally:
+        release.set()
+        holder.join(2)
+    with store.lease():
+        pass
+
+
+def test_initial_queue_write_after_deadline_is_rolled_back(tmp_path, manager, monkeypatch):
+    import caelab.jobs as jobs
+
+    store, _, plan = _fixture_animation(tmp_path)
+    write = jobs.atomic_json
+    written = []
+
+    def slow_queue(path, data):
+        write(path, data)
+        if data["state"] == "queued":
+            written.append(path)
+            time.sleep(.12)
+
+    monkeypatch.setattr(jobs, "atomic_json", slow_queue)
+    with pytest.raises(ResultError, match="TIMEOUT.*queued receipt"):
+        submit_conversion(manager, store, plan, timeout=.04)
+    assert len(written) == 1 and not written[0].parent.exists()
+    assert not manager._operations
+    with store.lease():
+        pass
 
 
 def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypatch, manager):

@@ -200,7 +200,7 @@ def verify_original_decks(source, record, check=no_checkpoint, *, code="HASH_MIS
 def snapshot_deck_paths(source, record):
     for item in _deck_entries(record["snapshot"]):
         relative = item["execution_path"] or item["source_copy"]
-        if relative and Path(relative).suffix.lower() in {".rad", ".inc", ".dat"}:
+        if relative:
             yield artifact_path(source, relative)
 
 
@@ -447,7 +447,7 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
         fixed_record = with_input_snapshot(fixed_job, snapshot_copy)
         fingerprint = receipt["source_fingerprint"]
         modern_fingerprint = source_fingerprint(fixed_record)
-        legacy_fingerprint = ((expected_digest is None or modern_fingerprint != fingerprint)
+        legacy_fingerprint = (expected_digest is None
                               and source_fingerprint(fixed_job, legacy=True) == fingerprint)
         if (fixed_record.get("id") != source_run_id or fixed_record.get("node_id") != receipt["source_node_id"]
                 or pinned.sha256 != receipt["source_receipt_sha256"]

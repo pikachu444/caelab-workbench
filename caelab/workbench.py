@@ -7,6 +7,7 @@ project has no solver or LLM side effects.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 
 
 def _source_metadata_changed(item: dict) -> bool:
+    if not isinstance(item, Mapping):
+        return True
     path = item.get("source_path")
     if not path:
         return False
@@ -295,7 +298,7 @@ class Workbench:
                 snapshot = with_input_snapshot({"snapshot": run.snapshot}, run.workdir / INPUT_SNAPSHOT)["snapshot"]
                 reason = self._native_stale_reason(project, run.node_id, run.solver_id, run.input_path,
                                                    run.units, run.unit_source, snapshot)
-            except (OSError, ValueError, KeyError, TypeError) as exc:
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
                 reason = f"실행 입력 스냅샷을 읽을 수 없습니다: {exc}"
             run.stale, run.stale_reason = bool(reason), reason
             runs[index] = run
@@ -313,8 +316,12 @@ class Workbench:
             return "상위 변경으로 현재 입력 덱이 오래되었습니다."
         if reference.units != units or reference.unit_source != unit_source:
             return "입력 단위 선언/출처가 변경되었습니다."
-        if any(_source_metadata_changed(item) for item in
-               snapshot.get("files", []) + snapshot.get("prerequisites", [])):
+        try:
+            changed = any(_source_metadata_changed(item) for group in ("files", "prerequisites")
+                          for item in snapshot.get(group, ()))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            changed = True
+        if changed:
             return "실행 원본 또는 INCLUDE 파일이 변경/누락되었습니다."
         return ""
 

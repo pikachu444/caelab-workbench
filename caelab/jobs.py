@@ -704,16 +704,24 @@ class JobManager:
         op_id = uuid.uuid4().hex
         folder = operation_dir(store, source_id, op_id)
         deadline = start + wait_budget
+        lease = None
+
+        def check_deadline():
+            if time.monotonic() >= deadline:
+                raise ResultError("TIMEOUT", "conversion deadline elapsed before publishing the queued receipt")
+
         while True:
-            with self._native_lock:
+            if not self._native_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+                raise ResultError("TIMEOUT", "conversion deadline elapsed waiting for the publication lock")
+            try:
+                check_deadline()
                 if self._closed:
                     raise ValueError("JobManager is closing")
                 for control in self._operations.values():
                     if (control["store"].root == store.root and control["plan_identity"] == identity
                             and control["receipt"]["state"] in ACTIVE_OPERATIONS
                             and not control["cancel"].is_set()):
-                        if time.monotonic() >= deadline:
-                            raise ResultError("TIMEOUT", "conversion deadline elapsed before duplicate lookup")
+                        check_deadline()
                         return copy.deepcopy(control["receipt"])
                 try:
                     lease = store.lease()
@@ -722,6 +730,9 @@ class JobManager:
                     if not isinstance(exc.__cause__, LockTimeout):
                         raise
                     busy = exc
+            finally:
+                if lease is None:
+                    self._native_lock.release()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ResultError("TIMEOUT", "conversion deadline elapsed waiting for the RunStore lease") from busy
@@ -746,11 +757,12 @@ class JobManager:
             if duplicate is not None:
                 return duplicate
             time.sleep(min(.025, remaining))
-        with self._native_lock:
+        try:
+            created_folder = False
+            operation_lock = None
             try:
-                if self._closed:
-                    raise ValueError("JobManager is closing")
                 recover_derived_operations(store, reject_conflicts=False)
+                check_deadline()
                 receipt = {
                     "schema_version": 1, "id": op_id, "source_run_id": source_id, "source_node_id": plan["source_node_id"],
                     "operation_kind": "extract" if plan["profile"] == "VTU-1" else "convert",
@@ -773,12 +785,17 @@ class JobManager:
                     "reused_from_operation_id": None,
                 }
                 folder.mkdir(parents=True)
+                created_folder = True
+                check_deadline()
+                atomic_json(artifact_path(folder, "operation.json"), receipt)
+                check_deadline()
+                # Duplicate scans recognize active receipts only after this
+                # lock exists, so a timed-out queued write cannot be reused.
                 operation_lock = FileLock(artifact_path(folder, "operation.lock"), timeout=0, thread_local=False)
                 operation_lock.acquire()
                 control = {"cancel": threading.Event(), "process": None, "group": None, "store": store,
                            "lease": lease, "operation_lock": operation_lock, "cleanup_failed": False, "plan": plan,
                            "plan_identity": identity, "receipt": receipt, "folder": folder}
-                atomic_json(artifact_path(folder, "operation.json"), receipt)
                 worker = threading.Thread(target=self._run_result_conversion,
                                           args=(control, deadline, executor or subprocess.Popen),
                                           name=f"caelab-result-{op_id[:8]}", daemon=True)
@@ -789,18 +806,28 @@ class JobManager:
             except Exception as exc:
                 self._operations.pop(op_id, None)
                 try:
-                    if "receipt" in locals() and folder.is_dir():
+                    if isinstance(exc, ResultError) and exc.code == "TIMEOUT":
+                        if operation_lock is not None:
+                            operation_lock.release()
+                            operation_lock = None
+                        if created_folder:
+                            (folder / "operation.json").unlink(missing_ok=True)
+                            (folder / "operation.lock").unlink(missing_ok=True)
+                            folder.rmdir()
+                    elif created_folder:
                         receipt.update(state="failed", stage="failed", finished_at=utc_now(),
                                        error={"code": "STARTUP_FAILED", "message": str(exc) or "converter startup failed",
                                               "detail": str(exc)})
                         atomic_json(folder / "operation.json", receipt)
                 finally:
                     try:
-                        if "operation_lock" in locals():
+                        if operation_lock is not None:
                             operation_lock.release()
                     finally:
                         lease.release()
                 raise
+        finally:
+            self._native_lock.release()
 
     def operation_snapshot(self, store: RunStore, source_run_id: str, operation_id: str) -> dict | None:
         from .native.operations import stored_snapshot

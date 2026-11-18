@@ -34,6 +34,7 @@ _PINNED_CONVERTER_SHA256 = {
     "OC-TH4-1": "704d647331ae4befd329d18b991d644f2af930abd117c5d204c23925f75fc8db",
 }
 _PINNED_WINDOWS_ZIP_SHA256 = "6d0ea8b43b68aa12f0a2787b339384a554978cbb65a5d3dbaf1e40598f02e7e6"
+_VERIFIED_WINDOWS_MEMBERS = {}
 
 # Named /MAT keywords from the pinned Starter's hm_read_mat dispatch.
 _MATERIAL_ALIASES = {
@@ -130,22 +131,31 @@ def _stream_sha256(stream, check):
 
 
 def _matches_pinned_windows_member(root, executable, digest, check):
-    # The release pins the Windows archive as a whole. Hash and open the
-    # same archive handle, then compare against its official package member.
-    try:
-        with (root / "OpenCourant_win64.zip").open("rb") as stream:
-            if _stream_sha256(stream, check) != _PINNED_WINDOWS_ZIP_SHA256:
-                return False
-            relative = executable.relative_to(root).as_posix().lower()
-            names = {relative, f"opencourant/{relative}", f"opencourant_win64/{relative}"}
-            with zipfile.ZipFile(stream) as archive:
-                matches = [member for member in archive.infolist() if member.filename.lower() in names]
-                if len(matches) != 1:
-                    return False
-                with archive.open(matches[0]) as member:
-                    return _stream_sha256(member, check) == digest
-    except (FileNotFoundError, zipfile.BadZipFile):
-        return False
+    relative = executable.relative_to(root).as_posix().lower()
+    key = (_PINNED_WINDOWS_ZIP_SHA256, relative)
+    trusted = _VERIFIED_WINDOWS_MEMBERS.get(key)
+    if trusted is not None:
+        check()
+        return trusted == digest
+    names = {relative, f"opencourant/{relative}", f"opencourant_win64/{relative}"}
+    for directory in dict.fromkeys((root, root.parent, root.parent.parent)):
+        check()
+        try:
+            # Hash and open the same archive handle before trusting a member.
+            with (directory / "OpenCourant_win64.zip").open("rb") as stream:
+                if _stream_sha256(stream, check) != key[0]:
+                    continue
+                with zipfile.ZipFile(stream) as archive:
+                    matches = [member for member in archive.infolist() if member.filename.lower() in names]
+                    if len(matches) != 1:
+                        continue
+                    with archive.open(matches[0]) as member:
+                        trusted = _stream_sha256(member, check)
+        except (OSError, zipfile.BadZipFile):
+            continue
+        _VERIFIED_WINDOWS_MEMBERS[key] = trusted
+        return trusted == digest
+    return False
 
 
 def converter_environment(plan, environment):
@@ -300,7 +310,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                 if card[1] in {"SHELL", "TYPE1"} and animation:
                     add(shell_properties, int(card[2]), int(rows[3][:10].strip() or "0"))
                 elif card[1] in {"SOLID", "TYPE14"}:
-                    add(solid_properties, int(card[2]), int(rows[1][:10].strip() or "0"))
+                    row = rows[1]
+                    add(solid_properties, int(card[2]), (int(row[:10].strip() or "0"), int(row[20:30].strip() or "0")))
             elif not animation and head == "TH" and len(card) >= 3 and card[1] in {"BRIC", "NODE"}:
                 title = " ".join(rows[0].split())
                 codes = []
@@ -320,7 +331,7 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
         shells = {eid: element for eid, element in elements.items() if element["cell_type"] in {5, 9}}
         solids = {eid: element for eid, element in elements.items() if element["cell_type"] in {10, 12}}
         formulations = {eid: "hex8_1pt" for eid, element in solids.items() if element["cell_type"] == 12
-                        and solid_properties.get(parts.get(element["part_id"], (None, None))[0]) == 1}
+                        and solid_properties.get(parts.get(element["part_id"], (None, None))[0]) == (1, 0)}
         mesh = None
         if animation:
             node_ids = set(map(int, nodes))
@@ -328,15 +339,22 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                 raise ValueError("saved RAD deck is missing supported node or element definitions")
             shell_nip_by_id = {}
             for eid, element in shells.items():
-                prop, material = parts[element["part_id"]]
-                nip = shell_properties[prop]
-                law = materials.get(material, "")
+                part = element["part_id"]
+                if part not in parts:
+                    raise ValueError(f"shell {eid} references missing part {part}")
+                prop, material = parts[part]
+                if prop not in shell_properties or material not in materials:
+                    raise ValueError(f"shell {eid} cannot resolve property {prop} or material {material}")
+                nip = max(0, shell_properties[prop])
+                law = materials[material]
                 law_number = re.fullmatch(r"LAW([0-9]+)", law)
                 law_id = int(law_number[1]) if law_number else _MATERIAL_ALIASES.get(law)
+                if law_id is None:
+                    raise ValueError(f"shell {eid} uses unresolved material law {law}")
                 # Starter uses separate rules for quadrilaterals and triangles.
                 if nip > 1 and (law_id in {1, 136} or law_id == 91 and element["cell_type"] == 9):
                     nip = 0
-                elif nip == 0 and law_id is not None and law_id not in {0, 1, 91, 136}:
+                elif nip == 0 and law_id not in {0, 1, 91, 136}:
                     nip = 3
                 shell_nip_by_id[eid] = nip
             mesh = {"node_coordinates": nodes, "elements": elements, "shell_ids": sorted(map(int, shells)),

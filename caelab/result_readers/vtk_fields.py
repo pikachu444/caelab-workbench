@@ -473,9 +473,9 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
                 raise ResultError("SOURCE_MISMATCH", "missing shell integration count") from exc
         else:
             counts = dict.fromkeys(shell_ids, 5 if nip is None else nip)
-        if any(type(count) is not int or count < 0 for count in counts.values()):
+        if any(type(count) is not int for count in counts.values()):
             raise ResultError("SOURCE_MISMATCH", "invalid shell integration count")
-        grid.shell_nip_by_id = counts
+        grid.shell_nip_by_id = counts = {shell: max(0, count) for shell, count in counts.items()}
         required.update({"2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)"})
         for count in set(counts.values()):
             required.update(f"2DELEM_Stress_(layer__{i})_" for i in range(1, max(1, count) + 1))
