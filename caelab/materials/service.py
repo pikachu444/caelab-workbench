@@ -1619,11 +1619,17 @@ class CalibrationStudyService:
                 ):
                     raise ValueError("EXPOSURE_IDENTITY_MISMATCH")
                 exposed_at = datetime.fromisoformat(data["exposed_at"])
+                recorded_exposed_at = expected_exposed_at or entry.get("exposed_at")
                 if (
                     exposed_at.tzinfo is None
                     or exposed_at < datetime.fromisoformat(artifact.created_at)
                     or exposed_at < datetime.fromisoformat(self._manifest["created_at"])
-                    or (expected_exposed_at is not None and data["exposed_at"] != expected_exposed_at)
+                    or exposed_at > datetime.fromisoformat(utc_now())
+                    or (recorded_exposed_at is not None and data["exposed_at"] != recorded_exposed_at)
+                    or (
+                        pending_refs is None and "updated_at" in self._manifest
+                        and exposed_at > datetime.fromisoformat(self._manifest["updated_at"])
+                    )
                 ):
                     raise ValueError("EXPOSURE_TIMESTAMP_MISMATCH")
                 return data, selection
@@ -1972,11 +1978,13 @@ class CalibrationStudyService:
                 "created_at": artifact.created_at,
             }
             if exp_ref is not None:
+                new_manifest["evaluations"][eval_id]["exposed_at"] = exposed_at
                 refs = new_manifest.setdefault("holdout_exposures", [])
                 refs.append(exp_ref.to_dict())
                 self._verified_holdout_exposure(
                     artifact, new_manifest["evaluations"][eval_id], pending_refs=refs, expected_exposed_at=exposed_at,
                 )
+                new_manifest["updated_at"] = utc_now()
             if artifact.state == "completed" and res_out.objective_eligible:
                 new_manifest["selected_evaluation_id"] = eval_id
                 if execution_phase == "exploration":

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -754,7 +755,10 @@ def test_holdout_event_must_verify_on_reopen_history_and_export(tmp_path, change
         manifest = json.loads(study_path.read_bytes())
         ref = manifest["holdout_exposures"][0]
         ref.update(sha256=hashlib.sha256(event.read_bytes()).hexdigest(), size=event.stat().st_size)
-        manifest["evaluations"][receipt.evaluation_id]["holdout_exposure_ref"] = ref
+        entry = manifest["evaluations"][receipt.evaluation_id]
+        entry["holdout_exposure_ref"] = ref
+        if change == "early_exposure":
+            entry.pop("exposed_at", None)
         study_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with CalibrationStudyService.open(study_path, read_only=True, registry=registry) as reader:
@@ -767,6 +771,49 @@ def test_holdout_event_must_verify_on_reopen_history_and_export(tmp_path, change
         with pytest.raises(MaterialStudyError, match="CORRUPT_ARTIFACT"):
             writer.export(receipt.evaluation_id, target, expected_revision=writer.snapshot().document_revision)
         assert not target.exists()
+
+
+@pytest.mark.parametrize("change", [
+    "future", "future_without_manifest_time", "after_manifest_update", "indexed_timestamp",
+])
+def test_indexed_holdout_exposure_rejects_invalid_timestamp(tmp_path, change):
+    svc, study_path = _make_custom_study(tmp_path, _CustomLinearAdapter())
+    registry = svc._registry
+    with svc:
+        receipt = svc.evaluate(
+            {"m": 3, "b": 2}, expected_revision=svc.snapshot().document_revision,
+            cache_policy="refresh", execution_phase="confirmation", compute_identifiability=False,
+        )
+        manifest = json.loads(study_path.read_bytes())
+        ref, = manifest["holdout_exposures"]
+        event_path = svc.data_root / ref["path"]
+        event = json.loads(event_path.read_bytes())
+
+    entry = manifest["evaluations"][receipt.evaluation_id]
+    assert entry["exposed_at"] == event["exposed_at"]
+    assert datetime.fromisoformat(manifest["updated_at"]) >= datetime.fromisoformat(event["exposed_at"])
+    if change == "indexed_timestamp":
+        event["exposed_at"] = event["exposed_at"].replace("+00:00", "Z")
+    else:
+        entry.pop("exposed_at", None)  # Simulate a manifest from before the timestamp was recorded in the index.
+        if change == "after_manifest_update":
+            manifest["updated_at"] = (datetime.fromisoformat(event["exposed_at"]) - timedelta(microseconds=1)).isoformat()
+        else:
+            event["exposed_at"] = "2999-01-01T00:00:00Z"
+            if change == "future":
+                manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+            else:
+                manifest.pop("updated_at", None)
+
+    raw = json.dumps(event).encode("utf-8")
+    event_path.write_bytes(raw)
+    ref.update(sha256=hashlib.sha256(raw).hexdigest(), size=len(raw))
+    entry["holdout_exposure_ref"] = ref
+    study_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with CalibrationStudyService.open(study_path, read_only=True, registry=registry) as reader:
+        with pytest.raises(MaterialStudyError, match="CORRUPT_ARTIFACT") as caught:
+            reader.evaluation(receipt.evaluation_id)
+        assert caught.value.details["reason"] == "EXPOSURE_TIMESTAMP_MISMATCH"
 
 
 def test_campaign_checkpoint_config_repeat_cache_and_stop(tmp_path):
