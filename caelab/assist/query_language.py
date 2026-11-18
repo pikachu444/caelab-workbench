@@ -20,6 +20,9 @@ from .contracts import (
     RetrievalCandidateCheckV1,
     RetrievalDecisionV1,
     RetrievalRequirementV1,
+    RetrievalTraceRecord,
+    _is_retrieval_event,
+    _validate_embedding_provider,
 )
 
 __all__ = [
@@ -207,15 +210,23 @@ _SOLVER_MENTION = re.compile(
     re.I,
 )
 _EDITION_RE = re.compile(r"(?<![0-9A-Za-z_.])v?\d+(?:\.\d+)*(?![0-9A-Za-z]|\.\d)", re.I)
+_VERSION_LABEL = r"(?:\b(?:versions?|ver\.?|editions?|releases?)|버전|판본)"
+_EDITION_BEFORE_SOLVER = (
+    rf"(?:{_VERSION_LABEL}(?:\s*[:=]\s*|\s+)\d+|v\d+(?:\.\d+)*|\d+(?:\.\d+)+)"
+)
 _PRE_SOLVER_EDITIONS = re.compile(
-    r"(?<![\w.])v?\d+(?:\.\d+)*(?:\s+(?:vs\.?|versus|and|to)\s+v?\d+(?:\.\d+)*)*"
+    rf"(?<![\w.]){_EDITION_BEFORE_SOLVER}(?:\s+(?:vs\.?|versus|and|to)\s+{_EDITION_BEFORE_SOLVER})*"
     r"\s+(?:in|for|of|on|with)\s+$",
     re.I,
 )
-_PARENTHETIC_SOLVER_EDITION = re.compile(r"(?<![\w.])v?\d+(?:\.\d+)*\s*\(\s*$", re.I)
+_PARENTHETIC_SOLVER_EDITION = re.compile(rf"(?<![\w.]){_EDITION_BEFORE_SOLVER}\s*\(\s*$", re.I)
+_ENTITY_NUMBER = re.compile(
+    r"\b(?:nodes?|elements?|parts?|steps?|modes?|frames?|pages?|lines?|section|chapter|figure|table|"
+    r"eq|equation|case|run|id|law|type|column|row|절점|요소|파트|단계|페이지|식)\s*(?:[.#:]\s*)?$", re.I,
+)
 _UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|bar|mbar|psi|ksi|atm|rpm|deg|rad|MN|mJ|kJ|W|kW|C)"
 _EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
-_VERSION_MARKER = re.compile(r"(?:\b(?:versions?|ver\.?|editions?)\s*[:=]?|버전|판본)\s*$", re.I)
+_VERSION_MARKER = re.compile(rf"{_VERSION_LABEL}\s*[:=]?\s*$", re.I)
 _PROTECTED_TOKEN_RE = re.compile(
     _CARD
     + r"|(?<![A-Za-z0-9])(?i:3D|2D|1D)(?![A-Za-z0-9_])"
@@ -794,6 +805,8 @@ def extract_query_scope(plan, explicit_facets=None):
         if _EDITION_UNIT.match(normalized[match.end():]):
             continue
         prefix = normalized[:match.start()]
+        if match[0].isdigit() and _ENTITY_NUMBER.search(prefix):
+            continue
         continued = last_edition_end is not None and re.fullmatch(
             r"\s*(?:(?:,\s*)?(?:and|or|versus|vs\.?|및|와|과)|,|/)\s*", prefix[last_edition_end:], re.I,
         )
@@ -944,9 +957,18 @@ def _candidate_metadata(candidate: CorpusChunkSpec | Mapping[str, Any]) -> tuple
 
 
 def _has_valid_source_span(candidate: CorpusChunkSpec | Mapping[str, Any]) -> bool:
-    if isinstance(candidate, CorpusChunkSpec):
-        return candidate.char_end - candidate.char_start == len(candidate.text)
     try:
+        _candidate_source_span(candidate)
+        if isinstance(candidate, CorpusChunkSpec):
+            return (all(type(value) is int for value in (
+                        candidate.line_start, candidate.line_end, candidate.char_start, candidate.char_end,
+                    ))
+                    and 1 <= candidate.line_start <= candidate.line_end
+                    and 0 <= candidate.char_start < candidate.char_end
+                    and candidate.char_end - candidate.char_start == len(candidate.text)
+                    and ((candidate.page_start is None and candidate.page_end is None)
+                         or (type(candidate.page_start) is int and type(candidate.page_end) is int
+                             and 1 <= candidate.page_start <= candidate.page_end)))
         lines = (candidate.get("start_line", candidate.get("line_start")),
                  candidate.get("end_line", candidate.get("line_end")))
         chars = candidate["char_start"], candidate["char_end"]
@@ -958,7 +980,7 @@ def _has_valid_source_span(candidate: CorpusChunkSpec | Mapping[str, Any]) -> bo
             and isinstance(text, str) and chars[1] - chars[0] == len(text)
             and candidate["text_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
         )
-    except KeyError:
+    except (KeyError, ValueError):
         return False
 
 
@@ -1090,15 +1112,46 @@ def _trace_objects(value):
 
 
 def _trace_blocks_support(value):
-    states = {"decision", "status", "outcome", "relation", "scope_status", "retrieval_decision"}
+    states = {"decision", "status", "outcome", "relation", "scope_status", "retrieval_decision", "kind", "stage"}
     denied = ("insufficient", "out_of_scope", "missing", "unsatisfied", "uncertain",
               "cancelled", "timed_out", "failed")
     return (value.get("is_non_cae") is True or value.get("satisfied") is False
+            or value.get("selected_chunk_ids") == []
             or any(key in value and not value[key] for key in ("checks", "requirement_checks"))
             or any((key in states or key.startswith("req-")) and item in denied for key, item in value.items()))
 
 
-def _strict_assessment(payload, ref, root, identity, requirements, texts, pages, question):
+_QUOTATION_PROVENANCE = {"page", "page_start", "page_end", "section_path"}
+
+
+def _section_path(value):
+    if isinstance(value, str):
+        value = value.split(" > ")
+    if not isinstance(value, (tuple, list)) or any(not isinstance(part, str) or not part.strip() for part in value):
+        raise ValueError("Invalid retrieval assessment citation section_path")
+    return tuple(part.strip() for part in value)
+
+
+def _validate_quote_provenance(value, provenance, span=None, *, require_page=False):
+    pages, is_pdf, section_path = provenance
+    if "section_path" in value and _section_path(value["section_path"]) != section_path:
+        raise ValueError("Invalid retrieval assessment citation section_path")
+    page = value.get("page")
+    has_page = "page" in value and (is_pdf or page is not None)
+    has_range = "page_start" in value or "page_end" in value
+    if not (has_page or has_range):
+        if require_page and is_pdf:
+            raise ValueError("PDF retrieval assessment citation requires page provenance")
+        return
+
+    first, last = (value.get("page_start"), value.get("page_end")) if has_range else (page, page)
+    if (type(first) is not int or type(last) is not int or first > last or first not in pages or last not in pages
+            or (has_page and (type(page) is not int or not page == first == last))
+            or (span is not None and not pages[first][0] <= span[0] < span[1] <= pages[last][1])):
+        raise ValueError("Invalid retrieval assessment citation or quotation page")
+
+
+def _strict_assessment(payload, ref, root, identity, requirements, texts, provenance, question):
     if ref is None or root is None:
         raise ValueError("A retrieval assessment requires assessment_trace_ref and its artifact root")
     if not isinstance(ref, ArtifactRefV1):
@@ -1114,17 +1167,12 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, pages,
             or ref.format_id != "cae-retrieval-trace-v1" or "schema_version" in trace
             and (type(trace["schema_version"]) is not int or trace["schema_version"] != 1)):
         raise ValueError("Invalid retrieval assessment trace format")
-    events = trace.get("events")
-    event_kinds = {"retrieval", "retrieval_assessment", "retrieval_decision", "retrieval_response",
-                   "retrieval_start", "retrieval_completion", "query_plan", "search", "candidate_selection",
-                   "assessment", "response", "requirement_checks", "decision", "terminal", "completion"}
-    if not isinstance(events, list) or any(
-        not isinstance(event, dict) or not ({"kind", "stage"} & event.keys()) or any(
-            key in event and (not isinstance(event[key], str) or event[key] not in event_kinds)
-            for key in ("kind", "stage", "step_kind", "step_type", "event_kind", "type")
-        ) for event in events
-    ):
-        raise ValueError("Invalid retrieval assessment trace events")
+    def validate_events(events):
+        if not isinstance(events, list) or not events or not all(_is_retrieval_event(event) for event in events):
+            raise ValueError("Invalid retrieval assessment trace events")
+        return events
+
+    events = validate_events(trace.get("events"))
     trace_identity = {key: event[key] for event in (trace, *events) for key in identity if key in event}
     if (trace_identity != identity
             or any(event[key] != identity[key] for event in (trace, *events)
@@ -1134,19 +1182,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, pages,
     if any(record[key] != identity[key] for record in trace_objects
            for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256") if key in record):
         raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
-    for record in trace_objects:
-        if ("candidate_id" in record
-                and (not isinstance(record["candidate_id"], str) or record["candidate_id"] not in texts)):
-            raise ValueError("Retrieval trace contains an unknown cited candidate")
-        if "candidate_ids" in record and (not isinstance(record["candidate_ids"], list) or any(
-            not isinstance(cid, str) or cid not in texts for cid in record["candidate_ids"]
-        )):
-            raise ValueError("Retrieval trace contains an unknown cited candidate")
-        if "citations" in record and (not isinstance(record["citations"], list) or any(
-            cid not in texts if isinstance(cid, str) else not isinstance(cid, Mapping) or "candidate_id" not in cid
-            for cid in record["citations"]
-        )):
-            raise ValueError("Retrieval trace contains an unknown cited candidate")
     trace_blocks_support = any(_trace_blocks_support(record) for record in trace_objects)
     if not isinstance(payload, Mapping):
         raise ValueError("Retrieval assessment fields are missing or unexpected")
@@ -1170,49 +1205,105 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, pages,
         if not isinstance(payload[key], list) or any(not isinstance(value, str) or not value.strip() for value in payload[key]):
             raise ValueError(f"Invalid retrieval assessment {key}")
 
+    quote_fields = {"candidate_id", "start", "end"}
+    allowed_quote_fields = quote_fields | _QUOTATION_PROVENANCE | {"text"}
+
     def quote(value):
-        if not isinstance(value, Mapping) or not {"candidate_id", "start", "end"} <= value.keys() or set(value) - {
-            "candidate_id", "start", "end", "text", "page"
-        }:
+        if (not isinstance(value, Mapping) or not quote_fields <= value.keys()
+                or set(value) - allowed_quote_fields):
             raise ValueError("Invalid retrieval assessment citation")
         cid, start, end = value["candidate_id"], value["start"], value["end"]
-        page = value.get("page")
         if (not isinstance(cid, str) or cid not in texts or type(start) is not int or type(end) is not int
                 or not 0 <= start < end <= len(texts[cid])
-                or ("text" in value and value["text"] != texts[cid][start:end])
-                or (page is not None and (type(page) is not int or page < 1 or page not in pages[cid]
-                                          or not pages[cid][page][0] <= start < end <= pages[cid][page][1]))):
+                or ("text" in value and value["text"] != texts[cid][start:end])):
             raise ValueError("Invalid retrieval assessment citation or quotation")
+        _validate_quote_provenance(value, provenance[cid], (start, end), require_page=True)
         return cid, start, end
 
-    if not isinstance(payload.get("citations", []), list) or not isinstance(payload["checks"], list):
-        raise ValueError("Retrieval assessment citations and checks must be lists")
-    citations = {quote(value) for value in payload.get("citations", [])}
-    by_req = {}
-    checked_citations = set()
-    for check in payload["checks"]:
-        if not isinstance(check, Mapping) or set(check) != {
-            "requirement_id", "candidate_ids", "relation", "quoted_spans", "reason"
-        }:
-            raise ValueError("Invalid retrieval assessment check fields")
-        rid = check["requirement_id"]
-        if (not isinstance(rid, str) or rid in by_req
-                or check["relation"] not in ("satisfied", "missing", "uncertain")
-                or not isinstance(check["reason"], str) or not check["reason"].strip()
-                or not isinstance(check["quoted_spans"], list) or not isinstance(check["candidate_ids"], list)
-                or any(not isinstance(cid, str) or cid not in texts for cid in check["candidate_ids"])):
-            raise ValueError("Invalid retrieval assessment check")
-        quotes = [quote(value) for value in check["quoted_spans"]]
-        if not {q[0] for q in quotes} <= set(check["candidate_ids"]) or (
-            check["relation"] == "satisfied" and (not quotes or set(check["candidate_ids"]) != {q[0] for q in quotes})
-        ):
-            raise ValueError("Retrieval assessment check candidate_ids do not match its quotations")
-        checked_citations.update(quotes)
-        by_req[rid] = (check, quotes)
-    if set(by_req) != {req.requirement_id for req in requirements} or (
-        "citations" in payload and citations != checked_citations
-    ):
-        raise ValueError("Retrieval assessment must check every requirement and link every citation")
+    def validate_candidate_ids(ids):
+        if not isinstance(ids, list) or any(not isinstance(cid, str) or cid not in texts for cid in ids):
+            raise ValueError("Retrieval assessment contains an unknown cited candidate or invalid candidate_ids")
+
+    def validate_quotes(values):
+        if not isinstance(values, list):
+            raise ValueError("Retrieval assessment citations and quoted_spans must be lists")
+        for value in values:
+            cid = value.get("candidate_id") if isinstance(value, Mapping) else value
+            if isinstance(cid, str) and cid not in texts:
+                raise ValueError("Retrieval assessment contains an unknown cited candidate")
+        return {quote(value) for value in values}
+
+    required_ids = {req.requirement_id for req in requirements}
+
+    def validate_checks(checks):
+        if not isinstance(checks, list):
+            raise ValueError("Retrieval assessment checks must be a list")
+        by_req = {}
+        checked_citations = set()
+        for check in checks:
+            if not isinstance(check, Mapping) or set(check) != {
+                "requirement_id", "candidate_ids", "relation", "quoted_spans", "reason"
+            }:
+                raise ValueError("Invalid retrieval assessment check fields")
+            rid = check["requirement_id"]
+            if (not isinstance(rid, str) or rid in by_req
+                    or check["relation"] not in ("satisfied", "missing", "uncertain")
+                    or not isinstance(check["reason"], str) or not check["reason"].strip()):
+                raise ValueError("Invalid retrieval assessment check")
+            validate_candidate_ids(check["candidate_ids"])
+            quotes = validate_quotes(check["quoted_spans"])
+            quoted_ids = {q[0] for q in quotes}
+            check_ids = set(check["candidate_ids"])
+            if not quoted_ids <= check_ids or (check["relation"] == "satisfied" and (
+                not quoted_ids or check_ids != quoted_ids
+            )):
+                raise ValueError("Retrieval assessment check candidate_ids do not match its quotations")
+            checked_citations.update(quotes)
+            by_req[rid] = (check, quotes)
+        if set(by_req) != required_ids:
+            raise ValueError("Retrieval assessment must check every requirement")
+        return by_req, checked_citations
+
+    by_req, checked_citations = validate_checks(payload["checks"])
+    if "citations" in payload and validate_quotes(payload["citations"]) != checked_citations:
+        raise ValueError("Retrieval assessment must link every citation")
+
+    for record in trace_objects:
+        if record is not trace and "events" in record:
+            validate_events(record["events"])
+        if "embedding_provider" in record:
+            _validate_embedding_provider(record["embedding_provider"])
+        if "stage_events" in record:
+            RetrievalTraceRecord(
+                embedding_provider=record.get("embedding_provider"),
+                stage_events=record["stage_events"],
+                outcome=record.get("outcome", trace.get("outcome", "completed")),
+                selected_chunk_ids=record.get(
+                    "selected_chunk_ids", trace.get("selected_chunk_ids", identity["candidate_ids"]),
+                ),
+            )
+            trace_blocks_support |= any(
+                _trace_blocks_support({"stage": event})
+                for event in record["stage_events"] if isinstance(event, str)
+            )
+        for key in ("candidate_ids", "selected_chunk_ids"):
+            if key in record:
+                validate_candidate_ids(record[key])
+        for key in ("citations", "quoted_spans"):
+            if key in record:
+                validate_quotes(record[key])
+        for key in ("checks", "requirement_checks"):
+            if key in record and record[key] != []:
+                _, recorded_citations = validate_checks(record[key])
+                if "citations" in record and validate_quotes(record["citations"]) != recorded_citations:
+                    raise ValueError("Retrieval assessment trace must link every citation")
+        if "candidate_id" in record:
+            cid = record["candidate_id"]
+            validate_candidate_ids([cid])
+            if "start" in record or "end" in record:
+                quote({key: record[key] for key in allowed_quote_fields if key in record})
+            elif _QUOTATION_PROVENANCE.intersection(record):
+                _validate_quote_provenance(record, provenance[cid])
 
     scope = payload["out_of_scope"]
     if (not isinstance(scope, Mapping) or set(scope) != {"is_non_cae", "original_spans", "reason"}
@@ -1248,7 +1339,7 @@ def build_retrieval_decision(
     reqs, edition_owners = extract_query_scope(plan, explicit_facets)
 
     cand_summary = []
-    candidate_pages = {}
+    candidate_provenance = {}
     for cand in candidates:
         cid, sha, edition, scope, text = _candidate_metadata(cand)
         override = (candidate_solver_scopes or {}).get(cid)
@@ -1258,10 +1349,19 @@ def build_retrieval_decision(
         source_span = _candidate_source_span(cand)
         positions = ({**source_span["top"], **(source_span["nested"] or {})}
                      if "top" in source_span else source_span)
-        candidate_pages[cid] = _quote_page_bounds(positions, text)
+        source_format = cand.source_format if isinstance(cand, CorpusChunkSpec) else cand.get("source_format")
+        if source_format is not None and not isinstance(source_format, str):
+            raise ValueError("Invalid candidate source_format")
+        section = cand.section_path if isinstance(cand, CorpusChunkSpec) else cand.get("section_path", ())
+        section = _section_path(section)
+        pages = _quote_page_bounds(positions, text)
+        is_pdf = ((source_format or "").strip().lower() == "pdf" or bool(pages)
+                  or any(positions.get(key) is not None
+                         for key in ("page", "page_start", "page_end", "start_page", "end_page")))
+        candidate_provenance[cid] = (pages, is_pdf, section)
         cand_summary.append({"candidate_id": cid, "source_sha256": sha, "edition": edition,
                              "solver_scope": list(scope), "scope_limit": list(override) if override is not None else None,
-                             "source_span": source_span,
+                             "source_span": source_span, "source_format": source_format, "section_path": section,
                              "chunk_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), **meta})
     cand_set_sha = canonical_sha256(cand_summary)
 
@@ -1280,7 +1380,7 @@ def build_retrieval_decision(
             assessment_result, assessment_trace_ref, assessment_trace_root,
             {"assessment_id": assessment_id, "query_plan_sha256": query_plan_sha,
              "candidate_set_sha256": cand_set_sha, "candidate_ids": candidate_ids},
-            reqs, {cid: row[4] for cid, row in candidate_data.items()}, candidate_pages, plan.original_text,
+            reqs, {cid: row[4] for cid, row in candidate_data.items()}, candidate_provenance, plan.original_text,
         )
 
     req_solvers = {normalize_solver(r.expected) for r in reqs if r.facet == "solver"}

@@ -829,7 +829,7 @@ def test_index_loading_can_be_abandoned_before_it_returns(tmp_path, monkeypatch,
         release.set()
 
 
-@pytest.mark.parametrize("stop", ["cancel", "expire"])
+@pytest.mark.parametrize("stop", ["cancel", "expire", "cancel_on_response"])
 def test_stopped_request_does_not_continue_index_build(tmp_path, monkeypatch, stop):
     from io import BytesIO
     from caelab.assist import knowledge, rag
@@ -858,7 +858,10 @@ def test_stopped_request_does_not_continue_index_build(tmp_path, monkeypatch, st
         calls.append(timeout)
         if len(calls) == 1:
             entered.set()
-            assert release.wait(3)
+            if stop == "cancel_on_response":
+                cancelled.set()
+            else:
+                assert release.wait(3)
         batch = json.loads(request.data)["input"]
         return BytesIO(json.dumps({"data": [
             {"index": i, "embedding": [1.0, 0.0]} for i in range(len(batch))
@@ -866,6 +869,8 @@ def test_stopped_request_does_not_continue_index_build(tmp_path, monkeypatch, st
 
     def check_cancelled():
         if cancelled.is_set():
+            if stop == "cancel_on_response" and threading.current_thread() is threading.main_thread():
+                assert done.wait(3)
             raise RuntimeError("cancelled during embedding")
 
     monkeypatch.setattr(service, "pin_knowledge_index", load)
@@ -879,7 +884,7 @@ def test_stopped_request_does_not_continue_index_build(tmp_path, monkeypatch, st
         threading.Thread(target=cancel_after_http_starts, daemon=True).start()
     try:
         turn = ask(path, doc, template_id="material", check_cancelled=check_cancelled)["turns"][-1]
-        assert turn["status"] == ("cancelled" if stop == "cancel" else "timed_out")
+        assert turn["status"] == ("timed_out" if stop == "expire" else "cancelled")
         assert entered.is_set()
     finally:
         release.set()
@@ -887,6 +892,35 @@ def test_stopped_request_does_not_continue_index_build(tmp_path, monkeypatch, st
     assert len(calls) == 1
     assert 0.01 <= calls[0] <= 0.5
     assert knowledge._index_cache == {} and provider.prompts == []
+
+
+def test_embedding_timeout_can_be_shorter_than_ten_milliseconds(monkeypatch):
+    from types import SimpleNamespace
+    from caelab.assist import rag
+
+    monkeypatch.setattr(rag, "time", SimpleNamespace(monotonic=lambda: 100))
+    assert rag._endpoint_timeout(None, 100.003) == pytest.approx(0.003)
+
+
+def test_cancel_during_cache_publication_restores_previous_index(monkeypatch):
+    from caelab.assist import knowledge, rag
+
+    cancel = threading.Event()
+    previous = rag.HybridIndex(chunks=[], embedder_id="previous")
+
+    class CancelOnPublish(dict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            cancel.set()
+
+    cache = CancelOnPublish({("previous",): previous})
+    for name in ("CAELAB_CORPUS_INDEX_DIR", "CAELAB_RAG_INDEX_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(knowledge, "_index_cache", cache)
+    monkeypatch.setattr(knowledge, "configured_sources", lambda: [])
+    monkeypatch.setattr(rag, "get_embedder", rag.HashingEmbedder)
+    assert knowledge.pin_knowledge_index(cancel_event=cancel).index is None
+    assert cache == {("previous",): previous}
 
 
 def test_split_timeout_budgets_dedicated_provider_budget_and_caller_monotonic_anchor(tmp_path, monkeypatch):

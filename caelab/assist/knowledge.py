@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -238,6 +239,26 @@ def configured_sources() -> list[tuple[str, Path, str]]:
 
 
 _index_cache: dict[tuple, rag.HybridIndex] = {}
+_index_cache_lock = threading.Lock()
+
+
+def _publish_index(key, index, check_cancelled):
+    with _index_cache_lock:
+        check_cancelled()
+        previous = _index_cache.copy()
+        _index_cache.clear()
+        _index_cache[key] = index
+        try:
+            check_cancelled()
+        except Exception:
+            _index_cache.clear()
+            _index_cache.update(previous)
+            raise
+
+
+def _cached_index(key):
+    with _index_cache_lock:
+        return _index_cache.get(key)
 
 
 def _load_prebuilt(root: Path, embedder_id: str, *, check_cancelled=lambda: None) -> rag.HybridIndex | None:
@@ -274,7 +295,7 @@ def _load_prebuilt(root: Path, embedder_id: str, *, check_cancelled=lambda: None
     return merged
 
 
-def default_index(*, cancel_event=None, deadline: float | None = None) -> rag.HybridIndex:
+def default_index(*, cancel_event=None, deadline: float | None = None, _publish=None) -> rag.HybridIndex:
     """The shared index: seed notes + configured manual files,
     embedded with the configured embedder. Rebuilt only when the
     source set or embedder changes.
@@ -287,8 +308,10 @@ def default_index(*, cancel_event=None, deadline: float | None = None) -> rag.Hy
 
     def publish(key, index):
         check_cancelled()
-        _index_cache.clear()
-        _index_cache[key] = index
+        if _publish is None:
+            _publish_index(key, index, check_cancelled)
+        else:
+            _publish(key, index)
         return index
 
     check_cancelled()
@@ -302,7 +325,7 @@ def default_index(*, cancel_event=None, deadline: float | None = None) -> rag.Hy
         # Validate the current bundle even when its immutable index was seen before.
         loaded, _ = load_corpus_bundle(root, check_cancelled=check_cancelled)
         key = ("corpus", root, loaded.corpus_revision, loaded.index_digest)
-        cached = _index_cache.get(key)
+        cached = _cached_index(key)
         if cached is not None:
             check_cancelled()
             return cached
@@ -312,7 +335,7 @@ def default_index(*, cancel_event=None, deadline: float | None = None) -> rag.Hy
     prebuilt = legacy_dir
     if prebuilt:
         key = ("prebuilt", prebuilt, embedder.id)
-        cached = _index_cache.get(key)
+        cached = _cached_index(key)
         if cached is not None:
             check_cancelled()
             return cached
@@ -326,7 +349,7 @@ def default_index(*, cancel_event=None, deadline: float | None = None) -> rag.Hy
         check_cancelled()
         source_keys.append((source_id, str(path), path.stat().st_mtime if path.exists() else 0))
     key = (embedder.id, tuple(source_keys))
-    cached = _index_cache.get(key)
+    cached = _cached_index(key)
     if cached is not None:
         check_cancelled()
         return cached
@@ -348,7 +371,23 @@ def pin_knowledge_index(*, cancel_event=None, deadline: float | None = None) -> 
     try:
         if cancel_event is None and deadline is None:
             return PinnedKnowledgeIndex(default_index())
-        return PinnedKnowledgeIndex(default_index(cancel_event=cancel_event, deadline=deadline))
+        pending = None
+
+        def defer_publish(key, index):
+            nonlocal pending
+            pending = (key, index)
+
+        def check_cancelled():
+            rag.check_index_budget(cancel_event, deadline)
+
+        pinned = PinnedKnowledgeIndex(default_index(
+            cancel_event=cancel_event, deadline=deadline, _publish=defer_publish,
+        ))
+        if pending is None:
+            check_cancelled()
+        else:
+            _publish_index(*pending, check_cancelled)
+        return pinned
     except Exception as error:
         return PinnedKnowledgeIndex(None, f"{type(error).__name__}: {error}")
 

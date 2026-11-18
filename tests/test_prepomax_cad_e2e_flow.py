@@ -636,6 +636,15 @@ def test_d32_contract_boundaries_and_discipline_graph_gap(tmp_path: Path):
 
 
 
+def test_template_deck_preserves_spaced_comments_with_tokens():
+    from caelab.mdo.inp_binder import TemplateDeck
+
+    comments = "* * documentation <NOTE>\r\n\t* \t* <E>\r\n"
+    deck = TemplateDeck.from_text(comments + "*ELASTIC\r\n<E>, 0.3\r\n")
+    assert deck.token_names == ("E",)
+    assert deck.render({"E": 210}) == comments + "*ELASTIC\r\n210, 0.3\r\n"
+
+
 @pytest.mark.parametrize("element_header", ["*ELEMENT,TYPE=C3D4", "*ELEMENT ,TYPE=C3D4", "* ELEMENT,TYPE=C3D4", "*\tELE MENT,TYPE=C3D4"])
 @pytest.mark.parametrize("comment", ["", "* \t* included connectivity\n"])
 def test_d32_include_card_state_and_rendered_connectivity_guard(tmp_path, element_header, comment):

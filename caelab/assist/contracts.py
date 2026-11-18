@@ -35,6 +35,7 @@ __all__ = [
     "RetrievalCandidateCheckV1",
     "RetrievalDecisionV1",
     "RetrievalRequirementV1",
+    "RetrievalTraceRecord",
     "RoleReadPolicyV1",
     "build_role_read_policy",
     "map_corpus_source_kind_to_envelope",
@@ -796,6 +797,7 @@ class CorpusChunkSpec:
     # Resolved from the published manifest, outside the source-span wire record.
     source_kind: str | None = field(default=None, compare=False)
     review_status: str | None = field(default=None, compare=False)
+    source_format: str | None = field(default=None, compare=False)
     # Relative character offsets at the starts of subsequent pages.
     page_breaks: tuple[int, ...] | None = None
 
@@ -990,6 +992,82 @@ class CorpusReceipt:
             context="CorpusReceipt",
         )
         return cls(**m)
+
+
+def _validate_embedding_provider(provider: Mapping[str, Any]) -> dict[str, Any]:
+    data = _require_exact_keys(
+        provider, {"provider_id", "model", "dimensions", "Status"}, context="embedding_provider",
+    )
+    for key in ("provider_id", "model"):
+        if not isinstance(data[key], str) or not data[key].strip():
+            raise ValueError(f"embedding_provider.{key} must be a non-empty string")
+    if type(data["dimensions"]) is not int or data["dimensions"] <= 0:
+        raise ValueError("embedding_provider.dimensions must be a positive integer")
+    if data["Status"] not in ("ready", "fallback", "unavailable"):
+        raise ValueError("Invalid embedding_provider.Status")
+    return dict(data)
+
+
+_RETRIEVAL_TERMINAL_STAGES = frozenset({
+    "terminal", "completion", "complete", "completed", "finalize", "retrieval_completion",
+    "retrieval_decision", "select_candidates", "candidates_selected", "no_candidates", "supported",
+    "insufficient", "out_of_scope", "cancelled", "timed_out", "failed",
+})
+_RETRIEVAL_STAGES = _RETRIEVAL_TERMINAL_STAGES | {
+    "retrieval", "retrieval_assessment", "retrieval_response", "retrieval_start", "query_plan",
+    "search", "candidate_selection", "assessment", "response", "requirement_checks", "decision",
+    "prepare_query", "embed_query", "rank_candidates", "rerank",
+}
+
+
+def _is_retrieval_event(event: Any) -> bool:
+    return (isinstance(event, Mapping) and bool({"kind", "stage"} & event.keys())
+            and all(isinstance(event[key], str) and event[key] in _RETRIEVAL_STAGES
+                    for key in ("kind", "stage", "step_kind", "step_type", "event_kind", "type") if key in event))
+
+
+@dataclass(frozen=True)
+class RetrievalTraceRecord:
+    embedding_provider: Mapping[str, Any] | None
+    stage_events: Sequence[str | Mapping[str, Any]]
+    outcome: str
+    selected_chunk_ids: Sequence[str]
+
+    def __post_init__(self) -> None:
+        self.validate()
+        if self.embedding_provider is not None:
+            object.__setattr__(self, "embedding_provider", MappingProxyType(dict(self.embedding_provider)))
+        object.__setattr__(self, "stage_events", _freeze_value(self.stage_events, context="stage_events"))
+        object.__setattr__(self, "selected_chunk_ids", tuple(self.selected_chunk_ids))
+
+    def validate(self) -> None:
+        if self.embedding_provider is not None:
+            _validate_embedding_provider(self.embedding_provider)
+        outcome = _require_nonempty_str(self.outcome, "RetrievalTraceRecord.outcome")
+        selected = _require_str_tuple(self.selected_chunk_ids, "RetrievalTraceRecord.selected_chunk_ids")
+        if not isinstance(self.stage_events, (list, tuple)) or not self.stage_events:
+            raise ValueError("RetrievalTraceRecord.stage_events must be a non-empty list or tuple")
+        if not all(isinstance(event, str) and event in _RETRIEVAL_STAGES or _is_retrieval_event(event)
+                   for event in self.stage_events):
+            raise ValueError("Invalid RetrievalTraceRecord.stage_events")
+        stages = [
+            event.get("stage", event.get("kind")) if isinstance(event, Mapping) else event
+            for event in self.stage_events
+        ]
+        if "prepare_query" not in stages[:-1] or stages[-1] not in _RETRIEVAL_TERMINAL_STAGES:
+            raise ValueError("RetrievalTraceRecord.stage_events must include prepare_query and a terminal stage")
+        if ((outcome in ("supported", "candidates_selected") and not selected)
+                or (outcome == "no_candidates" and selected)):
+            raise ValueError("RetrievalTraceRecord.outcome conflicts with selected_chunk_ids")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            **({"embedding_provider": dict(self.embedding_provider)} if self.embedding_provider is not None else {}),
+            "stage_events": _to_plain(self.stage_events),
+            "outcome": self.outcome,
+            "selected_chunk_ids": list(self.selected_chunk_ids),
+        }
 
 
 # ------------------------------------------------------------------ RetrievalDecisionV1

@@ -421,7 +421,7 @@ def _chunk_text_with_spans(
     stack: list[str] = []
     current_start = 1
     current_path: tuple[str, ...] = (source.title,)
-    is_markdown = ext in {".md", ".markdown", ".txt"}
+    is_markdown = (source.source_format or "").lower() in {"markdown", "md"} or ext in {".md", ".markdown", ".txt"}
 
     for idx, line in enumerate(lines, 1):
         stripped = line.rstrip("\r\n")
@@ -1017,7 +1017,8 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
         chunks.append(rag.Chunk(
             chunk_id=spec.chunk_id, source_id=spec.source_id, heading_path=spec.section_path, text=spec.text,
             solver=scope[0] if len(scope) == 1 else "", solver_scope=scope,
-            corpus_chunk=replace(spec, source_kind=source.source_kind, review_status=review_statuses[spec.source_id]),
+            corpus_chunk=replace(spec, source_kind=source.source_kind, source_format=source.source_format,
+                                 review_status=review_statuses[spec.source_id]),
             source_kind=source.source_kind, review_status=review_statuses[spec.source_id],
         ))
     if local_chunks != (manifest.local_chunk_sha256 or {}):

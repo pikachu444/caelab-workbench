@@ -266,15 +266,17 @@ class BM25:
 
 # ---------------------------------------------------------------- embedders
 def check_index_budget(cancel_event=None, deadline: float | None = None) -> float | None:
+    if cancel_event is not None and (cancel_event() if callable(cancel_event) else cancel_event.is_set()):
+        raise TimeoutError("Knowledge retrieval stopped")
     remaining = None if deadline is None else deadline - time.monotonic()
-    if (cancel_event is not None and cancel_event.is_set()) or (remaining is not None and remaining <= 0):
+    if remaining is not None and remaining <= 0:
         raise TimeoutError("Knowledge retrieval stopped")
     return remaining
 
 
 def _endpoint_timeout(cancel_event, deadline):
     remaining = check_index_budget(cancel_event, deadline)
-    return 600 if remaining is None else min(600, max(0.01, remaining))
+    return 600 if remaining is None else min(600, remaining)
 
 
 class Embedder:
@@ -327,6 +329,7 @@ class EndpointEmbedder(Embedder):
     def embed(self, texts: list[str], *, cancel_event=None, deadline: float | None = None) -> np.ndarray:
         vectors: list[list[float]] = []
         for start in range(0, len(texts), 32):
+            check_index_budget(cancel_event, deadline)
             batch = texts[start: start + 32]
             body = json.dumps({"model": self.model, "input": batch}).encode("utf-8")
             request = urllib.request.Request(
@@ -335,8 +338,9 @@ class EndpointEmbedder(Embedder):
             if self.api_key:
                 request.add_header("Authorization", f"Bearer {self.api_key}")
             with urllib.request.urlopen(request, timeout=_endpoint_timeout(cancel_event, deadline)) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            check_index_budget(cancel_event, deadline)
+                raw = response.read()
+                check_index_budget(cancel_event, deadline)
+            data = json.loads(raw.decode("utf-8"))
             vectors.extend(item["embedding"] for item in sorted(data["data"], key=lambda d: d["index"]))
         return _normalize(np.array(vectors, dtype=np.float32))
 

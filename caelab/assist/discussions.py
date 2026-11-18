@@ -1128,6 +1128,20 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
             except Exception:
                 pass
         stopped = threading.Event()
+
+        class LiveCancellation:
+            def is_set(self):
+                if stopped.is_set():
+                    return True
+                if check_cancelled is not None:
+                    try:
+                        check_cancelled()
+                    except Exception:
+                        stopped.set()
+                        return True
+                return False
+
+        live_cancellation = LiveCancellation()
         # A cancelled caller can leave the preparation message unread. The worker
         # can still post its one terminal result and exit.
         responses = queue.Queue()
@@ -1176,7 +1190,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     problems = verify_evidence(evidence, path.parent / "assets")
                     if problems:
                         raise ValueError("근거 무결성 확인 실패: " + "; ".join(problems))
-                pinned = (pin_knowledge_index(cancel_event=stopped, deadline=prep_deadline)
+                pinned = (pin_knowledge_index(cancel_event=live_cancellation, deadline=prep_deadline)
                           if "knowledge" in template.allowed_tools else None)
                 checkpoint("prep")
                 index = pinned.index if pinned is not None else None
@@ -1187,7 +1201,9 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                         document, prior_turn, asset_root
                     ):
                         discussion.history.append(prior_turn)
-                prompt = discussion.build_prompt(question, pinned_index=pinned, cancel_event=stopped, deadline=prep_deadline)
+                prompt = discussion.build_prompt(
+                    question, pinned_index=pinned, cancel_event=live_cancellation, deadline=prep_deadline
+                )
                 materials = _provided_materials(discussion, evidence, origin)
                 k_res = discussion.knowledge_result
                 retrieval_decisions = []

@@ -25,6 +25,7 @@ from caelab.assist.contracts import (
     RetrievalCandidateCheckV1,
     RetrievalDecisionV1,
     RetrievalRequirementV1,
+    RetrievalTraceRecord,
     RoleReadPolicyV1,
     build_role_read_policy,
     map_corpus_source_kind_to_envelope,
@@ -1105,17 +1106,50 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     for trace_outcome in ("insufficient", "out_of_scope", "cancelled", "timed_out", "failed"):
         assert assess(candidate, trace_outcome=trace_outcome).status == "insufficient"
         assert assess(candidate, trace_outcome=trace_outcome, trace_events=True).status == "insufficient"
-    for response in ({"decision": {"status": "insufficient"}},
-                     {"assessment": {"requirement_checks": [{"relation": "missing"}]}},
-                     {"requirement_checks": [{"status": "uncertain"}]},
-                     {"requirement_checks": []}):
+    for response in ({"decision": {"status": "insufficient"}}, {"requirement_checks": []}):
         assert assess(candidate, trace_overrides={"response": response}).status == "insufficient"
+    for response in ({"assessment": {"requirement_checks": [{"relation": "missing"}]}},
+                     {"requirement_checks": [{"status": "uncertain"}]}):
+        with pytest.raises(ValueError, match="check fields"):
+            assess(candidate, trace_overrides={"response": response})
     for event in ({"kind": "solver_step"}, {"status": "completed"}):
         with pytest.raises(ValueError, match="trace events"):
             assess(candidate, trace_overrides={"events": [event]})
     for citation in ("unknown:chunk", {"candidate_id": "unknown:chunk"}):
         with pytest.raises(ValueError, match="unknown cited candidate"):
             assess(candidate, trace_overrides={"response": {"citations": [citation]}})
+    provider = {"provider_id": "endpoint", "model": "test", "dimensions": 384, "Status": "ready"}
+    recorded_stages = RetrievalTraceRecord(
+        embedding_provider=provider, stage_events=["prepare_query", {"stage": "retrieval_completion"}],
+        outcome="candidates_selected", selected_chunk_ids=[candidate["citation"]],
+    ).to_dict()
+    assert assess(candidate, trace_overrides=recorded_stages).status == "supported"
+    with pytest.raises(ValueError, match="outcome conflicts"):
+        assess(candidate, trace_overrides={**recorded_stages, "selected_chunk_ids": []})
+    with pytest.raises(ValueError, match="stage_events"):
+        assess(candidate, trace_overrides={**recorded_stages, "stage_events": ["prepare_query", "solver_step"]})
+    assert assess(candidate, trace_overrides={
+        **recorded_stages, "stage_events": ["prepare_query", "cancelled"], "outcome": "cancelled",
+    }).status == "insufficient"
+    for invalid in (dict(dimensions=True), dict(Status="unknown"), dict(extra=True)):
+        with pytest.raises(ValueError, match="embedding.provider"):
+            assess(candidate, trace_overrides={"response": {"embedding_provider": {**provider, **invalid}}})
+    assert assess(candidate, trace_overrides={"selected_chunk_ids": []}).status == "insufficient"
+    for field in ("events", "stage_events"):
+        with pytest.raises(ValueError, match="events"):
+            assess(candidate, trace_overrides={field: []})
+    with pytest.raises(ValueError, match="events"):
+        assess(candidate, trace_overrides={"response": {"events": [{"kind": "solver_step"}]}})
+    citation = {"candidate_id": candidate["citation"], "start": 0, "end": 10_000}
+    check = {"requirement_id": "req-topic", "relation": "satisfied", "reason": "recorded",
+             "candidate_ids": [candidate["citation"]], "quoted_spans": [{**citation, "end": 2}]}
+    for response_format in ("frozen", None):
+        with pytest.raises(ValueError, match="citation or quotation"):
+            assess(candidate, response_format=response_format, trace_overrides={"response": {"citations": [citation]}})
+        with pytest.raises(ValueError, match="every requirement"):
+            assess(candidate, response_format=response_format, trace_overrides={"response": {"checks": [check]}})
+    assert not query_language._has_valid_source_span(dict(candidate, page_start=5, page_end=2))
+    assert not query_language._has_valid_source_span(dict(candidate, source_span={"char_start": True}))
     with pytest.raises(ValueError, match="trace identity"):
         assess(candidate, trace_overrides={"assessment_id": None})
     with pytest.raises(ValueError, match="retrieval trace artifact"):
@@ -1345,19 +1379,23 @@ def test_assessment_quote_must_fit_the_claimed_page_of_a_pdf_chunk(tmp_path, mon
     producer = ProducerIdentity("pytest", "1")
     review = ArtifactRefV1(id="review", role="source_review", path="review.json", sha256="d" * 64,
                            size=1, format_id="cae-source-review-v1", producer=producer)
-    trace_bytes = canonical_json_bytes({
-        "schema": "caelab.retrieval_trace.v1",
-        "assessment_id": probe.assessment_id, "query_plan_sha256": probe.query_plan_sha256,
-        "candidate_set_sha256": probe.candidate_set_sha256, "candidate_ids": [spec.citation],
-        "events": [{"kind": "retrieval_completion", "status": "completed"}],
-    })
-    (tmp_path / "trace.json").write_bytes(trace_bytes)
-    trace_ref = ArtifactRefV1(id="trace", role="retrieval_trace", path="trace.json",
-                              sha256=hashlib.sha256(trace_bytes).hexdigest(), size=len(trace_bytes),
-                              format_id="cae-retrieval-trace-v1", producer=producer)
 
-    def assess(page):
-        quotes = [{"candidate_id": spec.citation, "start": 0, "end": len("Weak form"), "page": page}]
+    def assess(provenance, trace_provenance=None, *, end=len("Weak form")):
+        span = {"candidate_id": spec.citation, "start": 0, "end": end}
+        event = {"kind": "retrieval_completion", "status": "completed"}
+        if trace_provenance is not None:
+            event["response"] = {"citations": [{**span, **trace_provenance}]}
+        trace_bytes = canonical_json_bytes({
+            "schema": "caelab.retrieval_trace.v1",
+            "assessment_id": probe.assessment_id, "query_plan_sha256": probe.query_plan_sha256,
+            "candidate_set_sha256": probe.candidate_set_sha256, "candidate_ids": [spec.citation],
+            "events": [event],
+        })
+        (tmp_path / "trace.json").write_bytes(trace_bytes)
+        trace_ref = ArtifactRefV1(id="trace", role="retrieval_trace", path="trace.json",
+                                  sha256=hashlib.sha256(trace_bytes).hexdigest(), size=len(trace_bytes),
+                                  format_id="cae-retrieval-trace-v1", producer=producer)
+        quotes = [{**span, **provenance}]
         checks = [{"requirement_id": req.requirement_id, "relation": "satisfied", "reason": "page evidence",
                    "candidate_ids": [spec.citation], "quoted_spans": quotes} for req in probe.requirements]
         return query_language.build_retrieval_decision(
@@ -1369,9 +1407,31 @@ def test_assessment_quote_must_fit_the_claimed_page_of_a_pdf_chunk(tmp_path, mon
             },
         )
 
-    assert assess(1).status == "supported"
-    with pytest.raises(ValueError, match="citation or quotation"):
-        assess(2)
+    assert assess({"page": 1}).status == "supported"
+    page_range = {"page_start": 1, "page_end": 1, "section_path": "Weak form"}
+    assert assess(page_range, trace_provenance=page_range).status == "supported"
+    assert assess({"page_start": 1, "page_end": 2}, end=len(spec.text)).status == "supported"
+    for invalid in ({}, {"page": None}, {"page": 2}, {"page_start": 2, "page_end": 1},
+                    {"page": 2, **page_range}, {"page": 1, "section_path": ["Forged clause"]}):
+        with pytest.raises(ValueError, match="citation"):
+            assess(invalid)
+        with pytest.raises(ValueError, match="citation"):
+            assess({"page": 1}, trace_provenance=invalid)
+
+
+def test_local_only_declared_markdown_preserves_headings(tmp_path):
+    root, manifest, data = _make_sample_corpus(tmp_path)
+    source = data["sources"][0]
+    (root / source["local_relative_path"]).rename(root / "manual.data")
+    source.update(local_relative_path="manual.data", source_format="markdown")
+    source["license"]["redistribution"] = "local_only"
+    manifest.write_bytes(canonical_json_bytes(data))
+    out = tmp_path / "out"
+    corpus.build_corpus(manifest, output_root=out)
+    index, _ = corpus.load_corpus_bundle(out)
+    assert any(chunk.corpus_chunk.source_id == source["source_id"]
+               and "Drucker-Prager Plasticity and Dilation Angle" in chunk.corpus_chunk.section_path
+               for chunk in index.chunks)
 
 
 @pytest.mark.parametrize("defect", ["wrong_schema", "wrong_version", "wrong_discussion", "wrong_turn", "alias", "event", "chunk", "no_terminal"])
@@ -1823,6 +1883,29 @@ def test_d09_comparison_editions_and_unmentioned_facet_spans(tmp_path, question)
     facets = {"solver": "abaqus", "model": "Norton", "edition": "2.24"}
     reqs = query_language.extract_query_requirements(query_language.prepare_query("Weak form?"), facets)
     assert all(req.original_span is None for req in reqs if req.facet in facets)
+
+
+@pytest.mark.parametrize("question", [
+    "How do I extract displacement at node 42 in CalculiX?",
+    "Compare frames 42 and 43 in CalculiX",
+    "Do I need law 1 (CalculiX)?",
+    "절점 42 in CalculiX",
+])
+def test_d09_entity_numbers_are_not_solver_editions(question):
+    plan = query_language.prepare_query(question)
+    requirements, owners = query_language.extract_query_scope(plan)
+    assert any(req.facet == "solver" and req.expected == "CalculiX" for req in requirements)
+    assert not owners
+    assert not any(req.facet == "edition" for req in requirements)
+
+
+@pytest.mark.parametrize("phrase", ["release 42 in CalculiX", "V42 (CalculiX)"])
+def test_d09_explicit_version_marker_allows_integer_edition(phrase):
+    plan = query_language.prepare_query(f"Compare the contact behavior of {phrase}")
+    requirements, owners = query_language.extract_query_scope(plan)
+    [edition] = [req for req in requirements if req.facet == "edition"]
+    assert query_language.editions_match(edition.expected, "42")
+    assert owners == {edition.requirement_id: "calculix"}
 
 
 def test_d09_units_scope_edges_and_legacy_labels():
