@@ -17,6 +17,7 @@ from pathlib import Path
 from ..artifact_refs import ArtifactOwner, ArtifactRefV1, DatasetManifestV1, canonical_json_bytes, canonical_sha256
 from ..result_readers import ResultError, no_checkpoint
 from ..result_readers import opencourant_history, vtk_fields
+from .input_snapshot import _rad_includes
 from .operations import (INPUT_SNAPSHOT, POST_PRODUCER, artifact, artifact_path, read_object, sha256_file,
                          snapshot_deck_paths, source_fingerprint, source_record, verify_artifact,
                          verify_original_decks, with_input_snapshot)
@@ -241,6 +242,8 @@ def _rad_cards(paths, check):
                 text = line.lstrip()
                 if included and re.match(r"#enddata\b", text, re.I):
                     break
+                if not included and re.match(r"/end(?:\s|$)", text, re.I):
+                    break
                 if text.startswith("//") and text.upper().startswith("//SUBMODEL"):
                     raise ResultError("SOURCE_MISMATCH", "transformed RAD submodels are unsupported")
                 if text.startswith("/") and not text.startswith("//"):
@@ -267,6 +270,34 @@ def _rad_fields(row, widths, convert):
         return list(map(convert, row.split()[:len(widths)]))
 
 
+def _active_rad_paths(root, snapshot, paths, check):
+    starter = snapshot.get("execution_input")
+    engine = snapshot.get("engine_input")
+    # Older snapshots can be flat lists with no recorded include graph.
+    if not starter and not engine and not re.search(br"(?im)^[ \t]*#include\b", paths[0].read_bytes()):
+        return paths
+
+    active = {}
+    archived = set(paths)
+
+    def visit(path, *, included, ancestors=()):
+        check()
+        if path in ancestors or len(ancestors) > 9:
+            raise ValueError(f"invalid RAD include nesting at {path.name}")
+        if path in active:
+            return
+        if path not in archived:
+            raise ValueError(f"active RAD deck or include is not archived: {path.name}")
+        active[path] = None
+        for name, _ in _rad_includes(path.read_bytes(), path, included=included):
+            visit(artifact_path(root, name), included=True, ancestors=(*ancestors, path))
+
+    visit(artifact_path(root, starter) if starter else paths[0], included=False)
+    if engine:
+        visit(artifact_path(root, engine), included=False)
+    return tuple(active)
+
+
 def _rad_snapshot_metadata(root, receipt, check, *, animation):
     paths = tuple(dict.fromkeys(snapshot_deck_paths(root, receipt)))
     if not paths:
@@ -276,6 +307,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
     shell_properties, solid_properties, materials = {}, {}, {}
     history = []
     lagrangian = True
+    implicit = False
+    default_isolid = None
     topology = {"SHELL": (9, 4), "SH3N": (5, 3), "BRICK": (12, 8), "TETRA4": (10, 4), "TETRA": (10, 4)}
 
     def add(table, key, value):
@@ -284,10 +317,16 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
         table[key] = value
 
     try:
+        paths = _active_rad_paths(root, receipt["snapshot"], paths, check)
         for card, rows in _rad_cards(paths, check):
             head = card[0]
             if head in {"ALE", "EULER", "UPWM"}:
                 lagrangian = False
+            elif head in {"IMPLICIT", "IMPL"}:
+                implicit = True
+            elif head == "DEF_SOLID" and default_isolid is None:
+                row = next((row for row in rows if row.strip()), "")
+                default_isolid = int(row[:10].strip() or "0")
             if head == "NODE" and animation:
                 if len(card) > 1 and int(card[1]) != 0:
                     raise ValueError("local RAD node units are unsupported")
@@ -325,8 +364,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                     add(shell_properties, int(card[2]), int(rows[3][:10].strip() or "0"))
                 elif card[1] in {"SOLID", "TYPE14"}:
                     row = rows[1]
-                    isolid, ismstr, iale = (int(row[start:start + 10].strip() or "0") for start in (0, 10, 20))
-                    add(solid_properties, int(card[2]), isolid in {1, 2, 24} and ismstr in {0, 4} and iale == 0)
+                    isolid, _ismstr, iale = (int(row[start:start + 10].strip() or "0") for start in (0, 10, 20))
+                    add(solid_properties, int(card[2]), (isolid, iale))
             elif not animation and head == "TH" and len(card) >= 3 and card[1] in {"BRIC", "NODE"}:
                 title = " ".join(rows[0].split())
                 codes = []
@@ -345,8 +384,11 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
                                    for code in codes)
         shells = {eid: element for eid, element in elements.items() if element["cell_type"] in {5, 9}}
         solids = {eid: element for eid, element in elements.items() if element["cell_type"] in {10, 12}}
+        default_isolid = default_isolid or (14 if implicit else 1)
+        one_point = {prop for prop, (isolid, iale) in solid_properties.items()
+                     if (isolid or default_isolid) in {1, 2, 24} and iale == 0}
         formulations = {eid: "hex8_1pt" for eid, element in solids.items() if lagrangian and element["cell_type"] == 12
-                        and solid_properties.get(parts.get(element["part_id"], (None, None))[0])}
+                        and parts.get(element["part_id"], (None, None))[0] in one_point}
         mesh = None
         if animation:
             node_ids = set(map(int, nodes))

@@ -124,6 +124,8 @@ def _rad_includes(data: bytes, path: Path, *, included=False):
     """Radioss INCLUDE names are relative to the solver cwd, never the parent deck."""
     lines = data.splitlines()
     for index, line in enumerate(lines):
+        if not included and re.match(br"\s*/end(?:\s|$)", line, re.I):
+            break
         if included and re.match(br"\s*#enddata\b", line, re.I):
             break
         match = re.match(br"\s*#include\b(.*)$", line, re.I)

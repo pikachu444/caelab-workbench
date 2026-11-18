@@ -7,6 +7,7 @@ import json
 import re
 import time
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -22,6 +23,7 @@ _LEGACY_TERMINAL_OPERATIONS = {"timed_out", "interrupted"}
 INPUT_SNAPSHOT = "input/snapshot.json"
 _ID = re.compile(r"[0-9a-f]{32}")
 _CHUNK = 1024 * 1024
+_OPERATION_STARTUP_FILES = {"operation.lock", "operation.json.part"}
 # Reader source hashes from 5e59f175, for LF and CRLF checkouts.
 _ORIGINAL_FIELD_READERS = {
     "3d5c291d80078f4653e776c1aedc5234f1c9a0bd6cbe58a1e482a121fab14f76",
@@ -39,9 +41,13 @@ def _original_reader(receipt):
         return False
     readers = _ORIGINAL_HISTORY_READERS if adapter.get("id") == "OC-TH4-1" else _ORIGINAL_FIELD_READERS
     code = adapter.get("code_sha256")
+    top_code = receipt.get("adapter_code_sha256")
+    if code is not None and top_code is not None and code != top_code:
+        return False
+    recorded = code if code is not None else top_code
     return ("dataset_ref" in receipt and receipt.get("result") is None and "dataset_manifest_sha256" not in receipt
-            and "reader_code_sha256" not in receipt and code in readers
-            and receipt.get("adapter_code_sha256", code) in readers)
+            and "reader_code_sha256" not in receipt
+            and (recorded is None or isinstance(recorded, str) and recorded in readers))
 
 
 class _TerminalResultConflict(ResultError):
@@ -273,7 +279,11 @@ def _read_receipt(folder, source_run_id, operation_id):
     try:
         data = read_object(artifact_path(folder, "operation.json"))
     except FileNotFoundError:
-        if folder.is_dir():
+        try:
+            has_artifacts = any(path.name not in _OPERATION_STARTUP_FILES for path in folder.iterdir())
+        except FileNotFoundError:
+            return None
+        if has_artifacts:
             raise ResultError("CORRUPT_OPERATION", f"missing operation.json in {operation_id}", availability="corrupt")
         return None
     except ResultError:
@@ -361,6 +371,12 @@ def _operation_receipts(store, *, strict=False, recover_orphans=False, reject_co
                 check()
             if receipt is not None:
                 yield folder, receipt
+            elif recover_orphans:
+                for name in _OPERATION_STARTUP_FILES:
+                    with suppress(OSError):
+                        artifact_path(folder, name).unlink(missing_ok=True)
+                with suppress(OSError):
+                    folder.rmdir()
 
 
 def recover_derived_operations(store, *, reject_conflicts=True):

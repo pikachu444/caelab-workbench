@@ -17,6 +17,7 @@ import time
 import traceback
 import uuid
 from concurrent.futures import Future
+from contextlib import suppress
 from typing import Callable, Sequence, Any, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -787,10 +788,6 @@ class JobManager:
                 folder.mkdir(parents=True)
                 created_folder = True
                 check_deadline()
-                atomic_json(artifact_path(folder, "operation.json"), receipt)
-                check_deadline()
-                # Duplicate scans recognize active receipts only after this
-                # lock exists, so a timed-out queued write cannot be reused.
                 remaining = max(0.0, deadline - time.monotonic())
                 operation_lock = FileLock(artifact_path(folder, "operation.lock"), timeout=remaining, thread_local=False)
                 try:
@@ -805,7 +802,13 @@ class JobManager:
                                           args=(control, deadline, executor or subprocess.Popen),
                                           name=f"caelab-result-{op_id[:8]}", daemon=True)
                 control["thread"] = worker
+                pending = artifact_path(folder, "operation.json.part")
                 check_deadline()
+                atomic_json(pending, receipt)
+                check_deadline()
+                # Duplicate scans only see the committed receipt after both
+                # the lock acquisition and the receipt write met the deadline.
+                pending.replace(artifact_path(folder, "operation.json"))
                 self._operations[op_id] = control
                 worker.start()
                 return copy.deepcopy(receipt)
@@ -814,13 +817,19 @@ class JobManager:
                 try:
                     if isinstance(exc, ResultError) and exc.code == "TIMEOUT":
                         if operation_lock is not None:
-                            operation_lock.release()
+                            with suppress(OSError):
+                                operation_lock.release()
                             operation_lock = None
                         if created_folder:
                             (folder / "operation.json").unlink(missing_ok=True)
-                            (folder / "operation.lock").unlink(missing_ok=True)
-                            folder.rmdir()
+                            with suppress(OSError):
+                                (folder / "operation.json.part").unlink(missing_ok=True)
+                            with suppress(OSError):
+                                (folder / "operation.lock").unlink(missing_ok=True)
+                                folder.rmdir()
                     elif created_folder:
+                        with suppress(OSError):
+                            (folder / "operation.json.part").unlink(missing_ok=True)
                         receipt.update(state="failed", stage="failed", finished_at=utc_now(),
                                        error={"code": "STARTUP_FAILED", "message": str(exc) or "converter startup failed",
                                               "detail": str(exc)})

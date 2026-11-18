@@ -194,25 +194,36 @@ def _selection_payload(directory, descriptor, check):
         raise ResultError("SCHEMA_MISMATCH", "invalid selection payload reference")
     relative = descriptor.get("path")
     path = artifact_path(directory, relative)
+    fmt = descriptor.get("format_id")
+    fmt = fmt.lower() if isinstance(fmt, str) else None
+    suffix = path.suffix.lower()
+    json_formats = {"json", "caelab.selection.v1"}
+    npy_formats = {"npy", "numpy.npy.v2"}
+    if fmt is not None and fmt not in json_formats | npy_formats:
+        raise ResultError("SCHEMA_MISMATCH", "selection payload must be JSON or NPY")
+    if (suffix == ".json" and (fmt is None or fmt in json_formats)) or (not suffix and fmt in json_formats):
+        is_npy = False
+    elif (suffix == ".npy" and (fmt is None or fmt in npy_formats)) or (not suffix and fmt in npy_formats):
+        is_npy = True
+    else:
+        raise ResultError("SCHEMA_MISMATCH", "selection payload format_id does not match file suffix")
     try:
         check()
         size = path.stat().st_size
         if "size" in descriptor and size != descriptor["size"]:
             raise ResultError("HASH_MISMATCH", "selection payload size changed")
-        if path.suffix.lower() == ".npy":
+        if is_npy:
             if sha256_file(path, check) != descriptor.get("sha256"):
                 raise ResultError("HASH_MISMATCH", "selection payload bytes changed")
             array = read_safe_npy_v2(path, root=directory)
             if array.ndim != 1 or array.dtype.kind not in "iu":
                 raise ResultError("SCHEMA_MISMATCH", "selection payload must be a one-dimensional integer array")
             payload = array.tolist()
-        elif path.suffix.lower() == ".json":
+        else:
             raw = path.read_bytes()
             if hashlib.sha256(raw).hexdigest() != descriptor.get("sha256"):
                 raise ResultError("HASH_MISMATCH", "selection payload bytes changed")
             payload = decode_json(raw)
-        else:
-            raise ResultError("SCHEMA_MISMATCH", "selection payload must be JSON or NPY")
     except FileNotFoundError as exc:
         raise ResultError("HASH_MISMATCH", "selection payload is missing") from exc
     return path, payload
@@ -340,19 +351,25 @@ def _legacy_selection_payload(store, folder, receipt, selection, selection_id, r
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ResultError("HASH_MISMATCH", "legacy selection has no payload byte digest")
     source = selection.get("selection_source", selection.get("entity_selection_ref", {}).get("selection_source"))
-    roots = (folder,) if source == "operation" else (store.root,) if source in ("store", "run_store") else (store.root, folder)
+    explicit_ref = _selection_reference(selection) is not None
+    if source in ("store", "run_store"):
+        roots = (store.root,)
+    elif source == "operation" or explicit_ref:
+        roots = (folder,)
+    else:
+        roots = (folder, store.root)
     directories = []
     for root in roots:
         if selection_id is not None and isinstance(path, str) and "/" not in path:
             directories.append(artifact_path(root, f"selections/{selection_id}"))
-            if _selection_reference(selection) is None:
+            if not explicit_ref:
                 continue  # A historical digest without a path pins the selected ID's payload.
         directories.append(root)
     for directory in directories:
         try:
             _, payload = _selection_payload(directory, reference, check)
         except ResultError as exc:
-            if exc.code == "HASH_MISMATCH":
+            if exc.code == "HASH_MISMATCH" and isinstance(exc.__cause__, FileNotFoundError):
                 continue
             raise
         except ValueError as exc:
@@ -452,10 +469,14 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
     if receipt["adapter"]["version"] != "1" or profile not in {*_SPATIAL_READERS, "OC-TH4-1"}:
         raise ResultError("UNSUPPORTED_CAPABILITY", "unregistered numeric reader")
     adapter_sha = receipt["adapter"].get("code_sha256")
-    expected_reader = receipt.get("reader_code_sha256", adapter_sha)
+    top_sha = receipt.get("adapter_code_sha256")
+    expected_reader = receipt.get("reader_code_sha256", receipt.get("adapter_code_sha256", adapter_sha))
+    recorded = [value for value in (receipt.get("reader_code_sha256"), top_sha, adapter_sha) if value is not None]
+    if expected_reader is None and recorded:
+        expected_reader = recorded[0]
     active_reader = converters.reader_code_sha256(profile, check)
     original_reader = resolved["legacy_manifest"] and _original_reader(receipt)
-    if (expected_reader != adapter_sha
+    if (any(value != recorded[0] for value in recorded[1:])
             or not original_reader and active_reader != expected_reader):
         raise ResultError("HASH_MISMATCH", "active reader code differs from the operation receipt")
     item, location, basis, measure, shear, units, geometry, binding = _semantics(
@@ -471,7 +492,7 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
              "requested_quantity_ref_sha256": requested_hash, "base_ref_sha256": base_hash,
              "requested_ref_sha256": requested_hash}
     if original_reader:
-        audit.update(reader_code_sha256=active_reader, recorded_reader_code_sha256=expected_reader)
+        audit.update(reader_code_sha256=active_reader, recorded_reader_code_sha256=expected_reader or active_reader)
     eroded = ()
     if dataset.dataset_kind == "history":
         if profile != "OC-TH4-1" or op != "curve_extract" or ref.selection:

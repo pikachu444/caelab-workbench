@@ -17,7 +17,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from caelab.artifact_refs import DatasetManifestV1, ResultRefV1, canonical_json_bytes, read_safe_npy_v2
+from caelab.artifact_refs import DatasetManifestV1, ResultRefV1, canonical_json_bytes, read_safe_npy_v2, write_safe_npy_v2
 from caelab.jobs import JobManager
 from caelab.native import converters
 from caelab.native.operations import (TERMINAL_OPERATIONS, cancel_operation, operation_dir, operation_snapshot,
@@ -1070,6 +1070,35 @@ def test_shell_deck_rejects_negative_nip_other_than_global_integration_switch(tm
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], {"allow_custom_executable": True})
 
 
+def test_history_snapshot_excludes_inactive_includes_in_new_and_retained_archives(tmp_path):
+    from caelab.native.input_snapshot import snapshot_radioss_input
+
+    store, source = _run(tmp_path, {"caseT01": b"fixture", "caseT01_TITLES": TITLES})
+    inputs = tmp_path / "working"
+    inputs.mkdir()
+    starter = inputs / "case_0000.rad"
+    mesh, history = _th_deck("BRIC", ("SX",), "hex").split(b"/TH/", 1)
+    starter.write_bytes(b"#include active.inc\n" + mesh + b" /eNd   $ finished\n#include stale-root.inc\n")
+    (inputs / "case_0001.rad").write_bytes(b"/RUN/case/1\n/END\n")
+    (inputs / "active.inc").write_bytes(b"/TH/" + history.removesuffix(b"/END\n")
+                                       + b"#enddata\n#include stale-nested.inc\n")
+    snapshot = snapshot_radioss_input(starter, source)
+    assert {item["execution_path"] for item in snapshot["files"]} == {"case_0000.rad", "case_0001.rad", "active.inc"}
+    sidecar = source / "input/snapshot.json"
+    opts = {"allow_custom_executable": True}
+    for retained in (False, True):
+        if retained:
+            for name in ("stale-root.inc", "stale-nested.inc"):
+                raw = b"/EULER/MAT/1\n"
+                (source / name).write_bytes(raw)
+                sha = hashlib.sha256(raw).hexdigest()
+                snapshot["files"].append({"execution_path": name, "source_copy": name,
+                                          "original_sha256": sha, "execution_sha256": sha})
+        atomic_json(sidecar, snapshot)
+        plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options=opts)
+        assert plan["options"]["solid_formulation"] == {"101": "hex8_1pt"}
+
+
 @pytest.mark.parametrize(("requested", "plastic"), [(5, 5), (0, 3)])
 def test_dat_snapshot_preserves_effective_nip_per_shell(tmp_path, manager, requested, plastic):
     rows = ("/MAT/LAW1/1\nelastic\n/MAT/LAW2/2\nplastic\n/PART/30\nsecond shell\n         7         2\n"
@@ -1213,9 +1242,13 @@ def test_history_uses_exact_archived_request_with_overlapping_group_titles(tmp_p
 
 @pytest.mark.parametrize(("isolid", "ismstr", "iale", "motion", "supported"), [
     (None, 0, 0, "", False), (1, 0, 0, "", True), (2, 4, 0, "", True), (24, 0, 0, "", True),
-    (17, 0, 0, "", False), (1, 1, 0, "", False), (1, 4, 1, "", False),
+    (1, 1, 0, "", True), (1, 2, 0, "", True), (2, 1, 0, "", True), (2, 2, 0, "", True),
+    (24, 1, 0, "", True), (24, 2, 0, "", True), (17, 0, 0, "", False), (1, 4, 1, "", False),
     (1, 0, 0, "/ALE/MAT\n         1\n", False), (1, 0, 0, "/EULER/MAT\n         1\n", False),
     (1, 0, 0, "/UPWM\n", False),
+    (0, 0, 0, "", True), (0, 0, 0, "/IMPLICIT\n", False),
+    (0, 0, 0, "/DEF_SOLID\n        17\n", False),
+    (0, 0, 0, "/DEF_SOLID\n        24\n", True),
 ])
 def test_retained_legacy_ip_history_requires_archived_lagrangian_one_point_hex8(
         tmp_path, monkeypatch, manager, isolid, ismstr, iale, motion, supported):
@@ -1395,8 +1428,19 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
         unrecognized_reader = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement")
         with pytest.raises(ResultError, match="HASH_MISMATCH.*reader code"):
             read_result(store, unrecognized_reader)
+    other_EOL = "3d5c291d80078f4653e776c1aedc5234f1c9a0bd6cbe58a1e482a121fab14f76"
+    conflicting = {**receipt, "adapter_code_sha256": other_EOL}
+    atomic_json(receipt_path, conflicting)
+    with pytest.raises(ResultError, match="original receipt identity mismatch"):
+        inspect_dataset(store, receipt["id"])
+    atomic_json(receipt_path, {**conflicting, "source_fingerprint": plan["source_fingerprint"]})
+    conflicting_ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement")
+    with pytest.raises(ResultError, match="HASH_MISMATCH.*reader code"):
+        read_result(store, conflicting_ref)
     if canonical:
         receipt["dataset_ref"]["sha256"] = digest
+        receipt["adapter"].pop("code_sha256")
+        receipt["adapter_code_sha256"] = None
     atomic_json(receipt_path, receipt)
     store.recover()
     saved = tmp_path / "saved"
@@ -1409,7 +1453,10 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
                              selection={"ids": [11]}, location={"association": "point"})
     for quantity_ref in (ref, historical_ref):
         assert resolve_result_ref(store, quantity_ref)["availability"] == "available"
-    assert read_result(RunStore(saved), historical_ref).values == (3,)
+    numeric = read_result(RunStore(saved), historical_ref)
+    assert numeric.values == (3,)
+    expected_reader = converters.reader_code_sha256("OC-ANIM-1") if canonical else legacy_reader
+    assert numeric.operator_provenance["recorded_reader_code_sha256"] == expected_reader
     operation_payload = folder / "selections" / "set1" / "payload.json"
     root_payload = store.root / "selections" / "set1" / "payload.json"
     atomic_json(operation_payload, {"ids": [11]})
@@ -1430,10 +1477,28 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
     new_ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x",
                               selection={"artifact_ref": full, "selection_source": "operation"})
     assert read_result(store, new_ref).values == (3,)
+    unsigned_owner = replace(historical_ref, selection={"artifact_ref": full})
+    with_id = replace(historical_ref, selection={"selection_id": "set1", "payload_ref": short})
+    extensionless = operation_payload.with_name("extensionless")
+    extensionless.write_bytes(operation_payload.read_bytes())
+    extensionless_ref = {**full, "path": extensionless.relative_to(folder).as_posix(), "format_id": "JSON"}
+    assert read_result(store, replace(historical_ref, selection={"artifact_ref": extensionless_ref})).values == (3,)
+    numpy_path = operation_payload.with_name("integers")
+    numpy_sha = write_safe_npy_v2(numpy_path, np.array([11]), root=folder)
+    numpy_ref = {"path": numpy_path.relative_to(folder).as_posix(), "sha256": numpy_sha, "format_id": "numpy.npy.v2"}
+    assert read_result(store, replace(historical_ref, selection={"artifact_ref": numpy_ref})).values == (3,)
+    for format_id in ("vtu", "numpy.npy.v2"):
+        with pytest.raises(ResultError, match="SCHEMA_MISMATCH"):
+            read_result(store, replace(historical_ref, selection={"artifact_ref": {**full, "format_id": format_id}}))
     operation_payload.replace(root_payload)
     assert read_result(store, selection_ref).values == (3,)
-    with pytest.raises(ResultError, match="HASH_MISMATCH"):
-        read_result(store, new_ref)
+    for operation_ref in (new_ref, unsigned_owner, with_id):
+        with pytest.raises(ResultError, match="HASH_MISMATCH"):
+            read_result(store, operation_ref)
+    atomic_json(operation_payload, {"ids": [12]})
+    for operation_ref in (selection_ref, new_ref, unsigned_owner, with_id):
+        with pytest.raises(ResultError, match="HASH_MISMATCH"):
+            read_result(store, operation_ref)
     root_ref = replace(historical_ref, selection={"payload_ref": full, "selection_source": "store"})
     assert read_result(store, root_ref).values == (3,)
     atomic_json(root_payload, {"ids": [13]})
@@ -1559,6 +1624,99 @@ def test_operation_lock_deadline_rolls_back_without_starting_worker(tmp_path, ma
         pass
 
 
+@pytest.mark.parametrize("delay_at", ["lock", "write"])
+def test_concurrent_submission_cannot_return_uncommitted_receipt(tmp_path, manager, monkeypatch, delay_at):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+    from caelab import jobs
+
+    other = JobManager()
+    store, _, plan = _fixture_animation(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    delayed_folders = []
+
+    def pause(folder):
+        if delayed_folders:
+            return
+        delayed_folders.append(folder)
+        entered.set()
+        assert release.wait(5)
+
+    if delay_at == "lock":
+        make_lock = jobs.FileLock
+
+        def delayed_lock(path, **kwargs):
+            lock = make_lock(path, **kwargs)
+            acquire = lock.acquire
+
+            def acquire_and_pause():
+                acquire()
+                pause(path.parent)
+
+            monkeypatch.setattr(lock, "acquire", acquire_and_pause)
+            return lock
+
+        monkeypatch.setattr(jobs, "FileLock", delayed_lock)
+    else:
+        write = jobs.atomic_json
+
+        def delayed_write(path, data):
+            write(path, data)
+            if data.get("state") == "queued":
+                pause(path.parent)
+
+        monkeypatch.setattr(jobs, "atomic_json", delayed_write)
+
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(submit_conversion, manager, store, plan, timeout=.15)
+        try:
+            assert entered.wait(2)
+            second = pool.submit(submit_conversion, other, store, plan, timeout=3)
+            with pytest.raises(FutureTimeout):
+                second.result(timeout=.2)
+            assert not (delayed_folders[0] / "operation.json").exists()
+        finally:
+            release.set()
+        with pytest.raises(ResultError, match="TIMEOUT"):
+            first.result(timeout=2)
+        queued = second.result(timeout=2)
+    assert queued["id"] != delayed_folders[0].name
+    assert not delayed_folders[0].exists()
+    assert _wait(other, store, queued)["state"] == "completed"
+    assert other.close()
+
+
+def test_submission_timeout_survives_windows_sharing_denial(tmp_path, manager, monkeypatch):
+    from pathlib import Path
+    from caelab import jobs
+
+    store, _, plan = _fixture_animation(tmp_path)
+    unlink = Path.unlink
+    write = jobs.atomic_json
+    retained = []
+
+    def blocking_unlink(path, *args, **kwargs):
+        if path.name == "operation.lock":
+            retained.append(path.parent)
+            raise PermissionError("foreign handle")
+        return unlink(path, *args, **kwargs)
+
+    def slow_write(path, data):
+        write(path, data)
+        if data["state"] == "queued":
+            time.sleep(.12)
+
+    monkeypatch.setattr(Path, "unlink", blocking_unlink)
+    monkeypatch.setattr(jobs, "atomic_json", slow_write)
+    with pytest.raises(ResultError, match="TIMEOUT"):
+        submit_conversion(manager, store, plan, timeout=.04)
+    (folder,) = set(retained)
+    assert not (folder / "operation.json").exists() and not (folder / "operation.json.part").exists()
+    assert operation_snapshot(manager, store, ROOT_ID, folder.name) is None
+    with store.lease():
+        pass
+    store.copy_to(tmp_path / "saved")
+
+
 def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypatch, manager):
     import caelab.jobs as jobs
     from concurrent.futures import ThreadPoolExecutor
@@ -1569,7 +1727,7 @@ def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypa
     writer = jobs.atomic_json
 
     def delayed(path, data):
-        if path.name == "operation.json" and data["state"] == "queued":
+        if path.name == "operation.json.part" and data["state"] == "queued":
             entered.set()
             assert release.wait(10)
         writer(path, data)
