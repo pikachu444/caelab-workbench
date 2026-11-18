@@ -17,7 +17,7 @@ from . import ResultError, no_checkpoint
 _PRODUCER = ProducerIdentity("OC-TH4-1", "1")
 _STRESS = dict(zip(("SX", "SY", "SZ", "SXY", "SYZ", "SXZ"), ("xx", "yy", "zz", "xy", "yz", "xz")))
 _STRAIN = dict(zip(("EPSX", "EPSY", "EPSZ", "EPSXY", "EPSYZ", "EPSXZ"), ("xx", "yy", "zz", "xy", "yz", "xz")))
-_STRAIN.update(EPSXX="xx", EPSYY="yy", EPSZZ="zz")
+_STRAIN.update(EPSXX="xx", EPSYY="yy", EPSZZ="zz", EPSYX="xy", EPSZY="yz", EPSZX="xz")
 _SOLID = {"DENS": ("density", "density", "current_density"), "VOL": ("volume", "volume", "current_volume"),
           "MASS": ("mass", "mass", "mass"), "ENER": ("energy", "energy", "element_energy"),
           "IE": ("internal_energy_density", "energy_density", "per_initial_volume"),
@@ -166,8 +166,19 @@ def _bind_history_columns(titles_meta, raw_headers, *, expected_columns, exact_r
                 for item in request)):
             raise ResultError("SOURCE_MISMATCH", "invalid source history requests")
     group_titles = {"BRIC", "NODE"} | {item["group_title"] for request in requests for item in request}
+    archived_headers = {}
+    for request in requests:
+        for item in request:
+            if item.get("entity_title"):
+                group_title, entity_id = item["group_title"], item["entity_id"]
+                title_and_code = f"{item['entity_title']} {item['variable_code']}"
+                header = _normalized(f"{group_title} {entity_id} {title_and_code}")
+                archived_headers.setdefault(header, set()).add((group_title, entity_id, title_and_code))
     for index, header in enumerate(normalized[1:], 1):
-        group = _entity_header(header, group_titles)
+        archived = archived_headers.get(header)
+        if archived and len(archived) != 1:
+            raise ResultError("INVALID_DATASET", f"ambiguous archived history header: {header!r}")
+        group = next(iter(archived)) if archived else _entity_header(header, group_titles)
         if index < first:
             if group:
                 raise ResultError("INVALID_DATASET", "entity column is missing a TITLES pair")

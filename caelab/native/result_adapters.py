@@ -138,8 +138,11 @@ def make_result_ref(store: RunStore, source_run_id: str, operation_id: str, fram
     reason = "MEASURE_UNKNOWN" if measure == "unknown" else "PROFILE_NOT_PHYSICALLY_VERIFIED"
     selection = selection or {}
     if _selection_id(selection) is not None:
-        _, revision = _saved_selection(store, receipt, selection, location, no_checkpoint)
+        _, revision, payload_sha = _saved_selection(store, receipt, selection, location, no_checkpoint,
+                                                    pinning=True)
         selection = {**selection, "revision_sha256": revision}
+        if payload_sha is not None:
+            selection["payload_sha256"] = payload_sha
     elif "ids" in selection:
         revision = _selection_digest(selection, selection["ids"])
         _verify_selection_revision(selection, revision, required=False)
@@ -209,17 +212,19 @@ def _verify_selection_revision(descriptor, digest, *, required=True):
     entity_ref = descriptor.get("entity_selection_ref", {})
     if not isinstance(entity_ref, Mapping):
         raise ResultError("SCHEMA_MISMATCH", "invalid entity selection reference")
+    if "entity_selection_ref" in descriptor and "revision_sha256" not in entity_ref:
+        raise ResultError("HASH_MISMATCH", "entity selection reference has no revision_sha256")
     revision = descriptor.get("revision_sha256")
-    nested = entity_ref.get("revision_sha256", entity_ref.get("sha256"))
+    nested = entity_ref.get("revision_sha256")
     for present, expected in (("revision_sha256" in descriptor, revision),
-                              ("revision_sha256" in entity_ref or "sha256" in entity_ref, nested)):
+                              ("revision_sha256" in entity_ref, nested)):
         if present and expected != digest:
             raise ResultError("HASH_MISMATCH", "selection revision changed")
     if required and revision is None and nested is None:
         raise ResultError("HASH_MISMATCH", "selection has no revision digest")
 
 
-def _saved_selection(store, receipt, selection, location, check):
+def _saved_selection(store, receipt, selection, location, check, *, pinning=False):
     selection_id = _selection_id(selection)
     if not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id):
         raise ResultError("PATH_ESCAPE", f"invalid selection ID {selection_id!r}")
@@ -229,7 +234,10 @@ def _saved_selection(store, receipt, selection, location, check):
         path = artifact_path(directory, "payload.json")
     check()
     try:
-        saved = read_object(path)
+        raw = path.read_bytes()
+        saved = decode_json(raw)
+        if not isinstance(saved, dict):
+            raise ValueError("expected a JSON object")
     except FileNotFoundError as exc:
         raise ResultError("HASH_MISMATCH", f"missing selection {selection_id}") from exc
     except (OSError, ValueError) as exc:
@@ -246,7 +254,8 @@ def _saved_selection(store, receipt, selection, location, check):
             or (run_id is not None and run_id != receipt["source_run_id"])
             or (mesh_revision is not None and mesh_revision != expected_revision)):
         raise ResultError("SOURCE_MISMATCH", "selection run or mesh revision")
-    if "sha256" in selection and sha256_file(path, check) != selection["sha256"]:
+    file_sha = hashlib.sha256(raw).hexdigest()
+    if "sha256" in selection and file_sha != selection["sha256"]:
         raise ResultError("HASH_MISMATCH", "saved selection digest")
     payload_ref = saved.get("payload_ref")
     entity_ref = selection.get("entity_selection_ref", {})
@@ -272,7 +281,12 @@ def _saved_selection(store, receipt, selection, location, check):
     digest = _selection_digest(saved, payload)
     _verify_selection_revision(saved, digest)
     _verify_selection_revision(selection, digest, required=False)
-    return ids, digest
+    payload_sha = file_sha if path.name == "payload.json" and payload_ref is None else None
+    if "payload_sha256" in selection and selection["payload_sha256"] != payload_sha:
+        raise ResultError("HASH_MISMATCH", "saved selection payload bytes changed")
+    if payload_sha is not None and not pinning and "payload_sha256" not in selection and reference is None:
+        raise ResultError("HASH_MISMATCH", "single-file selection has no payload byte digest")
+    return ids, digest, payload_sha
 
 
 def _selection(store, receipt, selection, location, check):
@@ -282,7 +296,7 @@ def _selection(store, receipt, selection, location, check):
     if _selection_id(selection) is not None:
         if ids is not None:
             raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
-        ids, digest = _saved_selection(store, receipt, selection, location, check)
+        ids, digest, _ = _saved_selection(store, receipt, selection, location, check)
         _verify_selection_revision(selection, digest)
     elif ids is not None:
         _verify_selection_revision(selection, _selection_digest(selection, ids))

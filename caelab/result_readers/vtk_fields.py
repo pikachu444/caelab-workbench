@@ -416,10 +416,17 @@ def _validate_identity(grid, expected):
         oracle = {int(key): value for key, value in expected["elements"].items()}
         if set(oracle) != set(grid.element_ids):
             raise ResultError("SOURCE_MISMATCH", "ELEMENT_ID set")
+        point_index = {int(node): index for index, node in enumerate(grid.node_ids)}
         for element, part, kind, cell in zip(grid.element_ids, grid.part_ids, grid.cell_types, grid.cells):
             saved = oracle[element]
-            if (part != saved["part_id"] or kind != saved["cell_type"]
-                    or tuple(grid.node_ids[i] for i in cell) != tuple(saved["node_ids"])):
+            expected_nodes = tuple(saved["node_ids"])
+            actual_nodes = tuple(grid.node_ids[i] for i in cell)
+            matches = actual_nodes == expected_nodes
+            if not matches and kind == 10 and set(expected_nodes) <= point_index.keys():
+                # anim_to_vtk writes tetrahedra through a set of VTK point indices.
+                sorted_indices = sorted(point_index[node] for node in expected_nodes)
+                matches = tuple(cell) == tuple(sorted_indices)
+            if part != saved["part_id"] or kind != saved["cell_type"] or not matches:
                 raise ResultError("SOURCE_MISMATCH", f"topology or part for element {element}")
 
 
@@ -484,6 +491,8 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
         status = grid.cell_data[erosion]
         if status.shape != (m, 1):
             raise ResultError("SCHEMA_MISMATCH", f"{erosion} must be scalar")
+        if not np.isin(status, [0, 1]).all():
+            raise ResultError("INVALID_DATASET", "Invalid EROSION_STATUS value")
         grid.active_erosion_status = erosion_active_value
         active = status[:, 0] == grid.active_erosion_status
     else:

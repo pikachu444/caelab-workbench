@@ -128,6 +128,18 @@ def test_vtk_rejects_invalid_native_layout(tmp_path, missing, replacements, code
         read_vtk(path, exact_required_set=TENSORS, expected=MESH)
 
 
+def test_tetra_can_follow_archived_or_sorted_vtk_point_indices(tmp_path):
+    path = tmp_path / "tetra.vtk"
+    permutation = (0, 1, 2, 3, 6, 4, 5)
+    for row, native_ids in (("4 3 5 6 4", [14, 15, 16, 17]), ("4 3 4 5 6", [14, 17, 15, 16])):
+        path.write_text(_vtk(permutation=permutation, replacements={"4 3 5 6 4": row}), encoding="ascii")
+        grid = read_vtk(path, expected=MESH)
+        assert grid.node_ids[list(grid.cells[1])].tolist() == native_ids
+    path.write_text(_vtk(permutation=permutation, replacements={"4 3 5 6 4": "4 3 4 6 5"}), encoding="ascii")
+    with pytest.raises(ResultError, match="SOURCE_MISMATCH"):
+        read_vtk(path, expected=MESH)
+
+
 def test_vtk_physical_time_rotation_undeformed_points_and_family(tmp_path):
     path = tmp_path / "animation.vtk"
     permutation = (1, 2, 4, 0, 6, 5, 3)
@@ -667,6 +679,12 @@ def test_manifest_deck_selection_semantics_and_reader_digest(tmp_path, monkeypat
     atomic_json(selection_file, saved)
     ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x",
                           selection={"selection_id": "s1", "count": 1})
+    saved_bytes = selection_file.read_bytes()
+    assert ref.selection["payload_sha256"] == hashlib.sha256(saved_bytes).hexdigest()
+    selection_file.write_bytes(canonical_json_bytes(saved))
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, ref)
+    selection_file.write_bytes(saved_bytes)
     expected_hash = hashlib.sha256(canonical_json_bytes(json.loads((folder / "dataset.json").read_bytes()))).hexdigest()
     assert receipt["dataset_manifest_sha256"] == ref.dataset_manifest_sha256 == expected_hash
     with pytest.raises(ResultError, match="HASH_MISMATCH"):
@@ -733,6 +751,10 @@ def test_reopen_save_as_duplicate_and_unrelated_invalid_receipt(tmp_path, manage
     try:
         _wait(manager, store, queued, {"running"})
         assert submit_conversion(other, RunStore(store.root), plan)["id"] == queued["id"]
+        tampered = {**plan, "options": {**plan["options"], "exact_required_set": ["Velocity"]}}
+        for owner in (manager, other):
+            with pytest.raises(ResultError, match="STALE_PLAN"):
+                submit_conversion(owner, store, tampered)
         assert not other.cancel_operation(queued["id"])
     finally:
         assert manager.cancel_operation(queued["id"])
@@ -759,8 +781,11 @@ def test_verify_plan_preserves_deadline_and_requires_trusted_converter(tmp_path,
     plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"],
                     {"install_root": str(tmp_path), "allow_custom_executable": True})
     shutil.copyfile(sys.executable, tool)
+    with pytest.raises(ResultError, match="UNTRUSTED_CONVERTER_EXECUTABLE"):
+        plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"], {"install_root": str(tmp_path)})
     trusted = plan_conversion(store, ROOT_ID, "OC-ANIM-1", tool, ["A001"],
-                              options={"expected_mesh": MESH, "install_root": str(tmp_path)})
+                              options={"allow_custom_executable": True, "expected_mesh": MESH,
+                                       "install_root": str(tmp_path)})
     assert trusted["options"]["erosion_active_value"] == plan["options"]["erosion_active_value"] == 1
     if os.name == "nt":
         env = converters.converter_environment(trusted, {"Path": "original"})
@@ -810,12 +835,36 @@ def test_unconfirmed_cleanup_keeps_store_lease_and_publishes_no_dataset(tmp_path
         assert not manager.close()
     assert jobs._finish_owned is real_finish
     control = manager._operations[queued["id"]]
+    receipt_path = operation_dir(store, ROOT_ID, queued["id"]) / "operation.json"
+    write = jobs.atomic_json
+
+    def verify_cleanup_order(path, data):
+        if path == receipt_path and not data["cleanup_failed"]:
+            assert not control["operation_lock"].is_locked
+            with pytest.raises(ValueError):
+                store.lease()
+            raise OSError("receipt write unavailable")
+        write(path, data)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(jobs, "atomic_json", verify_cleanup_order)
+        assert not manager.close()
+        assert json.loads(receipt_path.read_bytes())["cleanup_failed"]
+        assert control["lease"].is_locked
     for lock in (control["operation_lock"], control["lease"]):
         with monkeypatch.context() as patch:
             patch.setattr(lock, "release", unconfirmed)
             assert not manager.close()
             assert manager.operation_snapshot(store, ROOT_ID, queued["id"])["cleanup_failed"]
-    assert manager.close()
+    release = control["lease"].release
+
+    def release_after_publication():
+        assert not json.loads(receipt_path.read_bytes())["cleanup_failed"]
+        release()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(control["lease"], "release", release_after_publication)
+        assert manager.close()
     assert queued["id"] not in manager._operations
     assert not manager.operation_snapshot(store, ROOT_ID, queued["id"])["cleanup_failed"]
     with store.lease():
@@ -893,16 +942,49 @@ def test_saved_rad_authority_shell_layers_and_live_deck(tmp_path, manager, nip):
         read_result(store, ref)
 
 
-def test_dat_snapshot_preserves_effective_nip_per_shell(tmp_path, manager):
+@pytest.mark.parametrize("matching_stat", [False, True])
+def test_workbench_run_list_checks_working_deck_hash_even_without_metadata_change(tmp_path, monkeypatch, matching_stat):
+    from types import SimpleNamespace
+    from caelab import workbench as workbench_module
+
+    store, source = _run(tmp_path, {})
+    live = tmp_path / "working.rad"
+    _snapshot_sidecar(source, _rad_mesh_deck(), live)
+    if matching_stat:
+        path = source / "input/snapshot.json"
+        sidecar = json.loads(path.read_bytes())
+        metadata = workbench_module.fingerprint(live)
+        sidecar["files"][0]["stat"] = metadata
+        atomic_json(path, sidecar)
+        monkeypatch.setattr(workbench_module, "fingerprint", lambda _: metadata)
+    job = json.loads((source / "job.json").read_bytes())
+    reference = SimpleNamespace(path=job["input_path"], stale=False, units=job["units"], unit_source=job["unit_source"])
+    project = SimpleNamespace(path=tmp_path / "project.json", run_store=store.root, run_store_expected=True,
+                              nodes={NODE: SimpleNamespace(program_id=job["solver_id"])},
+                              input_file=lambda _: reference)
+    workbench = workbench_module.Workbench()
+    assert not workbench.native_runs(project)[0].stale
+    live.write_bytes(live.read_bytes().replace(b"#RADIOSS", b"#CHANGED"))
+    assert workbench.native_runs(project)[0].stale
+    assert workbench.jobs.close()
+
+
+@pytest.mark.parametrize(("requested", "plastic"), [(5, 5), (0, 3)])
+def test_dat_snapshot_preserves_effective_nip_per_shell(tmp_path, manager, requested, plastic):
     rows = ("/MAT/LAW1/1\nelastic\n/MAT/LAW2/2\nplastic\n/PART/30\nsecond shell\n         7         2\n"
             "/SH3N/30\n" + "".join(f"{i:10d}" for i in (303, 11, 12, 13)) + "\n/END\n").encode()
-    deck = _rad_mesh_deck().replace(b"/END\n", rows)
+    deck = _rad_mesh_deck(requested).replace(b"/END\n", rows)
     vtk = _vtk(extra_shell=True)
     store, source = _run(tmp_path, {"caseA001": f"print({vtk!r})".encode()})
     _snapshot_sidecar(source, deck, tmp_path / "mesh.dat", suffix=".dat")
     plan = plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"],
                            {"allow_custom_executable": True, "exact_required_set": []})
-    assert plan["options"]["expected_mesh"]["shell_nip_by_id"] == {"101": 0, "303": 5}
+    expected = plan["options"]["expected_mesh"]
+    assert expected["shell_nip_by_id"] == {"101": 0, "303": plastic}
+    path = tmp_path / "missing-layer.vtk"
+    path.write_text(_vtk(extra_shell=True, missing=["2DELEM_Stress_(layer__3)_"]), encoding="ascii")
+    with pytest.raises(ResultError, match="SCHEMA_MISMATCH"):
+        read_vtk(path, expected=expected, exact_required_set=[])
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
     assert receipt["state"] == "completed", receipt["error"]
     field = "2DELEM_Stress_(layer__3)_"
@@ -919,7 +1001,7 @@ def test_dat_snapshot_preserves_effective_nip_per_shell(tmp_path, manager):
 
 
 @pytest.mark.parametrize(("statuses", "active", "value"), [("1 1", None, [12]), ("0 1", None, [12]),
-                                                        ("0 0", None, []), ("1 2", None, []),
+                                                        ("0 0", None, []),
                                                         ("0 0", 0, [12]), ("0 1", 0, [])])
 def test_erosion_rule_matches_producer_unless_explicitly_overridden(tmp_path, statuses, active, value):
     marker = "SCALARS EROSION_STATUS int 1\nLOOKUP_TABLE default\n" + statuses + "\n"
@@ -927,6 +1009,15 @@ def test_erosion_rule_matches_producer_unless_explicitly_overridden(tmp_path, st
     path.write_text(_vtk().replace("SCALARS 3DELEM int 1", marker + "SCALARS 3DELEM int 1"), encoding="ascii")
     grid = read_vtk(path, erosion_active_value=active)
     assert query_field(grid, "3DELEM_Stress", component="xx")[0].tolist() == value
+
+
+@pytest.mark.parametrize("corrupt", ["2", "0.5"])
+def test_erosion_status_rejects_nonbinary_values(tmp_path, corrupt):
+    marker = f"SCALARS EROSION_STATUS float 1\nLOOKUP_TABLE default\n1 {corrupt}\n"
+    path = tmp_path / "erosion.vtk"
+    path.write_text(_vtk().replace("SCALARS 3DELEM int 1", marker + "SCALARS 3DELEM int 1"), encoding="ascii")
+    with pytest.raises(ResultError, match="INVALID_DATASET: Invalid EROSION_STATUS value"):
+        read_vtk(path)
 
 
 def test_vtu_timevalue_precedes_time_and_empty_coverage_is_invalid(tmp_path, manager):
@@ -1004,6 +1095,21 @@ def test_th_metadata_from_brick_deck_and_frozen_binding_payload(tmp_path, manage
                              source_bindings=plan["options"]["source_bindings"], solid_formulation={"101": "hex8_1pt"})
 
 
+def test_history_uses_exact_archived_request_with_overlapping_group_titles(tmp_path):
+    codes = ("SX", "EPSZX", "EPSZY", "EPSYX")
+    titles_path = tmp_path / "TITLES"
+    titles_path.write_bytes("".join(f"{1:10d}\n{code:10s}\n" for code in codes).encode())
+    source = [{"output_type": "Solid", "group_title": "Zone", "entity_id": 2, "entity_title": "101 beam",
+               "variable_code": "SX"}]
+    source.extend({"output_type": "Solid", "group_title": "Zone 2", "entity_id": 101, "entity_title": "beam",
+                   "variable_code": code} for code in codes[1:])
+    bindings = bind_history_columns(read_titles(titles_path), ["time", *(f"Zone 2 101 beam {code}" for code in codes)],
+                                    source_bindings=source, solid_formulation={"2": "hex8_1pt", "101": "hex8_1pt"})
+    assert [(b["group_title"], b["entity_id"], b["entity_title"], b["component"]) for b in bindings] == [
+        ("Zone", 2, "101 beam", "xx"), ("Zone 2", 101, "beam", "xz"),
+        ("Zone 2", 101, "beam", "yz"), ("Zone 2", 101, "beam", "xy")]
+
+
 def test_saved_selection_payload_and_recomputed_revision_are_pinned(tmp_path, manager):
     store, _, plan = _fixture_animation(tmp_path)
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
@@ -1023,6 +1129,12 @@ def test_saved_selection_payload_and_recomputed_revision_are_pinned(tmp_path, ma
     save([11])
     ref = make_result_ref(store, ROOT_ID, receipt["id"], "A001", "Displacement", component="x", selection={"selection_id": "s2"})
     assert read_result(store, ref).values == (3,)
+    nested = {"id": "s2", "sha256": ref.selection["revision_sha256"]}
+    missing_revision = replace(ref, selection={**ref.selection, "entity_selection_ref": nested})
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        read_result(store, ResultRefV1.from_dict(missing_revision.to_dict()))
+    pinned = replace(ref, selection={"entity_selection_ref": {"id": "s2", "revision_sha256": nested["sha256"]}})
+    assert read_result(store, pinned).values == (3,)
     legacy = replace(ref, selection={"selection_id": "s2"})
     with pytest.raises(ResultError, match="HASH_MISMATCH"):
         read_result(store, ResultRefV1.from_dict(legacy.to_dict()))
@@ -1081,6 +1193,55 @@ def test_completed_receipt_accepts_top_level_or_result_manifest_reference(tmp_pa
     atomic_json(path, {**receipt, "result": {}})
     with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
         inspect_dataset(store, receipt["id"])
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager, canonical):
+    store, _, plan = _fixture_animation(tmp_path)
+    receipt = _wait(manager, store, submit_conversion(manager, store, plan))
+    assert receipt["state"] == "completed", receipt["error"]
+    folder = operation_dir(store, ROOT_ID, receipt["id"])
+    digest = receipt.pop("dataset_manifest_sha256")
+    receipt.pop("result")
+    if canonical:
+        receipt["dataset_ref"]["sha256"] = digest
+    atomic_json(folder / "operation.json", receipt)
+    store.recover()
+    saved = tmp_path / "saved"
+    store.copy_to(saved)
+    assert inspect_dataset(RunStore(saved), receipt["id"]).dataset_id == plan["cache_key"]
+    assert (folder / "dataset.json").is_file()
+    assert not (folder / "dataset.json.orphaned").exists()
+    receipt["dataset_ref"]["sha256"] = "f" * 64
+    atomic_json(folder / "operation.json", receipt)
+    with pytest.raises(ResultError, match="HASH_MISMATCH"):
+        inspect_dataset(store, receipt["id"])
+
+
+@pytest.mark.parametrize(("state", "key"), [("failed", "result"), ("cancelled", "dataset_ref"),
+                                           ("failed", "dataset_manifest_ref")])
+def test_terminal_with_result_is_corrupt_for_read_and_recovery(tmp_path, manager, state, key):
+    store, _ = _run(tmp_path, {})
+    op_id = "b" * 32
+    folder = operation_dir(store, ROOT_ID, op_id)
+    atomic_json(folder / "operation.json", {"schema_version": 1, "source_run_id": ROOT_ID, "id": op_id,
+                                          "state": state, "error": {"code": "CANCELLED", "message": "ended"},
+                                          key: {"present": True}})
+    with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+        operation_snapshot(manager, store, ROOT_ID, op_id)
+    with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+        store.recover()
+    with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+        store.copy_to(tmp_path / "refused")
+
+
+def test_conversion_lease_wait_uses_short_caller_timeout(tmp_path, manager):
+    store, _, plan = _fixture_animation(tmp_path)
+    with store.lease():
+        start = time.monotonic()
+        with pytest.raises(ValueError):
+            submit_conversion(manager, store, plan, timeout=.1)
+        assert time.monotonic() - start < 1
 
 
 def test_cross_manager_duplicate_waits_for_the_queued_receipt(tmp_path, monkeypatch, manager):

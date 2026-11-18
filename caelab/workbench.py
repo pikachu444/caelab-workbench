@@ -18,6 +18,7 @@ from .solvers import get_converter
 from .validate.checker import Issue, validate_model
 from .native.run_store import NativeRun, RunStore
 from .native.input_snapshot import fingerprint
+from .native.operations import INPUT_SNAPSHOT, sha256_file, with_input_snapshot
 
 if TYPE_CHECKING:
     from .model_execution import ModelRunResult
@@ -33,10 +34,16 @@ def _source_metadata_changed(item: dict) -> bool:
     # WSL remounts can assign a different device number to the same file.
     # Keep full device identity for collection races, but not saved-run freshness.
     saved = item.get("stat")
-    if not isinstance(saved, dict):
-        return False  # read_result independently verifies the snapshot's working-file SHA.
-    return any(current[key] != saved.get(key) for key in
-               ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino"))
+    if isinstance(saved, dict) and any(current[key] != saved.get(key) for key in
+                                       ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino")):
+        return True
+    digest = item.get("original_sha256") or item.get("source_sha256") or item.get("sha256")
+    if not digest:
+        return False
+    try:
+        return sha256_file(Path(path)) != digest
+    except OSError:
+        return True
 
 
 class Workbench:
@@ -283,8 +290,9 @@ class Workbench:
         for index, stored in enumerate(runs):
             owned = self.jobs.native_snapshot(stored.id)
             run = owned if owned and owned.workdir == stored.workdir else stored
+            snapshot = with_input_snapshot({"snapshot": run.snapshot}, run.workdir / INPUT_SNAPSHOT)["snapshot"]
             reason = self._native_stale_reason(project, run.node_id, run.solver_id, run.input_path,
-                                               run.units, run.unit_source, run.snapshot)
+                                               run.units, run.unit_source, snapshot)
             run.stale, run.stale_reason = bool(reason), reason
             runs[index] = run
         return runs

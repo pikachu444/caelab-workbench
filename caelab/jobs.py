@@ -675,32 +675,40 @@ class JobManager:
             return True
 
     def submit_result_conversion(self, store: RunStore, plan: Mapping[str, Any], *,
-                                 timeout: float = 120.0, executor=None) -> dict:
+                                 timeout: float | None = 120.0, executor=None) -> dict:
         """Start a registered conversion. An injected executor follows Popen's contract."""
         from .artifact_refs import canonical_json_bytes
+        from .native.converters import conversion_plan_identity
         from .native.operations import (ACTIVE_OPERATIONS, artifact_path, find_active_duplicate, operation_dir,
                                         recover_derived_operations)
         from .result_readers import ResultError
 
-        if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0:
+        if timeout is not None and (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
             raise ValueError("timeout must be a positive finite duration in seconds")
+        wait_budget = float(timeout) if timeout is not None else 5.0
         plan = json.loads(canonical_json_bytes(plan))
         if not isinstance(plan, dict) or not all(key in plan for key in
                 ("source_run_id", "source_node_id", "source_artifacts", "source_fingerprint",
                  "source_input_revision", "profile", "reader_version", "reader_sha256", "executable", "plan_hash",
                  "cache_key", "options", "units")):
             raise ResultError("STALE_PLAN", "invalid conversion plan")
+        try:
+            identity = conversion_plan_identity(plan)
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ResultError("STALE_PLAN", "invalid conversion plan fields") from exc
+        if identity != (plan["plan_hash"], plan["cache_key"]):
+            raise ResultError("STALE_PLAN", "conversion plan digest does not match its fields")
         start = time.monotonic()
         source_id = plan["source_run_id"]
         op_id = uuid.uuid4().hex
         folder = operation_dir(store, source_id, op_id)
-        published = start + max(timeout, 5.0)
+        deadline = start + wait_budget
         while True:
             with self._native_lock:
                 if self._closed:
                     raise ValueError("JobManager is closing")
                 for control in self._operations.values():
-                    if (control["store"].root == store.root and control["plan"] == plan
+                    if (control["store"].root == store.root and control["plan_identity"] == identity
                             and control["receipt"]["state"] in ACTIVE_OPERATIONS
                             and not control["cancel"].is_set()):
                         return copy.deepcopy(control["receipt"])
@@ -714,14 +722,15 @@ class JobManager:
             duplicate = find_active_duplicate(store, plan)
             if duplicate is not None:
                 return duplicate
-            if time.monotonic() >= published:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise busy
-            time.sleep(.025)
+            time.sleep(min(.025, remaining))
         with self._native_lock:
             try:
                 if self._closed:
                     raise ValueError("JobManager is closing")
-                recover_derived_operations(store)
+                recover_derived_operations(store, reject_conflicts=False)
                 receipt = {
                     "schema_version": 1, "id": op_id, "source_run_id": source_id, "source_node_id": plan["source_node_id"],
                     "operation_kind": "extract" if plan["profile"] == "VTU-1" else "convert",
@@ -748,10 +757,10 @@ class JobManager:
                 operation_lock.acquire()
                 control = {"cancel": threading.Event(), "process": None, "group": None, "store": store,
                            "lease": lease, "operation_lock": operation_lock, "cleanup_failed": False, "plan": plan,
-                           "receipt": receipt, "folder": folder}
+                           "plan_identity": identity, "receipt": receipt, "folder": folder}
                 atomic_json(artifact_path(folder, "operation.json"), receipt)
                 worker = threading.Thread(target=self._run_result_conversion,
-                                          args=(control, start + timeout, executor or subprocess.Popen),
+                                          args=(control, deadline, executor or subprocess.Popen),
                                           name=f"caelab-result-{op_id[:8]}", daemon=True)
                 control["thread"] = worker
                 self._operations[op_id] = control
@@ -1268,12 +1277,19 @@ class JobManager:
                         _finish_owned(control, cancel=True, term_grace=5,
                                       wait_timeout=min(5, remaining / 2), confirm_tree=True)
                         control["process"] = None
-                    if "operation_lock" in control:
+                    derived = "operation_lock" in control
+                    if derived:
                         control["operation_lock"].release()
-                    control["lease"].release()
-                    if "operation_lock" in control:
                         receipt = {**control["receipt"], "cleanup_failed": False}
-                        atomic_json(control["folder"] / "operation.json", receipt)
+                        path = control["folder"] / "operation.json"
+                        atomic_json(path, receipt)
+                    try:
+                        control["lease"].release()
+                    except Exception:
+                        if derived and control["lease"].is_locked:
+                            atomic_json(path, control["receipt"])
+                        raise
+                    if derived:
                         control["receipt"].update(receipt)
                 except Exception:
                     continue

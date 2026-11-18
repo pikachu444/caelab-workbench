@@ -27,6 +27,10 @@ _PROFILES = {"OC-ANIM-1", "OC-TH4-1", "VTU-1"}
 _ANIMATION = re.compile(r".*(A[0-9]{3,})(?:\.gz)?", re.I)
 _HISTORY = re.compile(r".*T01", re.I)
 _LOG_LIMIT = 64 * 1024**2
+_CONVERTER_MARKERS = {
+    "OC-ANIM-1": (b"DATASET UNSTRUCTURED_GRID", b"TIME 1 1 double", b"EROSION_STATUS int 1"),
+    "OC-TH4-1": (b"T01 TO CSV CONVERTER", b"MISSING INPUT ARGUMENT: TH-FILE"),
+}
 
 
 def reader_code_sha256(profile, check=no_checkpoint):
@@ -41,7 +45,7 @@ def reader_code_sha256(profile, check=no_checkpoint):
     return hashlib.sha256(marshal.dumps(code)).hexdigest()
 
 
-def _install_root(options, executable, profile):
+def _install_root(options, executable, profile, check):
     candidate = options.get("install_root") or os.environ.get("CAELAB_OPENCOURANT")
     root = Path(candidate).resolve() if candidate else None
     if root and root.is_file() and not options.get("install_root") and root.name.startswith("starter_"):
@@ -51,7 +55,8 @@ def _install_root(options, executable, profile):
         filenames = {name, name + ".exe", name + "_win64.exe", name + "_linux64", name + "_linux64_gf"}
         directories = {"exec", "bin", f"output_converters/{name}", f"output_converters/{name}/bin"}
         if executable.name.lower() in filenames and executable.parent.relative_to(root).as_posix().lower() in directories:
-            if options.get("allow_custom_executable") is True or _executable_header(executable):
+            if options.get("allow_custom_executable") is True or (
+                    _executable_header(executable) and _converter_markers(executable, profile, check)):
                 return root
     if options.get("allow_custom_executable") is True:
         return None
@@ -73,6 +78,22 @@ def _executable_header(path):
             return (len(header) >= 52 and header[5] in (1, 2)
                     and (header[4] == 1 or header[4] == 2 and len(header) >= 64))
         return len(header) >= 8 and header.startswith(b"#!") and bool(header[2:].splitlines()[0].strip())
+
+
+def _converter_markers(path, profile, check):
+    # Identify the converter family using literals emitted by the pinned source.
+    remaining = set(_CONVERTER_MARKERS[profile])
+    overlap = max(map(len, remaining)) - 1
+    tail = b""
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(_COPY_CHUNK), b""):
+            check()
+            data = tail + chunk
+            remaining = {marker for marker in remaining if marker not in data}
+            if not remaining:
+                return True
+            tail = data[-overlap:]
+    return False
 
 
 def converter_environment(plan, environment):
@@ -257,8 +278,16 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
             for eid, element in shells.items():
                 prop, material = parts[element["part_id"]]
                 nip = shell_properties[prop]
-                # The pinned Starter resets LAW1 layer counts greater than one.
-                shell_nip_by_id[eid] = 0 if nip > 1 and materials.get(material) in {"LAW1", "ELAST"} else nip
+                law = materials.get(material, "")
+                law_number = re.fullmatch(r"LAW([0-9]+)", law)
+                law_id = 1 if law == "ELAST" else int(law_number[1]) if law_number else None
+                # Starter uses separate rules for quadrilaterals and triangles.
+                if nip > 1 and (law_id in {1, 136} or law_id == 91 and element["cell_type"] == 9):
+                    nip = 0
+                elif nip == 0 and ((law_id is not None and law_id not in {0, 1, 91, 136})
+                                   or law in {"PLAS_JOHNS", "PLAS_ZERIL"}):
+                    nip = 3
+                shell_nip_by_id[eid] = nip
             mesh = {"node_coordinates": nodes, "elements": elements, "shell_ids": sorted(map(int, shells)),
                     "solid_ids": sorted(map(int, solids)), "shell_nip_by_id": shell_nip_by_id}
         return mesh, history, formulations
@@ -312,7 +341,7 @@ def _read_source_plan(store, run_id, profile, frame_ids, options, *, check=no_ch
     return root, receipt, artifacts
 
 
-def _seal(plan):
+def conversion_plan_identity(plan):
     content = {key: value for key, value in plan.items() if key not in {"plan_hash", "cache_key", "executable"}}
     executable = plan["executable"]
     content["executable"] = None if executable is None else {
@@ -350,7 +379,7 @@ def _plan(store, source_run_id, profile, executable, frame_ids, options, *, chec
             path = Path(executable).resolve(strict=True)
             if not path.is_file():
                 raise OSError("expected a converter executable file")
-            root = _install_root(options, path, profile)
+            root = _install_root(options, path, profile, check)
             if root is not None:
                 options["install_root"] = str(root)
             program = {"path_audit": str(path), "sha256": sha256_file(path, check),
@@ -383,7 +412,7 @@ def _plan(store, source_run_id, profile, executable, frame_ids, options, *, chec
         "executable": program, "estimated_input_bytes": sum(ref.size for ref in refs),
     }
     plan["reader_sha256"] = reader_code_sha256(profile, check)
-    plan["plan_hash"], plan["cache_key"] = _seal(plan)
+    plan["plan_hash"], plan["cache_key"] = conversion_plan_identity(plan)
     return plan
 
 

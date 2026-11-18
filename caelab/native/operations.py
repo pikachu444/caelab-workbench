@@ -23,6 +23,10 @@ _ID = re.compile(r"[0-9a-f]{32}")
 _CHUNK = 1024 * 1024
 
 
+class _TerminalResultConflict(ResultError):
+    pass
+
+
 def artifact_path(root: Path, relative: str) -> Path:
     try:
         validate_relative_artifact_path(relative, root)
@@ -229,6 +233,14 @@ def _completed_manifest(receipt):
             continue
         if ref.path == "dataset.json":
             return ref, digest
+    if result is None and "dataset_manifest_sha256" not in receipt:
+        try:
+            legacy = ArtifactRefV1.from_dict(receipt.get("dataset_ref"))
+        except (ValueError, TypeError):
+            pass
+        else:
+            if legacy.path == "dataset.json":
+                return legacy, None
     raise ResultError("CORRUPT_OPERATION", "completed operation lacks a valid dataset manifest reference",
                       availability="corrupt")
 
@@ -253,6 +265,9 @@ def _read_receipt(folder, source_run_id, operation_id):
     if state == "completed":
         _completed_manifest(data)
     if state in {"failed", "cancelled"}:
+        if any(data.get(key) for key in ("result", "dataset_ref", "dataset_manifest_ref")):
+            raise _TerminalResultConflict("CORRUPT_OPERATION", "unsuccessful operation carries a result",
+                                          availability="corrupt")
         error = data.get("error")
         if not isinstance(error, dict) or any(not isinstance(error.get(key), str) or not error[key]
                                               for key in ("code", "message")):
@@ -283,7 +298,7 @@ def _quarantine_parts(folder):
         checked.replace(target)
 
 
-def _operation_receipts(store, *, strict=False, recover_orphans=False):
+def _operation_receipts(store, *, strict=False, recover_orphans=False, reject_conflicts=False):
     base = artifact_path(store.root, ".derived")
     if not base.is_dir():
         return
@@ -302,6 +317,10 @@ def _operation_receipts(store, *, strict=False, recover_orphans=False):
             try:
                 folder = operation_dir(store, source.name, path.name)
                 receipt = _read_receipt(folder, source.name, path.name)
+            except _TerminalResultConflict:
+                if strict or reject_conflicts:
+                    raise
+                continue
             except ResultError as exc:
                 if strict:
                     raise
@@ -315,18 +334,21 @@ def _operation_receipts(store, *, strict=False, recover_orphans=False):
                 yield folder, receipt
 
 
-def recover_derived_operations(store):
+def recover_derived_operations(store, *, reject_conflicts=True):
     """Recover orphaned operations while the caller holds the RunStore lease."""
-    for folder, receipt in _operation_receipts(store, recover_orphans=True):
+    for folder, receipt in _operation_receipts(store, recover_orphans=True, reject_conflicts=reject_conflicts):
         if receipt["state"] in ACTIVE_OPERATIONS:
             _interrupt(folder, receipt)
 
 
 def find_active_duplicate(store, plan):
+    from .converters import conversion_plan_identity
+
+    plan_sha, cache_key = conversion_plan_identity(plan)
     for folder, receipt in _operation_receipts(store):
         if (receipt["state"] in ACTIVE_OPERATIONS and receipt["source_run_id"] == plan["source_run_id"]
-                and receipt.get("cache_key") == plan["cache_key"]
-                and receipt.get("plan_sha256", receipt.get("plan_hash")) == plan["plan_hash"]):
+                and receipt.get("cache_key") == cache_key
+                and receipt.get("plan_sha256", receipt.get("plan_hash")) == plan_sha):
             lock_path = artifact_path(folder, "operation.lock")
             if lock_path.is_file():
                 try:
@@ -397,7 +419,8 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
         for ref in (pinned, manifest, *staged, *outputs):
             if owners[ref.id] != ArtifactOwner("operation", operation_id, source_run_id):
                 raise ValueError(f"wrong operation owner for {ref.id}")
-            verify_artifact(folder, ref, check=check)
+            if ref != manifest or expected_digest is not None:
+                verify_artifact(folder, ref, check=check)
         if pinned.path != "inputs/source-receipt.json" or manifest.path != "dataset.json":
             raise ValueError("incorrect receipt or manifest path")
         snapshot_copy = artifact_path(folder, "inputs/input-snapshot.json")
@@ -415,12 +438,21 @@ def load_completed_operation(store, source_run_id, operation_id, *, check=no_che
             if owners[ref.id] != ArtifactOwner("run", source_run_id):
                 raise ValueError(f"wrong source owner for {ref.id}")
             verify_artifact(source, ref, check=check)
-        dataset = DatasetManifestV1.from_dict(read_object(folder / manifest.path))
+        manifest_path = artifact_path(folder, manifest.path)
+        try:
+            raw_manifest = manifest_path.read_bytes()
+        except FileNotFoundError as exc:
+            raise ResultError("HASH_MISMATCH", "missing dataset manifest", availability="source_unavailable") from exc
+        dataset = DatasetManifestV1.from_dict(decode_json(raw_manifest))
         result = receipt.get("result") or {}
         if isinstance(result, dict) and result.get("dataset_id", dataset.dataset_id) != dataset.dataset_id:
             raise ResultError("CORRUPT_OPERATION", "completed result does not identify its dataset", availability="corrupt")
         digest = canonical_sha256(dataset.to_dict(), exclude_keys=())
-        if expected_digest != digest:
+        if expected_digest is None:
+            if len(raw_manifest) != manifest.size or manifest.sha256 not in {
+                    digest, hashlib.sha256(raw_manifest).hexdigest()}:
+                raise ResultError("HASH_MISMATCH", "legacy dataset manifest", availability="corrupt")
+        elif expected_digest != digest:
             raise ResultError("HASH_MISMATCH", "canonical dataset manifest", availability="corrupt")
         refs_by_id = {ref.id: ref for ref in outputs}
         nested = [ArtifactRefV1.from_dict(frame["artifact_ref"]) for frame in dataset.frames]
