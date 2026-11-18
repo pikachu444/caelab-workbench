@@ -1,0 +1,706 @@
+"""Tests for D08 (evidence-free theory scope, Discussion v2 + v1 backup) and D09 (bilingual corpus/index)."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+import numpy as np
+import pytest
+
+from caelab.artifact_refs import ArtifactRefV1, ProducerIdentity, canonical_json_bytes, canonical_sha256
+from caelab.assist import corpus, discussions, experts, knowledge, query_language
+from caelab.assist.contracts import (
+    CORPUS_PROFILE_ID,
+    ROLE_POLICY_V1_ID,
+    ROLE_POLICY_V2_ID,
+    CorpusManifest,
+    QueryPlan,
+    QueryVariant,
+    ReassessmentLinkV1,
+    RetrievalCandidateCheckV1,
+    RetrievalDecisionV1,
+    RetrievalRequirementV1,
+    RoleReadPolicyV1,
+    build_role_read_policy,
+    map_corpus_source_kind_to_envelope,
+)
+from caelab.workbench import Workbench
+
+
+# ------------------------------------------------------------------ Helpers
+def _v1_sample_document() -> dict:
+    return {
+        "schema_version": 1,
+        "id": "disc-v1-legacy-0001",
+        "revision": 2,
+        "title": "기존 v1 접촉 수렴 논의",
+        "evidences": {},
+        "selected_evidence_id": None,
+        "turns": [
+            {
+                "id": "req-legacy-0001",
+                "question": "이전 질문입니다.",
+                "reply": "이전 답변입니다.",
+                "status": "completed",
+                "error": None,
+                "template_id": "convergence",
+                "role": "해석·수렴 전문가",
+                "provider_id": "openai_compatible",
+                "evidence_id": None,
+                "evidence_sources": ["knowledge"],
+                "provided_materials": [],
+                "constraints": [],
+                "citations": {"shown_ids": [], "unverified": [], "verified": []},
+                "created_at": "2026-10-01T00:00:00Z",
+                "finished_at": "2026-10-01T00:00:05Z",
+                "stage": "completed",
+            }
+        ],
+        "constraints": ["최대 요소 크기 2 mm 유지"],
+        "failures": [],
+        "proposals": [],
+        "draft_question": "아직 보내지 않은 초안",
+        "pending_request": None,
+        "provider_id": None,
+    }
+
+
+def _make_sample_corpus(tmp_path: Path) -> tuple[Path, Path, dict]:
+    sources_dir = tmp_path / "corpus_src"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+
+    ccx_manual = (
+        "# Hyperelastic Constitutive Theory\n"
+        "In compressible hyperelasticity, the strain energy density splits into deviatoric stress\n"
+        "response parameterized by Lame parameters mu and bulk modulus kappa with Poisson's ratio.\n"
+        "\n"
+        "## Drucker-Prager Plasticity and Dilation Angle\n"
+        "The Drucker-Prager yield surface uses friction angle, cohesion, trial pressure, and\n"
+        "non-associated flow governed by the dilation angle to capture pressure-sensitive behavior.\n"
+        "\n"
+        "# Viscoelastic Prony Series and TTS\n"
+        "Linear viscoelasticity models stress relaxation via a Prony series with equilibrium term\n"
+        "and relaxation modulus. In frequency domain, storage modulus and loss modulus follow\n"
+        "time-temperature superposition (WLF shift factor) without negative dissipation.\n"
+    )
+    ccx_file = sources_dir / "calculix_theory.md"
+    ccx_bytes = ccx_manual.encode("utf-8")
+    ccx_file.write_bytes(ccx_bytes)
+
+    aster_manual = (
+        "# Finite Element Weak Form and Boundary Conditions\n"
+        "The Neumann boundary condition enters naturally into the weak form variational integral\n"
+        "of Poisson equation. Missing Dirichlet constraints lead to zero-energy rigid body modes.\n"
+        "First-order hexahedral elements may exhibit shear locking or volumetric locking under\n"
+        "incompressible bending.\n"
+    )
+    aster_file = sources_dir / "code_aster_theory.md"
+    aster_bytes = aster_manual.encode("utf-8")
+    aster_file.write_bytes(aster_bytes)
+
+    manifest_dict = {
+        "schema_version": 1,
+        "corpus_id": "cae-theory-test-corpus",
+        "revision": "2026.11-r1",
+        "sources": [
+            {
+                "source_id": "calculix-theory",
+                "source_kind": "solver_manual",
+                "title": "CalculiX Theory Excerpt",
+                "edition": "2.22",
+                "commit": None,
+                "uri": "https://example.invalid/calculix/2.22",
+                "local_relative_path": "calculix_theory.md",
+                "sha256": hashlib.sha256(ccx_bytes).hexdigest(),
+                "byte_length": len(ccx_bytes),
+                "license": {
+                    "id": "GPL-2.0-or-later",
+                    "source_uri": "https://example.invalid/calculix/license",
+                    "redistribution": "allowed",
+                },
+                "solver_scope": ["calculix"],
+                "parser": {"id": "markdown-line-v1", "version": "1.0"},
+                "extraction_quality": "verified",
+            },
+            {
+                "source_id": "aster-theory",
+                "source_kind": "official_manual",
+                "title": "Code_Aster FEM Reference Excerpt",
+                "edition": "16.5",
+                "commit": "abc1234",
+                "uri": "https://example.invalid/aster/16.5",
+                "local_relative_path": "code_aster_theory.md",
+                "sha256": hashlib.sha256(aster_bytes).hexdigest(),
+                "byte_length": len(aster_bytes),
+                "license": {
+                    "id": "CC-BY-4.0",
+                    "source_uri": "https://example.invalid/aster/license",
+                    "redistribution": "notice_required",
+                },
+                "solver_scope": ["code_aster"],
+                "parser": {"id": "markdown-line-v1", "version": "1.0"},
+                "extraction_quality": "verified",
+            },
+        ],
+    }
+    manifest_path = sources_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+    return sources_dir, manifest_path, manifest_dict
+
+
+class _StubTheoryProvider:
+    id = "stub_theory"
+    name = "스텁 이론 공급자"
+    model = "stub-cae-v1"
+
+    def __init__(self, reply: str | None = None):
+        self.prompts: list[str] = []
+        self.reply = reply or "핵심 이론 설명입니다. [근거: calculix-manual:convergence] 근거를 확인하세요."
+
+    def availability(self):
+        return True, ""
+
+    def discuss(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self.reply
+
+    def cancel(self):
+        return None
+
+
+# ------------------------------------------------------------------ D08 Contracts
+def test_d08_contracts_validation_and_role_policies():
+    good_hash = "a" * 64
+    link = ReassessmentLinkV1(review_id="rev-1", item_id="claim-1", original_context_hash=good_hash)
+    assert ReassessmentLinkV1.from_dict(link.to_dict()) == link
+    with pytest.raises(ValueError, match="tuple2|mapping"):
+        ReassessmentLinkV1.from_dict(("rev-1", "claim-1"))
+    with pytest.raises(ValueError):
+        ReassessmentLinkV1(review_id="rev-1", item_id="claim-1", original_context_hash="not-sha")
+
+    policy_v1 = build_role_read_policy("interpretation", ("result_summary", "knowledge"), policy_id=ROLE_POLICY_V1_ID)
+    policy_v2 = build_role_read_policy("interpretation", ("result_summary", "knowledge"), policy_id=ROLE_POLICY_V2_ID)
+    assert "evidence.query_field" not in policy_v1.allowed_query_tools
+    assert policy_v1.allowed_result_projections == ()
+    assert "evidence.query_field" in policy_v2.allowed_query_tools
+    assert policy_v2.allowed_result_projections == ("selected-node-scalar-v1", "selected-node-vector-v1")
+    assert policy_v1.policy_sha256 != policy_v2.policy_sha256
+    assert RoleReadPolicyV1.from_dict(policy_v2.to_dict()) == policy_v2
+
+    tampered = policy_v2.to_dict()
+    tampered["policy_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="mismatch"):
+        RoleReadPolicyV1.from_dict(tampered)
+
+    theory_policy = build_role_read_policy("theory", ("knowledge",), policy_id=ROLE_POLICY_V2_ID)
+    assert theory_policy.allowed_query_tools == ("knowledge.search",)
+    assert theory_policy.allowed_result_projections == ()
+
+    with pytest.raises(ValueError, match="removed_spans"):
+        QueryPlan(
+            original_text="포아송비 설명",
+            original_language="ko",
+            queries=(QueryVariant("포아송비 설명", "ko", "original", "cae-glossary-ko-en-v1"),),
+            policy_revision="cae-query-ko-en-v1",
+            removed_spans=("something",),
+        )
+
+    assert map_corpus_source_kind_to_envelope("solver_manual") == "solver_manual"
+    assert map_corpus_source_kind_to_envelope("official_manual") == "solver_manual"
+    assert map_corpus_source_kind_to_envelope("reviewed_note") == "manual"
+    assert map_corpus_source_kind_to_envelope("paper") == "paper"
+
+    # RetrievalDecisionV1 requires strict verification for status="supported"
+    req = RetrievalRequirementV1(
+        requirement_id="req-1",
+        original_span=(0, 4),
+        facet="topic",
+        expected="Poisson",
+        status="verified",
+        reason="matched",
+    )
+    chk = RetrievalCandidateCheckV1(
+        candidate_id="chunk-1",
+        source_sha256="b" * 64,
+        relation="relevant",
+        requirement_ids=("req-1",),
+        quoted_spans=({"start": 0, "end": 12},),
+        reason="exact match",
+    )
+    ref = ArtifactRefV1(
+        id="src-review-1",
+        role="source_review",
+        path="reviews.json",
+        sha256="c" * 64,
+        size=32,
+        format_id="cae-source-review-v1",
+        producer=ProducerIdentity("test", "1.0"),
+    )
+    with pytest.raises(ValueError, match="source_review_refs"):
+        RetrievalDecisionV1(
+            assessment_id="assess-1",
+            query_plan_sha256="d" * 64,
+            candidate_set_sha256="e" * 64,
+            source_review_refs=(),
+            assessment_profile_id="human-reviewed-v1",
+            assessment_profile_sha256="f" * 64,
+            status="supported",
+            requirements=(req,),
+            candidate_checks=(chk,),
+            missing_evidence=(),
+            limitations=(),
+            assessment_trace_ref=None,
+        )
+    supported = RetrievalDecisionV1(
+        assessment_id="assess-1",
+        query_plan_sha256="d" * 64,
+        candidate_set_sha256="e" * 64,
+        source_review_refs=(ref,),
+        assessment_profile_id="human-reviewed-v1",
+        assessment_profile_sha256="f" * 64,
+        status="supported",
+        requirements=(req,),
+        candidate_checks=(chk,),
+        missing_evidence=(),
+        limitations=(),
+        assessment_trace_ref=None,
+    )
+    assert RetrievalDecisionV1.from_dict(supported.to_dict()) == supported
+
+
+# ------------------------------------------------------------------ D08 Prompt & Discussion v2 + v1 Migration
+def test_d08_theory_template_and_prompt_builder():
+    theory_tpl = experts.get_template("theory")
+    assert theory_tpl.id == "theory"
+    assert theory_tpl.allowed_tools == ("knowledge",)
+    assert theory_tpl.allowed_evidence_sources == ("knowledge",)
+
+    provider = _StubTheoryProvider()
+    disc = experts.Discussion(
+        template=theory_tpl,
+        summary_text="",
+        model_text="",
+        log_tail="",
+        provider=provider,
+        solver_id="",
+        native_evidence=None,
+        question_scope="theory",
+    )
+    prompt = disc.build_prompt("CalculiX에서 Prony 급수 점탄성 접촉 수렴 원리를 설명해 주세요.")
+    assert "[질문 범위 — 실행 결과 첨부 없는 일반 CAE 이론·문헌 자문]" in prompt
+    assert "첨부된 실행·모델·보정 근거가 없습니다" in prompt
+    assert "run_id" not in prompt and "frame_index" not in prompt
+    assert disc.knowledge_result.solver == "calculix"
+    assert disc.evidence_sources == ["knowledge"]
+
+    # case_analysis keeps inferring solver from summary_text rather than question
+    model_tpl = experts.get_template("material")
+    disc_case = experts.Discussion(
+        template=model_tpl,
+        summary_text="code_aster 계산 완료",
+        model_text="DEFI_MATERIAU",
+        log_tail="",
+        provider=provider,
+        solver_id="",
+        question_scope="case_analysis",
+    )
+    disc_case.build_prompt("CalculiX 자료를 참고해 설명해 주세요.")
+    assert disc_case.knowledge_result.solver == "code_aster"
+
+
+def test_d08_v1_open_no_write_and_first_write_backup(tmp_path: Path, monkeypatch):
+    v1_path = tmp_path / "legacy_discussion.json"
+    raw_v1_bytes = (json.dumps(_v1_sample_document(), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    v1_sha = hashlib.sha256(raw_v1_bytes).hexdigest()
+    v1_path.write_bytes(raw_v1_bytes)
+
+    # Opening v1 must NOT modify disk or write backup.
+    loaded = discussions.load_discussion(v1_path)
+    assert loaded["schema_version"] == 2
+    assert loaded["question_scope"] == "case_analysis"
+    assert loaded["tool_policy_id"] == ROLE_POLICY_V1_ID
+    assert loaded["turns"][0]["schema_version"] == 1
+    assert loaded["turns"][0]["capability_limits"]["claim_review_status"] == "not_assessed"
+    assert v1_path.read_bytes() == raw_v1_bytes
+    assert not (tmp_path / "assets" / "migrations").exists()
+
+    # Corrupt version check
+    bad_path = tmp_path / "bad_ver.json"
+    bad_doc = _v1_sample_document()
+    bad_doc["schema_version"] = 3
+    bad_path.write_text(json.dumps(bad_doc), encoding="utf-8")
+    with pytest.raises(discussions.DiscussionFormatError):
+        discussions.load_discussion(bad_path)
+
+    # Failed v2 write after backup must leave v1 intact on disk
+    orig_atomic_json = discussions.atomic_json
+    def failing_atomic_json(target, payload):
+        if Path(target).resolve() == v1_path.resolve():
+            raise OSError("simulated disk write failure")
+        return orig_atomic_json(target, payload)
+
+    monkeypatch.setattr(discussions, "atomic_json", failing_atomic_json)
+    loaded["draft_question"] = "실패할 수정"
+    with pytest.raises(OSError, match="simulated disk write failure"):
+        discussions.save_discussion(v1_path, loaded, expected_revision=2)
+    assert json.loads(v1_path.read_bytes().decode("utf-8"))["schema_version"] == 1
+    assert v1_path.read_bytes() == raw_v1_bytes
+
+    # If corrupted backup already exists at same sha path, migration refuses to overwrite v1
+    monkeypatch.setattr(discussions, "atomic_json", orig_atomic_json)
+    backup_path = tmp_path / "assets" / "migrations" / f"{v1_sha}.json"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path.unlink(missing_ok=True)
+    backup_path.write_bytes(b"corrupted backup bytes")
+    with pytest.raises(discussions.DiscussionFormatError, match="원본과 일치"):
+        discussions.save_discussion(v1_path, loaded, expected_revision=2)
+    assert v1_path.read_bytes() == raw_v1_bytes
+
+    # Remove tampered backup and perform legitimate first write -> exact backup + v2 file
+    backup_path.unlink()
+    loaded["draft_question"] = "정상 저장된 초안"
+    saved = discussions.save_discussion(v1_path, loaded, expected_revision=2)
+    assert saved["schema_version"] == 2
+    assert saved["revision"] == 3
+    assert backup_path.read_bytes() == raw_v1_bytes
+    assert json.loads(v1_path.read_text(encoding="utf-8"))["schema_version"] == 2
+
+
+def test_d08_ask_discussion_theory_scope_and_v2_artifacts(tmp_path: Path, monkeypatch):
+    disc_path = tmp_path / "theory_chat.json"
+    doc = discussions.create_discussion(disc_path, title="이론 자문", question_scope="case_analysis")
+    assert doc["schema_version"] == 2
+    assert doc["revision"] == 0
+
+    provider = _StubTheoryProvider()
+    monkeypatch.setattr(experts, "get_provider", lambda _pid=None: provider)
+
+    # case_analysis requires evidence_id
+    with pytest.raises(ValueError, match="근거"):
+        discussions.ask_discussion(
+            disc_path,
+            "근거 없이 케이스 질문",
+            evidence_id=None,
+            template_id="convergence",
+            expected_revision=0,
+            question_scope="case_analysis",
+        )
+
+    # theory succeeds with evidence_id=None and writes immutable request artifacts + v2 turn
+    updated = discussions.ask_discussion(
+        disc_path,
+        "CalculiX에서 접촉 수렴과 *STATIC 증분 축소 원리를 설명해 주세요.",
+        evidence_id=None,
+        template_id="theory",
+        expected_revision=0,
+        question_scope="theory",
+    )
+    assert updated["question_scope"] == "theory"
+    assert updated["revision"] == 2
+    assert len(updated["turns"]) == 1
+    turn = updated["turns"][0]
+    assert turn["schema_version"] == 2
+    assert turn["question_scope"] == "theory"
+    assert turn["evidence_id"] is None
+    assert turn["run_id"] is None
+    assert turn["frame_index"] is None
+    assert turn["status"] == "completed"
+    assert turn["request_context_ref"]["path"].endswith("request_context.json")
+    assert turn["tool_trace_ref"]["path"].endswith("trace.json")
+    assert turn["evidence_pack_hash"] and len(turn["evidence_pack_hash"]) == 64
+    assert turn["retrieval_decisions"] and turn["retrieval_decisions"][0]["schema_version"] == 1
+    assert turn["claims"] and any("calculix-manual:convergence" in c["citation_ids"] for c in turn["claims"])
+    assert turn["capability_limits"]["claim_review_status"] == "not_assessed"
+    assert turn["budget_used"]["total_seconds"] >= 0.0
+
+    asset_root = tmp_path / "assets"
+    req_ctx = json.loads((asset_root / turn["request_context_ref"]["path"]).read_text(encoding="utf-8"))
+    assert req_ctx["evidence_id"] is None
+    assert req_ctx["evidence_sha256"] is None
+    assert req_ctx["question_scope"] == "theory"
+    assert (asset_root / f"requests/{turn['id']}/events/0001.json").is_file()
+    assert (asset_root / f"requests/{turn['id']}/events/0002.json").is_file()
+    trace_doc = json.loads((asset_root / turn["tool_trace_ref"]["path"]).read_text(encoding="utf-8"))
+    assert trace_doc["tool_call_count"] == 0
+    assert trace_doc["status"] == "completed"
+    assert trace_doc["request_context_ref"]["sha256"] == turn["request_context_ref"]["sha256"]
+
+
+# ------------------------------------------------------------------ D08 ExpertWindow GUI
+def test_d08_expert_window_theory_mode_gui(tmp_path: Path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication, QComboBox
+
+    app = QApplication.instance() or QApplication([])
+    settings_path = tmp_path / "expert_view.ini"
+    view_settings = QSettings(str(settings_path), QSettings.IniFormat)
+
+    provider = _StubTheoryProvider()
+    monkeypatch.setattr(experts, "get_provider", lambda _pid=None: provider)
+
+    disc_path = tmp_path / "gui_theory.json"
+    wb = Workbench()
+    try:
+        win = None
+        from apps.workbench_qt.expert_window import ExpertWindow
+
+        win = ExpertWindow(disc_path, workbench=wb, view_settings=view_settings)
+        win.resize(1100, 780)
+        assert win.scope_combo.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToContents
+        assert not win.ask_button.isEnabled()
+
+        win.question.setPlainText("드러커-프라거 팽창각이 수렴에 미치는 영향은?")
+        win.scope_combo.setCurrentIndex(win.scope_combo.findData("theory"))
+        assert win.question.toPlainText() == "드러커-프라거 팽창각이 수렴에 미치는 영향은?"
+        assert win.role.currentData() == "theory"
+        assert win.ask_button.isEnabled()
+        assert provider.prompts == []
+
+        win.scope_combo.setCurrentIndex(win.scope_combo.findData("case_analysis"))
+        assert win.question.toPlainText() == "드러커-프라거 팽창각이 수렴에 미치는 영향은?"
+        assert not win.ask_button.isEnabled()
+
+        win.scope_combo.setCurrentIndex(win.scope_combo.findData("theory"))
+        win.ask()
+        for _ in range(300):
+            app.processEvents()
+            win._poll()
+            if not win._operation and win.document.get("turns") and win.document["turns"][0].get("status") == "completed":
+                break
+            time.sleep(0.01)
+        assert win.document["turns"], f"Expected completed turn; status={win.status.text()}"
+        assert win.document["turns"][0]["question_scope"] == "theory"
+        html_out = win.transcript.toHtml()
+        assert "이론·문헌 자문 (첨부 없음)" in html_out
+        assert "입력 출처 미확인" not in html_out
+        assert "단위 미확인" not in html_out
+        win.close()
+
+        # Reopening persisted theory discussion keeps theory scope without invoking provider
+        calls_before = len(provider.prompts)
+        reopened = ExpertWindow(disc_path, workbench=wb, view_settings=view_settings)
+        assert reopened.scope_combo.currentData() == "theory"
+        assert reopened.role.currentData() == "theory"
+        assert reopened.ask_button.isEnabled()
+        assert len(provider.prompts) == calls_before
+        reopened.close()
+    finally:
+        wb.close()
+
+
+# ------------------------------------------------------------------ D09 QueryPlan
+def test_d09_query_plan_ko_en_expansion_and_warnings():
+    # NFKC applied only to search variants; original_text verbatim; removed_spans == ()
+    original = "ＡＢＡＱＵＳ에서 포아송비 0.3과 노이만 경계조건, 강체 모드, 라메 상수, 편차응력이 아닌 조건은?"
+    plan = query_language.prepare_query(original)
+    assert plan.original_text == original
+    assert plan.removed_spans == ()
+    assert plan.original_language == "ko"
+    assert plan.queries[0].text == original
+    mixed_plan = query_language.prepare_query("ABAQUS에서 Poisson ratio와 rigid body mode 설명해 주세요.")
+    assert mixed_plan.original_language == "mixed"
+    nfkc_texts = [v.text for v in plan.queries if v.method == "nfkc"]
+    assert any("ABAQUS" in t for t in nfkc_texts)
+    expanded_text = " ".join(v.text for v in plan.queries)
+    for expected in ("Poisson", "Neumann boundary condition", "rigid body", "Lame", "deviatoric stress", "0.3"):
+        assert expected in expanded_text
+
+    # Viscoelastic + Drucker-Prager + hardening + contact terms
+    q2 = "초탄성과 드러커-프라거 팽창각, 프로니 급수 이완, 저장 탄성계수, 손실 탄성계수, 시간-온도 중첩, 경화, 반력, 수렴, 접촉, 잠금, 변형률 비교"
+    plan2 = query_language.prepare_query(q2)
+    text2 = " ".join(v.text for v in plan2.queries)
+    for expected in (
+        "hyperelastic",
+        "Drucker-Prager",
+        "dilation angle",
+        "Prony series",
+        "relaxation",
+        "storage modulus",
+        "loss modulus",
+        "time-temperature superposition",
+        "hardening",
+        "reaction force",
+        "convergence",
+        "contact",
+        "locking",
+        "strain",
+    ):
+        assert expected in text2
+
+    # Unsupported language detection (Japanese / French)
+    jp_plan = query_language.prepare_query("ポアソン比とノイマン境界条件の説明")
+    assert jp_plan.original_language == "unsupported"
+    assert "QUERY_LANGUAGE_UNSUPPORTED" in jp_plan.warnings
+
+    unmapped_ko = query_language.prepare_query("오늘 초전도 자기부상 열차 해석 방법")
+    assert "LANGUAGE_COVERAGE_UNVERIFIED" in unmapped_ko.warnings
+
+
+# ------------------------------------------------------------------ D09 Offline Corpus, CLI, Hybrid Retrieval & Decision
+def test_d09_corpus_verify_build_reuse_cancel_and_cli(tmp_path: Path):
+    sources_dir, manifest_path, manifest_dict = _make_sample_corpus(tmp_path)
+    out_root = tmp_path / "corpus_out"
+
+    # --verify-only writes nothing
+    receipt_verify = corpus.build_corpus(manifest_path, output_root=out_root, verify_only=True)
+    assert receipt_verify.verify_only is True
+    assert receipt_verify.status == "verified"
+    assert receipt_verify.profile_id == CORPUS_PROFILE_ID
+    assert not (out_root / "indexes").exists()
+    assert not (out_root / "current.json").exists()
+
+    # Build atomic index
+    receipt_build = corpus.build_corpus(manifest_path, output_root=out_root, verify_only=False)
+    assert receipt_build.status == "built"
+    assert receipt_build.chunk_count >= 3
+    idx_dir = Path(receipt_build.index_dir)
+    assert idx_dir.is_dir()
+    assert (out_root / "current.json").is_file()
+    chunks_doc = json.loads((idx_dir / "chunks.json").read_text(encoding="utf-8"))
+    assert chunks_doc["bm25"] == {"k1": 1.5, "b": 0.75}
+    assert chunks_doc["rrf_k"] == 60
+    assert chunks_doc["vector_dim"] == 512
+    assert chunks_doc["vector_dtype"] == "float32"
+
+    # Verify 1-based line and exact 0-based char spans reconstruct source slices identically
+    src_texts = {
+        "calculix-theory": (sources_dir / "calculix_theory.md").read_text(encoding="utf-8"),
+        "aster-theory": (sources_dir / "code_aster_theory.md").read_text(encoding="utf-8"),
+    }
+    for ch in chunks_doc["chunks"]:
+        full = src_texts[ch["source_id"]]
+        assert ch["line_start"] >= 1
+        assert ch["line_end"] >= ch["line_start"]
+        assert full[ch["char_start"]:ch["char_end"]] == ch["text"]
+
+    vecs = np.load(idx_dir / "vectors.npy", allow_pickle=False)
+    assert vecs.dtype == np.float32
+    assert vecs.shape == (len(chunks_doc["chunks"]), 512)
+
+    # Second identical build reuses existing digest
+    receipt_reused = corpus.build_corpus(manifest_path, output_root=out_root, verify_only=False)
+    assert receipt_reused.status == "reused"
+    assert receipt_reused.index_digest == receipt_build.index_digest
+
+    # Cancellation during build cleans only its own tmpdir and keeps current.json untouched
+    prior_pointer = (out_root / "current.json").read_bytes()
+    sentinel = out_root / "indexes" / "user_note.txt"
+    sentinel.write_text("do not delete", encoding="utf-8")
+
+    def cancel_on_third():
+        cancel_on_third.calls += 1
+        return cancel_on_third.calls >= 3
+
+    cancel_on_third.calls = 0
+    with pytest.raises(RuntimeError, match="cancelled|중단"):
+        corpus.build_corpus(manifest_path, output_root=out_root, check_cancelled=cancel_on_third)
+    assert (out_root / "current.json").read_bytes() == prior_pointer
+    assert sentinel.read_text(encoding="utf-8") == "do not delete"
+    assert not any(p.name.startswith(".tmp-corpus-") for p in (out_root / "indexes").iterdir())
+
+    # CLI verification via subprocess (--verify-only and --build)
+    cli_out = tmp_path / "cli_out"
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    res_v = subprocess.run(
+        [sys.executable, "scripts/build_knowledge_index.py", "--manifest", str(manifest_path), "--output", str(cli_out), "--verify-only"],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(res_v.stdout)["status"] == "verified"
+    assert not (cli_out / "current.json").exists()
+
+    res_b = subprocess.run(
+        [sys.executable, "scripts/build_knowledge_index.py", "--manifest", str(manifest_path), "--output", str(cli_out), "--build"],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(res_b.stdout)["status"] == "built"
+    assert (cli_out / "current.json").is_file()
+
+    # Mismatched source SHA fails verification
+    bad_manifest = dict(manifest_dict)
+    bad_manifest["sources"] = [dict(manifest_dict["sources"][0], sha256="0" * 64)]
+    bad_manifest_path = sources_dir / "bad_manifest.json"
+    bad_manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="SHA256|sha256"):
+        corpus.build_corpus(bad_manifest_path, output_root=out_root, verify_only=True)
+
+
+def test_d09_cross_lingual_search_and_retrieval_decisions(tmp_path: Path, monkeypatch):
+    _, manifest_path, _ = _make_sample_corpus(tmp_path)
+    out_root = tmp_path / "corpus_idx"
+    receipt = corpus.build_corpus(manifest_path, output_root=out_root)
+
+    # Bilingual Korean queries retrieve corresponding English corpus chunks
+    plan_hp, hits_hp, dec_hp = corpus.search_corpus(
+        out_root,
+        "초탄성 편차응력과 라메 상수, 포아송비 관계가 어떻게 되나요?",
+        solver="calculix",
+    )
+    assert plan_hp.original_language == "mixed" or plan_hp.original_language == "ko"
+    assert hits_hp and "deviatoric stress" in hits_hp[0].text
+    assert dec_hp.status == "insufficient"  # unconfigured semantic assessment cannot claim supported
+
+    _, hits_dp, _ = corpus.search_corpus(
+        out_root,
+        "드러커-프라거 모델에서 팽창각과 마찰각 차이를 설명해 주세요.",
+        solver="calculix",
+    )
+    assert hits_dp and "Drucker-Prager" in hits_dp[0].text and "dilation angle" in hits_dp[0].text
+
+    _, hits_prony, _ = corpus.search_corpus(
+        out_root,
+        "프로니 급수 이완 탄성계수 및 시간-온도 중첩 저장 탄성계수 손실 탄성계수",
+        solver="calculix",
+    )
+    assert hits_prony and "Prony series" in hits_prony[0].text and "storage modulus" in hits_prony[0].text
+
+    _, hits_aster, _ = corpus.search_corpus(
+        out_root,
+        "노이만 경계조건 약형과 강체 모드, 전단 잠금 현상",
+        solver="code_aster",
+    )
+    assert hits_aster and "Neumann boundary condition" in hits_aster[0].text and "rigid body" in hits_aster[0].text
+
+    # Non-CAE question explicitly marked out_of_scope (distinct from insufficient solver coverage)
+    _, hits_oos, dec_oos = corpus.search_corpus(out_root, "오늘 저녁 김치찌개 레시피 알려줘")
+    assert dec_oos.status == "out_of_scope"
+    assert "NON_CAE_REQUEST" in dec_oos.missing_evidence
+
+    # Unknown solver edition explicitly marked insufficient (not out_of_scope)
+    _, _, dec_insuff = corpus.search_corpus(
+        out_root,
+        "LS-DYNA 2026에서 *MAT_999 카드의 포아송비를 설명해 주세요.",
+        solver="lsdyna",
+        edition="2026",
+    )
+    assert dec_insuff.status == "insufficient"
+    assert dec_insuff.status != "out_of_scope"
+
+    # Wire through knowledge.search_knowledge_result via CAELAB_CORPUS_INDEX_DIR
+    monkeypatch.setenv("CAELAB_CORPUS_INDEX_DIR", str(out_root))
+    knowledge._index_cache.clear()
+    try:
+        kres = knowledge.search_knowledge_result(
+            "드러커-프라거 팽창각과 시행 압력",
+            solver="calculix",
+            limit=3,
+        )
+        assert kres.status == "ok"
+        assert kres.query_plan is not None
+        assert kres.corpus_revision == receipt.revision
+        assert any("Drucker-Prager" in entry.text or "dilation angle" in entry.text for entry in kres.entries)
+    finally:
+        monkeypatch.delenv("CAELAB_CORPUS_INDEX_DIR", raising=False)
+        knowledge._index_cache.clear()

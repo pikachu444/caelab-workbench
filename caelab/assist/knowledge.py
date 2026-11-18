@@ -35,12 +35,13 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
 from . import rag
+from .contracts import QueryPlan
 
 SOURCE_ID = "calculix-manual"
 SOURCE_LABEL = "CalculiX CrunchiX User's Manual v2.23 (Dhondt)"
@@ -62,6 +63,8 @@ class KnowledgeSearchResult:
     entries: list[KnowledgeEntry]
     solver: str = ""
     error: str | None = None
+    query_plan: QueryPlan | None = field(default=None, compare=False)
+    corpus_revision: str | None = field(default=None, compare=False)
 
 
 # Canonical solver names and the spellings that identify them in
@@ -227,10 +230,17 @@ _index_cache: dict[tuple, rag.HybridIndex] = {}
 
 
 def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
-    """Load a prebuilt index — either `root` itself or every per-
-    solver subfolder under it, merged. Chunks that carry no solver
+    """Load a prebuilt index — either a corpus bundle (current.json), `root` itself,
+    or every per-solver subfolder under it, merged. Chunks that carry no solver
     tag yet (older builds) take the solver of their subfolder name.
     None when any folder's embedder differs from the configured one."""
+    if (root / "current.json").is_file():
+        from .corpus import load_corpus_bundle
+
+        loaded, _meta = load_corpus_bundle(root)
+        if loaded.embedder_id != embedder_id:
+            return None
+        return loaded
     if (root / "chunks.json").exists():
         folders = [root]
     elif root.is_dir():
@@ -265,12 +275,12 @@ def default_index() -> rag.HybridIndex:
     embedded with the configured embedder. Rebuilt only when the
     source set or embedder changes.
 
-    Prebuilt indexes (CAELAB_RAG_INDEX_DIR, made once — e.g. on the
+    Prebuilt indexes (CAELAB_CORPUS_INDEX_DIR or CAELAB_RAG_INDEX_DIR, made once — e.g. on the
     GPU laptop — and copied over) are loaded instead of rebuilt when
-    their embedder matches the configured one: either a single index
+    their embedder matches the configured one: either a corpus bundle, single index,
     or a parent folder of per-solver indexes."""
     embedder = rag.get_embedder()
-    prebuilt = os.environ.get("CAELAB_RAG_INDEX_DIR", "")
+    prebuilt = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "") or os.environ.get("CAELAB_RAG_INDEX_DIR", "")
     if prebuilt:
         key = ("prebuilt", prebuilt, embedder.id)
         if key in _index_cache:
@@ -308,19 +318,41 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
 def search_knowledge_result(query: str, limit: int = 3,
                             solver: str | None = None) -> KnowledgeSearchResult:
     """Keep solver scope and distinguish absent material from retrieval failure."""
+    from .corpus import search_hybrid_with_plan
+    from .query_language import prepare_query
+
     requested = solver or os.environ.get("CAELAB_KNOWLEDGE_SOLVER", "") or infer_solver(query)
     resolved = infer_solver(requested) or requested
+    if not (query or "").strip():
+        return KnowledgeSearchResult("no_material", [], resolved)
     try:
+        plan = prepare_query(query, explicit_facets={"solver": resolved} if resolved else None)
         index = default_index()
         embedder = rag.get_embedder()
         reranker = rag.get_reranker()
-        chunks = index.search(query, top_k=limit, embedder=embedder,
-                              reranker=reranker, solver=resolved or None)
+        chunks = search_hybrid_with_plan(
+            index,
+            plan,
+            embedder=embedder,
+            reranker=reranker,
+            limit=limit,
+            solver=resolved or None,
+        )
     except Exception as error:
         return KnowledgeSearchResult("error", [], resolved,
                                      f"{type(error).__name__}: {error}")
+    corpus_rev = None
+    prebuilt_dir = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "") or os.environ.get("CAELAB_RAG_INDEX_DIR", "")
+    if prebuilt_dir and (Path(prebuilt_dir) / "current.json").is_file():
+        try:
+            import json
+            ptr = json.loads((Path(prebuilt_dir) / "current.json").read_text(encoding="utf-8"))
+            corpus_rev = ptr.get("revision")
+        except Exception:
+            corpus_rev = None
     return KnowledgeSearchResult("ok" if chunks else "no_material",
-                                 [_to_entry(c) for c in chunks], resolved)
+                                 [_to_entry(c) for c in chunks], resolved,
+                                 query_plan=plan, corpus_revision=corpus_rev)
 
 
 def search_knowledge(query: str, limit: int = 3, solver: str | None = None) -> list[KnowledgeEntry]:

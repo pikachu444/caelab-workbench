@@ -4,7 +4,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import queue
+import re
 import threading
 import time
 import uuid
@@ -12,10 +14,18 @@ from pathlib import Path, PureWindowsPath
 
 from filelock import FileLock, Timeout
 
+from ..artifact_refs import ArtifactRefV1, ProducerIdentity, canonical_json_bytes, canonical_sha256
 from ..native.run_store import atomic_json, utc_now
 from ..native.input_snapshot import fingerprint
 from . import experts
+from .contracts import (
+    QUESTION_SCOPES,
+    ROLE_POLICY_V1_ID,
+    ROLE_POLICY_V2_ID,
+    build_role_read_policy,
+)
 from .knowledge import extract_citations, verify_citations
+from .query_language import build_retrieval_decision, prepare_query
 
 REQUEST_TIMEOUT_SECONDS = 85.0  # backward compatibility alias for administrative wait boundary
 PREPARATION_TIMEOUT_SECONDS = 20.0  # policy default budget for verification, availability, and prompt building
@@ -75,8 +85,27 @@ def _validate_evidence(evidence):
             raise DiscussionFormatError("대화 자산 경로는 자산 폴더 안의 상대 경로여야 합니다.")
 
 
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n[ \t]*\n")
+_DISCUSSIONS_PRODUCER = ProducerIdentity("caelab.assist.discussions", "2.0")
+
+
+def _validate_profile_ref(ref):
+    if ref is None:
+        return
+    if not isinstance(ref, dict):
+        raise DiscussionFormatError("관련성 판정 프로필 참조는 객체 또는 null이어야 합니다.")
+    if set(ref.keys()) != {"profile_id", "content_sha256"}:
+        raise DiscussionFormatError("관련성 판정 프로필 참조는 profile_id와 content_sha256만 포함해야 합니다.")
+    if not isinstance(ref["profile_id"], str) or not ref["profile_id"].strip():
+        raise DiscussionFormatError("관련성 판정 프로필 ID가 잘못되었습니다.")
+    sha = ref["content_sha256"]
+    if sha is not None and (not isinstance(sha, str) or not _SHA256_RE.fullmatch(sha)):
+        raise DiscussionFormatError("관련성 판정 프로필 SHA256이 잘못되었습니다.")
+
+
 def _validate(document):
-    if not isinstance(document, dict) or document.get("schema_version") != 1:
+    if not isinstance(document, dict) or type(document.get("schema_version")) is not int or document.get("schema_version") not in (1, 2):
         raise DiscussionFormatError("지원하지 않는 대화 문서입니다.")
     if not isinstance(document.get("id"), str) or not document["id"] or type(document.get("revision")) is not int or document["revision"] < 0:
         raise DiscussionFormatError("대화 ID·개정 번호가 잘못되었습니다.")
@@ -97,18 +126,83 @@ def _validate(document):
     selected = document.get("selected_evidence_id")
     if selected is not None and selected not in document["evidences"]:
         raise DiscussionFormatError("선택한 근거가 문서에 없습니다.")
+    if document["schema_version"] == 2:
+        scope = document.get("question_scope")
+        if scope not in QUESTION_SCOPES:
+            raise DiscussionFormatError("대화 질문 범위(question_scope)가 잘못되었습니다.")
+        for key in ("review_requests", "review_resolution_events", "draft_history"):
+            if not isinstance(document.get(key), list) or any(not isinstance(item, dict) for item in document[key]):
+                raise DiscussionFormatError(f"대화 {key} 형식이 잘못되었습니다.")
+        corpus_ref = document.get("corpus_snapshot_ref")
+        if corpus_ref is not None and not isinstance(corpus_ref, dict):
+            raise DiscussionFormatError("corpus_snapshot_ref 형식이 잘못되었습니다.")
+        policy_id = document.get("tool_policy_id")
+        if not isinstance(policy_id, str) or not policy_id.strip():
+            raise DiscussionFormatError("tool_policy_id가 잘못되었습니다.")
+        draft_ctx = document.get("draft_context")
+        if not isinstance(draft_ctx, dict):
+            raise DiscussionFormatError("draft_context 형식이 잘못되었습니다.")
+        if "retrieval_assessment_profile_ref" in draft_ctx:
+            _validate_profile_ref(draft_ctx["retrieval_assessment_profile_ref"])
     try:
         json.dumps(document, allow_nan=False)
     except (TypeError, ValueError) as error:
         raise DiscussionFormatError("대화에는 JSON으로 저장할 수 있는 유한 값만 넣을 수 있습니다.") from error
 
 
-def _read(path):
+def _upgrade_v1_turn_in_memory(turn: dict) -> dict:
+    upgraded = copy.deepcopy(turn)
+    upgraded.setdefault("schema_version", 1)
+    upgraded.setdefault("question_scope", "case_analysis")
+    upgraded.setdefault("responds_to_review_ids", [])
+    upgraded.setdefault("request_context_ref", None)
+    upgraded.setdefault("provider_capabilities", None)
+    upgraded.setdefault("tool_trace_ref", None)
+    upgraded.setdefault("retrieval_decisions", [])
+    upgraded.setdefault("claims", [])
+    upgraded.setdefault("answer_review_ids", [])
+    upgraded.setdefault("evidence_pack_hash", None)
+    upgraded.setdefault("corpus_revision", None)
+    upgraded.setdefault("budget_used", None)
+    upgraded.setdefault(
+        "capability_limits",
+        {"citation_verification": "id_only", "claim_review_status": "not_assessed", "semantic_relevance_assessed": False},
+    )
+    return upgraded
+
+
+def _upgrade_v1_to_v2(document: dict) -> dict:
+    upgraded = copy.deepcopy(document)
+    if upgraded.get("schema_version") == 2:
+        return upgraded
+    upgraded["schema_version"] = 2
+    upgraded["question_scope"] = "case_analysis"
+    upgraded["review_requests"] = []
+    upgraded["review_resolution_events"] = []
+    upgraded["corpus_snapshot_ref"] = None
+    upgraded["tool_policy_id"] = ROLE_POLICY_V1_ID
+    upgraded["draft_context"] = {
+        "question_scope": "case_analysis",
+        "template_id": "convergence",
+        "retrieval_assessment_profile_ref": None,
+    }
+    upgraded["draft_history"] = []
+    upgraded["turns"] = [_upgrade_v1_turn_in_memory(turn) for turn in upgraded["turns"]]
+    return upgraded
+
+
+def _read_raw(path):
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError, UnicodeError) as error:
+        raw_bytes = path.read_bytes()
+        document = json.loads(raw_bytes.decode("utf-8"))
+    except (OSError, ValueError, UnicodeError) as error:
         raise DiscussionFormatError("대화 파일을 읽지 못했습니다.") from error
     _validate(document)
+    return document, raw_bytes
+
+
+def _read(path):
+    document, _raw = _read_raw(path)
     return document
 
 
@@ -129,29 +223,60 @@ def _interrupt(document):
     document["pending_request"] = None
 
 
-def _current(path, expected_revision, *, idle=True):
-    document = _read(path)
+def _current_raw(path, expected_revision, *, idle=True):
+    document, raw_bytes = _read_raw(path)
     if document["revision"] != expected_revision:
         raise DiscussionConflict("다른 창에서 대화가 바뀌었습니다. 다시 열어 확인하세요.")
     if idle:
         if _active(path):
             raise DiscussionBusy("이 대화에 진행 중인 질문이 있습니다.")
         _interrupt(document)
+    raw_v1_bytes = raw_bytes if document["schema_version"] == 1 else None
+    if raw_v1_bytes is not None:
+        document = _upgrade_v1_to_v2(document)
+        _interrupt(document) if idle else None
+    return document, raw_v1_bytes
+
+
+def _current(path, expected_revision, *, idle=True):
+    document, _raw_v1 = _current_raw(path, expected_revision, idle=idle)
     return document
 
 
-def _write(path, document):
+def _write_v1_migration_backup(path: Path, raw_v1_bytes: bytes) -> Path:
+    v1_sha256 = hashlib.sha256(raw_v1_bytes).hexdigest()
+    backup_path = path.parent / "assets" / "migrations" / f"{v1_sha256}.json"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with backup_path.open("xb") as stream:
+            stream.write(raw_v1_bytes)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError:
+        if backup_path.read_bytes() != raw_v1_bytes:
+            raise DiscussionFormatError("기존 v1 마이그레이션 백업의 바이트가 원본과 일치하지 않습니다.")
+    return backup_path
+
+
+def _write(path, document, *, raw_v1_bytes: bytes | None = None):
     document = copy.deepcopy(document)
+    document["schema_version"] = 2
     document["revision"] += 1
     document["updated_at"] = utc_now()
     if document.get("pending_request"):
         document["pending_request"].pop("live", None)
     _validate(document)
+    if raw_v1_bytes is not None:
+        _write_v1_migration_backup(path, raw_v1_bytes)
+        if path.read_bytes() != raw_v1_bytes:
+            raise DiscussionConflict("백업 저장 중 다른 창에서 대화 문서가 바뀌었습니다.")
     atomic_json(path, document)
     return copy.deepcopy(document)
 
 
-def create_discussion(path, *, title="새 대화") -> dict:
+def create_discussion(path, *, title="새 대화", question_scope: str = "case_analysis") -> dict:
+    if question_scope not in QUESTION_SCOPES:
+        raise ValueError(f"지원하지 않는 질문 범위입니다: {question_scope!r}")
     path = Path(path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -159,10 +284,34 @@ def create_discussion(path, *, title="새 대화") -> dict:
             if path.exists():
                 raise DiscussionConflict("이미 있는 대화 문서를 덮어쓰지 않습니다.")
             now = utc_now()
-            document = {"schema_version": 1, "id": str(uuid.uuid4()), "revision": 0, "title": title,
-                        "created_at": now, "updated_at": now, "evidences": {}, "selected_evidence_id": None,
-                        "turns": [], "constraints": [], "failures": [], "proposals": [],
-                        "pending_request": None, "draft_question": "", "provider_id": None}
+            document = {
+                "schema_version": 2,
+                "id": str(uuid.uuid4()),
+                "revision": 0,
+                "title": title,
+                "created_at": now,
+                "updated_at": now,
+                "question_scope": question_scope,
+                "evidences": {},
+                "selected_evidence_id": None,
+                "turns": [],
+                "constraints": [],
+                "failures": [],
+                "proposals": [],
+                "pending_request": None,
+                "draft_question": "",
+                "provider_id": None,
+                "review_requests": [],
+                "review_resolution_events": [],
+                "corpus_snapshot_ref": None,
+                "tool_policy_id": ROLE_POLICY_V2_ID,
+                "draft_context": {
+                    "question_scope": question_scope,
+                    "template_id": "theory" if question_scope == "theory" else "convergence",
+                    "retrieval_assessment_profile_ref": None,
+                },
+                "draft_history": [],
+            }
             _validate(document)
             atomic_json(path, document)
             return copy.deepcopy(document)
@@ -173,6 +322,9 @@ def create_discussion(path, *, title="새 대화") -> dict:
 def load_discussion(path) -> dict:
     path = Path(path).resolve()
     document = _read(path)
+    if document.get("schema_version") == 1:
+        # Upgrade in-memory view only; never write on open.
+        document = _upgrade_v1_to_v2(document)
     pending = document.get("pending_request")
     if pending:
         live = _active(path)
@@ -192,7 +344,9 @@ def save_discussion(path, document, *, expected_revision: int) -> dict:
     _validate(candidate)
     try:
         with _lock(path):
-            current = _current(path, expected_revision, idle=False)
+            current, raw_v1_bytes = _current_raw(path, expected_revision, idle=False)
+            if raw_v1_bytes is not None and candidate.get("schema_version") == 1:
+                candidate = _upgrade_v1_to_v2(candidate)
             if _active(path):
                 raise DiscussionBusy("이 대화에 진행 중인 질문이 있습니다.")
             saved_pending = copy.deepcopy(current.get("pending_request"))
@@ -206,8 +360,16 @@ def save_discussion(path, document, *, expected_revision: int) -> dict:
                 draft = candidate.get("draft_question", "")
                 _interrupt(candidate)
                 candidate["draft_question"] = draft
-            editable = {"title", "constraints", "draft_question", "provider_id", "selected_evidence_id"}
-            for key in (current.keys() | candidate.keys()) - editable - {"pending_request", "failures"}:
+            editable = {
+                "title",
+                "constraints",
+                "draft_question",
+                "provider_id",
+                "selected_evidence_id",
+                "question_scope",
+                "draft_context",
+            }
+            for key in (current.keys() | candidate.keys()) - editable - {"pending_request", "failures", "draft_history"}:
                 if key not in current or key not in candidate or candidate[key] != current[key]:
                     raise DiscussionConflict("저장으로 기존 발언·제안·근거·출처 기록을 바꿀 수 없습니다.")
             if any(not isinstance(value, str) for value in candidate["constraints"]):
@@ -216,11 +378,17 @@ def save_discussion(path, document, *, expected_revision: int) -> dict:
             if candidate["failures"][:len(old_failures)] != old_failures or any(
                     not isinstance(value, str) for value in candidate["failures"][len(old_failures):]):
                 raise DiscussionConflict("기존 실패 기록은 보존하고 사용자 실패 이유만 추가할 수 있습니다.")
+            old_history = current.get("draft_history", [])
+            cand_history = candidate.get("draft_history", [])
+            if cand_history[:len(old_history)] != old_history or any(
+                    not isinstance(value, dict) for value in cand_history[len(old_history):]):
+                raise DiscussionConflict("기존 초안 이력은 보존하고 새 항목만 추가할 수 있습니다.")
             for key in editable:
                 if key in candidate:
                     current[key] = candidate[key]
             current["failures"] = candidate["failures"]
-            return _write(path, current)
+            current["draft_history"] = cand_history
+            return _write(path, current, raw_v1_bytes=raw_v1_bytes)
     except Timeout as error:
         raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
@@ -231,13 +399,13 @@ def attach_evidence(path, evidence, *, expected_revision: int) -> dict:
     _validate_evidence(evidence)
     try:
         with _lock(path):
-            document = _current(path, expected_revision)
+            document, raw_v1_bytes = _current_raw(path, expected_revision)
             old = document["evidences"].get(evidence["id"])
             if old is not None and old != evidence:
                 raise DiscussionConflict("같은 근거 ID의 원래 자료를 교체할 수 없습니다.")
             document["evidences"][evidence["id"]] = evidence
             document["selected_evidence_id"] = evidence["id"]
-            return _write(path, document)
+            return _write(path, document, raw_v1_bytes=raw_v1_bytes)
     except Timeout as error:
         raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
@@ -363,7 +531,7 @@ def review_proposal(path, proposal_id, *, expected_revision: int, decision="chec
     path = Path(path).resolve()
     try:
         with _lock(path):
-            document = _current(path, expected_revision)
+            document, raw_v1_bytes = _current_raw(path, expected_revision)
             matches = [item for item in document["proposals"] if isinstance(item, dict) and item.get("id") == proposal_id]
             if len(matches) != 1:
                 raise ValueError("제안 ID가 없거나 중복되어 검토할 수 없습니다.")
@@ -393,7 +561,7 @@ def review_proposal(path, proposal_id, *, expected_revision: int, decision="chec
             proposal.update(status=status, review_reason=review_reason, reviewed_at=now)
             proposal.setdefault("review_history", []).append({"decision": decision, "status": status,
                 "reason": review_reason, "user_reason": reason, "reviewed_at": now, "issues": issues})
-            return _write(path, document)
+            return _write(path, document, raw_v1_bytes=raw_v1_bytes)
     except Timeout as error:
         raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
@@ -427,8 +595,9 @@ def _provided_materials(discussion, evidence, origin):
         if source == "knowledge":
             for entry in discussion.knowledge_result.entries:
                 materials.append({"source": source, "citation_id": experts.citation_id(entry),
-                                  "topic": entry.topic, "text": entry.text, **origin})
-        else:
+                                  "topic": entry.topic, "text": entry.text,
+                                  "text_sha256": hashlib.sha256(entry.text.encode("utf-8")).hexdigest(), **origin})
+        elif evidence is not None:
             key = {"result_summary": "summary_text", "model_summary": "model_text", "solver_log": "log_text"}[source]
             text = evidence[key]
             materials.append({"source": source, "text_field": key, "text_length": len(text),
@@ -436,10 +605,95 @@ def _provided_materials(discussion, evidence, origin):
     return materials
 
 
-def ask_discussion(path, question, *, evidence_id: str, template_id: str,
-                   provider_id: str | None = None, expected_revision: int, check_cancelled=None,
-                   on_stage=None) -> dict:
-    """Ask once with a frozen document/evidence context and a 60-second deadline.
+def _write_immutable_request_json(asset_root: Path, rel_posix: str, artifact_id: str, role: str, format_id: str, payload: dict) -> dict:
+    raw = canonical_json_bytes(payload)
+    target = asset_root / rel_posix
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("xb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return ArtifactRefV1(
+        id=artifact_id,
+        role=role,
+        path=rel_posix,
+        sha256=hashlib.sha256(raw).hexdigest(),
+        size=len(raw),
+        format_id=format_id,
+        producer=_DISCUSSIONS_PRODUCER,
+    ).to_dict()
+
+
+def _segment_reply_claims(reply: str, request_id: str, verified_citations: list[str]) -> list[dict]:
+    if not reply or not reply.strip():
+        return []
+    reply_sha = hashlib.sha256(reply.encode("utf-8")).hexdigest()
+    verified_set = set(verified_citations)
+    claims: list[dict] = []
+    cursor = 0
+    for match in _PARAGRAPH_SPLIT_RE.finditer(reply):
+        raw_start, raw_end = cursor, match.start()
+        cursor = match.end()
+        seg = reply[raw_start:raw_end]
+        l_trim = len(seg) - len(seg.lstrip())
+        r_trim = len(seg) - len(seg.rstrip())
+        start = raw_start + l_trim
+        end = raw_end - r_trim
+        if start < end:
+            text_seg = reply[start:end]
+            seg_cids = [cid for cid in extract_citations(text_seg) if cid in verified_set]
+            claims.append({
+                "claim_id": str(uuid.uuid5(uuid.UUID(request_id), f"{start}:{end}:{reply_sha}")),
+                "text_span": [start, end],
+                "citation_ids": seg_cids,
+                "basis": "evidence" if seg_cids else "model_general_unverified",
+                "support": "not_assessed",
+            })
+    if cursor <= len(reply):
+        raw_start, raw_end = cursor, len(reply)
+        seg = reply[raw_start:raw_end]
+        l_trim = len(seg) - len(seg.lstrip())
+        r_trim = len(seg) - len(seg.rstrip())
+        start = raw_start + l_trim
+        end = raw_end - r_trim
+        if start < end:
+            text_seg = reply[start:end]
+            seg_cids = [cid for cid in extract_citations(text_seg) if cid in verified_set]
+            claims.append({
+                "claim_id": str(uuid.uuid5(uuid.UUID(request_id), f"{start}:{end}:{reply_sha}")),
+                "text_span": [start, end],
+                "citation_ids": seg_cids,
+                "basis": "evidence" if seg_cids else "model_general_unverified",
+                "support": "not_assessed",
+            })
+    return claims
+
+
+def _provider_capabilities_snapshot(provider, transport_mode: str) -> dict:
+    configured = False
+    if provider.id == "openai_compatible":
+        configured = bool(getattr(provider, "endpoint", "") and getattr(provider, "model", ""))
+    elif provider.id not in ("none", "base"):
+        configured = True
+    return {
+        "provider_id": provider.id,
+        "model_id": getattr(provider, "model", None),
+        "transport_mode": transport_mode,
+        "supported_tool_schema_version": None,
+        "max_context": None,
+        "configured": configured,
+        "probe_status": "not_run",
+        "last_probe_at": None,
+    }
+
+
+def ask_discussion(path, question, *, evidence_id: str | None = None, template_id: str,
+                   provider_id: str | None = None, expected_revision: int,
+                   question_scope: str | None = None, review_policy_id: str = "none",
+                   responds_to_review_ids: tuple[str, ...] = (),
+                   retrieval_assessment_profile_ref: dict | None = None,
+                   check_cancelled=None, on_stage=None) -> dict:
+    """Ask once with a frozen document/evidence context and bounded preparation/provider budgets.
 
     Only the caller writes. A late daemon worker can neither update a document
     nor start a provider after retrieval has been cancelled or timed out.
@@ -447,6 +701,17 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
     path = Path(path).resolve()
     if not isinstance(question, str) or not question.strip():
         raise ValueError("질문을 입력하세요.")
+    if question_scope is not None and question_scope not in QUESTION_SCOPES:
+        raise ValueError(f"지원하지 않는 질문 범위입니다: {question_scope!r}")
+    if not isinstance(review_policy_id, str) or not review_policy_id.strip():
+        raise ValueError("review_policy_id는 비어 있지 않은 문자열이어야 합니다.")
+    if isinstance(responds_to_review_ids, (str, bytes)) or not hasattr(responds_to_review_ids, "__iter__"):
+        raise ValueError("responds_to_review_ids는 문자열 목록이어야 합니다.")
+    responds_list = [str(rid) for rid in responds_to_review_ids]
+    if any(not rid.strip() for rid in responds_list):
+        raise ValueError("responds_to_review_ids 항목은 비어 있을 수 없습니다.")
+    _validate_profile_ref(retrieval_assessment_profile_ref)
+
     template = experts.get_template(template_id)
     try:
         lease = _lock(path, request=True)
@@ -456,7 +721,7 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
     try:
         try:
             with _lock(path):
-                document = _current(path, expected_revision, idle=False)
+                document, raw_v1_bytes = _current_raw(path, expected_revision, idle=False)
                 _interrupt(document)
                 prep_budget = PREPARATION_TIMEOUT_SECONDS
                 provider_budget = PROVIDER_TIMEOUT_SECONDS
@@ -466,31 +731,152 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                     provider_budget = min(provider_budget, REQUEST_TIMEOUT_SECONDS)
                     prep_budget = min(prep_budget, REQUEST_TIMEOUT_SECONDS)
 
+                if question_scope is not None:
+                    effective_scope = question_scope
+                elif evidence_id is not None:
+                    effective_scope = "case_analysis"
+                elif template_id == "theory" or document.get("question_scope") == "theory":
+                    effective_scope = "theory"
+                else:
+                    effective_scope = "case_analysis"
+
+                if effective_scope == "theory":
+                    if evidence_id is not None:
+                        raise ValueError("이론·문헌 자문(theory) 범위에서는 실행·모델 근거를 첨부하지 않습니다.")
+                    evidence = None
+                    origin = {
+                        "evidence_id": None,
+                        "evidence_name": "이론·문헌 자문 (첨부 없음)",
+                        "solver_id": None,
+                        "run_id": None,
+                        "input_revision": None,
+                        "frame_index": None,
+                    }
+                else:
+                    if evidence_id is None or evidence_id not in document["evidences"]:
+                        raise ValueError("선택한 근거가 대화에 없습니다.")
+                    evidence = copy.deepcopy(document["evidences"][evidence_id])
+                    origin = {
+                        "evidence_id": evidence_id,
+                        "evidence_name": evidence.get("summary_text", "").splitlines()[0][:120] if evidence.get("summary_text") else evidence_id,
+                        **{key: evidence.get(key) for key in ("solver_id", "run_id", "input_revision", "frame_index")},
+                    }
+
                 provider = experts.get_provider(provider_id or document.get("provider_id"))
                 if isinstance(provider, experts.OpenAICompatibleProvider):
                     provider.timeout_seconds = provider_budget
-                if evidence_id not in document["evidences"]:
-                    raise ValueError("선택한 근거가 대화에 없습니다.")
-                evidence = copy.deepcopy(document["evidences"][evidence_id])
                 request_id = str(uuid.uuid4())
-                origin = {"evidence_id": evidence_id, "evidence_name": evidence.get("summary_text", "").splitlines()[0][:120] if evidence.get("summary_text") else evidence_id,
-                          **{key: evidence.get(key) for key in ("solver_id", "run_id", "input_revision", "frame_index")}}
                 now = utc_now()
-                turn = {"id": request_id, "question": question, "reply": "", "status": "pending", "error": None,
-                        "template_id": template.id, "role": template.name, "provider_id": provider.id,
-                        "provider_name": provider.name, "provider_model": getattr(provider, "model", None),
-                        **origin, "evidence_sources": [], "provided_materials": [],
-                        "constraints": copy.deepcopy(document["constraints"]),
-                        "citations": {"shown_ids": [], "unverified": [], "verified": []},
-                        "created_at": now, "finished_at": None, "stage": "preparation"}
+                policy_id = document.get("tool_policy_id") or ROLE_POLICY_V2_ID
+                role_policy = build_role_read_policy(template.id, template.allowed_tools, policy_id=policy_id)
+                transport_mode = "structured_action" if provider.id == "openscience" else "prompt_only"
+                provider_caps = _provider_capabilities_snapshot(provider, transport_mode)
+                profile_ref = (
+                    copy.deepcopy(retrieval_assessment_profile_ref)
+                    if retrieval_assessment_profile_ref is not None
+                    else copy.deepcopy((document.get("draft_context") or {}).get("retrieval_assessment_profile_ref"))
+                )
+                query_plan = prepare_query(
+                    question,
+                    explicit_facets={"solver": evidence["solver_id"]} if evidence and evidence.get("solver_id") else None,
+                )
+                corpus_rev = None
+                corpus_snapshot = document.get("corpus_snapshot_ref")
+                if isinstance(corpus_snapshot, dict):
+                    corpus_rev = corpus_snapshot.get("revision")
+
+                request_context_payload = {
+                    "schema_version": 1,
+                    "request_id": request_id,
+                    "discussion_id": document["id"],
+                    "question": question,
+                    "question_scope": effective_scope,
+                    "template_id": template.id,
+                    "role_policy": role_policy.to_dict(),
+                    "constraints": copy.deepcopy(document["constraints"]),
+                    "evidence_id": origin["evidence_id"],
+                    "evidence_sha256": canonical_sha256(evidence) if evidence is not None else None,
+                    "query_plan": query_plan.to_dict(),
+                    "retrieval_assessment_profile_ref": profile_ref,
+                    "review_policy_id": review_policy_id,
+                    "responds_to_review_ids": responds_list,
+                    "corpus_revision": corpus_rev,
+                    "created_at": now,
+                }
+                asset_root = path.parent / "assets"
+                request_context_ref = _write_immutable_request_json(
+                    asset_root,
+                    f"requests/{request_id}/request_context.json",
+                    f"request-context:{request_id}",
+                    "request_context",
+                    "cae-request-context-v1",
+                    request_context_payload,
+                )
+                capability_limits = {
+                    "read_policy_id": "cae-read-v1",
+                    "role_policy_id": role_policy.policy_id,
+                    "role_policy_sha256": role_policy.policy_sha256,
+                    "transport_mode": transport_mode,
+                    "citation_verification": "id_only",
+                    "claim_review_status": "not_assessed",
+                    "semantic_relevance_assessed": False,
+                }
+
+                turn = {
+                    "schema_version": 2,
+                    "id": request_id,
+                    "question": question,
+                    "reply": "",
+                    "status": "pending",
+                    "error": None,
+                    "question_scope": effective_scope,
+                    "template_id": template.id,
+                    "role": template.name,
+                    "provider_id": provider.id,
+                    "provider_name": provider.name,
+                    "provider_model": getattr(provider, "model", None),
+                    **origin,
+                    "evidence_sources": [],
+                    "provided_materials": [],
+                    "constraints": copy.deepcopy(document["constraints"]),
+                    "citations": {"shown_ids": [], "unverified": [], "verified": []},
+                    "responds_to_review_ids": responds_list,
+                    "review_policy_id": review_policy_id,
+                    "request_context_ref": request_context_ref,
+                    "provider_capabilities": provider_caps,
+                    "tool_trace_ref": None,
+                    "retrieval_decisions": [],
+                    "claims": [],
+                    "answer_review_ids": [],
+                    "evidence_pack_hash": None,
+                    "corpus_revision": corpus_rev,
+                    "budget_used": {"preparation_seconds": 0.0, "provider_seconds": 0.0, "total_seconds": 0.0, "tool_calls": 0, "rounds": 0},
+                    "capability_limits": capability_limits,
+                    "created_at": now,
+                    "finished_at": None,
+                    "stage": "preparation",
+                }
                 history = copy.deepcopy(document["turns"])
                 document["turns"].append(turn)
-                document["selected_evidence_id"] = evidence_id
-                document["pending_request"] = {"id": request_id, "question": question, **origin,
-                                               "template_id": template.id, "provider_id": provider.id, "started_at": now,
-                                               "constraints": copy.deepcopy(document["constraints"])}
+                document["question_scope"] = effective_scope
+                document.setdefault("draft_context", {})["question_scope"] = effective_scope
+                document["draft_context"]["template_id"] = template.id
+                if retrieval_assessment_profile_ref is not None:
+                    document["draft_context"]["retrieval_assessment_profile_ref"] = copy.deepcopy(retrieval_assessment_profile_ref)
+                if effective_scope == "case_analysis":
+                    document["selected_evidence_id"] = evidence_id
+                document["pending_request"] = {
+                    "id": request_id,
+                    "question": question,
+                    "question_scope": effective_scope,
+                    **origin,
+                    "template_id": template.id,
+                    "provider_id": provider.id,
+                    "started_at": now,
+                    "constraints": copy.deepcopy(document["constraints"]),
+                }
                 document["draft_question"] = question
-                pending_document = _write(path, document)
+                pending_document = _write(path, document, raw_v1_bytes=raw_v1_bytes)
         except Timeout as error:
             raise DiscussionBusy("다른 창에서 대화를 저장하고 있습니다.") from error
 
@@ -507,23 +893,33 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
         supplied = queue.Queue(maxsize=1)
         provider_started = threading.Event()
         provider_deadline_box = [overall_deadline]
-        discussion = experts.Discussion(template=template, summary_text=evidence["summary_text"],
-                    model_text=evidence["model_text"], log_tail=evidence["log_text"], provider=provider,
-                    history=history, constraints=copy.deepcopy(document["constraints"]),
-                    failures=copy.deepcopy(document["failures"]), solver_id=evidence["solver_id"], native_evidence=evidence)
+        provider_started_at_box = [None]
+        discussion = experts.Discussion(
+            template=template,
+            summary_text=evidence["summary_text"] if evidence is not None else "",
+            model_text=evidence["model_text"] if evidence is not None else "",
+            log_tail=evidence["log_text"] if evidence is not None else "",
+            provider=provider,
+            history=history,
+            constraints=copy.deepcopy(document["constraints"]),
+            failures=copy.deepcopy(document["failures"]),
+            solver_id=evidence["solver_id"] if evidence is not None else "",
+            native_evidence=evidence,
+            question_scope=effective_scope,
+        )
 
         class Cancelled(Exception):
             pass
 
         def checkpoint(stage="prep"):
-            now = time.monotonic()
+            now_mono = time.monotonic()
             if stopped.is_set():
                 raise Cancelled("전문가 요청 대기 시간이 지났습니다.")
             if stage == "prep":
-                if now >= prep_deadline:
+                if now_mono >= prep_deadline:
                     raise TimeoutError(f"전문가 준비 대기 시간이 {prep_budget:g}초 제한을 넘었습니다.")
             else:
-                if now >= provider_deadline_box[0] or now >= overall_deadline:
+                if now_mono >= provider_deadline_box[0] or now_mono >= overall_deadline:
                     raise TimeoutError(f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다.")
             if check_cancelled is not None:
                 try:
@@ -534,19 +930,59 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
         def request():
             try:
                 checkpoint("prep")
-                problems = verify_evidence(evidence, path.parent / "assets")
-                if problems:
-                    raise ValueError("근거 무결성 확인 실패: " + "; ".join(problems))
+                if evidence is not None:
+                    problems = verify_evidence(evidence, path.parent / "assets")
+                    if problems:
+                        raise ValueError("근거 무결성 확인 실패: " + "; ".join(problems))
                 available, reason = provider.availability()
                 if not available:
                     responses.put(("unavailable", "", reason))
                     return
                 prompt = discussion.build_prompt(question)
-                context = {"evidence_sources": list(discussion.evidence_sources),
-                           "provided_materials": _provided_materials(discussion, evidence, origin),
-                           "shown_ids": list(discussion.knowledge_ids),
-                           "knowledge_status": discussion.knowledge_result.status if discussion.knowledge_result else "not_requested",
-                           "knowledge_error": discussion.knowledge_result.error if discussion.knowledge_result else None}
+                materials = _provided_materials(discussion, evidence, origin)
+                k_res = discussion.knowledge_result
+                retrieval_decisions = []
+                k_corpus_rev = corpus_rev
+                if "knowledge" in template.allowed_tools and k_res is not None:
+                    used_plan = getattr(k_res, "query_plan", None) or query_plan
+                    if getattr(k_res, "corpus_revision", None):
+                        k_corpus_rev = k_res.corpus_revision
+                    cand_dicts = [
+                        {
+                            "source_id": e.source_id,
+                            "chunk_id": e.id,
+                            "citation": experts.citation_id(e),
+                            "text": e.text,
+                            "edition": "unknown",
+                            "document_sha256": hashlib.sha256(e.text.encode("utf-8")).hexdigest(),
+                            "coverage_facets": {"solver": [e.solver] if e.solver else []},
+                        }
+                        for e in k_res.entries
+                    ]
+                    decision = build_retrieval_decision(
+                        used_plan,
+                        cand_dicts,
+                        explicit_facets={"solver": k_res.solver} if k_res.solver else None,
+                    )
+                    retrieval_decisions.append(decision.to_dict())
+                pack_hash = canonical_sha256(
+                    {
+                        "request_context_sha256": request_context_ref["sha256"],
+                        "evidence_sources": list(discussion.evidence_sources),
+                        "provided_materials": materials,
+                        "shown_ids": list(discussion.knowledge_ids),
+                    }
+                )
+                context = {
+                    "evidence_sources": list(discussion.evidence_sources),
+                    "provided_materials": materials,
+                    "shown_ids": list(discussion.knowledge_ids),
+                    "knowledge_status": k_res.status if k_res else "not_requested",
+                    "knowledge_error": k_res.error if k_res else None,
+                    "retrieval_decisions": retrieval_decisions,
+                    "evidence_pack_hash": pack_hash,
+                    "corpus_revision": k_corpus_rev,
+                }
                 checkpoint("prep")  # retrieval must not launch a provider after cancellation or prep timeout
                 supplied.put(context)
                 checkpoint("prep")
@@ -560,6 +996,7 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                 checkpoint("prep")
 
                 provider_started_at = time.monotonic()
+                provider_started_at_box[0] = provider_started_at
                 provider_deadline_box[0] = min(provider_started_at + provider_budget, overall_deadline)
                 provider_started.set()
                 checkpoint("provider")
@@ -582,25 +1019,25 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
             except Exception as error:
                 status, reply, error_text = "cancelled", "", f"{type(error).__name__}: {error}"
                 break
-            now = time.monotonic()
+            now_mono = time.monotonic()
             if not provider_started.is_set():
-                if now >= prep_deadline:
+                if now_mono >= prep_deadline:
                     status, reply, error_text = "timed_out", "", f"전문가 준비 대기 시간이 {prep_budget:g}초 제한을 넘었습니다."
                     break
-                remaining = min(prep_deadline - now, overall_deadline - now)
+                remaining = min(prep_deadline - now_mono, overall_deadline - now_mono)
             else:
                 target_deadline = min(provider_deadline_box[0], overall_deadline)
-                if now >= target_deadline:
+                if now_mono >= target_deadline:
                     status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
                     break
-                remaining = target_deadline - now
+                remaining = target_deadline - now_mono
 
             if remaining <= 0:
                 status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
                 break
             try:
                 status, reply, error_text = responses.get(timeout=min(.05, max(0.001, remaining)))
-                now = time.monotonic()
+                now_mono = time.monotonic()
                 if check_cancelled is not None:
                     try:
                         check_cancelled()
@@ -608,15 +1045,15 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                         status, reply, error_text = "cancelled", "", f"{type(error).__name__}: {error}"
                         break
                 if not provider_started.is_set():
-                    if now >= prep_deadline:
+                    if now_mono >= prep_deadline:
                         status, reply, error_text = "timed_out", "", f"전문가 준비 대기 시간이 {prep_budget:g}초 제한을 넘었습니다."
                         break
                 else:
                     target_deadline = min(provider_deadline_box[0], overall_deadline)
-                    if now >= target_deadline:
+                    if now_mono >= target_deadline:
                         status, reply, error_text = "timed_out", "", f"전문가 요청이 {provider_budget:g}초 제한을 넘었습니다."
                         break
-                if now >= overall_deadline:
+                if now_mono >= overall_deadline:
                     status, reply, error_text = "timed_out", "", f"전문가 요청이 {overall_budget:g}초 제한을 넘었습니다."
                     break
                 break
@@ -628,6 +1065,15 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                 provider.cancel()
             except Exception as error:
                 error_text += f" 공급자 중단 요청 실패: {type(error).__name__}"
+        end_time = time.monotonic()
+        total_elapsed = max(0.0, end_time - start_time)
+        p_start = provider_started_at_box[0]
+        if p_start is not None:
+            prep_elapsed = max(0.0, p_start - start_time)
+            provider_elapsed = max(0.0, end_time - p_start)
+        else:
+            prep_elapsed = total_elapsed
+            provider_elapsed = 0.0
         try:
             with _lock(path):
                 current = _current(path, pending_document["revision"], idle=False)
@@ -635,25 +1081,85 @@ def ask_discussion(path, question, *, evidence_id: str, template_id: str,
                     raise DiscussionConflict("질문을 시작한 대화가 바뀌어 늦은 응답을 저장하지 않았습니다.")
                 final_turn = next(t for t in current["turns"] if t["id"] == request_id)
                 final_stage = "provider" if provider_started.is_set() else "preparation"
-                final_turn.update(status=status, reply=reply, error=error_text, finished_at=utc_now(), stage=final_stage)
+                finished_at = utc_now()
+                final_turn.update(status=status, reply=reply, error=error_text, finished_at=finished_at, stage=final_stage)
                 try:
                     context = supplied.get_nowait()
                 except queue.Empty:
                     context = None
                 if context is not None:
-                    final_turn.update({key: context[key] for key in ("evidence_sources", "provided_materials", "knowledge_status", "knowledge_error")})
+                    final_turn.update({
+                        key: context[key]
+                        for key in ("evidence_sources", "provided_materials", "knowledge_status",
+                                    "knowledge_error", "retrieval_decisions", "evidence_pack_hash", "corpus_revision")
+                    })
                     final_turn["citations"]["shown_ids"] = context["shown_ids"]
                 if status == "completed":
                     shown = final_turn["citations"]["shown_ids"]
                     unverified = verify_citations(reply, shown)
-                    final_turn["citations"] = {"shown_ids": shown, "unverified": unverified,
-                                                "verified": [cid for cid in extract_citations(reply) if cid in shown]}
-                    if "model_summary" in final_turn["evidence_sources"]:
+                    verified = [cid for cid in extract_citations(reply) if cid in shown]
+                    final_turn["citations"] = {"shown_ids": shown, "unverified": unverified, "verified": verified}
+                    final_turn["claims"] = _segment_reply_claims(reply, request_id, verified)
+                    if evidence is not None and "model_summary" in final_turn["evidence_sources"]:
                         current["proposals"].extend(_native_proposals(reply, evidence, request_id))
                     current["draft_question"] = ""
                 else:
                     current["failures"].append({"request_id": request_id, "reason": error_text,
-                                               "evidence_sources": list(template.allowed_tools), **origin})
+                                                "evidence_sources": list(template.allowed_tools), **origin})
+                final_turn["budget_used"] = {
+                    "preparation_seconds": round(prep_elapsed, 6),
+                    "provider_seconds": round(provider_elapsed, 6),
+                    "total_seconds": round(total_elapsed, 6),
+                    "tool_calls": 0,
+                    "rounds": 1 if provider_started.is_set() else 0,
+                }
+                # Record chained immutable trace events + terminal trace.json
+                asset_root = path.parent / "assets"
+                ev1_ref = _write_immutable_request_json(
+                    asset_root,
+                    f"requests/{request_id}/events/0001.json",
+                    f"trace-event:{request_id}:1",
+                    "trace_event",
+                    "cae-trace-event-v1",
+                    {
+                        "seq": 1,
+                        "previous_event_sha256": None,
+                        "request_id": request_id,
+                        "stage": "preparation",
+                        "request_context_sha256": request_context_ref["sha256"],
+                    },
+                )
+                ev2_ref = _write_immutable_request_json(
+                    asset_root,
+                    f"requests/{request_id}/events/0002.json",
+                    f"trace-event:{request_id}:2",
+                    "trace_event",
+                    "cae-trace-event-v1",
+                    {
+                        "seq": 2,
+                        "previous_event_sha256": ev1_ref["sha256"],
+                        "request_id": request_id,
+                        "stage": final_stage,
+                        "status": status,
+                        "finished_at": finished_at,
+                    },
+                )
+                final_turn["tool_trace_ref"] = _write_immutable_request_json(
+                    asset_root,
+                    f"requests/{request_id}/trace.json",
+                    f"trace:{request_id}",
+                    "tool_trace",
+                    "cae-tool-trace-v1",
+                    {
+                        "schema_version": 1,
+                        "request_id": request_id,
+                        "request_context_ref": request_context_ref,
+                        "events": [ev1_ref, ev2_ref],
+                        "tool_call_count": 0,
+                        "status": status,
+                        "budget_used": final_turn["budget_used"],
+                    },
+                )
                 current["pending_request"] = None
                 return _write(path, current)
         except Timeout as error:
