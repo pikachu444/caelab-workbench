@@ -54,7 +54,7 @@ class Chunk:
     solver: str = ""  # legacy single-solver index tag
     solver_scope: tuple[str, ...] = ()
     corpus_chunk: CorpusChunkSpec | None = None
-    source_kind: str = "theory_note"
+    source_kind: str = "legacy_unknown"
     review_status: str = "unreviewed"
 
     def matches_solver(self, solver: str) -> bool:
@@ -522,7 +522,7 @@ def save_index(index: HybridIndex, folder: str | Path) -> Path:
         "chunks": [
             {"chunk_id": c.chunk_id, "source_id": c.source_id,
              "heading_path": list(c.heading_path), "text": c.text,
-             "solver": c.solver}
+             "solver": c.solver, "source_kind": c.source_kind, "review_status": c.review_status}
             for c in index.chunks
         ],
     }
@@ -544,7 +544,8 @@ def load_index(folder: str | Path) -> HybridIndex:
     meta = json.loads((folder / "chunks.json").read_text(encoding="utf-8"))
     chunks = [
         Chunk(c["chunk_id"], c["source_id"], tuple(c["heading_path"]), c["text"],
-              solver=c.get("solver", ""))
+              solver=c.get("solver", ""), source_kind=c.get("source_kind") or "legacy_unknown",
+              review_status=c.get("review_status") or "unreviewed")
         for c in meta["chunks"]
     ]
     vectors_file = folder / "vectors.npy"

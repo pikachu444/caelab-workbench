@@ -258,7 +258,7 @@ def test_d08_contracts_validation_and_role_policies():
             assessment_trace_ref=None,
         )
     trace = ArtifactRefV1(
-        id="assessment-1", role="retrieval_assessment_trace", path="trace.json",
+        id="assessment-1", role="retrieval_trace", path="trace.json",
         sha256="e" * 64, size=32, format_id="cae-retrieval-assessment-trace-v1",
         producer=ProducerIdentity("test", "1.0"),
     )
@@ -946,7 +946,9 @@ def test_d09_full_frozen_evaluation_against_bm25_baseline(tmp_path):
         expected = row["expected_retrieval"]
         counts[expected] += 1
         facets = row["explicit_facets"]
-        _, hits, decision = corpus.search_corpus(tmp_path, row["question"], explicit_facets=facets)
+        _, hits, decision = corpus.search_corpus(
+            tmp_path, row["question"], explicit_facets=facets if expected == "supported" else None,
+        )
         if expected == "supported":
             expected_ids = set(row["expected_chunk_ids"])
             hybrid_hits += bool(expected_ids & {hit.chunk_id for hit in hits})
@@ -969,68 +971,109 @@ def test_d09_full_frozen_evaluation_against_bm25_baseline(tmp_path):
     assert hybrid_hits >= 22 and hybrid_hits >= bm25_hits, (hybrid_hits, bm25_hits)
 
 
-def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span():
+def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_path):
     text = "Drucker-Prager yield condition"
     digest = hashlib.sha256(text.encode()).hexdigest()
     reviewed_sha = "a" * 64
+    producer = ProducerIdentity("pytest", "1")
     review = ArtifactRefV1(
         id="review-1", role="source_review", path="reviews/approved.json",
-        sha256="e" * 64, size=12, format_id="cae-source-review-v1", producer=ProducerIdentity("pytest", "1"),
+        sha256="e" * 64, size=12, format_id="cae-source-review-v1", producer=producer,
     )
     candidate = {
-        "citation": "geos-manual:chapter-1", "document_sha256": reviewed_sha, "edition": "v2.23",
+        "citation": "geos-manual:chapter-1", "source_id": "geos-manual",
+        "document_sha256": reviewed_sha, "edition": "v2.23",
         "line_start": 12, "line_end": 12, "char_start": 80, "char_end": 80 + len(text),
         "text": text, "text_sha256": digest, "solver_scope": ["geos", "general"],
     }
-    plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield condition?")
-    requirements = query_language.extract_query_requirements(plan)
+    plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield")
 
-    trace = ArtifactRefV1(
-        id="assessment-1", role="retrieval_assessment_trace", path="traces/assessment.json",
-        sha256="3" * 64, size=32, format_id="cae-retrieval-assessment-trace-v1",
-        producer=ProducerIdentity("pytest", "1"),
-    )
-
-    def assess(target, *, quote_start=0, approved=True, include_good=False, trace_ref=trace,
-               candidate_scopes=None, facets=None, out_of_scope=None):
-        quotes = [{"candidate_id": target["citation"], "start": quote_start, "end": len(text)}]
-        result = {"checks": [dict(requirement_id=req.requirement_id, relation="satisfied", quoted_spans=quotes)
-                             for req in requirements]}
-        if out_of_scope is not None:
-            result["out_of_scope"] = out_of_scope
+    def assess(target, *, approved=True, include_good=False, trace_role="retrieval_trace",
+               candidate_scopes=None, facets=None, out_of_scope=None, drop=(), invalid_quote=None,
+               trace_ids=None, assessment_ids=None, gaps=(), question_plan=plan):
         candidates = [candidate, target] if include_good else [target]
+        probe = query_language.build_retrieval_decision(
+            question_plan, candidates, explicit_facets=facets, candidate_solver_scopes=candidate_scopes,
+        )
+        identity = {key: getattr(probe, key) for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")}
+        ids = [item["citation"] for item in candidates]
+        trace_payload = {"type": "retrieval_assessment", "schema_version": 1, **identity,
+                         "candidate_ids": ids if trace_ids is None else trace_ids}
+        raw = canonical_json_bytes(trace_payload)
+        (tmp_path / "trace.json").write_bytes(raw)
+        trace = ArtifactRefV1(
+            id="trace", role=trace_role or "retrieval_trace", path="trace.json",
+            sha256=hashlib.sha256(raw).hexdigest(), size=len(raw), format_id="cae-retrieval-trace-v1",
+            producer=producer,
+        )
+        quotes = [{"candidate_id": target["citation"], "start": 0, "end": len(text)}]
+        result = {
+            "type": "retrieval_assessment", **identity,
+            "candidate_ids": ids if assessment_ids is None else assessment_ids, "trace_ref": trace.to_dict(),
+            "scope_status": "in_scope", "decision": "supported", "insufficiency_reasons": list(gaps),
+            "citations": quotes,
+            "checks": [
+                {"requirement_id": req.requirement_id, "candidate_ids": [target["citation"]],
+                 "relation": "satisfied", "quoted_spans": quotes, "reason": "reviewed original text"}
+                for req in probe.requirements
+            ],
+            "out_of_scope": out_of_scope or {"is_non_cae": False, "original_spans": [], "reason": ""},
+            "limitations": [],
+        }
+        for field in drop:
+            result.pop(field)
+        if invalid_quote is not None:
+            result["checks"][0]["quoted_spans"] = [*quotes, invalid_quote]
         return query_language.build_retrieval_decision(
-            plan, candidates, source_review_refs=[review],
+            question_plan, candidates, source_review_refs=[review],
             approved_source_reviews={reviewed_sha: review} if approved else {},
-            assessment_profile_sha256="f" * 64, assessment_result=result, assessment_trace_ref=trace_ref,
+            assessment_profile_sha256="f" * 64, assessment_result=result,
+            assessment_trace_ref=trace if trace_role else None, assessment_trace_root=tmp_path,
             explicit_facets=facets, candidate_solver_scopes=candidate_scopes,
         )
 
     with pytest.raises(ValueError, match="assessment_trace_ref"):
-        assess(candidate, trace_ref=None)
-    with pytest.raises(ValueError, match="trace artifact"):
-        assess(candidate, trace_ref=review)
+        assess(candidate, trace_role=None)
+    with pytest.raises(ValueError, match="retrieval trace artifact"):
+        assess(candidate, trace_role="unrelated_trace")
+    for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256", "trace_ref",
+                "candidate_ids", "citations", "scope_status", "decision", "checks"):
+        with pytest.raises(ValueError, match="fields"):
+            assess(candidate, drop=(key,))
+    with pytest.raises(ValueError, match="candidate_ids"):
+        assess(candidate, trace_ids=["unrelated"])
+    with pytest.raises(ValueError, match="candidate_ids"):
+        assess(candidate, assessment_ids=[])
+    for invalid in (
+        {"candidate_id": candidate["citation"], "start": False, "end": 3},
+        {"candidate_id": candidate["citation"], "start": 0, "end": len(text) + 1},
+        {"candidate_id": candidate["citation"], "start": 0, "end": 3, "text": "not quoted"},
+    ):
+        with pytest.raises(ValueError, match="citation or quotation"):
+            assess(candidate, invalid_quote=invalid)
+    bad_span = {"is_non_cae": True, "original_spans": [{"start": 0, "end": len(plan.original_text) + 1}], "reason": "invalid"}
+    with pytest.raises(ValueError, match="original span"):
+        assess(candidate, out_of_scope=bad_span)
     assert assess(candidate).status == "supported"
-    altered = dict(candidate, text=text[:-1] + "X")
-    before = query_language.build_retrieval_decision(plan, [candidate])
-    after = query_language.build_retrieval_decision(plan, [altered])
-    assert before.candidate_set_sha256 != after.candidate_set_sha256
+    assert assess(candidate, trace_role="tool_trace").status == "supported"
+    assert assess(candidate, approved=False).status == "insufficient"
+    assert assess(candidate, gaps=["missing_restart_validation"]).status == "insufficient"
+    restart = query_language.prepare_query("GEOS v2.23 restart")
+    assert "missing_restart_validation" in assess(candidate, question_plan=restart).missing_evidence
     wrong_solver = dict(candidate, solver_scope=["calculix"])
     assert assess(wrong_solver, candidate_scopes={candidate["citation"]: ["geos"]}).status == "insufficient"
     assert assess(wrong_solver, facets={"solver": "calculix"}).status == "insufficient"
-    conflicting = dict(wrong_solver, coverage_facets={"solver": ["geos"]})
-    assert assess(conflicting).status == "insufficient"
-    bad_span = {"is_non_cae": True, "original_spans": [{"start": 0, "end": len(plan.original_text) + 1}]}
-    decision = assess(candidate, out_of_scope=bad_span)
-    assert decision.status == "insufficient" and "INVALID_ASSESSMENT_SPAN" in decision.missing_evidence
-    assert assess(candidate, approved=False).status == "insufficient"
-    assert assess(candidate, quote_start=False).status == "insufficient"
-    for invalid in (
-        dict(solver_scope=["calculix"]), dict(edition="2.230"), dict(char_end=80),
-        dict(document_sha256="b" * 64),
-    ):
-        wrong = dict(candidate, citation="other:chunk", **invalid)
-        assert assess(wrong, include_good=True).status == "insufficient"
+    assert assess(dict(wrong_solver, coverage_facets={"solver": ["geos"]})).status == "insufficient"
+    for invalid in (dict(edition="2.230"), dict(char_end=80), dict(document_sha256="b" * 64)):
+        assert assess(dict(candidate, citation="other:chunk", **invalid), include_good=True).status == "insufficient"
+    first = query_language.build_retrieval_decision(plan, [candidate])
+    for changed in (dict(text=text[:-1] + "X"), dict(line_start=13, line_end=13), dict(source_id="other")):
+        altered = query_language.build_retrieval_decision(plan, [dict(candidate, **changed)])
+        assert first.candidate_set_sha256 != altered.candidate_set_sha256
+    norton = query_language.build_retrieval_decision(plan, [candidate], explicit_facets={"model": "Norton"})
+    prony = query_language.build_retrieval_decision(plan, [candidate], explicit_facets={"model": "Prony"})
+    assert norton.assessment_id != prony.assessment_id
+    assert next(req for req in norton.requirements if req.facet == "model").original_span is None
 
 
 def test_d09_rejects_corrupt_artifacts_and_refreshes_ask_cache(tmp_path, monkeypatch):
@@ -1132,7 +1175,7 @@ def test_d09_review_overlay_applies_per_source_and_image_only_fails(tmp_path):
 
 
 
-@pytest.mark.parametrize("defect", ["wrong_schema", "wrong_discussion", "wrong_turn", "alias", "event", "chunk"])
+@pytest.mark.parametrize("defect", ["wrong_schema", "wrong_version", "wrong_discussion", "wrong_turn", "alias", "event", "chunk", "no_terminal"])
 def test_saved_request_artifact_issues_block_history_and_store_copy(tmp_path, monkeypatch, defect):
     from caelab.native.run_store import RunStore
 
@@ -1162,6 +1205,12 @@ def test_saved_request_artifact_issues_block_history_and_store_copy(tmp_path, mo
     if defect == "alias":
         turn["request_artifact_sha256"] = "0" * 64
         expected = "request_artifact_ref"
+    elif defect == "no_terminal":
+        trace_ref = turn["tool_trace_ref"]
+        trace = json.loads((assets / trace_ref["path"]).read_bytes())
+        truncated = rewrite(trace_ref, events=trace["events"][:1])
+        turn.update(tool_trace_ref=truncated, retrieval_trace_ref=truncated)
+        expected = "종료 추적 이벤트"
     elif defect in ("event", "chunk"):
         trace = json.loads((assets / turn["retrieval_trace_ref"]["path"]).read_bytes())
         references = trace["events"] if defect == "event" else trace["chunks"]
@@ -1170,6 +1219,7 @@ def test_saved_request_artifact_issues_block_history_and_store_copy(tmp_path, mo
     else:
         fields = {
             "wrong_schema": {"schema": "unknown"},
+            "wrong_version": {"schema_version": 999},
             "wrong_discussion": {"discussion_id": "other"},
             "wrong_turn": {"turn_id": "other"},
         }[defect]
@@ -1226,7 +1276,8 @@ def test_cancelling_attachment_dialog_keeps_v1_unchanged(tmp_path, monkeypatch, 
         app.processEvents()
 
 
-@pytest.mark.parametrize("mode", ["source_missing", "source_tampered", "vectors_nonfinite", "vector_meta_missing"])
+@pytest.mark.parametrize("mode", ["source_missing", "source_tampered", "vectors_nonfinite", "vector_meta_missing",
+                                  "forged_quotation", "notice_missing", "notice_tampered"])
 def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_path, mode):
     import io
     import shutil
@@ -1244,6 +1295,23 @@ def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_p
         raw = path.read_bytes()
         path.write_bytes(b"x" + raw[1:])
         error = "SHA256_MISMATCH"
+    elif mode == "forged_quotation":
+        path = staged / "chunks.json"
+        payload = json.loads(path.read_bytes())
+        quoted = payload["chunks"][0]
+        quoted["text"] = "x" + quoted["text"][1:]
+        quoted["text_sha256"] = hashlib.sha256(quoted["text"].encode()).hexdigest()
+        path.write_bytes(canonical_json_bytes(payload))
+        error = "PACKAGED_SOURCE_SPAN_MISMATCH"
+    elif mode in ("notice_missing", "notice_tampered"):
+        notice = staged / "licenses" / "LICENSE"
+        if mode == "notice_missing":
+            notice.unlink()
+            error = "LICENSE_NOTICE_MISSING"
+        else:
+            raw = notice.read_bytes()
+            notice.write_bytes(b"x" + raw[1:])
+            error = "SHA256_MISMATCH"
     elif mode == "vectors_nonfinite":
         path = staged / "vectors.npy"
         original_vectors = np.load(path, allow_pickle=False)
@@ -1313,3 +1381,135 @@ def test_switch_to_theory_discards_edited_saved_native_framing(tmp_path):
     finally:
         window.close()
         app.processEvents()
+
+
+
+def test_d08_pin_index_and_save_request_before_provider_availability(tmp_path, monkeypatch):
+    sources, manifest, data = _make_sample_corpus(tmp_path)
+    out = tmp_path / "out"
+    index_a = corpus.build_corpus(manifest, output_root=out)
+    pointer = out / "current.json"
+    pointer_a = pointer.read_bytes()
+
+    src = data["sources"][0]
+    source_path = sources / src["local_relative_path"]
+    changed = source_path.read_bytes().replace(b"trial pressure", b"new index pressure")
+    source_path.write_bytes(changed)
+    src.update(sha256=hashlib.sha256(changed).hexdigest(), byte_length=len(changed))
+    data["revision"] = "switched"
+    manifest.write_bytes(canonical_json_bytes(data))
+    index_b = corpus.build_corpus(manifest, output_root=out)
+    pointer_b = pointer.read_bytes()
+    pointer.write_bytes(pointer_a)
+    monkeypatch.setenv("CAELAB_CORPUS_INDEX_DIR", str(out))
+
+    path = tmp_path / "discussion.json"
+    doc = discussions.create_discussion(path, question_scope="theory")
+
+    class Provider(_StubTheoryProvider):
+        def availability(self):
+            pending = json.loads(path.read_bytes())
+            turn = pending["turns"][-1]
+            stored = json.loads((path.parent / "assets" / turn["request_context_ref"]["path"]).read_bytes())
+            assert turn["status"] == "pending"
+            assert turn["request_artifact_ref"] == turn["request_context_ref"]
+            assert turn["request_artifact_sha256"] == turn["request_context_ref"]["sha256"]
+            assert turn["index_sha256"] == stored["index_sha256"] == index_a.index_digest
+            pointer.write_bytes(pointer_b)
+            return True, ""
+
+        def discuss(self, prompt):
+            raw_pending = path.read_bytes()
+            interrupted_path = path.with_name("interrupt.json")
+            interrupted_path.write_bytes(raw_pending)
+            recovered = discussions.load_discussion(interrupted_path)
+            turn = recovered["turns"][-1]
+            assert turn["status"] == "interrupted"
+            assert turn["request_context_ref"]["sha256"] == turn["request_artifact_sha256"]
+            assert not discussions.discussion_issues(interrupted_path, recovered)
+            assert "trial pressure" in prompt and "new index pressure" not in prompt
+            return super().discuss(prompt)
+
+    provider = Provider()
+    monkeypatch.setattr(experts, "get_provider", lambda *_args: provider)
+    saved = discussions.ask_discussion(
+        path, "CalculiX Drucker-Prager trial pressure", template_id="theory", expected_revision=doc["revision"],
+    )
+    assert saved["turns"][-1]["status"] == "completed", saved["turns"][-1]["error"]
+    assert saved["turns"][-1]["corpus_revision"] == index_a.revision
+    assert knowledge.search_knowledge_result("Drucker-Prager trial pressure").index_digest == index_b.index_digest
+
+
+@pytest.mark.parametrize("key", ["evidence_summary", "evidence_name", "evidence_refs"])
+def test_d08_case_attachment_mismatch_excluded_from_history_and_save_as(tmp_path, monkeypatch, key):
+    from caelab.native.run_store import RunStore
+
+    root = tmp_path / "run-store"
+    path = root / "discussions" / "case.json"
+    doc = discussions.create_discussion(path)
+    log = tmp_path / "solver.log"
+    log.write_text("synthetic solver output", encoding="utf-8")
+    wb = Workbench()
+    try:
+        evidence = wb.import_expert_files(path.parent / "assets", files={"log": log}, solver_id="calculix")
+    finally:
+        wb.close()
+    doc = discussions.attach_evidence(path, evidence, expected_revision=doc["revision"])
+    provider = _StubTheoryProvider("sensitive previous reply")
+    monkeypatch.setattr(experts, "get_provider", lambda *_args: provider)
+    options = {"evidence_id": evidence["id"], "template_id": "interpretation"}
+    updated = discussions.ask_discussion(path, "First case", expected_revision=doc["revision"], **options)
+    assert updated["turns"][-1]["status"] == "completed"
+    assert not discussions.discussion_issues(path)
+    updated["turns"][-1][key] = []
+    path.write_bytes(canonical_json_bytes(updated))
+    assert any("첨부 근거 식별 정보" in issue for issue in discussions.discussion_issues(path))
+    target = tmp_path / "invalid-copy"
+    with pytest.raises(ValueError, match="요청 자산"):
+        RunStore(root).copy_to(target)
+    assert not target.exists()
+    followed = discussions.ask_discussion(path, "Second case", expected_revision=updated["revision"], **options)
+    assert followed["turns"][-1]["status"] == "completed"
+    assert "sensitive previous reply" not in provider.prompts[-1]
+
+
+def test_d09_verify_only_writes_no_temporary_directories(tmp_path, monkeypatch):
+    _, manifest, _ = _make_sample_corpus(tmp_path)
+    out = tmp_path / "existing"
+    corpus.build_corpus(manifest, output_root=out)
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("verify-only attempted to create a temporary directory")
+    monkeypatch.setattr(corpus.tempfile, "TemporaryDirectory", forbidden)
+    monkeypatch.setattr(corpus.tempfile, "mkdtemp", forbidden)
+    target = tmp_path / "read-only-target"
+    verified = corpus.build_corpus(manifest, output_root=target, verify_only=True, with_vectors=True)
+    assert verified.verify_only and not target.exists()
+    assert corpus.load_corpus_bundle(out, with_vectors=True)[0].vectors is not None
+
+
+def test_d09_comparison_editions_and_unmentioned_facet_spans(tmp_path):
+    _, manifest, data = _make_sample_corpus(tmp_path)
+    data["sources"][1]["solver_scope"] = ["calculix"]
+    manifest.write_bytes(canonical_json_bytes(data))
+    corpus.build_corpus(manifest, output_root=tmp_path / "out")
+    question = "CalculiX versions 2.22 and 16.5: compare weak form and Drucker-Prager"
+    plan, hits, decision = corpus.search_corpus(tmp_path / "out", question)
+    editions = [req for req in decision.requirements if req.facet == "edition"]
+    assert [req.expected for req in editions] == ["2.22", "16.5"]
+    assert {hit.edition for hit in hits} == {"2.22", "16.5"}
+    assert "edition_mismatch" not in decision.missing_evidence
+    one_edition = [hit for hit in hits if hit.edition == "2.22"]
+    assert "edition_mismatch" in query_language.build_retrieval_decision(plan, one_edition).missing_evidence
+    facets = {"solver": "abaqus", "model": "Norton", "edition": "2.24"}
+    reqs = query_language.extract_query_requirements(query_language.prepare_query("Weak form?"), facets)
+    assert all(req.original_span is None for req in reqs if req.facet in facets)
+
+
+def test_d09_units_scope_edges_and_legacy_labels():
+    for unit in "bar mbar psi ksi atm rpm deg rad kN MN mJ kJ W kW C".split():
+        plan = query_language.prepare_query(f"CalculiX 10 {unit} load")
+        assert not any(req.facet == "edition" for req in query_language.extract_query_requirements(plan)), unit
+    for question in ("Cook's membrane benchmark", "Why does a beam translate?"):
+        assert not query_language.classify_non_cae_intent(query_language.prepare_query(question))[0]
+    entry = knowledge._to_entry(rag.Chunk("chunk", "file", ("section",), "Some text"))
+    assert entry.source_kind == "legacy_unknown"

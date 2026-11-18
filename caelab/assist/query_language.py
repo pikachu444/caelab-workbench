@@ -4,12 +4,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from collections import Counter
 import hashlib
+import json
+from pathlib import Path
 import re
 import unicodedata
 from typing import Any
 import uuid
 
-from ..artifact_refs import ArtifactRefV1, canonical_sha256
+from ..artifact_refs import ArtifactRefV1, canonical_sha256, validate_relative_artifact_path
 from .contracts import (
     QUERY_POLICY_ID,
     CorpusChunkSpec,
@@ -205,9 +207,9 @@ _SOLVER_MENTION = re.compile(
     re.I,
 )
 _EDITION_RE = re.compile(r"(?<![0-9A-Za-z_.])v?\d+(?:\.\d+)*(?![0-9A-Za-z]|\.\d)", re.I)
-_UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol)"
+_UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|bar|mbar|psi|ksi|atm|rpm|deg|rad|MN|mJ|kJ|W|kW|C)"
 _EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
-_VERSION_MARKER = re.compile(r"(?:\b(?:version|ver\.?|edition)\s*[:=]?|버전|판본)\s*$", re.I)
+_VERSION_MARKER = re.compile(r"(?:\b(?:versions?|ver\.?|editions?)\s*[:=]?|버전|판본)\s*$", re.I)
 _PROTECTED_TOKEN_RE = re.compile(
     _CARD
     + r"|(?<![A-Za-z0-9])(?i:3D|2D|1D)(?![A-Za-z0-9_])"
@@ -738,7 +740,7 @@ def extract_query_requirements(
         solvers.setdefault(solver, match.span())
     solver = normalize_solver(facets.get("solver"))
     if solver and solver != "general":
-        solvers.setdefault(solver, (0, len(normalized)))
+        solvers.setdefault(solver, None)
 
     def original_span(start, end):
         return original_offsets[start][0], original_offsets[end - 1][1]
@@ -746,26 +748,31 @@ def extract_query_requirements(
     for index, (solver, span) in enumerate(solvers.items()):
         reqs.append(RetrievalRequirementV1(
             requirement_id="req-solver" if index == 0 else f"req-solver-{index}",
-            original_span=original_span(*span), facet="solver", expected=solver,
+            original_span=original_span(*span) if span is not None else None, facet="solver", expected=solver,
             status="unverified", reason=f"명시된 솔버 '{solver}' 일치 확인 필요",
         ))
 
     editions = {}
+    last_edition_end = None
     for match in _EDITION_RE.finditer(normalized):
         if _EDITION_UNIT.match(normalized[match.end():]):
             continue
         prefix = normalized[:match.start()]
-        if (match[0][0].lower() == "v" or _VERSION_MARKER.search(prefix)
+        continued = last_edition_end is not None and re.fullmatch(
+            r"\s*(?:(?:,\s*)?(?:and|or|versus|vs\.?|및|와|과)|,|/)\s*", prefix[last_edition_end:], re.I,
+        )
+        if (continued or match[0][0].lower() == "v" or _VERSION_MARKER.search(prefix)
                 or any(m.end() <= match.start() and not prefix[m.end():].strip(" 	,(:")
                        for m in mentions)):
             version = match[0]
+            last_edition_end = match.end()
             if not any(editions_match(version, current) for current in editions):
                 editions[version] = original_span(*match.span())
     edition = facets.get("edition")
     if isinstance(edition, str) and edition.strip():
         edition = edition.strip()
         if not any(editions_match(edition, current) for current in editions):
-            editions[edition] = (0, len(text))
+            editions[edition] = None
     for index, (edition, span) in enumerate(editions.items()):
         reqs.append(RetrievalRequirementV1(
             requirement_id="req-edition" if index == 0 else f"req-edition-{index}",
@@ -791,7 +798,7 @@ def extract_query_requirements(
         val = facets.get(key)
         if isinstance(val, str) and val.strip():
             idx = text.lower().find(val.strip().lower())
-            span = (idx, idx + len(val.strip())) if idx >= 0 else (0, len(text))
+            span = (idx, idx + len(val.strip())) if idx >= 0 else None
             reqs.append(
                 RetrievalRequirementV1(
                     requirement_id=f"req-{key}",
@@ -835,7 +842,7 @@ def classify_non_cae_intent(plan: QueryPlan) -> tuple[bool, str]:
         for alias, _ in _SOLVER_PATTERNS
     ):
         return False, ""
-    if re.search(r"\*[A-Za-z]+|LAW\d+|C3D\d+|FEM|FEA|CAE|PDE", plan.original_text, re.I):
+    if re.search(r"\*[A-Za-z]+|LAW\d+|C3D\d+|\b(?:FEM|FEA|CAE|PDE|beam|membrane)\b", text, re.I):
         return False, ""
     for category, pattern in _NON_CAE_PATTERNS:
         if pattern.search(text):
@@ -895,18 +902,18 @@ _TOPIC_GAPS = {
     "run_values": "missing_run_evidence",
 }
 _TOPIC_SIGNALS = {
-    "contact_law": r"contact.*penalty|접촉.*페널티|접촉.*penalty",
-    "damage_evolution": r"xia",
-    "material_identification": r"identifia\w+|유일성|계수.*유일",
-    "safety_certification": r"certif\w+|안전함.*승인|안전.*승인",
-    "creep": r"norton",
+    "contact_law": r"\bcontact\b.*\bpenalty\b|접촉.*페널티|접촉.*penalty",
+    "damage_evolution": r"\bxia\b",
+    "material_identification": r"\bidentifia\w+|유일성|계수.*유일",
+    "safety_certification": r"\bcertif\w+|안전함.*승인|안전.*승인",
+    "creep": r"\bnorton\b",
     "thermal": r"temperature[- ]dependen|온도\s*의존",
     "history": r"점성\s*(?:이력|내부상태)|viscous\s*(?:history|state)",
-    "restart": r"restart|재시작",
-    "buckling": r"buckling|좌굴",
+    "restart": r"\brestart\b|재시작",
+    "buckling": r"\bbuckling\b|좌굴",
     "measures": r"engineering shear|tensor shear",
     "mesh_quality": r"all[- ]hex",
-    "run_values": r"첨부하지 않은.*실행|unattached.*run",
+    "run_values": r"첨부하지 않은.*실행|\bunattached\b.*\brun\b",
 }
 
 
@@ -917,14 +924,114 @@ def _coverage_gaps(plan, candidates, explicit_facets):
     text = plan.original_text
     topics = set(requested)
     topics.update(topic for topic, pattern in _TOPIC_SIGNALS.items() if re.search(pattern, text, re.I))
-    if re.search(r"LAW\d+|" + _CARD, text):
+    if re.search(r"(?<![A-Za-z0-9_])(?:LAW\d+|RF)(?![A-Za-z0-9_])|" + _CARD, text, re.I):
         solvers = {normalize_solver(match[0]) for match in _SOLVER_MENTION.finditer(text)}
         topics.update(f"{solver}_cards" for solver in solvers if solver in {"radioss", "calculix"})
+    if re.search(r"\b(?:radioss|opencourant)\b.*(?:LAW\d+|TYPE\d+)", text, re.I):
+        topics.add("radioss_cards")
     supplied = set()
     for candidate in candidates:
         facets = candidate.coverage_facets if isinstance(candidate, CorpusChunkSpec) else candidate.get("coverage_facets") or {}
         supplied.update(facets.get("topics") or ())
     return [_TOPIC_GAPS[topic] for topic in sorted(topics - supplied) if topic in _TOPIC_GAPS]
+
+
+def _candidate_source_span(candidate):
+    if isinstance(candidate, CorpusChunkSpec):
+        return {"source_id": candidate.source_id, "source_sha256": candidate.document_sha256,
+                "start_line": candidate.line_start, "end_line": candidate.line_end,
+                "char_start": candidate.char_start, "char_end": candidate.char_end}
+    span = candidate.get("source_span") or {}
+    return {
+        "source_id": span.get("source_id", candidate.get("source_id")),
+        "source_sha256": span.get("source_sha256", candidate.get("document_sha256") or candidate.get("source_sha256")),
+        "start_line": span.get("start_line", candidate.get("line_start")),
+        "end_line": span.get("end_line", candidate.get("line_end")),
+        "char_start": span.get("char_start", candidate.get("char_start")),
+        "char_end": span.get("char_end", candidate.get("char_end")),
+    }
+
+
+def _strict_assessment(payload, ref, root, identity, requirements, texts, question):
+    if ref is None or root is None:
+        raise ValueError("A retrieval assessment requires assessment_trace_ref and its artifact root")
+    if not isinstance(ref, ArtifactRefV1):
+        ref = ArtifactRefV1.from_dict(ref)
+    if ref.size <= 0 or ref.role not in {"retrieval_trace", "tool_trace"}:
+        raise ValueError("Retrieval assessment requires a non-empty retrieval trace artifact")
+    root = Path(root)
+    raw = (root / validate_relative_artifact_path(ref.path, root=root)).read_bytes()
+    if len(raw) != ref.size or hashlib.sha256(raw).hexdigest() != ref.sha256:
+        raise ValueError("Retrieval assessment trace digest or size mismatch")
+    trace = json.loads(raw)
+    if (not isinstance(trace, dict) or type(trace.get("schema_version")) is not int
+            or trace["schema_version"] != 1 or trace.get("type") != "retrieval_assessment"
+            or any(trace.get(key) != value for key, value in identity.items())):
+        raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
+    keys = {*identity, "type", "trace_ref", "citations", "scope_status", "decision",
+            "insufficiency_reasons", "checks", "out_of_scope", "limitations"}
+    if not isinstance(payload, Mapping) or set(payload) != keys:
+        raise ValueError("Retrieval assessment fields are missing or unexpected")
+    if (payload["type"] != "retrieval_assessment" or payload["trace_ref"] != ref.to_dict()
+            or any(payload[key] != value for key, value in identity.items())):
+        raise ValueError("Retrieval assessment identity, trace_ref or candidate_ids mismatch")
+    if payload["scope_status"] not in ("in_scope", "out_of_scope") or payload["decision"] not in (
+        "supported", "insufficient", "out_of_scope"
+    ):
+        raise ValueError("Invalid retrieval assessment scope_status or decision")
+    for key in ("limitations", "insufficiency_reasons"):
+        if not isinstance(payload[key], list) or any(not isinstance(value, str) or not value.strip() for value in payload[key]):
+            raise ValueError(f"Invalid retrieval assessment {key}")
+
+    def quote(value):
+        if not isinstance(value, Mapping) or not {"candidate_id", "start", "end"} <= value.keys() or set(value) - {
+            "candidate_id", "start", "end", "text"
+        }:
+            raise ValueError("Invalid retrieval assessment citation")
+        cid, start, end = value["candidate_id"], value["start"], value["end"]
+        if (not isinstance(cid, str) or cid not in texts or type(start) is not int or type(end) is not int
+                or not 0 <= start < end <= len(texts[cid])
+                or ("text" in value and value["text"] != texts[cid][start:end])):
+            raise ValueError("Invalid retrieval assessment citation or quotation")
+        return cid, start, end
+
+    if not isinstance(payload["citations"], list) or not isinstance(payload["checks"], list):
+        raise ValueError("Retrieval assessment citations and checks must be lists")
+    citations = {quote(value) for value in payload["citations"]}
+    by_req = {}
+    checked_citations = set()
+    for check in payload["checks"]:
+        if not isinstance(check, Mapping) or set(check) != {
+            "requirement_id", "candidate_ids", "relation", "quoted_spans", "reason"
+        }:
+            raise ValueError("Invalid retrieval assessment check fields")
+        rid = check["requirement_id"]
+        if (not isinstance(rid, str) or rid in by_req
+                or check["relation"] not in ("satisfied", "missing", "uncertain")
+                or not isinstance(check["reason"], str) or not check["reason"].strip()
+                or not isinstance(check["quoted_spans"], list) or not isinstance(check["candidate_ids"], list)
+                or any(not isinstance(cid, str) or cid not in texts for cid in check["candidate_ids"])):
+            raise ValueError("Invalid retrieval assessment check")
+        quotes = [quote(value) for value in check["quoted_spans"]]
+        if not {q[0] for q in quotes} <= set(check["candidate_ids"]) or (
+            check["relation"] == "satisfied" and (not quotes or set(check["candidate_ids"]) != {q[0] for q in quotes})
+        ):
+            raise ValueError("Retrieval assessment check candidate_ids do not match its quotations")
+        checked_citations.update(quotes)
+        by_req[rid] = (check, quotes)
+    if set(by_req) != {req.requirement_id for req in requirements} or citations != checked_citations:
+        raise ValueError("Retrieval assessment must check every requirement and link every citation")
+
+    scope = payload["out_of_scope"]
+    if (not isinstance(scope, Mapping) or set(scope) != {"is_non_cae", "original_spans", "reason"}
+            or type(scope["is_non_cae"]) is not bool or not isinstance(scope["reason"], str)
+            or not isinstance(scope["original_spans"], list) or any(
+                not isinstance(span, Mapping) or set(span) != {"start", "end"}
+                or type(span["start"]) is not int or type(span["end"]) is not int
+                or not 0 <= span["start"] < span["end"] <= len(question) for span in scope["original_spans"]
+            ) or (scope["is_non_cae"] and not scope["original_spans"])):
+        raise ValueError("Invalid retrieval assessment original span")
+    return ref, by_req
 
 
 def build_retrieval_decision(
@@ -937,17 +1044,11 @@ def build_retrieval_decision(
     explicit_facets: Mapping[str, Any] | None = None,
     assessment_result: Mapping[str, Any] | None = None,
     assessment_trace_ref: ArtifactRefV1 | Mapping[str, Any] | None = None,
+    assessment_trace_root: Path | None = None,
     candidate_solver_scopes: Mapping[str, Sequence[str]] | None = None,
     approved_source_reviews: Mapping[str, ArtifactRefV1] | None = None,
 ) -> RetrievalDecisionV1:
     """Build a decision from assessment quotes and host-verified reviews keyed by document SHA256."""
-    if assessment_result is not None:
-        if assessment_trace_ref is None:
-            raise ValueError("A retrieval assessment requires assessment_trace_ref")
-        if not isinstance(assessment_trace_ref, ArtifactRefV1):
-            assessment_trace_ref = ArtifactRefV1.from_dict(assessment_trace_ref)
-        if assessment_trace_ref.size <= 0 or not assessment_trace_ref.role.endswith("_trace"):
-            raise ValueError("Retrieval assessment trace must be a non-empty trace artifact")
     query_plan_sha = canonical_sha256(plan.to_dict())
     reqs = extract_query_requirements(plan, explicit_facets)
 
@@ -957,8 +1058,26 @@ def build_retrieval_decision(
         override = (candidate_solver_scopes or {}).get(cid)
         cand_summary.append({"candidate_id": cid, "source_sha256": sha, "edition": edition,
                              "solver_scope": list(scope), "scope_limit": list(override) if override is not None else None,
+                             "source_span": _candidate_source_span(cand),
                              "chunk_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()})
     cand_set_sha = canonical_sha256(cand_summary)
+
+    assessment_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_sha256({
+        "query_plan_sha256": query_plan_sha, "candidate_set_sha256": cand_set_sha,
+        "required_facets": dict(explicit_facets or {}),
+        "requirements": [req.to_dict() for req in reqs],
+    })))
+    candidate_ids = [record["candidate_id"] for record in cand_summary]
+    candidate_data = {_candidate_metadata(c)[0]: _candidate_metadata(c) for c in candidates}
+    if assessment_result is not None:
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("Retrieval assessment candidate_ids must be unique")
+        assessment_trace_ref, reviewed_checks = _strict_assessment(
+            assessment_result, assessment_trace_ref, assessment_trace_root,
+            {"assessment_id": assessment_id, "query_plan_sha256": query_plan_sha,
+             "candidate_set_sha256": cand_set_sha, "candidate_ids": candidate_ids},
+            reqs, {cid: row[4] for cid, row in candidate_data.items()}, plan.original_text,
+        )
 
     req_solvers = {normalize_solver(r.expected) for r in reqs if r.facet == "solver"}
     req_editions = [r.expected for r in reqs if r.facet == "edition"]
@@ -977,7 +1096,6 @@ def build_retrieval_decision(
     if is_non_cae:
         missing_evidence.append("NON_CAE_REQUEST")
         limitations.append(non_cae_reason)
-        assessment_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cae-retrieval:{query_plan_sha}:{cand_set_sha}:oos"))
         return RetrievalDecisionV1(
             assessment_id=assessment_id,
             query_plan_sha256=query_plan_sha,
@@ -1003,14 +1121,16 @@ def build_retrieval_decision(
     candidate_counts = Counter(record["candidate_id"] for record in cand_summary)
     eligible: set[str] = set()
     solver_mismatch_count = 0
-    edition_mismatch_count = 0
+    editions_available = set()
+    compatible_candidates = []
     for cand in candidates:
         cid, sha, edition, scope, _text = _candidate_metadata(cand)
         norm_scope = {normalize_solver(value) for value in scope}
         if candidate_solver_scopes and cid in candidate_solver_scopes:
             norm_scope &= {normalize_solver(value) for value in candidate_solver_scopes[cid]}
         solver_ok = req_solvers <= norm_scope
-        edition_ok = all(editions_match(required, edition) for required in req_editions)
+        covered_editions = {required for required in req_editions if editions_match(required, edition)}
+        edition_ok = not req_editions or bool(covered_editions)
         if not solver_ok:
             solver_mismatch_count += 1
             checks.append(
@@ -1024,7 +1144,6 @@ def build_retrieval_decision(
                 )
             )
         elif not edition_ok:
-            edition_mismatch_count += 1
             checks.append(
                 RetrievalCandidateCheckV1(
                     candidate_id=cid,
@@ -1036,6 +1155,8 @@ def build_retrieval_decision(
                 )
             )
         else:
+            compatible_candidates.append(cand)
+            editions_available.update(covered_editions)
             review = (approved_source_reviews or {}).get(sha)
             if (isinstance(review, ArtifactRefV1) and review in approved_refs and review.role == "source_review"
                     and re.fullmatch(r"[0-9a-f]{64}", sha) and sha != "0" * 64
@@ -1054,88 +1175,50 @@ def build_retrieval_decision(
 
     if candidates and solver_mismatch_count == len(candidates):
         missing_evidence.extend(("SOLVER_MISMATCH", "SOLVER_COVERAGE_INSUFFICIENT", "missing_solver"))
-    if edition_mismatch_count and solver_mismatch_count + edition_mismatch_count == len(candidates):
+    if req_editions and set(req_editions) - editions_available and (
+        not req_solvers or solver_mismatch_count < len(candidates)
+    ):
         missing_evidence.extend(("EDITION_COVERAGE_INSUFFICIENT", "edition_mismatch"))
+    missing_evidence.extend(_coverage_gaps(plan, compatible_candidates, explicit_facets))
 
-    missing_evidence.extend(_coverage_gaps(plan, candidates, explicit_facets))
-
-    # If a validated semantic assessment payload is provided, strictly verify before considering 'supported'.
-    if assessment_result is not None and source_review_refs and assessment_profile_sha256:
-        out_of_scope = assessment_result.get("out_of_scope") or {}
-        if out_of_scope.get("is_non_cae") is True:
-            # A provider's span alone cannot establish a non-CAE intent.
-            spans = out_of_scope.get("original_spans")
-            valid_spans = isinstance(spans, list) and bool(spans) and all(
-                isinstance(span, Mapping) and type(span.get("start")) is int and type(span.get("end")) is int
-                and 0 <= span["start"] < span["end"] <= len(plan.original_text) for span in spans
-            )
-            status = "insufficient"
-            missing_evidence.append("NON_CAE_INTENT_UNVERIFIED" if valid_spans else "INVALID_ASSESSMENT_SPAN")
-        else:
-            raw_checks = assessment_result.get("checks") or []
-            by_req = {c.get("requirement_id"): c for c in raw_checks if isinstance(c, dict)}
-            verified_reqs: list[RetrievalRequirementV1] = []
-            cand_texts = {_candidate_metadata(c)[0]: _candidate_metadata(c)[4] for c in candidates}
-            cand_shas = {_candidate_metadata(c)[0]: _candidate_metadata(c)[1] for c in candidates}
-            updated_checks: list[RetrievalCandidateCheckV1] = []
-            relevant_cids: dict[str, list[tuple[str, int, int]]] = {}
-            all_satisfied = len(raw_checks) == len(reqs) and set(by_req) == {r.requirement_id for r in reqs}
-            for r in reqs:
-                chk = by_req.get(r.requirement_id)
-                if chk is None or chk.get("relation") != "satisfied" or not chk.get("quoted_spans"):
-                    all_satisfied = False
-                    verified_reqs.append(r)
-                    continue
-                valid_quotes = False
-                for q in chk.get("quoted_spans", []):
-                    if not isinstance(q, Mapping):
-                        continue
-                    cid = q.get("candidate_id")
-                    qs, qe = q.get("start"), q.get("end")
-                    if not isinstance(cid, str) or cid not in eligible:
-                        continue
-                    ctext = cand_texts[cid]
-                    if type(qs) is int and type(qe) is int and 0 <= qs < qe <= len(ctext):
-                        valid_quotes = True
-                        relevant_cids.setdefault(cid, []).append((r.requirement_id, qs, qe))
-                if not valid_quotes:
-                    all_satisfied = False
-                    verified_reqs.append(r)
-                else:
-                    verified_reqs.append(
-                        RetrievalRequirementV1(
-                            requirement_id=r.requirement_id,
-                            original_span=r.original_span,
-                            facet=r.facet,
-                            expected=r.expected,
-                            status="verified",
-                            reason=str(chk.get("reason") or "관련성 검토 통과"),
-                        )
-                    )
-            if all_satisfied and relevant_cids:
-                for cid, entries in relevant_cids.items():
-                    updated_checks.append(
-                        RetrievalCandidateCheckV1(
-                            candidate_id=cid,
-                            source_sha256=cand_shas[cid],
-                            relation="relevant",
-                            requirement_ids=tuple(dict.fromkeys(e[0] for e in entries)),
-                            quoted_spans=tuple({"start": e[1], "end": e[2]} for e in entries),
-                            reason="질문별 관련성 검토 및 출처 검증 통과",
-                        )
-                    )
-                reqs = tuple(verified_reqs)
-                checks = updated_checks + [check for check in checks if check.candidate_id not in relevant_cids]
-                status = "supported"
-                limitations = [str(x) for x in (assessment_result.get("limitations") or ())]
-            else:
-                missing_evidence.append("RETRIEVAL_REQUIREMENTS_UNVERIFIED")
-                status = "insufficient"
-    else:
+    status = "insufficient"
+    if assessment_result is None or not source_review_refs or not assessment_profile_sha256:
         missing_evidence.append("RETRIEVAL_RELEVANCE_UNVERIFIED")
-        status = "insufficient"
+    else:
+        missing_evidence.extend(assessment_result["insufficiency_reasons"])
+        if assessment_result["out_of_scope"]["is_non_cae"] or assessment_result["scope_status"] != "in_scope":
+            missing_evidence.append("NON_CAE_INTENT_UNVERIFIED")
+        relevant: dict[str, list[tuple[str, int, int]]] = {}
+        verified = []
+        for req in reqs:
+            check, quotes = reviewed_checks[req.requirement_id]
+            if check["relation"] != "satisfied" or any(
+                cid not in eligible or (req.facet == "edition" and not editions_match(req.expected, candidate_data[cid][2]))
+                for cid, _, _ in quotes
+            ):
+                continue
+            verified.append(RetrievalRequirementV1(
+                req.requirement_id, req.original_span, req.facet, req.expected, "verified", check["reason"],
+            ))
+            for cid, start, end in quotes:
+                relevant.setdefault(cid, []).append((req.requirement_id, start, end))
+        if (not missing_evidence and assessment_result["decision"] == "supported"
+                and len(verified) == len(reqs) and relevant):
+            reqs = tuple(verified)
+            checks = [
+                RetrievalCandidateCheckV1(
+                    candidate_id=cid, source_sha256=candidate_data[cid][1], relation="relevant",
+                    requirement_ids=tuple(dict.fromkeys(rid for rid, _, _ in quotes)),
+                    quoted_spans=tuple({"start": start, "end": end} for _, start, end in quotes),
+                    reason="질문별 관련성 검토 및 출처 검증 통과",
+                )
+                for cid, quotes in relevant.items()
+            ] + [check for check in checks if check.candidate_id not in relevant]
+            status = "supported"
+            limitations = assessment_result["limitations"]
+        else:
+            missing_evidence.append("RETRIEVAL_REQUIREMENTS_UNVERIFIED")
 
-    assessment_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cae-retrieval:{query_plan_sha}:{cand_set_sha}:{status}"))
     return RetrievalDecisionV1(
         assessment_id=assessment_id,
         query_plan_sha256=query_plan_sha,

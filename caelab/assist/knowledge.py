@@ -56,7 +56,7 @@ class KnowledgeEntry:
     source_id: str = SOURCE_ID
     solver: str = ""
     corpus_chunk: CorpusChunkSpec | None = None
-    source_kind: str = "theory_note"
+    source_kind: str = "legacy_unknown"
     review_status: str = "unreviewed"
 
     @property
@@ -322,6 +322,19 @@ def default_index() -> rag.HybridIndex:
     return index
 
 
+@dataclass(frozen=True)
+class PinnedKnowledgeIndex:
+    index: rag.HybridIndex | None
+    error: str | None = None
+
+
+def pin_knowledge_index() -> PinnedKnowledgeIndex:
+    try:
+        return PinnedKnowledgeIndex(default_index())
+    except Exception as error:
+        return PinnedKnowledgeIndex(None, f"{type(error).__name__}: {error}")
+
+
 def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
     return KnowledgeEntry(
         id=chunk.chunk_id,
@@ -337,7 +350,8 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
 
 
 def search_knowledge_result(query: str, limit: int = 3,
-                            solver: str | None = None) -> KnowledgeSearchResult:
+                            solver: str | None = None, *,
+                            pinned_index: PinnedKnowledgeIndex | None = None) -> KnowledgeSearchResult:
     """Keep solver scope and distinguish absent material from retrieval failure."""
     from .corpus import mismatched_corpus_candidates, search_hybrid_with_plan
     from .query_language import extract_query_requirements, normalize_solver, prepare_query
@@ -354,7 +368,10 @@ def search_knowledge_result(query: str, limit: int = 3,
         }
         resolved = normalize_solver(requirements.get("solver")) or ""
         edition = requirements.get("edition")
-        index = default_index()
+        pinned = pinned_index if pinned_index is not None else pin_knowledge_index()
+        index = pinned.index
+        if index is None:
+            return KnowledgeSearchResult("error", [], resolved, pinned.error)
         if index.corpus_revision is not None:
             embedder, reranker = rag.HashingEmbedder(), rag.LexicalReranker()
         else:

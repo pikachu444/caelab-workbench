@@ -122,7 +122,7 @@ def source_fingerprint(data):
         "outputs": snapshot.get("outputs", {}),
         "artifacts": snapshot.get("artifacts", {}),
     }
-    for key in ("mesh_revision", "expected_mesh"):
+    for key in ("mesh_revision", "expected_mesh", "input_snapshot"):
         if key in snapshot:
             content[key] = snapshot[key]
     return canonical_sha256(content, exclude_keys=())
@@ -133,6 +133,19 @@ def _original_sha(item):
 
 
 def verify_original_decks(source, record, check=no_checkpoint, *, code="HASH_MISMATCH"):
+    snapshot = record["snapshot"]
+    if (sidecar := snapshot.get("input_snapshot")) is not None:
+        if not isinstance(sidecar, dict) or sidecar.get("path") != "input/snapshot.json":
+            raise ResultError(code, "invalid immutable input snapshot reference", availability="corrupt")
+        path = artifact_path(source, sidecar["path"])
+        try:
+            if sha256_file(path, check) != sidecar.get("sha256"):
+                raise ResultError(code, "immutable input snapshot changed", availability="corrupt")
+            frozen = read_object(path)
+        except FileNotFoundError as exc:
+            raise ResultError(code, "immutable input snapshot is missing", availability="source_unavailable") from exc
+        if any(frozen.get(key) != snapshot.get(key) for key in ("input_revision", "execution_input", "files")):
+            raise ResultError(code, "immutable input snapshot disagrees with the run receipt", availability="corrupt")
     for item in record["snapshot"].get("files", ()):
         relative, digest = item.get("source_copy"), _original_sha(item)
         if not relative or not digest:

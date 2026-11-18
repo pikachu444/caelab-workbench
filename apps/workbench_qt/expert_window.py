@@ -461,11 +461,9 @@ class ExpertWindow(QMainWindow):
         framing = self._native_analysis_framing or saved_framing
         self._native_analysis_framing = None
         if isinstance(framing, str) and framing:
-            text = self.question.toPlainText()
-            draft = text.replace(framing, '', 1).strip() if framing in text else ''
-            self.question.setPlainText(draft)
+            self.question.clear()
             if self.path:
-                self.document['draft_question'] = draft
+                self.document['draft_question'] = ''
             self._notice('계산 결과와 로그가 담긴 자동 초안을 제외했습니다. 이론 질문을 입력하세요.')
 
     def _on_scope_changed(self, _index=None):
@@ -1194,8 +1192,10 @@ class ExpertWindow(QMainWindow):
             self._error(error)
 
     def ask(self):
-        question = self.question.toPlainText().strip()
         scope = self._current_scope()
+        if scope == 'theory':
+            self._remove_native_analysis_framing()
+        question = self.question.toPlainText().strip()
         if not question or not self.ask_button.isEnabled():
             return
         if self.path is None and not self._ensure_document():

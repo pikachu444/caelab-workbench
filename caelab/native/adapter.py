@@ -38,6 +38,25 @@ class CalculiXAdapter:
     name = "CalculiX"
     input_extensions = (".inp",)
 
+    def snapshot_input(self, input_path, workdir, check_cancelled=lambda: None):
+        from ..artifact_refs import canonical_json_bytes
+        from .input_snapshot import snapshot_input
+        import hashlib
+        import os
+
+        snapshot = snapshot_input(input_path, workdir, check_cancelled)
+        check_cancelled()
+        relative = "input/snapshot.json"
+        target = workdir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        raw = canonical_json_bytes(snapshot)
+        with target.open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        snapshot["input_snapshot"] = {"path": relative, "sha256": hashlib.sha256(raw).hexdigest()}
+        return snapshot
+
     def build_run_request(self, status: ProgramStatus, workdir: Path, input_path: Path) -> LaunchRequest:
         from ..connections import calculix_run_request
         return calculix_run_request(status, workdir)

@@ -966,7 +966,7 @@ class RetrievalRequirementV1:
     """One host-derived requirement for query-relevance assessment."""
 
     requirement_id: str
-    original_span: tuple[int, int]
+    original_span: tuple[int, int] | None
     facet: str
     expected: str | None
     status: str
@@ -974,8 +974,9 @@ class RetrievalRequirementV1:
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self.requirement_id, "RetrievalRequirementV1.requirement_id")
-        span = _require_span_pair(self.original_span, "RetrievalRequirementV1.original_span")
-        object.__setattr__(self, "original_span", span)
+        if self.original_span is not None:
+            span = _require_span_pair(self.original_span, "RetrievalRequirementV1.original_span")
+            object.__setattr__(self, "original_span", span)
         if self.facet not in RETRIEVAL_FACETS:
             raise ValueError(f"RetrievalRequirementV1.facet must be one of {sorted(RETRIEVAL_FACETS)}, got {self.facet!r}")
         _require_optional_nonempty_str(self.expected, "RetrievalRequirementV1.expected")
@@ -988,7 +989,7 @@ class RetrievalRequirementV1:
     def to_dict(self) -> dict[str, Any]:
         return {
             "requirement_id": self.requirement_id,
-            "original_span": list(self.original_span),
+            "original_span": list(self.original_span) if self.original_span is not None else None,
             "facet": self.facet,
             "expected": self.expected,
             "status": self.status,
@@ -1118,6 +1119,8 @@ class RetrievalDecisionV1:
         trace_ref = _coerce_optional_artifact_ref(self.assessment_trace_ref, "RetrievalDecisionV1.assessment_trace_ref")
 
         if self.status == "supported":
+            if missing:
+                raise ValueError("RetrievalDecisionV1.status='supported' cannot have missing_evidence")
             if not reqs or any(r.status != "verified" for r in reqs):
                 raise ValueError("RetrievalDecisionV1.status='supported' requires all requirements verified")
             if not any(c.relation == "relevant" and c.quoted_spans for c in checks):
@@ -1128,7 +1131,7 @@ class RetrievalDecisionV1:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires source_review_refs")
             if self.assessment_profile_sha256 is None:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires assessment_profile_sha256")
-            if trace_ref is None or trace_ref.size <= 0 or not trace_ref.role.endswith("_trace"):
+            if trace_ref is None or trace_ref.size <= 0 or trace_ref.role not in {"retrieval_trace", "tool_trace"}:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires a valid assessment_trace_ref")
 
         object.__setattr__(self, "requirements", reqs)

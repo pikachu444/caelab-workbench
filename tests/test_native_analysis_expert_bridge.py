@@ -104,7 +104,7 @@ def test_all_entries_open_independent_window_with_selected_run(analysis, tmp_pat
     assert state.closed == []
 
 
-@pytest.mark.parametrize("edit", ["untouched", "edited", "appended"])
+@pytest.mark.parametrize("edit", ["untouched", "edited", "appended", "duplicated", "partial_lines"])
 def test_switch_to_theory_removes_automatic_case_draft(analysis, tmp_path, edit):
     window, state = analysis
     display_run(window, state, tmp_path)
@@ -116,8 +116,12 @@ def test_switch_to_theory_removes_automatic_case_draft(analysis, tmp_path, edit)
         expert.question.setPlainText(framing.replace("not convergent", "failed to converge"))
     elif edit == "appended":
         expert.question.setPlainText(framing + "\nWhat is a weak form?")
+    elif edit == "duplicated":
+        expert.question.setPlainText(framing + "\n" + framing)
+    elif edit == "partial_lines":
+        expert.question.setPlainText("What is a weak form?\n" + framing.splitlines()[-1])
     expert.scope_combo.setCurrentIndex(expert.scope_combo.findData("theory"))
-    expected = "What is a weak form?" if edit == "appended" else ""
+    expected = ""
     assert expert.question.toPlainText() == expected
     window.request_expert_debate()
     assert window._expert_window is expert

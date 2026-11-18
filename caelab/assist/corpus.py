@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tempfile
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -433,6 +434,14 @@ def _chunk_text_with_spans(
     return chunks
 
 
+def _pdf_page_texts(reader):
+    pages = []
+    for page in reader.pages:
+        text = rag._clean_pdf_text(page.extract_text() or "")
+        pages.append(text + "\n" if text and not text.endswith("\n") else text)
+    return pages
+
+
 def _chunk_pdf_with_spans(
     source: CorpusSourceSpec,
     raw_bytes: bytes,
@@ -441,12 +450,7 @@ def _chunk_pdf_with_spans(
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw_bytes))
-    page_texts: list[str] = []
-    for page in reader.pages:
-        txt = rag._clean_pdf_text(page.extract_text() or "")
-        if txt and not txt.endswith("\n"):
-            txt += "\n"
-        page_texts.append(txt)
+    page_texts = _pdf_page_texts(reader)
 
     flat: list[tuple[str, int, int]] = []
 
@@ -557,8 +561,6 @@ def build_corpus(
     m_path = Path(manifest_path).expanduser().resolve()
     data, _ = _load_strict_json(m_path)
     manifest = CorpusManifest.from_dict(data)
-    manifest_bytes = canonical_json_bytes(manifest.to_dict())
-    manifest_sha = _sha256_bytes(manifest_bytes)
     embedded_sources, embedded_notices, curated_by_source = _recovery_materials(data, manifest)
     source_root = m_path.parent
     out_root = Path(output_root).expanduser().resolve()
@@ -569,6 +571,7 @@ def build_corpus(
     source_statuses: dict[str, str] = {}
     verified_bytes: dict[str, bytes] = {}
     notices_to_stage: dict[str, bytes] = {}
+    packaged_notices: dict[str, list[dict]] = {}
     warnings: list[str] = []
     reviews = {item["source_id"]: item["status"] for item in (overlay_data or {}).get("reviews", ())}
     for chunk in (overlay_data or {}).get("chunks", ()):
@@ -593,7 +596,16 @@ def build_corpus(
             warnings.append(f"source_unavailable:{src.source_id}")
             continue
         verified_bytes[src.source_id] = raw
-        notices_to_stage.update(_source_notices(src, source_root, embedded_notices))
+        source_notices = _source_notices(src, source_root, embedded_notices)
+        for relative, payload in source_notices.items():
+            if relative in notices_to_stage and notices_to_stage[relative] != payload:
+                raise ValueError(f"Conflicting packaged license notice: {relative}")
+        notices_to_stage.update(source_notices)
+        if source_notices:
+            packaged_notices[src.source_id] = [
+                {"path": relative, "sha256": _sha256_bytes(payload), "byte_length": len(payload)}
+                for relative, payload in source_notices.items()
+            ]
         extracted = _chunk_text_with_spans(src, raw, curated_by_source.get(src.source_id, ()))
         if not extracted:
             raise ValueError(f"NO_EXTRACTABLE_CHUNKS: {src.source_id}")
@@ -611,6 +623,12 @@ def build_corpus(
         if src.extraction_quality not in {"verified", "complete"}:
             warnings.append(f"source_extraction_{src.extraction_quality}:{src.source_id}")
 
+    manifest = replace(manifest, sources=tuple(
+        replace(src, license={**src.license, "notice_files": packaged_notices[src.source_id]})
+        if src.source_id in packaged_notices else src for src in manifest.sources
+    ))
+    manifest_bytes = canonical_json_bytes(manifest.to_dict())
+    manifest_sha = _sha256_bytes(manifest_bytes)
     embedder = rag.HashingEmbedder()
     reranker = rag.LexicalReranker()
 
@@ -677,13 +695,9 @@ def build_corpus(
     index_digest = _index_digest(manifest, files_to_stage, profile_id)
 
     if verify_only:
-        with tempfile.TemporaryDirectory(prefix="caelab-corpus-verify-") as directory:
-            tmp_dir = Path(directory)
-            _stage_files(tmp_dir, files_to_stage, check_cancelled)
-            staged = _dir_snapshot(tmp_dir)
-            if _index_digest(manifest, staged, profile_id) != index_digest:
-                raise ValueError("STAGED_HASH_MISMATCH: corpus index")
-            _load_vectors(staged, tmp_dir, len(chunks), with_vectors)
+        _check_cancel(check_cancelled)
+        _load_vectors(files_to_stage, out_root, len(chunks), with_vectors)
+        _verify_packaged_sources(manifest, files_to_stage, out_root)
         return CorpusReceipt(
             corpus_id=manifest.corpus_id, revision=manifest.revision, manifest_sha256=manifest_sha,
             verify_only=True, status="verified_with_limitations" if warnings else "verified",
@@ -869,6 +883,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
     sources = {source.source_id: source for source in manifest.sources}
     chunks = []
     citations = set()
+    source_texts = {}
     for raw in meta["chunks"]:
         spec = CorpusChunkSpec.from_dict({
             key: value for key, value in raw.items()
@@ -882,6 +897,20 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                 or review_statuses[spec.source_id] in {"rejected", "source_unavailable"}
                 or spec.char_end - spec.char_start != len(spec.text) or spec.citation in citations):
             raise ValueError(f"Invalid corpus chunk provenance: {spec.citation}")
+        packaged = files.get(f"sources/{source.local_relative_path}")
+        if packaged is not None:
+            if source.source_id not in source_texts:
+                if Path(source.local_relative_path).suffix.lower() == ".pdf":
+                    from pypdf import PdfReader
+                    text = "".join(_pdf_page_texts(PdfReader(io.BytesIO(packaged))))
+                else:
+                    text = packaged.decode("utf-8")
+                source_texts[source.source_id] = (text, *_line_spans(text)[1:])
+            text, starts, ends = source_texts[source.source_id]
+            if (spec.line_end > len(ends) or starts[spec.line_start - 1] != spec.char_start
+                    or ends[spec.line_end - 1] != spec.char_end
+                    or text[spec.char_start:spec.char_end] != spec.text):
+                raise ValueError(f"PACKAGED_SOURCE_SPAN_MISMATCH: {spec.citation}")
         citations.add(spec.citation)
         chunks.append(rag.Chunk(
             chunk_id=spec.chunk_id, source_id=spec.source_id, heading_path=spec.section_path, text=spec.text,
@@ -925,6 +954,18 @@ def _verify_packaged_sources(manifest, files, index_dir):
             if relative not in files:
                 raise ValueError(f"PACKAGED_SOURCE_MISSING: {sid}")
             _verify_bytes(files[relative], sid, source.sha256, source.byte_length)
+        license_data = source.license
+        notices = license_data.get("notice_files", ())
+        required = license_data["redistribution"] == "notice_required" or license_data.get("notice_required")
+        if required and not notices:
+            raise ValueError(f"LICENSE_NOTICE_MISSING: {sid}")
+        for notice in notices:
+            if not isinstance(notice, Mapping):
+                raise ValueError(f"LICENSE_NOTICE_DIGEST_MISSING: {sid}")
+            relative = notice["path"]
+            if relative not in files:
+                raise ValueError(f"LICENSE_NOTICE_MISSING: {relative}")
+            _verify_bytes(files[relative], relative, notice["sha256"], notice["byte_length"])
         statuses[sid] = review_status
     return statuses
 
@@ -1040,12 +1081,12 @@ def _search_scope(plan, solver, edition):
 
 
 def _matches_scope(chunk: rag.Chunk, requirements) -> bool:
+    editions = [req.expected for req in requirements if req.facet == "edition"]
+    if editions and (chunk.corpus_chunk is None
+                     or not any(editions_match(edition, chunk.corpus_chunk.edition) for edition in editions)):
+        return False
     for requirement in requirements:
         if requirement.facet == "solver" and not chunk.matches_solver(requirement.expected):
-            return False
-        if requirement.facet == "edition" and (
-            chunk.corpus_chunk is None or not editions_match(requirement.expected, chunk.corpus_chunk.edition)
-        ):
             return False
     return True
 

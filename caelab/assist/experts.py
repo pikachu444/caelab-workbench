@@ -22,7 +22,8 @@ import re
 import urllib.request
 from dataclasses import dataclass, field
 
-from .knowledge import (KnowledgeSearchResult, citation_id, infer_solver,
+from .knowledge import (
+    PinnedKnowledgeIndex,KnowledgeSearchResult, citation_id, infer_solver,
                         search_knowledge_result, verify_citations)
 
 
@@ -311,7 +312,7 @@ class Discussion:
             raise ValueError("theory role cannot be used with case_analysis request_scope")
         return self.question_scope == "theory"
 
-    def build_prompt(self, question: str) -> str:
+    def build_prompt(self, question: str, *, pinned_index: PinnedKnowledgeIndex | None = None) -> str:
         self.knowledge_ids = []  # citations are checked against this request only
         self.knowledge_result = None
         theory_mode = self._is_theory_mode()
@@ -351,7 +352,7 @@ class Discussion:
             search_solver = infer_solver(question) if theory_mode else (
                 self.solver_id or infer_solver(self.summary_text) or infer_solver(question)
             )
-            self.knowledge_result = search_knowledge_result(question, limit=5, solver=search_solver)
+            self.knowledge_result = search_knowledge_result(question, limit=5, solver=search_solver, pinned_index=pinned_index)
             entries = self.knowledge_result.entries
             if entries:
                 self.evidence_sources.append("knowledge")
@@ -361,7 +362,7 @@ class Discussion:
                     "solver_manual": "솔버 매뉴얼", "official_manual": "공식 매뉴얼",
                     "official_source": "공식 소스 코드", "source_code": "소스 코드",
                     "verification_case": "검증 사례", "theory_note": "이론 노트",
-                    "reviewed_note": "검토 노트", "paper": "논문", "user_document": "사용자 문서",
+                    "legacy_unknown": "출처 유형 미확인", "reviewed_note": "검토 노트", "paper": "논문", "user_document": "사용자 문서",
                 }
                 for entry in entries:
                     cid = citation_id(entry)

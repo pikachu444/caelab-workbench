@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -15,7 +17,8 @@ import uuid
 import numpy as np
 import pytest
 
-from caelab.artifact_refs import ArtifactRefV1, NumericResultV1, ProducerIdentity, ResultRefV1, canonical_sha256
+from caelab.artifact_refs import NumericResultV1
+from caelab.result_readers import ResultError
 from caelab.assist import experts
 from caelab.connections import PROGRAMS, ProgramStatus, _status
 from caelab.jobs import BatchRun, LaunchRecord
@@ -26,11 +29,22 @@ from caelab.mdo.objectives import ObjectiveSpec
 from caelab.mdo.optimize import OptimizationConfig
 from caelab.mdo.surrogate import SurrogateConfig
 from caelab.mdo.variables import ContinuousVariable, VariableSpace
-from caelab.native.input_snapshot import fingerprint, snapshot_input
+from caelab.native.adapter import get_solver_adapter
+from caelab.native.input_snapshot import fingerprint
 from caelab.native.results import collect_results
-from caelab.native.run_store import NativeRun, utc_now
+from caelab.native.run_store import NativeRun, RunStore, utc_now
 from caelab.workbench import Workbench
 from test_native_results import _field, _geometry
+
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+_TETRA_NODES = (1, 2, 3, 4)
+_TETRA_XYZ = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))
+
+
+def _tetra_geometry():
+    return _geometry(ids=_TETRA_NODES, connectivity=_TETRA_NODES, coordinates=_TETRA_XYZ, element_id=1)
 
 
 class _E2EBoundaryJobs:
@@ -55,7 +69,7 @@ class _E2EBoundaryJobs:
         self.native_count += 1
         run_id = uuid.uuid4().hex
         folder = store.root / run_id
-        manifest = snapshot_input(Path(reference.path), folder)
+        manifest = get_solver_adapter("calculix").snapshot_input(Path(reference.path), folder)
         manifest["prerequisites"] = [
             {
                 "source_path": item.path,
@@ -66,12 +80,12 @@ class _E2EBoundaryJobs:
         ]
         x = 2.0
         components = [(k, 4, i // 3 + 1, i % 3 + 1, 0) for i, k in enumerate(("SXX", "SYY", "SZZ", "SXY", "SYZ", "SZX"))]
-        text = _geometry()
+        text = _tetra_geometry()
         for inc_idx, factor in ((1, 0.5), (2, 1.0)):
-            displacement = [(n, [x * factor * (1.23456 if n == 90 else 1.0), 0, 0]) for n in (40, 10, 90, 25)]
+            displacement = [(n, [x * factor * (1.23456 if n == 3 else 1.0), 0, 0]) for n in _TETRA_NODES]
             text += _field(displacement, value=factor, increment=inc_idx)
             text += _field(
-                [(n, [10 * x * factor, 0, 0, 0, 0, 0]) for n in (40, 10, 90, 25)],
+                [(n, [10 * x * factor, 0, 0, 0, 0, 0]) for n in _TETRA_NODES],
                 name="STRESS",
                 components=components,
                 value=factor,
@@ -126,12 +140,12 @@ class _E2EBoundaryJobs:
             self.batch_count += 1
             run_id = uuid.uuid4().hex
             folder = store.root / run_id
-            manifest = snapshot_input(item.input_path, folder)
+            manifest = get_solver_adapter("calculix").snapshot_input(item.input_path, folder)
             x = float(item.parameters["WIDTH"])
             components = [(k, 4, i // 3 + 1, i % 3 + 1, 0) for i, k in enumerate(("SXX", "SYY", "SZZ", "SXY", "SYZ", "SZX"))]
-            text = _geometry() + _field([(n, [x, 0, 0]) for n in (40, 10, 90, 25)], value=1.0, increment=1)
+            text = _tetra_geometry() + _field([(n, [x, 0, 0]) for n in _TETRA_NODES], value=1.0, increment=1)
             text += _field(
-                [(n, [10 * x, 0, 0, 0, 0, 0]) for n in (40, 10, 90, 25)],
+                [(n, [10 * x, 0, 0, 0, 0, 0]) for n in _TETRA_NODES],
                 name="STRESS",
                 components=components,
                 value=1.0,
@@ -231,8 +245,9 @@ def _build_freecad_prepomax_calculix_project(tmp_path: Path):
         "*INCLUDE,INPUT=material.inc\n"
         "*BEAM SECTION,SECTION=RECT\n"
         "2.0, 2.0\n"
-        "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n"
-        "*ELEMENT,TYPE=C3D4\n1,1,2,3,4\n"
+        "*NODE\n"
+        + "".join(f"{node},{xyz[0]},{xyz[1]},{xyz[2]}\n" for node, xyz in zip(_TETRA_NODES, _TETRA_XYZ))
+        + "*ELEMENT,TYPE=C3D4\n1,1,2,3,4\n"
         "*STEP\n*STATIC\n*END STEP\n",
         encoding="utf-8",
     )
@@ -250,48 +265,57 @@ def _build_freecad_prepomax_calculix_project(tmp_path: Path):
     return wb, jobs, project, cad, pre, solver, pv, pre_res, dict(fcstd=fcstd, step=step, pmx=pmx, inc=inc, inp=inp)
 
 
-def _read_numeric_displacement(wb, run, node_id):
-    """Read exact receipt-backed VTU values through the same reader as Native Analysis."""
-    from apps.workbench_qt.native_result_view import _read_grid
+def _verify_precise_calculix_results(manager, store, run):
+    from caelab.native.operations import (
+        TERMINAL_OPERATIONS, load_completed_operation, operation_snapshot, plan_conversion, submit_conversion,
+    )
+    from caelab.native.result_adapters import make_result_ref, read_result
+    from caelab.result_readers.vtk_fields import read_vtu
 
-    producer = ProducerIdentity("caelab.native.results", "1")
-    receipt_bytes = (run.workdir / "job.json").read_bytes()
-    receipt = ArtifactRefV1(
-        id=run.id, role="native_receipt", path="job.json",
-        sha256=hashlib.sha256(receipt_bytes).hexdigest(), size=len(receipt_bytes),
-        format_id="native-run-json-v1", producer=producer,
-    )
-    frames = [wb.read_native_frame(run, index) for index in (0, 1)]
-    values = []
-    artifacts = []
-    for frame in frames:
-        grid = _read_grid(frame)
-        data = grid.GetPointData()
-        nodes = data.GetArray("NativeNodeId")
-        row, = [i for i in range(nodes.GetNumberOfTuples()) if nodes.GetValue(i) == node_id]
-        disp = data.GetArray("DISP")
-        component, = [i for i in range(disp.GetNumberOfComponents()) if disp.GetComponentName(i) == "D1"]
-        values.append(disp.GetComponent(row, component))
-        artifacts.append(ArtifactRefV1(
-            id=f"frame:{frame.frame['index']}", role="native_frame",
-            path=frame.path.relative_to(run.workdir).as_posix(), sha256=frame.sha256,
-            size=len(frame.payload), format_id="vtu", producer=producer,
-        ))
-    operator = {"id": "node_displacement_component", "parameters": {"node_id": node_id, "component": "D1"}}
-    ref = ResultRefV1(
-        source_run_id=run.id, source_node_id=run.node_id, source_receipt_sha256=receipt.sha256,
-        source_receipt_ref=receipt, operation_id=operator["id"], operation_manifest_sha256=canonical_sha256(operator),
-        dataset_id=run.id, dataset_manifest_sha256=canonical_sha256(run.result), source_artifacts=tuple(artifacts),
-        frame_id=None, field_id="DISP", component="D1", selection={"node_ids": [node_id]},
-        location={"association": "point"}, basis={"coordinate_system": "global"}, measure="displacement",
-        shear_convention="not_applicable", units={"length": frames[0].units["length"]},
-        geometry_state="reference", operator=operator, coverage={"frames": 2}, eligibility={"source": "recorded"},
-    )
-    return NumericResultV1(
-        ref=ref, values=tuple(values), values_ref=None,
-        sample_coordinates=tuple(frame.frame["value"] for frame in frames),
-        counts={"total": len(values), "valid": len(values)}, status="ok", operator_provenance=operator,
-    )
+    snapshot_path = run.workdir / "input" / "snapshot.json"
+    snapshot = json.loads(snapshot_path.read_bytes())
+    assert snapshot["input_revision"] == run.input_revision
+    assert snapshot["files"] == run.snapshot["files"]
+    frames = [frame["vtu_file"] for frame in run.result["frames"]]
+    plan = plan_conversion(store, run.id, "VTU-1", frame_ids=frames)
+    queued = submit_conversion(manager, store, plan)
+    deadline = time.monotonic() + 10
+    operation = operation_snapshot(manager, store, run.id, queued["id"])
+    while operation["state"] not in TERMINAL_OPERATIONS and time.monotonic() < deadline:
+        time.sleep(0.02)
+        operation = operation_snapshot(manager, store, run.id, queued["id"])
+    assert operation["state"] == "completed", operation.get("error")
+    folder, receipt, dataset, stale = load_completed_operation(store, run.id, queued["id"])
+    assert not stale and receipt["execution"] == []
+    assert (folder / "operation.json").is_file() and (folder / "dataset.json").is_file()
+    fixed = json.loads((folder / receipt["source_receipt_ref"]["path"]).read_bytes())
+    assert fixed["snapshot"]["input_snapshot"] == run.snapshot["input_snapshot"]
+    assert len(dataset.frames) == 2
+    refs = []
+    for frame_id, coordinate, expected in zip(frames, (0.5, 1.0), (1.23456, 2.46912)):
+        ref = make_result_ref(store, run.id, queued["id"], frame_id, "DISP",
+                              component="D1", selection={"ids": [3]})
+        refs.append(ref)
+        numeric = read_result(store, ref)
+        assert isinstance(numeric, NumericResultV1) and numeric.status == "available"
+        assert numeric.values == pytest.approx((expected,))
+        assert numeric.ref.units["symbol"] == "mm"
+        assert numeric.operator_provenance["native_value"] == pytest.approx(coordinate)
+        assert numeric.operator_provenance["coordinate_kind"] == "static"
+        assert numeric.operator_provenance["frame_time"] is None
+        grid = read_vtu(run.workdir / frame_id)
+        assert tuple(grid.node_ids) == _TETRA_NODES
+        assert np.array_equal(grid.points, _TETRA_XYZ)
+        assert tuple(grid.element_ids) == (1,)
+        assert tuple(grid.node_ids[i] for i in grid.cells[0]) == _TETRA_NODES
+
+    raw = snapshot_path.read_bytes()
+    try:
+        snapshot_path.write_bytes(raw + b" ")
+        with pytest.raises(ResultError, match="immutable input snapshot changed"):
+            read_result(store, refs[0])
+    finally:
+        snapshot_path.write_bytes(raw)
 
 
 def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, monkeypatch):
@@ -318,12 +342,7 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
         assert run.parse_state in {"readable", "partial"}
         assert Path(run.workdir, "results", "results.pvd").is_file()
         assert list(Path(run.workdir, "results").glob("*.vtu"))
-        numeric = _read_numeric_displacement(wb, run, node_id=90)
-        assert numeric.values == pytest.approx((1.23456, 2.46912))
-        assert numeric.sample_coordinates == pytest.approx((0.5, 1.0))
-        assert numeric.ref.units["length"] == "mm"
-        assert numeric.ref.source_run_id == run.id
-        assert NumericResultV1.from_dict(numeric.to_dict()) == numeric
+        _verify_precise_calculix_results(jobs._real_jobs, RunStore(project.run_store), run)
 
         # Results launchers hand off .pvd to ParaView and .frd to PrePoMax
         wb.open_native_results(project, pv.id)
@@ -599,5 +618,51 @@ def test_d32_contract_boundaries_and_discipline_graph_gap(tmp_path: Path):
         assert not hasattr(mdo, "DisciplineGraph")
         assert not hasattr(svc2, "discipline_graph")
         assert importlib.util.find_spec("caelab.mdo.disciplines") is None
+    finally:
+        wb.close()
+
+
+
+def test_d32_include_card_state_and_rendered_connectivity_guard(tmp_path):
+    root = tmp_path / "part.inp"
+    include = tmp_path / "rows.inc"
+    include.write_text("1,1,2,3,<LAST_NODE>\n", encoding="utf-8")
+    root.write_text(
+        "*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,0,0,1\n5,1,1,1\n"
+        "*ELEMENT,TYPE=C3D4\n*INCLUDE,INPUT=rows.inc\n"
+        "*STEP\n*STATIC\n*CLOAD\n1,1,<LOAD>\n*END STEP\n",
+        encoding="utf-8",
+    )
+    wb = Workbench()
+    wb.programs = lambda: [ProgramStatus(spec, sys.executable) for spec in PROGRAMS]
+    jobs = _E2EBoundaryJobs(wb.jobs)
+    wb.jobs = jobs
+    try:
+        study = wb.create_mdo_study()
+        with pytest.raises(ValueError, match="Geometry/topology tokens"):
+            study.open_input(root)
+        study.close()
+
+        literal = b"1,1,2,3,4\n"
+        include.write_bytes(literal)
+        study = wb.create_mdo_study()
+        study.open_input(root)
+        with pytest.raises(ValueError, match="geometry and topology"):
+            study.parameterize([{"source_path": str(include), "line_number": 1,
+                                 "expected_line": "1,1,2,3,4", "old_literal": "4",
+                                 "occurrence": 1, "token": "LAST_NODE"}])
+
+        study.configure(
+            VariableSpace(variables=(ContinuousVariable(id="LOAD", name="Load", unit="N", lower=1, upper=10, initial=2),)),
+            [ObjectiveSpec(id="disp", response_id="disp")], [], {"disp": "mm"},
+        )
+        point = study.add_point({"LOAD": 2})
+        # Simulate an altered saved template while leaving the live input untouched.
+        study._templates[str(include.resolve())] = b"1,1,2,3,5\n"
+        assert include.read_bytes() == literal
+        with pytest.raises(ValueError, match="Rendered native mesh topology changed"):
+            study.submit([point.point_id])
+        assert jobs.batch_count == 0
+        study.close()
     finally:
         wb.close()
