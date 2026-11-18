@@ -7,7 +7,6 @@ import importlib.metadata
 import math
 import os
 from pathlib import Path
-import re
 import tempfile
 import threading
 import uuid
@@ -37,7 +36,7 @@ from caelab.materials.contracts import (
     PredictionBundleV1,
     ScalarResponseSpecV1,
 )
-from caelab.materials.experiments import load_experiment_channel_arrays
+from caelab.materials.experiments import load_experiment_channel_arrays, storage_segment
 from caelab.materials.registry import (
     EvaluationPlan,
     MaterialEvaluationRequest,
@@ -63,9 +62,9 @@ PYVISCO_SHIFT_SHA256 = "93f143f9789e31aaffebc229fe76b0c3b37ffa0b4937d5b2980b1d52
 PYVISCO_REPOSITORY = "NatLabRockies/pyvisco"
 PYVISCO_REVISION = "b61b5a0c6a2939927c87189972ea5619503bd813"
 PYVISCO_LICENSE = "BSD-3-Clause"
+_PYVISCO_VERSION = "2.1.3"
 
 _PRODUCER = ProducerIdentity(id="caelab.prony_trs", version="1.0.0")
-_SAFE_SEG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _STRESS_UNITS = ("MPa", "Pa", "kPa", "GPa")
 
 
@@ -121,11 +120,15 @@ def verify_pyvisco_sources() -> dict[str, Any]:
         },
     ]
     source_match = all(item["source_match"] for item in checks)
+    version_match = pkg_version == _PYVISCO_VERSION
     return {
         "installed": True,
         "version": str(pkg_version),
-        "source_match": source_match,
-        "error_code": None if source_match else "PYVISCO_SOURCE_HASH_MISMATCH",
+        "source_match": source_match and version_match,
+        "error_code": (
+            "PYVISCO_VERSION_MISMATCH" if not version_match
+            else None if source_match else "PYVISCO_SOURCE_HASH_MISMATCH"
+        ),
         "prony_sha256": prony_sha,
         "shift_sha256": shift_sha,
         "license": PYVISCO_LICENSE,
@@ -547,10 +550,10 @@ def _require_verified_pyvisco(stage: str) -> tuple[Any, Any, dict[str, Any]]:
         )
     if not status["source_match"]:
         raise MaterialStudyError(
-            "PYVISCO_SOURCE_HASH_MISMATCH",
+            status["error_code"] or "PYVISCO_SOURCE_HASH_MISMATCH",
             stage,
             {
-                "reason": "PYVISCO_SOURCE_HASH_MISMATCH",
+                "version": status["version"],
                 "checks": status["loaded_source_checks"],
             },
         )
@@ -779,7 +782,36 @@ class PronyTRSAdapter:
             diagnostics.append({"experiment_id": exp.experiment_id, "temperature_K": temp_k, "valid": True})
         return tuple(diagnostics)
 
+    def validate_study_configuration(
+        self,
+        parameters: Sequence[ParameterSpec],
+        experiments: Sequence[ExperimentSpec],
+        settings: Mapping[str, Any],
+    ) -> None:
+        stage = "prony_trs.wlf_provenance"
+        measured = any(
+            exp.source_kind == "experiment" and exp.conditions.get("provenance") != "synthetic_demo"
+            for exp in experiments
+        )
+        fixed = {p.id: p.default for p in parameters if p.role == "fixed" and p.id in ("C1", "C2", "Tref")}
+        if not measured or not fixed or len({_extract_temperature_K(exp, stage) for exp in experiments}) < 2:
+            return
+        provenance = settings.get("wlf_provenance")
+        if (
+            not isinstance(provenance, Mapping)
+            or not isinstance(provenance.get("source"), str)
+            or not provenance["source"].strip()
+            or any(
+                not isinstance(provenance.get(key), (int, float))
+                or isinstance(provenance[key], bool)
+                or provenance[key] != value
+                for key, value in fixed.items()
+            )
+        ):
+            raise MaterialStudyError("WLF_PROVENANCE_REQUIRED", stage, {"fixed_parameters": fixed})
+
     def plan(self, request: MaterialEvaluationRequest) -> EvaluationPlan:
+        self.validate_study_configuration(request.parameter_specs, request.experiments, request.numerical_settings)
         self.validate(
             request.model_descriptor,
             request.physical_parameters,
@@ -789,7 +821,7 @@ class PronyTRSAdapter:
         exp_plans: list[dict[str, Any]] = []
         expected_artifacts: list[str] = [f"artifacts/pyvisco-provenance-{request.evaluation_id}.json"]
         for exp in request.experiments:
-            exp_slug = _SAFE_SEG_RE.sub("_", exp.experiment_id).strip("._") or "exp"
+            exp_slug = storage_segment(exp.experiment_id)
             exp_plans.append(
                 {
                     "experiment_id": exp.experiment_id,
@@ -800,7 +832,7 @@ class PronyTRSAdapter:
                 }
             )
             for ch in exp.channels:
-                ch_slug = _SAFE_SEG_RE.sub("_", ch.observable_id).strip("._") or "ch"
+                ch_slug = storage_segment(ch.observable_id)
                 prefix = f"arrays/predictions/{request.evaluation_id}/{exp_slug}/{ch_slug}"
                 expected_artifacts.extend(
                     [f"{prefix}.independent.npy", f"{prefix}.values.npy", f"{prefix}.sample_keys.npy", f"{prefix}.mask.npy"]
@@ -847,6 +879,7 @@ class PronyTRSAdapter:
             "model_id": self.MODEL_ID,
             "model_revision": self.MODEL_REVISION,
             "pyvisco_version": pyvisco_status["version"],
+            "wlf_provenance": _to_plain_json(request.numerical_settings.get("wlf_provenance")),
             "loaded_source_checks": pyvisco_status["loaded_source_checks"],
             "license": PYVISCO_LICENSE,
             "repository": PYVISCO_REPOSITORY,
@@ -910,7 +943,7 @@ class PronyTRSAdapter:
                 )
 
             exp_data_entry = request.experiment_data.get(exp.experiment_id, {})
-            exp_slug = _SAFE_SEG_RE.sub("_", exp.experiment_id).strip("._") or "exp"
+            exp_slug = storage_segment(exp.experiment_id)
             ch_outputs: list[dict[str, Any]] = []
 
             for ch in exp.channels:
@@ -1073,7 +1106,7 @@ class PronyTRSAdapter:
                     )
 
                 mask_arr = np.ones(y_out.shape, dtype="|b1")
-                ch_slug = _SAFE_SEG_RE.sub("_", ch.observable_id).strip("._") or "ch"
+                ch_slug = storage_segment(ch.observable_id)
                 base_rel = f"arrays/predictions/{request.evaluation_id}/{exp_slug}/{ch_slug}"
 
                 def _save_pred_npy(rel: str, aid: str, role: str, arr: np.ndarray) -> ArtifactRefV1:

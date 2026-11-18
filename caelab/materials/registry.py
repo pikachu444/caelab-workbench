@@ -336,6 +336,7 @@ class CalibrationEvaluationArtifact:
     diagnostics: tuple[Mapping[str, Any] | str, ...] = ()
     created_at: str = ""
     schema_version: int = 1
+    holdout_exposed: bool = False
 
     def __post_init__(self) -> None:
         _require_schema_version_v1(self.schema_version)
@@ -368,6 +369,9 @@ class CalibrationEvaluationArtifact:
         if self.state not in _EVAL_STATES:
             raise ValueError(f"CalibrationEvaluationArtifact.state must be one of {sorted(_EVAL_STATES)}")
         _require_bool(self.cache_hit, "CalibrationEvaluationArtifact.cache_hit")
+        _require_bool(self.holdout_exposed, "CalibrationEvaluationArtifact.holdout_exposed")
+        if self.holdout_exposed and self.execution_phase != "confirmation":
+            raise ValueError("Only a confirmation can expose holdout")
         if self.prediction_bundle is not None and not isinstance(self.prediction_bundle, PredictionBundleV1):
             raise ValueError("CalibrationEvaluationArtifact.prediction_bundle must be None or PredictionBundleV1")
         if not isinstance(self.assessment, AssessmentResultV1):
@@ -424,6 +428,7 @@ class CalibrationEvaluationArtifact:
             "numerical_settings": _to_plain_json(self.numerical_settings),
             "state": self.state,
             "cache_hit": self.cache_hit,
+            "holdout_exposed": self.holdout_exposed,
             "prediction_bundle": None if self.prediction_bundle is None else self.prediction_bundle.to_dict(),
             "assessment": self.assessment.to_dict(),
             "channel_results": _to_plain_json(self.channel_results),
@@ -462,7 +467,7 @@ class CalibrationEvaluationArtifact:
             "diagnostics",
             "created_at",
         }
-        m = _require_exact_keys(data, required, context="CalibrationEvaluationArtifact")
+        m = _require_exact_keys(data, required, optional={"holdout_exposed"}, context="CalibrationEvaluationArtifact")
         _require_schema_version_v1(m["schema_version"])
         return cls(
             schema_version=1,
@@ -479,6 +484,7 @@ class CalibrationEvaluationArtifact:
             numerical_settings=m["numerical_settings"],
             state=m["state"],
             cache_hit=m["cache_hit"],
+            holdout_exposed=m.get("holdout_exposed", False),
             prediction_bundle=(
                 None if m["prediction_bundle"] is None else PredictionBundleV1.from_dict(m["prediction_bundle"])
             ),

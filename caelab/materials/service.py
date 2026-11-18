@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import threading
+import time
 import uuid
 from typing import Any
 
@@ -80,6 +81,12 @@ _CACHE_POLICIES = frozenset({"reuse", "refresh"})
 _EXECUTION_PHASES = frozenset({"exploration", "confirmation"})
 _SELECTION_MODES = frozenset({"training_only", "manual_with_validation"})
 _RECOVERY_ACTIONS = frozenset({"mark_interrupted", "finish_save_as", "discard_incomplete_copy"})
+_EXPOSURE_DIR = "holdout_exposures"
+_EXPOSURE_DIRS = (_EXPOSURE_DIR, "holdout-exposures")
+_COPY_MANAGED_DIRS = frozenset({
+    "experiments", "evaluations", "campaigns", "selections", *_EXPOSURE_DIRS,
+    "sources", "arrays", "revisions", "exports", "artifacts",
+})
 
 
 def _derive_study_paths(path: str | Path) -> tuple[Path, Path, str]:
@@ -344,7 +351,7 @@ class CalibrationStudyService:
         )
 
         data_root.mkdir(parents=True, exist_ok=True)
-        for sub in ("sources", "arrays", "revisions", "evaluations", "holdout-exposures", "exports"):
+        for sub in ("sources", "arrays", "revisions", "evaluations", _EXPOSURE_DIR, "exports"):
             (data_root / sub).mkdir(parents=True, exist_ok=True)
 
         lease = FileLock(data_root / "study.lock", timeout=0, thread_local=False)
@@ -536,8 +543,11 @@ class CalibrationStudyService:
     def _comparisons(self) -> tuple[ComparisonSpec, ...]:
         return tuple(ComparisonSpec.from_dict(c) for c in self._manifest["comparisons"])
 
-    def _collect_artifact_refs(self, manifest: Mapping[str, Any] | None = None) -> list[ArtifactRefV1]:
+    def _collect_artifact_refs(
+        self, manifest: Mapping[str, Any] | None = None, *, root: Path | None = None,
+    ) -> list[ArtifactRefV1]:
         m = manifest or self._manifest
+        root = root if root is not None else self._data_root
         refs: list[ArtifactRefV1] = []
         for exp_raw in m.get("experiments", ()):
             refs.append(ArtifactRefV1.from_dict(exp_raw["source_ref"]))
@@ -557,7 +567,10 @@ class CalibrationStudyService:
                     refs.append(ArtifactRefV1.from_dict(rev_entry[k]))
         for ev_idx in m.get("evaluations", {}).values():
             if ev_idx.get("artifact_ref"):
-                refs.append(ArtifactRefV1.from_dict(ev_idx["artifact_ref"]))
+                ref = ArtifactRefV1.from_dict(ev_idx["artifact_ref"])
+                refs.append(ref)
+                payload = self._read_ref_json(ref, root, "artifact_references")
+                refs.extend(self._nested_artifact_refs(payload))
             if ev_idx.get("selection_ref"):
                 refs.append(ArtifactRefV1.from_dict(ev_idx["selection_ref"]))
         for exp_ref in m.get("holdout_exposures", ()):
@@ -567,7 +580,35 @@ class CalibrationStudyService:
                 refs.append(ArtifactRefV1.from_dict(export_rec["manifest_ref"]))
             for art in export_rec.get("artifacts", ()):
                 refs.append(ArtifactRefV1.from_dict(art))
-        return refs
+        for selection in {ref for ref in refs if ref.role == "selection_record"}:
+            payload = self._read_ref_json(selection, root, "artifact_references")
+            refs.extend(self._nested_artifact_refs(payload))
+        return list(dict.fromkeys(refs))
+
+    @staticmethod
+    def _nested_artifact_refs(value: Any):
+        if isinstance(value, Mapping):
+            if {"path", "sha256", "size", "id", "role", "format_id", "producer"}.issubset(value):
+                yield ArtifactRefV1.from_dict(value)
+            else:
+                for item in value.values():
+                    yield from CalibrationStudyService._nested_artifact_refs(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from CalibrationStudyService._nested_artifact_refs(item)
+
+    def _read_ref_json(self, ref: ArtifactRefV1, root: Path, stage: str) -> dict[str, Any]:
+        try:
+            validate_relative_artifact_path(ref.path, root=root)
+            raw = (root / ref.path).read_bytes()
+            if len(raw) != ref.size or _sha256_bytes(raw) != ref.sha256:
+                raise ValueError("ARTIFACT_DIGEST_MISMATCH")
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("EXPECTED_JSON_OBJECT")
+            return payload
+        except (ValueError, OSError) as exc:
+            raise MaterialStudyError("CORRUPT_ARTIFACT", stage, {"path": ref.path, "reason": str(exc)}) from exc
 
     def _verify_ref(self, ref: ArtifactRefV1, root: Path) -> str | None:
         try:
@@ -592,7 +633,12 @@ class CalibrationStudyService:
             corrupt.append({"path": str(self._data_root), "reason": exc.code})
             diags.append(exc.to_dict())
 
-        for ref in self._collect_artifact_refs():
+        try:
+            refs = self._collect_artifact_refs()
+        except (MaterialStudyError, ValueError, KeyError) as exc:
+            corrupt.append({"reason": str(exc)})
+            refs = []
+        for ref in refs:
             issue = self._verify_ref(ref, self._data_root)
             if issue is not None:
                 corrupt.append({"artifact_id": ref.id, "path": ref.path, "issue": issue})
@@ -602,7 +648,7 @@ class CalibrationStudyService:
         # Check interrupted campaigns left on disk without re-starting workers
         interrupted = [
             cid
-            for cid, c in self._manifest.get("campaigns", {}).items()
+            for cid, c in self._campaign_records().items()
             if c.get("state") in ("running", "queued", "preparing")
         ]
         if interrupted:
@@ -652,8 +698,9 @@ class CalibrationStudyService:
         self._check_disk_cas(None, stage)
         atomic_json(self._path, new_manifest)
         new_rev = _sha256_file(self._path)
-        self._manifest = new_manifest
-        self._document_revision = new_rev
+        with self._state_lock:
+            self._manifest = new_manifest
+            self._document_revision = new_rev
         return new_rev
 
     def snapshot(self) -> StudySnapshot:
@@ -684,13 +731,11 @@ class CalibrationStudyService:
     def list_evaluations(self) -> tuple[dict[str, Any], ...]:
         """Return evaluation index metadata without leaking sealed holdout values."""
         with self._state_lock:
-            out: list[dict[str, Any]] = []
-            for ev_id, entry in self._manifest.get("evaluations", {}).items():
-                item = dict(entry)
-                if item.get("execution_phase") == "confirmation" and not item.get("holdout_exposed", False):
-                    item["fit_loss"] = item.get("fit_loss")
-                out.append(item)
-            return tuple(out)
+            out = tuple(dict(entry) for entry in self._manifest.get("evaluations", {}).values())
+        for item in out:
+            if item.get("execution_phase") == "confirmation":
+                self.evaluation(item["evaluation_id"])
+        return out
 
     def experiments(self) -> tuple[ExperimentSpec, ...]:
         with self._state_lock:
@@ -755,6 +800,7 @@ class CalibrationStudyService:
             op_id = uuid.uuid4().hex
             self._busy_operation = "import_experiment"
             self._active_operation_id = op_id
+            self._active_workers.add(threading.current_thread())
             study_id = self.study_id
             data_root = self._data_root
 
@@ -792,9 +838,7 @@ class CalibrationStudyService:
                     new_manifest["revisions"][new_content_rev] = self._build_revision_entry(new_manifest)
                 new_doc_rev = self._commit_manifest_unlocked(new_manifest, "import_experiment")
         finally:
-            with self._state_lock:
-                self._busy_operation = None
-                self._active_operation_id = None
+            self._finish_operation()
 
         return ImportReceipt(
             study_id=study_id,
@@ -950,6 +994,7 @@ class CalibrationStudyService:
             opt_cfg_dict = _opt_config_to_dict(optimization_config) if optimization_config is not None else self._manifest.get("optimization_config")
 
             new_manifest = json.loads(json.dumps(self._manifest))
+            new_manifest["adapter"] = adapter.identity.to_dict()
             new_manifest["parameters"] = [p.to_dict() for p in param_specs]
             new_manifest["comparisons"] = [c.to_dict() for c in comp_specs]
             new_manifest["assessment_policy"] = raw_policy
@@ -963,29 +1008,30 @@ class CalibrationStudyService:
             self._commit_manifest_unlocked(new_manifest, "configure")
             return self.snapshot()
 
-    def _planned_experiments_for_phase(
-        self,
+    @staticmethod
+    def _phase_comparisons(
         *,
         execution_phase: str,
-        experiments: Mapping[str, ExperimentSpec],
         comparisons: Sequence[ComparisonSpec],
         assessment_policy: Mapping[str, Any],
-    ) -> tuple[ExperimentSpec, ...]:
-        """Select ONLY allowed experiments for exploration vs confirmation (C4 Holdout Seal)."""
-        ordered_exps = self._experiments()
+    ) -> tuple[ComparisonSpec, ...]:
         if execution_phase == "confirmation":
-            return ordered_exps
+            return tuple(comparisons)
         sel_policy = assessment_policy.get("selection_policy", {})
         mode = sel_policy.get("mode", "training_only")
         val_comp_ids = set(sel_policy.get("validation_comparison_ids", ()))
-        allowed_val_exp_ids = {
-            c.experiment_id for c in comparisons if c.id in val_comp_ids and c.split == "validation"
-        } if mode == "manual_with_validation" else set()
         return tuple(
-            exp
-            for exp in ordered_exps
-            if exp.split == "train" or (exp.split == "validation" and exp.experiment_id in allowed_val_exp_ids)
+            c for c in comparisons
+            if c.required_for_fit or (
+                mode == "manual_with_validation" and c.split == "validation"
+                and c.required_for_validation and c.id in val_comp_ids
+            )
         )
+
+    @staticmethod
+    def _compared_experiments(experiments, comparisons) -> tuple[ExperimentSpec, ...]:
+        ids = {comp.experiment_id for comp in comparisons}
+        return tuple(exp for exp in experiments.values() if exp.experiment_id in ids)
 
     def _write_revision_json_ref(
         self,
@@ -1049,11 +1095,14 @@ class CalibrationStudyService:
         assessment_policy: Mapping[str, Any],
         numerical_settings: Mapping[str, Any],
         optimization_config: Mapping[str, Any] | None,
+        selection_id: str,
     ) -> tuple[SelectionRecordV1, ArtifactRefV1, str]:
         norm_payload = build_normalization_payload(
             experiments=experiments,
             experiment_data=experiment_data,
-            comparisons=comparisons,
+            comparisons=self._phase_comparisons(
+                execution_phase="exploration", comparisons=comparisons, assessment_policy=assessment_policy,
+            ),
             data_root=self._data_root,
         )
         norm_ref = self._write_revision_json_ref(
@@ -1100,12 +1149,12 @@ class CalibrationStudyService:
                 continue
             if ev_meta.get("execution_phase") != "exploration":
                 continue
-            if ev_meta.get("state") != "completed":
+            if ev_meta.get("state") != "completed" or ev_meta.get("fit_loss") is None:
                 continue
-            if ev_meta.get("parameter_values_sha256") == param_sha:
+            if ev_meta.get("parameter_values_sha256") == param_sha and self.evaluation(ev_id).adapter == adapter.identity:
                 matching_eval_ids.append(ev_id)
 
-        ordered = self._experiments()
+        ordered = self._compared_experiments(experiments, comparisons)
         train_revs = tuple(
             {"experiment_id": e.experiment_id, "experiment_revision": e.experiment_revision}
             for e in ordered
@@ -1122,7 +1171,6 @@ class CalibrationStudyService:
             if e.split == "holdout"
         )
 
-        selection_id = uuid.uuid4().hex
         sel_record = SelectionRecordV1(
             selection_id=selection_id,
             study_id=self.study_id,
@@ -1169,26 +1217,23 @@ class CalibrationStudyService:
         adapter: MaterialAdapter,
         physical_parameters: Mapping[str, float],
         numerical_settings: Mapping[str, Any],
+        holdout_experiments: Sequence[ExperimentSpec],
     ) -> tuple[SelectionRecordV1, str]:
-        issue = self._verify_ref(selection_ref, self._data_root)
-        if issue is not None:
-            raise MaterialStudyError("SELECTION_MISMATCH", "evaluate", {"reason": issue})
-        raw = json.loads((self._data_root / selection_ref.path).read_text(encoding="utf-8"))
+        raw = self._read_ref_json(selection_ref, self._data_root, "evaluate.selection")
         rec = SelectionRecordV1.from_dict(raw)
+        for ref in (rec.normalization_ref, rec.assessment_policy_ref, rec.selection_policy_ref):
+            self._read_ref_json(ref, self._data_root, "evaluate.selection")
         param_sha = canonical_sha256(_to_plain_json(physical_parameters), exclude_keys=())
         num_sha = canonical_sha256(_to_plain_json(numerical_settings), exclude_keys=())
-        ordered = self._experiments()
         expected_hold = tuple(
             {"experiment_id": e.experiment_id, "experiment_revision": e.experiment_revision}
-            for e in ordered
-            if e.split == "holdout"
+            for e in holdout_experiments
         )
         if (
             rec.study_id != self.study_id
             or rec.content_revision != content_revision
             or rec.model_revision != model_descriptor.model_revision
-            or rec.adapter.id != adapter.identity.id
-            or rec.adapter.version != adapter.identity.version
+            or rec.adapter != adapter.identity
             or rec.parameter_values_sha256 != param_sha
             or rec.numerical_settings_sha256 != num_sha
             or rec.holdout_experiment_revisions != expected_hold
@@ -1214,54 +1259,43 @@ class CalibrationStudyService:
         self,
         *,
         holdout_experiments: Sequence[ExperimentSpec],
-        current_proc_sha: str,
-    ) -> list[dict[str, Any]]:
-        """Check holdout-exposures/*.json to detect reuse of same holdout source under different selection (C4)."""
+        selection_id: str,
+        parameter_sha: str,
+        content_revision: str,
+    ) -> None:
         if not holdout_experiments:
-            return []
-        exposures_dir = self._data_root / "holdout-exposures"
-        if not exposures_dir.is_dir():
-            return []
-
-        prior_by_source_sha: dict[str, str] = {}
-        for exp_file in sorted(exposures_dir.glob("*.json")):
-            try:
-                data = json.loads(exp_file.read_text(encoding="utf-8"))
-            except Exception:
+            return
+        source_hashes = {exp.source_ref.sha256 for exp in holdout_experiments}
+        for indexed in self._manifest.get("evaluations", {}).values():
+            if indexed.get("execution_phase") != "confirmation":
                 continue
-            proc = str(data.get("selection_procedure_sha256", ""))
-            for item in data.get("holdout_experiments", ()):
-                src_sha = str(item.get("source_sha256", ""))
-                if src_sha and proc and proc != current_proc_sha:
-                    prior_by_source_sha[src_sha] = proc
-
-        checks: list[dict[str, Any]] = []
-        for exp in holdout_experiments:
-            if exp.source_ref.sha256 in prior_by_source_sha:
-                checks.append(
-                    {
-                        "code": "HOLDOUT_REUSED_FOR_SELECTION",
-                        "experiment_id": exp.experiment_id,
-                        "source_sha256": exp.source_ref.sha256,
-                        "prior_selection_procedure_sha256": prior_by_source_sha[exp.source_ref.sha256],
-                        "current_selection_procedure_sha256": current_proc_sha,
-                        "independent_validation_satisfied": False,
-                    }
+            artifact = self.evaluation(indexed["evaluation_id"])
+            if not indexed.get("holdout_exposed") and not artifact.holdout_exposed:
+                continue
+            event, prior = self._verified_holdout_exposure(artifact, indexed)
+            identity = (prior.selection_id, prior.parameter_values_sha256, prior.content_revision)
+            if identity == (selection_id, parameter_sha, content_revision):
+                continue
+            shared = source_hashes.intersection(item["source_sha256"] for item in event["holdout_experiments"])
+            if shared:
+                raise MaterialStudyError(
+                    "HOLDOUT_REUSED_FOR_SELECTION", "evaluate",
+                    {"source_sha256": sorted(shared), "prior_selection_id": prior.selection_id},
                 )
-        return checks
 
     def _record_holdout_exposure(
         self,
         *,
         evaluation_id: str,
         content_revision: str,
-        selection_ref: ArtifactRefV1 | None,
+        selection_ref: ArtifactRefV1,
+        selection: SelectionRecordV1,
         selection_procedure_sha256: str,
         holdout_experiments: Sequence[ExperimentSpec],
     ) -> ArtifactRefV1:
         """Atomically persist holdout exposure event via fsync + os.replace BEFORE exposing holdout data (C4)."""
         event_id = uuid.uuid4().hex
-        rel_path = f"holdout-exposures/{event_id}.json"
+        rel_path = f"{_EXPOSURE_DIR}/{event_id}.json"
         validate_relative_artifact_path(rel_path, root=self._data_root)
         target = self._data_root / rel_path
         payload = {
@@ -1270,7 +1304,9 @@ class CalibrationStudyService:
             "study_id": self.study_id,
             "evaluation_id": evaluation_id,
             "content_revision": content_revision,
-            "selection_ref": None if selection_ref is None else selection_ref.to_dict(),
+            "selection_ref": selection_ref.to_dict(),
+            "selection_id": selection.selection_id,
+            "parameter_set_sha256": selection.parameter_values_sha256,
             "selection_procedure_sha256": selection_procedure_sha256,
             "holdout_experiments": [
                 {
@@ -1302,25 +1338,103 @@ class CalibrationStudyService:
             producer=_PRODUCER,
         )
 
-    def _has_verified_holdout_exposure(self, evaluation_id: str) -> bool:
-        for ref_raw in self._manifest.get("holdout_exposures", ()):
-            ref = ArtifactRefV1.from_dict(ref_raw)
-            if self._verify_ref(ref, self._data_root) is not None:
-                continue
-            try:
-                data = json.loads((self._data_root / ref.path).read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if data.get("evaluation_id") == evaluation_id:
-                return True
-        return False
+    def _verified_holdout_exposure(
+        self, artifact: CalibrationEvaluationArtifact, entry: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], SelectionRecordV1]:
+        stage = "holdout_exposure"
+        try:
+            selection_ref = artifact.selection_ref
+            if selection_ref is None or entry.get("selection_ref") != selection_ref.to_dict():
+                raise ValueError("SELECTION_REFERENCE_MISMATCH")
+            selection = SelectionRecordV1.from_dict(self._read_ref_json(selection_ref, self._data_root, stage))
+            for ref in (selection.normalization_ref, selection.assessment_policy_ref, selection.selection_policy_ref):
+                self._read_ref_json(ref, self._data_root, stage)
+            actual_sha = canonical_sha256(_to_plain_json(artifact.physical_parameters), exclude_keys=())
+            if (
+                selection.study_id != self.study_id
+                or selection.content_revision != artifact.content_revision
+                or selection.parameter_values_sha256 != actual_sha
+                or selection.model_revision != artifact.model_revision
+                or selection.adapter != artifact.adapter
+                or selection.numerical_settings_sha256
+                != canonical_sha256(_to_plain_json(artifact.numerical_settings), exclude_keys=())
+            ):
+                raise ValueError("SELECTION_IDENTITY_MISMATCH")
+            revision = self._manifest.get("revisions", {}).get(artifact.content_revision, {})
+            known = {e["experiment_id"]: e for e in revision.get("experiments", ()) if e["split"] == "holdout"}
+            expected = [
+                {
+                    "experiment_id": item["experiment_id"],
+                    "experiment_revision": item["experiment_revision"],
+                    "source_sha256": known[item["experiment_id"]]["source_ref"]["sha256"],
+                }
+                for item in selection.holdout_experiment_revisions
+                if known[item["experiment_id"]]["experiment_revision"] == item["experiment_revision"]
+            ]
+            if not expected or len(expected) != len(selection.holdout_experiment_revisions):
+                raise ValueError("HOLDOUT_REVISION_MISMATCH")
+            refs = self._manifest.get("holdout_exposures", ())
+            indexed_ref = entry.get("holdout_exposure_ref")
+            if indexed_ref is not None:
+                if indexed_ref not in refs:
+                    raise ValueError("EXPOSURE_REFERENCE_NOT_INDEXED")
+                refs = (indexed_ref,)
+            for raw_ref in refs:
+                ref = ArtifactRefV1.from_dict(raw_ref)
+                try:
+                    data = self._read_ref_json(ref, self._data_root, stage)
+                except MaterialStudyError:
+                    if indexed_ref is not None:
+                        raise
+                    continue
+                if data.get("evaluation_id") != artifact.evaluation_id:
+                    continue
+                event_id = data.get("event_id")
+                proc = self._selection_procedure_sha256(
+                    content_revision=selection.content_revision,
+                    model_revision=selection.model_revision,
+                    adapter_identity=selection.adapter,
+                    physical_parameters=selection.physical_parameters,
+                    numerical_settings_sha256=selection.numerical_settings_sha256,
+                    normalization_sha256=selection.normalization_ref.sha256,
+                    assessment_policy_sha256=selection.assessment_policy_ref.sha256,
+                    selection_policy_sha256=selection.selection_policy_ref.sha256,
+                )
+                # Legacy on-demand exposures used only the parameter digest as the procedure ID.
+                allowed_procedures = (proc, actual_sha) if indexed_ref is None else (proc,)
+                if (
+                    type(data.get("schema_version")) is not int or data["schema_version"] != 1
+                    or not isinstance(event_id, str) or not event_id
+                    or ref.id != f"exposure:{event_id}" or ref.role != "holdout_exposure"
+                    or ref.path not in {f"{directory}/{event_id}.json" for directory in _EXPOSURE_DIRS}
+                    or data.get("study_id") != self.study_id
+                    or data.get("content_revision") != artifact.content_revision
+                    or data.get("selection_ref") != selection_ref.to_dict()
+                    or data.get("selection_id", selection.selection_id if indexed_ref is None else None) != selection.selection_id
+                    or data.get("parameter_set_sha256", actual_sha if indexed_ref is None else None) != actual_sha
+                    or data.get("selection_procedure_sha256") not in allowed_procedures
+                    or data.get("holdout_experiments") != expected
+                ):
+                    raise ValueError("EXPOSURE_IDENTITY_MISMATCH")
+                datetime.fromisoformat(data["exposed_at"])
+                return data, selection
+            raise ValueError("EXPOSURE_RECORD_MISSING")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MaterialStudyError(
+                "CORRUPT_ARTIFACT", stage, {"evaluation_id": artifact.evaluation_id, "reason": str(exc)},
+            ) from exc
 
     def _lookup_cached_evaluation(self, cache_key: str) -> CalibrationEvaluationArtifact | None:
         with self._state_lock:
             eval_id = self._eval_cache_index.get(cache_key)
             if eval_id is None:
                 for eid, entry in reversed(list(self._manifest.get("evaluations", {}).items())):
-                    if entry.get("cache_key") == cache_key and entry.get("state") == "completed":
+                    if (
+                        entry.get("cache_key") == cache_key
+                        and entry.get("state") == "completed"
+                        and entry.get("execution_phase") == "exploration"
+                        and entry.get("fit_loss") is not None
+                    ):
                         eval_id = eid
                         self._eval_cache_index[cache_key] = eid
                         break
@@ -1337,11 +1451,9 @@ class CalibrationStudyService:
             art = CalibrationEvaluationArtifact.from_dict(art_dict)
         except Exception:
             return None
-        # Verify prediction bundle artifacts still exist intact
-        if art.prediction_bundle is not None:
-            for a_ref in art.prediction_bundle.artifacts:
-                if self._verify_ref(a_ref, self._data_root) is not None:
-                    return None
+        for nested in self._nested_artifact_refs(art_dict):
+            if self._verify_ref(nested, self._data_root) is not None:
+                return None
         return art
 
     def evaluate(
@@ -1390,13 +1502,27 @@ class CalibrationStudyService:
             user_constraints = tuple(_coerce_constraint_spec(c) for c in self._manifest.get("user_constraints", ()))
             all_constraints = tuple(cap.optimizer_constraints) + user_constraints
             content_rev = str(self._manifest["content_revision"])
-            planned_exps = self._planned_experiments_for_phase(
+            phase_comparisons = self._phase_comparisons(
                 execution_phase=execution_phase,
-                experiments=experiments,
                 comparisons=comparisons,
                 assessment_policy=assessment_policy,
             )
+            planned_exps = self._compared_experiments(experiments, phase_comparisons)
             holdout_exps = tuple(e for e in planned_exps if e.split == "holdout")
+            validate_study = getattr(adapter, "validate_study_configuration", None)
+            if validate_study is not None:
+                validate_study(param_specs, tuple(experiments.values()), numerical_settings)
+            if AdapterIdentity.from_dict(self._manifest["adapter"]) != adapter.identity:
+                if execution_phase == "confirmation":
+                    raise MaterialStudyError(
+                        "SELECTION_MISMATCH", "evaluate", {"reason": "ADAPTER_IMPLEMENTATION_CHANGED"},
+                    )
+                updated = json.loads(json.dumps(self._manifest))
+                updated["adapter"] = adapter.identity.to_dict()
+                content_rev = self._compute_content_revision(updated)
+                updated["content_revision"] = content_rev
+                updated["revisions"].setdefault(content_rev, self._build_revision_entry(updated))
+                self._commit_manifest_unlocked(updated, "evaluate.adapter_revision")
 
             op_id = uuid.uuid4().hex
             eval_id = f"eval-{uuid.uuid4().hex[:16]}"
@@ -1404,8 +1530,10 @@ class CalibrationStudyService:
             cancel_event = threading.Event()
             self._busy_operation = "evaluate"
             self._active_operation_id = op_id
-            self._active_campaign_id = None
+            self._active_campaign_id = op_id
             self._active_cancel_event = cancel_event
+            self._active_stop_event = cancel_event
+            self._active_workers.add(threading.current_thread())
             start_doc_rev = self._document_revision
             study_id = self.study_id
             data_root = self._data_root
@@ -1416,7 +1544,7 @@ class CalibrationStudyService:
                 on_progress(
                     {
                         "stage": "started",
-                        "campaign_id": None,
+                        "campaign_id": op_id,
                         "operation_id": op_id,
                         "content_revision": content_rev,
                     }
@@ -1424,19 +1552,33 @@ class CalibrationStudyService:
 
             # Holdout Seal step 1: atomically freeze SelectionRecordV1 BEFORE any holdout execution!
             proc_sha = ""
-            extra_split_checks: list[dict[str, Any]] = []
+            frozen_selection = None
+            param_sha = canonical_sha256(_to_plain_json(full_phys), exclude_keys=())
             if execution_phase == "confirmation":
+                selection_id = uuid.uuid4().hex
                 if selection_ref is not None:
-                    _, proc_sha = self._validate_existing_selection_ref(
+                    frozen = SelectionRecordV1.from_dict(
+                        self._read_ref_json(selection_ref, data_root, "evaluate.selection")
+                    )
+                    selection_id = frozen.selection_id
+                self._detect_holdout_reuse(
+                    holdout_experiments=holdout_exps,
+                    selection_id=selection_id,
+                    parameter_sha=param_sha,
+                    content_revision=content_rev,
+                )
+                if selection_ref is not None:
+                    frozen_selection, proc_sha = self._validate_existing_selection_ref(
                         selection_ref,
                         content_revision=content_rev,
                         model_descriptor=descriptor,
                         adapter=adapter,
                         physical_parameters=full_phys,
                         numerical_settings=numerical_settings,
+                        holdout_experiments=holdout_exps,
                     )
                 else:
-                    _, selection_ref, proc_sha = self._create_selection_record(
+                    frozen_selection, selection_ref, proc_sha = self._create_selection_record(
                         content_revision=content_rev,
                         model_descriptor=descriptor,
                         adapter=adapter,
@@ -1447,10 +1589,8 @@ class CalibrationStudyService:
                         assessment_policy=assessment_policy,
                         numerical_settings=numerical_settings,
                         optimization_config=opt_config,
+                        selection_id=selection_id,
                     )
-                extra_split_checks.extend(
-                    self._detect_holdout_reuse(holdout_experiments=holdout_exps, current_proc_sha=proc_sha)
-                )
             else:
                 selection_ref = None
 
@@ -1467,7 +1607,7 @@ class CalibrationStudyService:
             )
 
             # Reuse cache ONLY in exploration when cache_policy == "reuse"
-            if cache_policy == "reuse" and execution_phase == "exploration":
+            if cache_policy == "reuse" and execution_phase == "exploration" and not cancel_event.is_set():
                 cached = self._lookup_cached_evaluation(cache_key)
                 if cached is not None:
                     with self._state_lock:
@@ -1513,7 +1653,7 @@ class CalibrationStudyService:
                 physical_parameters=full_phys,
                 experiments=experiments,
                 experiment_data=exp_data,
-                comparisons=comparisons,
+                comparisons=phase_comparisons,
                 planned_experiments=planned_exps,
                 numerical_settings=numerical_settings,
                 execution_phase=execution_phase,
@@ -1525,58 +1665,49 @@ class CalibrationStudyService:
                 data_root=data_root,
                 cancel_event=cancel_event,
                 compute_identifiability=compute_identifiability,
-                extra_split_checks=extra_split_checks,
             )
 
-            # Save evaluation index entry (with holdout_exposed=False initially for confirmation)
-            param_sha = canonical_sha256(_to_plain_json(full_phys), exclude_keys=())
-            with self._state_lock:
-                self._check_disk_cas(start_doc_rev, "evaluate")
-                new_manifest = json.loads(json.dumps(self._manifest))
-                rev_entry = new_manifest["revisions"].setdefault(content_rev, self._build_revision_entry(new_manifest))
-                rev_entry["assessment_policy_ref"] = ap_ref.to_dict()
-                if selection_ref is not None:
-                    existing_sel_paths = {s["path"] for s in rev_entry.get("selections", ())}
-                    if selection_ref.path not in existing_sel_paths:
-                        rev_entry.setdefault("selections", []).append(selection_ref.to_dict())
-                new_manifest["evaluations"][eval_id] = {
-                    "evaluation_id": eval_id,
-                    "campaign_id": None,
-                    "content_revision": content_rev,
-                    "state": artifact.state,
-                    "execution_phase": execution_phase,
-                    "selection_ref": None if selection_ref is None else selection_ref.to_dict(),
-                    "artifact_ref": eval_ref.to_dict(),
-                    "cache_key": cache_key,
-                    "parameter_values_sha256": param_sha,
-                    "holdout_exposed": False,
-                    "point_id": None,
-                    "fit_loss": res_out.fit_loss,
-                    "created_at": artifact.created_at,
-                }
-                if artifact.state == "completed" and res_out.objective_eligible and not (execution_phase == "confirmation" and holdout_exps):
-                    new_manifest["selected_evaluation_id"] = eval_id
-                    self._eval_cache_index[cache_key] = eval_id
-                doc_rev_after = self._commit_manifest_unlocked(new_manifest, "evaluate")
-
-            # Holdout Seal step 2: atomically record holdout exposure BEFORE returning ANY holdout result!
-            if execution_phase == "confirmation" and holdout_exps:
+            exp_ref = None
+            if artifact.holdout_exposed and selection_ref is not None and frozen_selection is not None:
                 exp_ref = self._record_holdout_exposure(
                     evaluation_id=eval_id,
                     content_revision=content_rev,
                     selection_ref=selection_ref,
+                    selection=frozen_selection,
                     selection_procedure_sha256=proc_sha,
                     holdout_experiments=holdout_exps,
                 )
-                with self._state_lock:
-                    self._check_disk_cas(doc_rev_after, "evaluate")
-                    m2 = json.loads(json.dumps(self._manifest))
-                    m2["evaluations"][eval_id]["holdout_exposed"] = True
-                    m2.setdefault("holdout_exposures", []).append(exp_ref.to_dict())
-                    if artifact.state == "completed" and res_out.objective_eligible:
-                        m2["selected_evaluation_id"] = eval_id
-                        self._eval_cache_index[cache_key] = eval_id
-                    doc_rev_after = self._commit_manifest_unlocked(m2, "evaluate")
+            self._check_disk_cas(start_doc_rev, "evaluate")
+            new_manifest = json.loads(json.dumps(self._manifest))
+            rev_entry = new_manifest["revisions"].setdefault(content_rev, self._build_revision_entry(new_manifest))
+            rev_entry["assessment_policy_ref"] = ap_ref.to_dict()
+            if frozen_selection is not None and selection_ref is not None:
+                existing_sel_paths = {s["path"] for s in rev_entry.get("selections", ())}
+                if selection_ref.path not in existing_sel_paths:
+                    rev_entry.setdefault("selections", []).append(selection_ref.to_dict())
+            new_manifest["evaluations"][eval_id] = {
+                "evaluation_id": eval_id,
+                "campaign_id": None,
+                "content_revision": content_rev,
+                "state": artifact.state,
+                "execution_phase": execution_phase,
+                "selection_ref": None if selection_ref is None else selection_ref.to_dict(),
+                "artifact_ref": eval_ref.to_dict(),
+                "cache_key": cache_key,
+                "parameter_values_sha256": param_sha,
+                "holdout_exposed": exp_ref is not None,
+                "holdout_exposure_ref": exp_ref.to_dict() if exp_ref is not None else None,
+                "point_id": None,
+                "fit_loss": res_out.fit_loss,
+                "created_at": artifact.created_at,
+            }
+            if exp_ref is not None:
+                new_manifest.setdefault("holdout_exposures", []).append(exp_ref.to_dict())
+            if artifact.state == "completed" and res_out.objective_eligible:
+                new_manifest["selected_evaluation_id"] = eval_id
+                if execution_phase == "exploration":
+                    self._eval_cache_index[cache_key] = eval_id
+            doc_rev_after = self._commit_manifest_unlocked(new_manifest, "evaluate")
 
             obs_dict = {
                 "request_id": req_id,
@@ -1598,10 +1729,7 @@ class CalibrationStudyService:
                 observation=obs_dict,
             )
         finally:
-            with self._state_lock:
-                self._busy_operation = None
-                self._active_operation_id = None
-                self._active_cancel_event = None
+            self._finish_operation()
 
     def optimize(
         self,
@@ -1640,6 +1768,8 @@ class CalibrationStudyService:
                 )
 
             if config is None:
+                config = self._manifest.get("optimization_config")
+            if config is None:
                 if cap.differentiable:
                     opt_cfg = OptimizationConfig(
                         algorithm="slsqp",
@@ -1662,7 +1792,10 @@ class CalibrationStudyService:
             elif isinstance(config, OptimizationConfig):
                 opt_cfg = config
             elif isinstance(config, Mapping):
-                opt_cfg = OptimizationConfig(**config)
+                try:
+                    opt_cfg = OptimizationConfig(**config)
+                except (TypeError, ValueError) as exc:
+                    raise MaterialStudyError("INVALID_CONFIGURATION", "optimize", {"reason": str(exc)}) from exc
             else:
                 raise MaterialStudyError("INVALID_CONFIGURATION", "optimize", {"reason": "INVALID_OPT_CONFIG"})
 
@@ -1674,14 +1807,22 @@ class CalibrationStudyService:
             all_constraints = tuple(cap.optimizer_constraints) + user_constraints
             response_units = {r.response_id: r.unit for r in cap.optimizer_responses}
             response_units.setdefault("fit_loss", "")
-            content_rev = str(self._manifest["content_revision"])
-
-            planned_exps = self._planned_experiments_for_phase(
+            phase_comparisons = self._phase_comparisons(
                 execution_phase="exploration",
-                experiments=experiments,
                 comparisons=comparisons,
                 assessment_policy=assessment_policy,
             )
+            planned_exps = self._compared_experiments(experiments, phase_comparisons)
+            validate_study = getattr(adapter, "validate_study_configuration", None)
+            if validate_study is not None:
+                validate_study(param_specs, tuple(experiments.values()), numerical_settings)
+            config_dict = _opt_config_to_dict(opt_cfg)
+            setup_manifest = json.loads(json.dumps(self._manifest))
+            setup_manifest["adapter"] = adapter.identity.to_dict()
+            setup_manifest["optimization_config"] = config_dict
+            content_rev = self._compute_content_revision(setup_manifest)
+            setup_manifest["content_revision"] = content_rev
+            setup_manifest["revisions"].setdefault(content_rev, self._build_revision_entry(setup_manifest))
 
             problem = OptimizationProblem(
                 space=space,
@@ -1703,11 +1844,26 @@ class CalibrationStudyService:
             self._active_operation_id = op_id
             self._active_cancel_event = cancel_event
             self._active_stop_event = stop_event
+            self._active_workers.add(threading.current_thread())
             study_id = self.study_id
             data_root = self._data_root
             started_at = utc_now()
 
         try:
+            campaign_path = data_root / "campaigns" / f"{campaign_id}.json"
+            running = {
+                "campaign_id": campaign_id,
+                "content_revision": content_rev,
+                "state": "running",
+                "termination_reason": "RUNNING",
+                "evaluation_ids": [],
+                "selected_ids": [],
+                "budget_usage": {},
+                "started_at": started_at,
+            }
+            setup_manifest["campaigns"][campaign_id] = running
+            self._commit_manifest_unlocked(setup_manifest, "optimize.start")
+            atomic_json(campaign_path, running)
             ap_ref = self._write_revision_json_ref(
                 content_revision=content_rev,
                 rel_subpath="assessment_policy.json",
@@ -1726,10 +1882,6 @@ class CalibrationStudyService:
                     }
                 )
 
-            recorded_lock = threading.Lock()
-            recorded_entries: list[tuple[CalibrationEvaluationArtifact, ArtifactRefV1, str]] = []
-            point_to_eval: dict[str, str] = {}
-
             def _on_eval_recorded(art: CalibrationEvaluationArtifact, ref: ArtifactRefV1, pt_id: str) -> None:
                 cache_k = compute_candidate_cache_key(
                     content_revision=content_rev,
@@ -1742,33 +1894,25 @@ class CalibrationStudyService:
                     execution_phase="exploration",
                     planned_experiments=planned_exps,
                 )
-                with recorded_lock:
-                    recorded_entries.append((art, ref, cache_k))
-                    point_to_eval[pt_id] = art.evaluation_id
-                with self._state_lock:
-                    # Update lightweight manifest index safely if disk document hasn't been touched externally
-                    if _sha256_file(self._path) != self._document_revision:
-                        cancel_event.set()
-                        return
-                    m = json.loads(json.dumps(self._manifest))
-                    m["evaluations"][art.evaluation_id] = {
-                        "evaluation_id": art.evaluation_id,
-                        "campaign_id": campaign_id,
-                        "content_revision": content_rev,
-                        "state": art.state,
-                        "execution_phase": "exploration",
-                        "selection_ref": None,
-                        "artifact_ref": ref.to_dict(),
-                        "cache_key": cache_k,
-                        "parameter_values_sha256": canonical_sha256(_to_plain_json(art.physical_parameters), exclude_keys=()),
-                        "holdout_exposed": False,
-                        "point_id": pt_id,
-                        "fit_loss": art.assessment.objective["fit_loss"],
-                        "created_at": art.created_at,
-                    }
-                    if art.state == "completed" and art.assessment.objective["eligible"]:
-                        self._eval_cache_index[cache_k] = art.evaluation_id
-                    self._commit_manifest_unlocked(m, "optimize.record_eval")
+                m = json.loads(json.dumps(self._manifest))
+                m["evaluations"][art.evaluation_id] = {
+                    "evaluation_id": art.evaluation_id,
+                    "campaign_id": campaign_id,
+                    "content_revision": content_rev,
+                    "state": art.state,
+                    "execution_phase": "exploration",
+                    "selection_ref": None,
+                    "artifact_ref": ref.to_dict(),
+                    "cache_key": cache_k,
+                    "parameter_values_sha256": canonical_sha256(_to_plain_json(art.physical_parameters), exclude_keys=()),
+                    "holdout_exposed": False,
+                    "point_id": pt_id,
+                    "fit_loss": art.assessment.objective["fit_loss"],
+                    "created_at": art.created_at,
+                }
+                self._commit_manifest_unlocked(m, "optimize.record_eval")
+                if art.state == "completed" and art.assessment.objective["eligible"]:
+                    self._eval_cache_index[cache_k] = art.evaluation_id
 
             batch_eval = MaterialBatchEvaluator(
                 campaign_id=campaign_id,
@@ -1779,7 +1923,7 @@ class CalibrationStudyService:
                 parameter_specs=param_specs,
                 experiments=experiments,
                 experiment_data=exp_data,
-                comparisons=comparisons,
+                comparisons=phase_comparisons,
                 planned_experiments=planned_exps,
                 numerical_settings=numerical_settings,
                 registered_responses=cap.optimizer_responses,
@@ -1805,12 +1949,12 @@ class CalibrationStudyService:
             if cancel_event.is_set():
                 final_state = "cancelled"
                 term_reason = "USER_CANCEL"
-            elif opt_result.termination_reason == "FAILED":
-                final_state = "failed"
-                term_reason = "FAILED"
             elif stop_event.is_set():
                 final_state = "stopped"
                 term_reason = "USER_STOP"
+            elif opt_result.termination_reason == "FAILED":
+                final_state = "failed"
+                term_reason = "FAILED"
             elif opt_result.termination_reason == "NO_VALID_EVALUATIONS":
                 final_state = "failed"
                 term_reason = "NO_VALID_EVALUATIONS"
@@ -1820,6 +1964,7 @@ class CalibrationStudyService:
 
             # Map selected point IDs to evaluation IDs (never fabricating new candidates on stop!)
             selected_eval_ids: list[str] = []
+            point_to_eval = batch_eval.point_to_evaluation
             for pt_id in opt_result.selected_ids:
                 if pt_id in point_to_eval:
                     selected_eval_ids.append(point_to_eval[pt_id])
@@ -1833,6 +1978,16 @@ class CalibrationStudyService:
 
             # Ensure final selected evaluation updates selected_evaluation_id when not cancelled/failed
             best_selected_eval = selected_eval_ids[0] if selected_eval_ids else None
+            if final_state == "stopped":
+                old_id = self._manifest.get("selected_evaluation_id")
+                old = self._manifest["evaluations"].get(old_id, {})
+                new = self._manifest["evaluations"].get(best_selected_eval, {})
+                old_loss, new_loss = old.get("fit_loss"), new.get("fit_loss")
+                if old.get("state") == "completed" and old_loss is not None and (
+                    new_loss is None or old.get("content_revision") != content_rev or old_loss <= new_loss
+                ):
+                    best_selected_eval = old_id
+                    selected_eval_ids = [old_id]
             budget_dict = {
                 "dispatched_requests": opt_result.budget_usage.dispatched_requests,
                 "dispatcher_calls": opt_result.budget_usage.dispatcher_calls,
@@ -1844,24 +1999,24 @@ class CalibrationStudyService:
                 "elapsed_seconds": opt_result.budget_usage.elapsed_seconds,
             }
 
-            with self._state_lock:
-                self._check_disk_cas(None, "optimize.finish")
-                m_final = json.loads(json.dumps(self._manifest))
-                m_final["campaigns"][campaign_id] = {
-                    "campaign_id": campaign_id,
-                    "content_revision": content_rev,
-                    "state": final_state,
-                    "termination_reason": term_reason,
-                    "raw_optimizer_termination_reason": opt_result.termination_reason,
-                    "evaluation_ids": list(batch_eval.evaluation_ids),
-                    "selected_ids": list(selected_eval_ids),
-                    "budget_usage": budget_dict,
-                    "started_at": started_at,
-                    "finished_at": utc_now(),
-                }
-                if best_selected_eval is not None and final_state != "cancelled":
-                    m_final["selected_evaluation_id"] = best_selected_eval
-                self._commit_manifest_unlocked(m_final, "optimize.finish")
+            m_final = json.loads(json.dumps(self._manifest))
+            final_record = {
+                "campaign_id": campaign_id,
+                "content_revision": content_rev,
+                "state": final_state,
+                "termination_reason": term_reason,
+                "raw_optimizer_termination_reason": opt_result.termination_reason,
+                "evaluation_ids": list(batch_eval.evaluation_ids),
+                "selected_ids": list(selected_eval_ids),
+                "budget_usage": budget_dict,
+                "started_at": started_at,
+                "finished_at": utc_now(),
+            }
+            m_final["campaigns"][campaign_id] = final_record
+            if best_selected_eval is not None and final_state in ("completed", "stopped"):
+                m_final["selected_evaluation_id"] = best_selected_eval
+            self._commit_manifest_unlocked(m_final, "optimize.finish")
+            atomic_json(campaign_path, final_record)
 
             return CampaignReceipt(
                 campaign_id=campaign_id,
@@ -1873,12 +2028,7 @@ class CalibrationStudyService:
                 budget_usage=budget_dict,
             )
         finally:
-            with self._state_lock:
-                self._busy_operation = None
-                self._active_campaign_id = None
-                self._active_operation_id = None
-                self._active_cancel_event = None
-                self._active_stop_event = None
+            self._finish_operation()
 
     def stop(self, campaign_id: str) -> CancelReceipt:
         with self._state_lock:
@@ -1911,45 +2061,30 @@ class CalibrationStudyService:
                 )
             ref = ArtifactRefV1.from_dict(ev_entry["artifact_ref"])
             data_root = self._data_root
-            read_only = self._read_only
             content_rev = str(ev_entry["content_revision"])
 
-        issue = self._verify_ref(ref, data_root)
-        if issue is not None:
-            raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"evaluation_id": evaluation_id, "issue": issue})
-        raw = json.loads((data_root / ref.path).read_text(encoding="utf-8"))
-        art = CalibrationEvaluationArtifact.from_dict(raw)
+        raw = self._read_ref_json(ref, data_root, "evaluation")
+        try:
+            art = CalibrationEvaluationArtifact.from_dict(raw)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"evaluation_id": evaluation_id}) from exc
+        if (
+            art.evaluation_id != evaluation_id or art.content_revision != content_rev
+            or art.study_id != self.study_id or art.execution_phase != ev_entry.get("execution_phase")
+        ):
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "evaluation", {"evaluation_id": evaluation_id})
 
-        # Enforce Holdout Seal BEFORE returning any holdout values/curves/scores (C4)
-        holdout_exps = tuple(e for e in self._experiments() if e.split == "holdout")
-        has_holdout_data = art.execution_phase == "confirmation" and (
-            any(ch.get("split") == "holdout" for ch in art.channel_results)
-            or (
-                art.prediction_bundle is not None
-                and any(ep.experiment_id in {h.experiment_id for h in holdout_exps} for ep in art.prediction_bundle.experiments)
+        if ev_entry.get("holdout_exposed") or art.holdout_exposed:
+            self._verified_holdout_exposure(art, ev_entry)
+        elif art.execution_phase == "confirmation" and (
+            art.assessment.assessment["holdout_status"] != "not_assessed"
+            or any(ch.get("split") == "holdout" for ch in art.channel_results)
+            or ev_entry.get("holdout_exposure_ref")
+        ):
+            raise MaterialStudyError(
+                "CORRUPT_ARTIFACT", "evaluation",
+                {"evaluation_id": evaluation_id, "reason": "HOLDOUT_EXPOSURE_MISSING"},
             )
-        )
-        if has_holdout_data and not self._has_verified_holdout_exposure(evaluation_id):
-            if read_only:
-                raise MaterialStudyError(
-                    "HOLDOUT_EXPOSURE_RECORD_FAILED",
-                    "evaluation",
-                    {"evaluation_id": evaluation_id, "reason": "READ_ONLY_CANNOT_RECORD_HOLDOUT_EXPOSURE"},
-                )
-            proc_sha = canonical_sha256(_to_plain_json(art.physical_parameters), exclude_keys=())
-            exp_ref = self._record_holdout_exposure(
-                evaluation_id=evaluation_id,
-                content_revision=content_rev,
-                selection_ref=art.selection_ref,
-                selection_procedure_sha256=proc_sha,
-                holdout_experiments=holdout_exps,
-            )
-            with self._state_lock:
-                self._check_disk_cas(None, "evaluation")
-                m = json.loads(json.dumps(self._manifest))
-                m["evaluations"][evaluation_id]["holdout_exposed"] = True
-                m.setdefault("holdout_exposures", []).append(exp_ref.to_dict())
-                self._commit_manifest_unlocked(m, "evaluation")
         return art
 
     def save(self, *, view_state: Mapping[str, Any] | None = None) -> StudySnapshot:
@@ -1961,6 +2096,255 @@ class CalibrationStudyService:
             self._commit_manifest_unlocked(new_manifest, "save")
             return self.snapshot()
 
+    @staticmethod
+    def _copy_inventory_paths(inventory: Mapping[str, str], root: Path) -> list[str]:
+        if not isinstance(inventory, Mapping):
+            raise ValueError("INVALID_COPY_INVENTORY")
+        paths: set[str] = set()
+        for relative, digest in inventory.items():
+            validate_relative_artifact_path(relative, root=root)
+            path = Path(relative)
+            if (
+                len(path.parts) < 2
+                or path.parts[0] not in _COPY_MANAGED_DIRS
+                or path.name.endswith((".tmp", ".lock"))
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(ch not in "0123456789abcdef" for ch in digest)
+            ):
+                raise ValueError(f"INVALID_COPY_PATH:{relative}")
+            paths.add(relative)
+            paths.update(parent.as_posix() for parent in path.parents if parent != Path("."))
+        return sorted(paths)
+
+    def _load_copy_journal(self, journal_path: Path, transaction_id: str) -> dict[str, Any]:
+        try:
+            stage_dir = journal_path.parent
+            _check_no_symlinks_under(stage_dir)
+            data = json.loads(journal_path.read_bytes())
+            manifest, root, _ = _derive_study_paths(data["destination_path"])
+            if (
+                type(data["schema_version"]) is not int or data["schema_version"] != 1
+                or data["transaction_id"] != transaction_id
+                or data["study_id"] != self.study_id
+                or stage_dir != manifest.parent / f".caemat-saveas-{transaction_id}"
+                or data["destination_data_root"] != str(root)
+                or type(data["created_data_root"]) is not bool
+                or (data["created_data_root"] and root == manifest.parent)
+                or root == self._data_root and manifest != self._path
+                or data["state"] not in ("staging", "committing")
+            ):
+                raise ValueError("COPY_JOURNAL_IDENTITY_MISMATCH")
+            self._check_copy_root(root)
+            allowed = self._copy_inventory_paths(data["expected_artifact_hashes"], root)
+            created = data["created_paths"]
+            top_dirs = {path for path in allowed if "/" not in path}
+            if not isinstance(created, list) or any(not isinstance(path, str) for path in created):
+                raise ValueError("INVALID_COPY_CREATED_PATHS")
+            completed_dirs = {path for path in created if path in top_dirs}
+            if (
+                created != [path for path in allowed if Path(path).parts[0] in completed_dirs]
+                or (data["pending_path"] is not None and data["pending_path"] not in top_dirs)
+            ):
+                raise ValueError("INVALID_COPY_CREATED_PATHS")
+            return data
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "recover", {"reason": str(exc)}) from exc
+
+    def _acquire_copy_lease(self, root: Path, stage: str) -> FileLock:
+        self._check_copy_root(root)
+        lease = FileLock(root / "study.lock", timeout=0, thread_local=False)
+        try:
+            lease.acquire()
+        except Timeout as exc:
+            raise MaterialStudyError("STUDY_LOCKED", stage, {"path": str(root / "study.lock")}) from exc
+        return lease
+
+    @staticmethod
+    def _check_copy_root(root: Path) -> None:
+        if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()):
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as.destination", {"path": str(root)})
+        validate_relative_artifact_path("study.lock", root=root)
+
+    def _copy_manifest_payload(self, path: Path, journal: Mapping[str, Any]) -> dict[str, Any]:
+        manifest, _, relative = _derive_study_paths(journal["destination_path"])
+        try:
+            if path.is_symlink():
+                raise ValueError("SYMLINK_MANIFEST_REJECTED")
+            raw = path.read_bytes()
+            if _sha256_bytes(raw) != journal["manifest_sha256"]:
+                raise ValueError("DESTINATION_MANIFEST_DIGEST_MISMATCH")
+            payload = json.loads(raw)
+            if (
+                payload["format"] != _STUDY_FORMAT or payload["schema_version"] != 1
+                or payload["study_id"] != journal["study_id"] or payload["data_root"] != relative
+                or payload["content_revision"] != self._compute_content_revision(payload)
+            ):
+                raise ValueError("INVALID_DESTINATION_MANIFEST")
+            return payload
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise MaterialStudyError(
+                "CORRUPT_ARTIFACT", "save_as.manifest",
+                {"path": str(manifest), "reason": str(exc)},
+            ) from exc
+
+    def _verify_copy_inventory(self, inventory: Mapping[str, str], root: Path, *, stage: str) -> None:
+        self._copy_inventory_paths(inventory, root)
+        for relative, expected in inventory.items():
+            path = root / relative
+            if not path.is_file() or _sha256_file(path) != expected:
+                raise MaterialStudyError("CORRUPT_ARTIFACT", stage, {"path": relative})
+
+    @staticmethod
+    def _copy_owner_marker(journal: Mapping[str, Any], directory: Path) -> Path:
+        return directory / f".caemat-copy-{journal['transaction_id']}.owner"
+
+    @staticmethod
+    def _copy_owner_digest(journal: Mapping[str, Any]) -> bytes:
+        return canonical_json_bytes({
+            key: journal[key] for key in ("transaction_id", "study_id", "destination_path", "manifest_sha256")
+        })
+
+    def _owns_copy_directory(self, journal: Mapping[str, Any], directory: Path) -> bool:
+        marker = self._copy_owner_marker(journal, directory)
+        return marker.is_file() and not marker.is_symlink() and marker.read_bytes() == self._copy_owner_digest(journal)
+
+    def _publish_copy(self, journal_path: Path, journal: dict[str, Any]) -> None:
+        dest = Path(journal["destination_path"])
+        root = Path(journal["destination_data_root"])
+        stage = journal_path.parent / "data"
+        tmp_manifest = journal_path.parent / "calibration.json.tmp"
+        payload = self._copy_manifest_payload(dest if dest.exists() else tmp_manifest, journal)
+        inventory = journal["expected_artifact_hashes"]
+        paths = self._copy_inventory_paths(inventory, root)
+        top_dirs = sorted({Path(relative).parts[0] for relative in paths})
+        if not dest.exists():
+            pending = journal["pending_path"]
+            if pending is not None and not (stage / pending).exists():
+                if not self._owns_copy_directory(journal, root / pending):
+                    raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as.destination", {"path": pending})
+                journal["created_paths"] = sorted(set(journal["created_paths"]) | {
+                    path for path in paths if Path(path).parts[0] == pending
+                })
+                journal["pending_path"] = None
+                atomic_json(journal_path, journal)
+            for name in top_dirs:
+                staged, target = stage / name, root / name
+                if staged.exists():
+                    if target.exists() or target.is_symlink():
+                        raise MaterialStudyError("DESTINATION_ALREADY_EXISTS", "save_as", {"path": str(target)})
+                    self._verify_copy_inventory(
+                        {path: sha for path, sha in inventory.items() if Path(path).parts[0] == name},
+                        stage, stage="save_as.staged",
+                    )
+                    _atomic_write_bytes(self._copy_owner_marker(journal, staged), self._copy_owner_digest(journal))
+                    journal["pending_path"] = name
+                    atomic_json(journal_path, journal)
+                    os.rename(staged, target)
+                else:
+                    if not self._owns_copy_directory(journal, target):
+                        raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as.destination", {"path": name})
+                    continue
+                journal["created_paths"] = sorted(set(journal["created_paths"]) | {
+                    path for path in paths if Path(path).parts[0] == name
+                })
+                journal["pending_path"] = None
+                atomic_json(journal_path, journal)
+
+        self._verify_copy_inventory(inventory, root, stage="save_as.destination")
+        for ref in self._collect_artifact_refs(payload, root=root):
+            issue = self._verify_ref(ref, root)
+            if issue is not None:
+                raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as", {"artifact_id": ref.id, "issue": issue})
+        if not dest.exists():
+            # Windows rename and POSIX link both publish without replacing an existing manifest.
+            if os.name == "nt":
+                os.rename(tmp_manifest, dest)
+            else:
+                os.link(tmp_manifest, dest)
+
+    def _discard_copy(self, journal_path: Path, journal: Mapping[str, Any]) -> None:
+        dest = Path(journal["destination_path"])
+        root = Path(journal["destination_data_root"])
+        stage_dir = journal_path.parent
+        stage = stage_dir / "data"
+        if dest.exists():
+            self._copy_manifest_payload(dest, journal)
+            return
+        inventory = journal["expected_artifact_hashes"]
+        created_paths = set(journal["created_paths"])
+        allowed = self._copy_inventory_paths(inventory, root)
+        if not created_paths.issubset(allowed):
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "discard_incomplete_copy", {"reason": "INVALID_COPY_CREATED_PATHS"})
+        pending = journal["pending_path"]
+        if pending is not None:
+            created_paths.update(path for path in allowed if Path(path).parts[0] == pending)
+        for relative in sorted(created_paths, key=lambda name: len(Path(name).parts), reverse=True):
+            path = Path(relative)
+            if (stage / path.parts[0]).exists() or not self._owns_copy_directory(journal, root / path.parts[0]):
+                continue  # This subtree has not been moved from staging.
+            target = root / path
+            validate_relative_artifact_path(relative, root=root)
+            if relative in inventory:
+                if target.is_file() and _sha256_file(target) == inventory[relative]:
+                    target.unlink()
+            elif target.is_dir():
+                if len(path.parts) == 1:
+                    self._copy_owner_marker(journal, target).unlink()
+                try:
+                    target.rmdir()
+                except OSError:
+                    pass  # Other files may now be present, and are outside this transaction.
+
+    def _clean_copy_stage(self, journal_path: Path, journal: Mapping[str, Any]) -> None:
+        stage = journal_path.parent
+        _check_no_symlinks_under(stage)
+        data = stage / "data"
+        inventory = journal["expected_artifact_hashes"]
+        paths = self._copy_inventory_paths(inventory, data)
+        allowed = {data, journal_path, stage / "calibration.json.tmp"}
+        allowed.update(data / path for path in paths)
+        for name in paths:
+            if "/" not in name:
+                marker = self._copy_owner_marker(journal, data / name)
+                if marker.is_file():
+                    if not self._owns_copy_directory(journal, marker.parent):
+                        raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as.cleanup", {"path": str(marker)})
+                    allowed.add(marker)
+        items = set(stage.rglob("*"))
+        if items - allowed:
+            raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as.cleanup", {"reason": "UNOWNED_STAGE_PATHS"})
+        for item in sorted(items - {journal_path}, key=lambda p: len(p.parts), reverse=True):
+            if item.is_dir():
+                item.rmdir()
+            else:
+                item.unlink()
+        journal_path.unlink(missing_ok=True)
+        stage.rmdir()
+
+    def _remove_created_copy_root(self, journal: Mapping[str, Any]) -> None:
+        dest, root, _ = _derive_study_paths(journal["destination_path"])
+        if not journal["created_data_root"] or dest.exists() or root == dest.parent or not root.is_dir():
+            return
+        marker = self._copy_owner_marker(journal, root)
+        if not self._owns_copy_directory(journal, root):
+            return
+        # Remove only the transaction's empty dedicated root. A file from another owner
+        # makes rmdir fail and leaves that owner’s data intact.
+        if any(path.name not in ("study.lock", marker.name) for path in root.iterdir()):
+            return
+        marker.unlink()
+        (root / "study.lock").unlink(missing_ok=True)
+        root.rmdir()
+
+    def _clean_copy_markers(self, journal: Mapping[str, Any]) -> None:
+        root = Path(journal["destination_data_root"])
+        directories = [root / path for path in journal["created_paths"] if "/" not in path]
+        if journal["created_data_root"]:
+            directories.append(root)
+        for directory in directories:
+            if self._owns_copy_directory(journal, directory):
+                self._copy_owner_marker(journal, directory).unlink()
+
     def save_as(
         self,
         destination: str | Path,
@@ -1971,27 +2355,23 @@ class CalibrationStudyService:
         dest_manifest, dest_data_root, dest_data_rel = _derive_study_paths(destination)
         if dest_manifest == self._path or self._data_root in dest_manifest.parents or dest_data_root == self._data_root:
             raise MaterialStudyError(
-                "INVALID_PATH",
-                "save_as",
+                "INVALID_PATH", "save_as",
                 {"reason": "CANNOT_SAVE_AS_INTO_SELF", "destination": str(dest_manifest)},
             )
         if dest_manifest.exists() or (dest_data_root != dest_manifest.parent and dest_data_root.exists()):
-            raise MaterialStudyError(
-                "DESTINATION_ALREADY_EXISTS",
-                "save_as",
-                {"destination": str(dest_manifest)},
-            )
+            raise MaterialStudyError("DESTINATION_ALREADY_EXISTS", "save_as", {"destination": str(dest_manifest)})
 
         with self._state_lock:
             if self._closed:
                 raise MaterialStudyError("STUDY_CLOSED", "save_as", {"reason": "SERVICE_CLOSED"})
-            if self._busy_operation is not None or self._active_campaign_id is not None:
+            if self._busy_operation is not None:
                 raise MaterialStudyError("STUDY_BUSY", "save_as", {"busy_operation": self._busy_operation})
             self._check_disk_cas(expected_revision, "save_as")
             tx_id = uuid.uuid4().hex
             op_id = uuid.uuid4().hex
             self._busy_operation = "save_as"
             self._active_operation_id = op_id
+            self._active_workers.add(threading.current_thread())
             src_manifest = json.loads(json.dumps(self._manifest))
             src_path = self._path
             src_data_root = self._data_root
@@ -1999,146 +2379,90 @@ class CalibrationStudyService:
             m0_rev = self._document_revision
             content_rev = str(src_manifest["content_revision"])
 
-        journal_path = dest_manifest.parent / f".caemat-saveas-{tx_id}.json"
-        tmp_data_dir = dest_manifest.parent / f".caemat-saveas-{tx_id}-data"
-        tmp_manifest_path = dest_manifest.parent / f".caemat-saveas-{tx_id}.manifest.json"
-        dest_lease: FileLock | None = None
-        committed = False
+        stage_dir = dest_manifest.parent / f".caemat-saveas-{tx_id}"
+        journal_path = stage_dir / "copy_journal.json"
+        tmp_data_dir = stage_dir / "data"
+        tmp_manifest_path = stage_dir / "calibration.json.tmp"
+        dest_lease = None
+        stage_created = committed = False
+        journal: dict[str, Any] = {
+            "schema_version": 1,
+            "transaction_id": tx_id,
+            "state": "staging",
+            "study_id": src_manifest["study_id"],
+            "source_path": str(src_path),
+            "destination_path": str(dest_manifest),
+            "destination_data_root": str(dest_data_root),
+            "created_data_root": False,
+            "created_paths": [],
+            "pending_path": None,
+            "expected_artifact_hashes": {},
+            "created_at": utc_now(),
+        }
+
+        def progress(stage: str) -> None:
+            if on_progress is not None:
+                on_progress({
+                    "stage": stage, "transaction_id": tx_id, "operation_id": op_id,
+                    "content_revision": content_rev,
+                })
 
         try:
-            if on_progress is not None:
-                on_progress(
-                    {
-                        "stage": "started",
-                        "campaign_id": None,
-                        "operation_id": op_id,
-                        "content_revision": content_rev,
-                    }
-                )
-
-            # 1. Verify source integrity & collect all referenced artifacts (excluding *.lock, *.tmp)
-            if on_progress is not None:
-                on_progress({"stage": "verifying_source", "transaction_id": tx_id, "content_revision": content_rev})
+            progress("started")
+            progress("verifying_source")
             _check_no_symlinks_under(src_data_root)
-            refs = self._collect_artifact_refs(src_manifest)
-            for ref in refs:
+            inventory = journal["expected_artifact_hashes"]
+            for ref in self._collect_artifact_refs(src_manifest, root=src_data_root):
                 issue = self._verify_ref(ref, src_data_root)
                 if issue is not None:
                     raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as", {"artifact_id": ref.id, "issue": issue})
+                inventory[ref.path] = ref.sha256
+            for path in (src_data_root / "campaigns").glob("*.json"):
+                inventory[path.relative_to(src_data_root).as_posix()] = _sha256_file(path)
+            self._copy_inventory_paths(inventory, dest_data_root)
 
-            # Inventory every regular non-lock/non-tmp file inside src_data_root
-            source_inventory: dict[str, str] = {}
-            for item in sorted(src_data_root.rglob("*")):
-                if item.name.endswith(".lock") or item.name.endswith(".tmp") or item.name.startswith(".caemat-saveas-"):
-                    continue
-                if item.is_dir():
-                    continue
-                rel_posix = item.relative_to(src_data_root).as_posix()
-                validate_relative_artifact_path(rel_posix, root=src_data_root)
-                source_inventory[rel_posix] = _sha256_file(item)
-
-            # 2. Write staging journal in destination parent (NEVER in original study!)
-            if on_progress is not None:
-                on_progress({"stage": "staging_copy", "transaction_id": tx_id, "content_revision": content_rev})
-            dest_manifest.parent.mkdir(parents=True, exist_ok=True)
-            atomic_json(
-                journal_path,
-                {
-                    "schema_version": 1,
-                    "transaction_id": tx_id,
-                    "state": "staging",
-                    "study_id": src_manifest["study_id"],
-                    "source_path": str(src_path),
-                    "destination_path": str(dest_manifest),
-                    "destination_data_root": str(dest_data_root),
-                    "temp_data_dir": str(tmp_data_dir),
-                    "temp_manifest_path": str(tmp_manifest_path),
-                    "expected_artifact_hashes": source_inventory,
-                    "created_at": utc_now(),
-                },
-            )
-
-            # 3. Copy bytes to sibling temp dir and verify hashes
-            tmp_data_dir.mkdir(parents=True, exist_ok=False)
-            for sub in ("sources", "arrays", "revisions", "evaluations", "holdout-exposures", "exports"):
-                (tmp_data_dir / sub).mkdir(parents=True, exist_ok=True)
-            copied_count = 0
-            for rel_posix, expected_sha in source_inventory.items():
-                src_file = src_data_root / rel_posix
-                dst_file = tmp_data_dir / rel_posix
-                dst_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(src_file, dst_file)
-                if _sha256_file(dst_file) != expected_sha:
-                    raise MaterialStudyError(
-                        "CORRUPT_ARTIFACT",
-                        "save_as",
-                        {"reason": "COPIED_FILE_HASH_MISMATCH", "path": rel_posix},
-                    )
-                copied_count += 1
-
-            dest_manifest_payload = json.loads(json.dumps(src_manifest))
-            dest_manifest_payload["data_root"] = dest_data_rel
-            atomic_json(tmp_manifest_path, dest_manifest_payload)
-
-            # 4. If read-only source, verify M1 == M0 and all source bytes unchanged during copy (C8)
+            progress("staging_copy")
+            stage_dir.mkdir(parents=True, exist_ok=False)
+            stage_created = True
+            tmp_data_dir.mkdir()
+            atomic_json(journal_path, journal)
+            for relative in inventory:
+                target = tmp_data_dir / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src_data_root / relative, target)
+            self._verify_copy_inventory(inventory, tmp_data_dir, stage="save_as.staged")
+            dest_payload = {**src_manifest, "data_root": dest_data_rel}
+            atomic_json(tmp_manifest_path, dest_payload)
+            journal["manifest_sha256"] = _sha256_file(tmp_manifest_path)
             if src_read_only:
-                if not src_path.is_file() or _sha256_file(src_path) != m0_rev:
-                    raise MaterialStudyError(
-                        "SOURCE_CHANGED_DURING_COPY",
-                        "save_as",
-                        {"reason": "MANIFEST_CHANGED_DURING_READONLY_COPY"},
-                    )
-                for rel_posix, expected_sha in source_inventory.items():
-                    cur_file = src_data_root / rel_posix
-                    if not cur_file.is_file() or _sha256_file(cur_file) != expected_sha:
-                        raise MaterialStudyError(
-                            "SOURCE_CHANGED_DURING_COPY",
-                            "save_as",
-                            {"reason": "SOURCE_FILE_CHANGED_DURING_READONLY_COPY", "path": rel_posix},
-                        )
+                try:
+                    if _sha256_file(src_path) != m0_rev:
+                        raise ValueError("MANIFEST_CHANGED_DURING_READONLY_COPY")
+                    self._verify_copy_inventory(inventory, src_data_root, stage="save_as.source")
+                except (OSError, ValueError, MaterialStudyError) as exc:
+                    raise MaterialStudyError("SOURCE_CHANGED_DURING_COPY", "save_as", {"reason": str(exc)}) from exc
+            atomic_json(journal_path, journal)
 
-            # 5. Update journal, atomically rename temp data dir -> dest_data_root, acquire dest study.lock, commit manifest
-            if on_progress is not None:
-                on_progress({"stage": "committing_destination", "transaction_id": tx_id, "content_revision": content_rev})
-            atomic_json(
-                journal_path,
-                {
-                    "schema_version": 1,
-                    "transaction_id": tx_id,
-                    "state": "committing",
-                    "study_id": src_manifest["study_id"],
-                    "source_path": str(src_path),
-                    "destination_path": str(dest_manifest),
-                    "destination_data_root": str(dest_data_root),
-                    "temp_data_dir": str(tmp_data_dir),
-                    "temp_manifest_path": str(tmp_manifest_path),
-                    "expected_artifact_hashes": source_inventory,
-                    "created_at": utc_now(),
-                },
-            )
-            os.replace(tmp_data_dir, dest_data_root)
-            dest_lease = FileLock(dest_data_root / "study.lock", timeout=0, thread_local=False)
-            try:
-                dest_lease.acquire()
-            except Timeout as exc:
-                raise MaterialStudyError("STUDY_LOCKED", "save_as", {"path": str(dest_data_root / "study.lock")}) from exc
-
-            for ref in self._collect_artifact_refs(dest_manifest_payload):
-                issue = self._verify_ref(ref, dest_data_root)
-                if issue is not None:
-                    raise MaterialStudyError("CORRUPT_ARTIFACT", "save_as", {"artifact_id": ref.id, "issue": issue})
-
-            os.replace(tmp_manifest_path, dest_manifest)
-            new_doc_rev = _sha256_file(dest_manifest)
+            if dest_data_root != dest_manifest.parent:
+                dest_data_root.mkdir(exist_ok=False)
+                journal["created_data_root"] = True
+                _atomic_write_bytes(
+                    self._copy_owner_marker(journal, dest_data_root), self._copy_owner_digest(journal),
+                )
+            dest_lease = self._acquire_copy_lease(dest_data_root, "save_as")
+            journal["state"] = "committing"
+            atomic_json(journal_path, journal)
+            progress("committing_destination")
+            self._publish_copy(journal_path, journal)
             committed = True
 
-            # Switch service to committed writable destination and release original lock
-            old_lease = self._lease
+            new_doc_rev = journal["manifest_sha256"]
             with self._state_lock:
+                old_lease = self._lease
                 self._path = dest_manifest
                 self._data_root = dest_data_root
                 self._data_root_rel = dest_data_rel
-                self._manifest = dest_manifest_payload
+                self._manifest = dest_payload
                 self._document_revision = new_doc_rev
                 self._read_only = False
                 self._lease = dest_lease
@@ -2146,41 +2470,36 @@ class CalibrationStudyService:
             if old_lease is not None:
                 old_lease.release()
 
-            # 6. Post-commit cleanup; failure does NOT roll back valid committed destination (C8)
             warnings: list[str] = []
-            receipt_state = "committed"
             try:
-                if on_progress is not None:
-                    on_progress({"stage": "cleaning_up", "transaction_id": tx_id, "content_revision": content_rev})
-                journal_path.unlink(missing_ok=True)
-            except OSError as exc:
-                receipt_state = "committed_cleanup_pending"
+                progress("cleaning_up")
+                self._clean_copy_markers(journal)
+                self._clean_copy_stage(journal_path, journal)
+            except (OSError, MaterialStudyError) as exc:
                 warnings.append(f"DESTINATION_COMMITTED_CLEANUP_PENDING: {exc}")
-
             return SaveAsReceipt(
                 transaction_id=tx_id,
                 source_path=str(src_path),
                 destination_path=str(dest_manifest),
                 document_revision=new_doc_rev,
                 content_revision=content_rev,
-                state=receipt_state,
-                copied_artifact_count=copied_count,
+                state="committed_cleanup_pending" if warnings else "committed",
+                copied_artifact_count=len(inventory),
                 warnings=tuple(warnings),
             )
         except Exception:
-            if not committed:
+            if not committed and stage_created:
                 if dest_lease is not None:
+                    self._discard_copy(journal_path, journal)
                     dest_lease.release()
-                if dest_data_root.exists() and not dest_manifest.exists():
-                    shutil.rmtree(dest_data_root, ignore_errors=True)
-                shutil.rmtree(tmp_data_dir, ignore_errors=True)
-                tmp_manifest_path.unlink(missing_ok=True)
-                journal_path.unlink(missing_ok=True)
+                    dest_lease = None
+                    self._remove_created_copy_root(journal)
+                self._clean_copy_stage(journal_path, journal)
             raise
         finally:
-            with self._state_lock:
-                self._busy_operation = None
-                self._active_operation_id = None
+            if dest_lease is not None:
+                dest_lease.release()
+            self._finish_operation()
 
     def reconcile(self, *, source_policy: str = "inspect") -> ReconcileReport:
         if source_policy != "inspect":
@@ -2191,7 +2510,14 @@ class CalibrationStudyService:
             data_root = self._data_root
             experiments = self._experiments()
             exp_sources = dict(self._manifest.get("experiment_sources", {}))
-            refs = self._collect_artifact_refs()
+            manifest = self._manifest
+
+        collection_error = None
+        try:
+            refs = self._collect_artifact_refs(manifest, root=data_root)
+        except (MaterialStudyError, ValueError, KeyError) as exc:
+            refs = []
+            collection_error = str(exc)
 
         source_states: dict[str, Any] = {}
         for exp in experiments:
@@ -2217,6 +2543,9 @@ class CalibrationStudyService:
 
         artifact_states: dict[str, Any] = {}
         corrupt_count = 0
+        if collection_error is not None:
+            artifact_states["evaluation_references"] = collection_error
+            corrupt_count += 1
         for ref in refs:
             issue = self._verify_ref(ref, data_root)
             artifact_states[ref.id] = "valid" if issue is None else issue
@@ -2305,12 +2634,21 @@ class CalibrationStudyService:
                 search_dirs.append(parent)
 
         transactions: list[dict[str, Any]] = []
+        recoverable_copy = False
         for sdir in search_dirs:
             if not sdir.is_dir():
                 continue
-            for jpath in sorted(sdir.glob(".caemat-saveas-*.json")):
+            for jpath in sorted((
+                *sdir.glob(".caemat-saveas-*/copy_journal.json"), *sdir.glob(".caemat-saveas-*.json"),
+            )):
                 try:
-                    jdata = json.loads(jpath.read_text(encoding="utf-8"))
+                    if jpath.name == "copy_journal.json":
+                        transaction_id = jpath.parent.name.removeprefix(".caemat-saveas-")
+                        jdata = self._load_copy_journal(jpath, transaction_id)
+                        recoverable_copy = True
+                    else:
+                        jdata = json.loads(jpath.read_bytes())
+                        jdata["corrupt_journal"] = "LEGACY_COPY_OWNERSHIP_AND_DIGEST_UNVERIFIABLE"
                     jdata["journal_path"] = str(jpath)
                     transactions.append(jdata)
                 except Exception as exc:
@@ -2318,14 +2656,14 @@ class CalibrationStudyService:
 
         interrupted = [
             dict(c)
-            for c in self._manifest.get("campaigns", {}).values()
+            for c in self._campaign_records().values()
             if c.get("state") in ("running", "queued", "preparing", "interrupted")
         ]
         corrupt = list(self._corrupt_artifacts)
         allowed: list[str] = []
         if any(c.get("state") in ("running", "queued", "preparing") for c in interrupted):
             allowed.append("mark_interrupted")
-        if transactions:
+        if recoverable_copy:
             allowed.extend(["finish_save_as", "discard_incomplete_copy"])
 
         return RecoveryReport(
@@ -2335,6 +2673,23 @@ class CalibrationStudyService:
             allowed_actions=tuple(dict.fromkeys(allowed)),
             diagnostics=tuple(self._diagnostics),
         )
+
+    def _campaign_records(self) -> dict[str, Any]:
+        records = dict(self._manifest.get("campaigns", {}))
+        for path in (self._data_root / "campaigns").glob("*.json"):
+            if path.stem in records:
+                continue
+            try:
+                raw = json.loads(path.read_bytes())
+                if (
+                    raw["campaign_id"] == path.stem
+                    and raw["content_revision"] in self._manifest["revisions"]
+                    and raw["state"] in ("running", "queued", "preparing")
+                ):
+                    records[path.stem] = raw
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+        return records
 
     def recover(
         self,
@@ -2353,11 +2708,15 @@ class CalibrationStudyService:
             if action == "mark_interrupted":
                 new_manifest = json.loads(json.dumps(self._manifest))
                 updated = 0
-                for cid, camp in new_manifest.get("campaigns", {}).items():
+                for cid, record in self._campaign_records().items():
+                    camp = dict(record)
                     if camp.get("state") in ("running", "queued", "preparing"):
                         camp["state"] = "interrupted"
                         camp["termination_reason"] = "INTERRUPTED"
                         camp["finished_at"] = utc_now()
+                        new_manifest["campaigns"][cid] = camp
+                        if len(cid) == 32 and all(ch in "0123456789abcdef" for ch in cid):
+                            atomic_json(self._data_root / "campaigns" / f"{cid}.json", camp)
                         updated += 1
                 new_doc_rev = self._commit_manifest_unlocked(new_manifest, "recover")
                 self._refresh_integrity_diagnostics()
@@ -2377,64 +2736,52 @@ class CalibrationStudyService:
                 if parent not in search_dirs:
                     search_dirs.append(parent)
 
-            journal_path: Path | None = None
-            journal_data: dict[str, Any] | None = None
-            for sdir in search_dirs:
-                cand = sdir / f".caemat-saveas-{transaction_id}.json"
-                if cand.is_file():
-                    journal_path = cand
-                    journal_data = json.loads(cand.read_text(encoding="utf-8"))
-                    break
-            if journal_path is None or journal_data is None or journal_data.get("transaction_id") != transaction_id:
-                raise MaterialStudyError(
-                    "RECOVERY_TRANSACTION_NOT_FOUND",
-                    "recover",
-                    {"transaction_id": transaction_id},
-                )
-
-            tmp_data = Path(journal_data["temp_data_dir"])
-            tmp_manifest = Path(journal_data["temp_manifest_path"])
-            dest_manifest = Path(journal_data["destination_path"])
-            dest_data = Path(journal_data["destination_data_root"])
-
-            if action == "discard_incomplete_copy":
-                shutil.rmtree(tmp_data, ignore_errors=True)
-                tmp_manifest.unlink(missing_ok=True)
-                if dest_data.exists() and not dest_manifest.exists():
-                    shutil.rmtree(dest_data, ignore_errors=True)
-                journal_path.unlink(missing_ok=True)
-                return RecoveryReceipt(
-                    transaction_id=transaction_id,
-                    action=action,
-                    state="discarded",
-                    document_revision=self._document_revision,
-                    diagnostics=(),
-                )
-
-            # finish_save_as
-            expected_hashes: dict[str, str] = dict(journal_data.get("expected_artifact_hashes", {}))
-            data_dir = dest_data if dest_data.is_dir() else tmp_data
-            if not data_dir.is_dir():
-                raise MaterialStudyError("CORRUPT_ARTIFACT", "recover", {"reason": "STAGED_DATA_MISSING"})
-            for rel_posix, exp_sha in expected_hashes.items():
-                f = data_dir / rel_posix
-                if not f.is_file() or _sha256_file(f) != exp_sha:
+            if len(transaction_id) != 32 or any(ch not in "0123456789abcdef" for ch in transaction_id):
+                raise MaterialStudyError("RECOVERY_TRANSACTION_NOT_FOUND", "recover", {"transaction_id": transaction_id})
+            journal_path = next(
+                (path for parent in search_dirs
+                 if (path := parent / f".caemat-saveas-{transaction_id}" / "copy_journal.json").is_file()),
+                None,
+            )
+            if journal_path is None:
+                if any((parent / f".caemat-saveas-{transaction_id}.json").is_file() for parent in search_dirs):
                     raise MaterialStudyError(
-                        "CORRUPT_ARTIFACT",
-                        "recover",
-                        {"reason": "STAGED_ARTIFACT_CORRUPT", "path": rel_posix},
+                        "CORRUPT_ARTIFACT", "recover", {"reason": "LEGACY_COPY_OWNERSHIP_AND_DIGEST_UNVERIFIABLE"},
                     )
-            if not dest_data.exists() and tmp_data.is_dir():
-                os.replace(tmp_data, dest_data)
-            if not dest_manifest.exists() and tmp_manifest.is_file():
-                os.replace(tmp_manifest, dest_manifest)
-            journal_path.unlink(missing_ok=True)
+                raise MaterialStudyError("RECOVERY_TRANSACTION_NOT_FOUND", "recover", {"transaction_id": transaction_id})
+
+            journal = self._load_copy_journal(journal_path, transaction_id)
+            dest = Path(journal["destination_path"])
+            root = Path(journal["destination_data_root"])
+            if action == "finish_save_as" and not root.is_dir():
+                self._copy_manifest_payload(journal_path.parent / "calibration.json.tmp", journal)
+                root.mkdir(exist_ok=False)
+                journal["created_data_root"] = root != dest.parent
+                if journal["created_data_root"]:
+                    _atomic_write_bytes(self._copy_owner_marker(journal, root), self._copy_owner_digest(journal))
+                atomic_json(journal_path, journal)
+            lease = None
+            if root.is_dir() and not (root == self._data_root and self._lease is not None):
+                lease = self._acquire_copy_lease(root, "recover")
+            try:
+                if action == "finish_save_as":
+                    self._publish_copy(journal_path, journal)
+                else:
+                    self._discard_copy(journal_path, journal)
+                if dest.is_file():
+                    self._clean_copy_markers(journal)
+                self._clean_copy_stage(journal_path, journal)
+            finally:
+                if lease is not None:
+                    lease.release()
+            if action == "discard_incomplete_copy":
+                self._remove_created_copy_root(journal)
             return RecoveryReceipt(
                 transaction_id=transaction_id,
                 action=action,
-                state="committed",
-                document_revision=self._document_revision,
-                diagnostics=({"destination_path": str(dest_manifest)},),
+                state="committed" if action == "finish_save_as" else "discarded",
+                document_revision=journal["manifest_sha256"] if action == "finish_save_as" else self._document_revision,
+                diagnostics=({"destination_path": str(dest)},),
             )
 
     def export(
@@ -2450,101 +2797,107 @@ class CalibrationStudyService:
             study_id = self.study_id
             data_root = self._data_root
             exps = self._experiments()
+            self._busy_operation = "export"
+            self._active_operation_id = uuid.uuid4().hex
+            self._active_workers.add(threading.current_thread())
 
-        # Calling self.evaluation() enforces Holdout Seal before returning/exporting any holdout metrics!
-        art = self.evaluation(evaluation_id)
-        eval_payload = art.to_dict()
-        eval_payload["sources"] = [
-            {"experiment_id": e.experiment_id, "split": e.split, "source_ref": e.source_ref.to_dict()}
-            for e in exps
-        ]
+        try:
+            # Calling self.evaluation() enforces Holdout Seal before returning/exporting any holdout metrics!
+            art = self.evaluation(evaluation_id)
+            eval_payload = art.to_dict()
+            eval_payload["sources"] = [
+                {"experiment_id": e.experiment_id, "split": e.split, "source_ref": e.source_ref.to_dict()}
+                for e in exps
+            ]
 
-        dest_p = Path(destination).expanduser().resolve()
-        plan = adapter.export(eval_payload, destination=dest_p)
+            dest_p = Path(destination).expanduser().resolve()
+            plan = adapter.export(eval_payload, destination=dest_p)
 
-        export_artifacts: list[ArtifactRefV1] = []
-        exp_dir_rel = f"exports/{plan.export_id}"
-        for idx, file_spec in enumerate(plan.files):
-            rel_name = str(file_spec["rel_path"])
-            internal_rel = f"{exp_dir_rel}/{rel_name}"
-            validate_relative_artifact_path(internal_rel, root=data_root)
-            content_bytes = str(file_spec["content_text"]).encode("utf-8")
-            _atomic_write_bytes(data_root / internal_rel, content_bytes)
-            ref = ArtifactRefV1(
-                id=f"export:{plan.export_id}:{idx}",
-                role=str(file_spec.get("role", "export_artifact")),
-                path=internal_rel,
-                sha256=_sha256_bytes(content_bytes),
-                size=len(content_bytes),
-                format_id=str(file_spec.get("format_id", "application/json")),
+            export_artifacts: list[ArtifactRefV1] = []
+            exp_dir_rel = f"exports/{plan.export_id}"
+            for idx, file_spec in enumerate(plan.files):
+                rel_name = str(file_spec["rel_path"])
+                internal_rel = f"{exp_dir_rel}/{rel_name}"
+                validate_relative_artifact_path(internal_rel, root=data_root)
+                content_bytes = str(file_spec["content_text"]).encode("utf-8")
+                _atomic_write_bytes(data_root / internal_rel, content_bytes)
+                ref = ArtifactRefV1(
+                    id=f"export:{plan.export_id}:{idx}",
+                    role=str(file_spec.get("role", "export_artifact")),
+                    path=internal_rel,
+                    sha256=_sha256_bytes(content_bytes),
+                    size=len(content_bytes),
+                    format_id=str(file_spec.get("format_id", "application/json")),
+                    producer=_PRODUCER,
+                )
+                export_artifacts.append(ref)
+                if idx == 0:
+                    if dest_p.suffix:
+                        _atomic_write_bytes(dest_p, content_bytes)
+                    else:
+                        dest_p.mkdir(parents=True, exist_ok=True)
+                        _atomic_write_bytes(dest_p / rel_name, content_bytes)
+                elif not dest_p.suffix:
+                    _atomic_write_bytes(dest_p / rel_name, content_bytes)
+
+            manifest_rel = f"{exp_dir_rel}/manifest.json"
+            validate_relative_artifact_path(manifest_rel, root=data_root)
+            manifest_payload = {
+                "schema_version": 1,
+                "export_id": plan.export_id,
+                "format_kind": plan.format_kind,
+                "supports_native_card": plan.supports_native_card,
+                "supported_solver_identity": _to_plain_json(plan.supported_solver_identity),
+                "study_id": study_id,
+                "content_revision": art.content_revision,
+                "evaluation_id": evaluation_id,
+                "model_id": plan.model_id,
+                "model_revision": plan.model_revision,
+                "adapter": plan.adapter.to_dict(),
+                "formulation": _to_plain_json(plan.formulation),
+                "parameters": _to_plain_json(plan.parameters),
+                "provenance": _to_plain_json(plan.provenance),
+                "assessment_summary": _to_plain_json(plan.assessment_summary),
+                "limitations": list(plan.limitations),
+                "artifacts": [r.to_dict() for r in export_artifacts],
+            }
+            m_bytes = canonical_json_bytes(manifest_payload)
+            _atomic_write_bytes(data_root / manifest_rel, m_bytes)
+            manifest_ref = ArtifactRefV1(
+                id=f"export:{plan.export_id}:manifest",
+                role="export_manifest",
+                path=manifest_rel,
+                sha256=_sha256_bytes(m_bytes),
+                size=len(m_bytes),
+                format_id="application/json",
                 producer=_PRODUCER,
             )
-            export_artifacts.append(ref)
-            if idx == 0:
-                if dest_p.suffix:
-                    _atomic_write_bytes(dest_p, content_bytes)
-                else:
-                    dest_p.mkdir(parents=True, exist_ok=True)
-                    _atomic_write_bytes(dest_p / rel_name, content_bytes)
-            elif not dest_p.suffix:
-                _atomic_write_bytes(dest_p / rel_name, content_bytes)
 
-        manifest_rel = f"{exp_dir_rel}/manifest.json"
-        validate_relative_artifact_path(manifest_rel, root=data_root)
-        manifest_payload = {
-            "schema_version": 1,
-            "export_id": plan.export_id,
-            "format_kind": plan.format_kind,
-            "supports_native_card": plan.supports_native_card,
-            "supported_solver_identity": _to_plain_json(plan.supported_solver_identity),
-            "study_id": study_id,
-            "content_revision": art.content_revision,
-            "evaluation_id": evaluation_id,
-            "model_id": plan.model_id,
-            "model_revision": plan.model_revision,
-            "adapter": plan.adapter.to_dict(),
-            "formulation": _to_plain_json(plan.formulation),
-            "parameters": _to_plain_json(plan.parameters),
-            "provenance": _to_plain_json(plan.provenance),
-            "assessment_summary": _to_plain_json(plan.assessment_summary),
-            "limitations": list(plan.limitations),
-            "artifacts": [r.to_dict() for r in export_artifacts],
-        }
-        m_bytes = canonical_json_bytes(manifest_payload)
-        _atomic_write_bytes(data_root / manifest_rel, m_bytes)
-        manifest_ref = ArtifactRefV1(
-            id=f"export:{plan.export_id}:manifest",
-            role="export_manifest",
-            path=manifest_rel,
-            sha256=_sha256_bytes(m_bytes),
-            size=len(m_bytes),
-            format_id="application/json",
-            producer=_PRODUCER,
-        )
-
-        receipt = ExportReceipt(
-            export_id=plan.export_id,
-            evaluation_id=evaluation_id,
-            manifest_ref=manifest_ref,
-            artifacts=tuple(export_artifacts),
-            supported_solver_identity=plan.supported_solver_identity,
-            diagnostics=plan.limitations,
-        )
-        with self._state_lock:
-            self._check_disk_cas(expected_revision, "export")
-            new_manifest = json.loads(json.dumps(self._manifest))
-            new_manifest.setdefault("exports", []).append(
-                {
-                    "export_id": receipt.export_id,
-                    "evaluation_id": receipt.evaluation_id,
-                    "manifest_ref": receipt.manifest_ref.to_dict(),
-                    "artifacts": [a.to_dict() for a in receipt.artifacts],
-                    "supported_solver_identity": _to_plain_json(receipt.supported_solver_identity),
-                    "created_at": utc_now(),
-                }
+            receipt = ExportReceipt(
+                export_id=plan.export_id,
+                evaluation_id=evaluation_id,
+                manifest_ref=manifest_ref,
+                artifacts=tuple(export_artifacts),
+                supported_solver_identity=plan.supported_solver_identity,
+                diagnostics=plan.limitations,
             )
-            self._commit_manifest_unlocked(new_manifest, "export")
-        return receipt
+            with self._state_lock:
+                self._check_disk_cas(expected_revision, "export")
+                new_manifest = json.loads(json.dumps(self._manifest))
+                new_manifest.setdefault("exports", []).append(
+                    {
+                        "export_id": receipt.export_id,
+                        "evaluation_id": receipt.evaluation_id,
+                        "manifest_ref": receipt.manifest_ref.to_dict(),
+                        "artifacts": [a.to_dict() for a in receipt.artifacts],
+                        "supported_solver_identity": _to_plain_json(receipt.supported_solver_identity),
+                        "created_at": utc_now(),
+                    }
+                )
+                self._commit_manifest_unlocked(new_manifest, "export")
+            return receipt
+        finally:
+            self._finish_operation()
 
     def prepare_apply(
         self,
@@ -2587,21 +2940,33 @@ class CalibrationStudyService:
             )
         raise MaterialStudyError("UNSUPPORTED_ATOMIC_APPLY", "commit_apply", {"reason": "NOT_IMPLEMENTED"})
 
+    def _finish_operation(self) -> None:
+        with self._state_lock:
+            self._active_workers.discard(threading.current_thread())
+            self._busy_operation = None
+            self._active_operation_id = None
+            self._active_campaign_id = None
+            self._active_cancel_event = None
+            self._active_stop_event = None
+            self._release_closed_lease()
+
+    def _release_closed_lease(self) -> None:
+        if self._closed and not self._active_workers and self._lease is not None:
+            self._lease.release()
+            self._lease = None
+
     def close(self) -> None:
         with self._state_lock:
-            if self._closed:
-                return
-            cancel_ev = self._active_cancel_event
-            lease = self._lease
             self._closed = True
-            self._lease = None
-        if cancel_ev is not None:
-            cancel_ev.set()
-        if lease is not None:
-            try:
-                lease.release()
-            except Exception:
-                pass
+            if self._active_cancel_event is not None:
+                self._active_cancel_event.set()
+            workers = tuple(self._active_workers)
+        deadline = time.monotonic() + 2.0
+        for worker in workers:
+            if worker is not threading.current_thread():
+                worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        with self._state_lock:
+            self._release_closed_lease()
 
     def __enter__(self) -> CalibrationStudyService:
         return self

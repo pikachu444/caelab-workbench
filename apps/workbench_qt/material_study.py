@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
+from dataclasses import replace as replace_spec
 import json
 import math
 import os
@@ -15,7 +16,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QKeySequence
+from PySide6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -55,16 +56,18 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 import matplotlib
 
+from caelab.artifact_refs import ArtifactRefV1, read_safe_npy_v2, validate_relative_artifact_path
 from caelab.materials.contracts import (
     ComparisonSpec,
     ExperimentChannelSpec,
     ObservableSpec,
     ParameterSpec,
 )
+from caelab.materials.evaluator import build_variable_space, resolve_parameter_values
 from caelab.materials.experiments import load_experiment_channel_arrays, preview_csv_rows
 from caelab.materials.registry import CalibrationEvaluationArtifact, MaterialStudyError, default_registry
 from caelab.materials.service import CalibrationStudyService
-from caelab.materials.units import QuantityUnitSpec
+from caelab.materials.units import QuantityUnitSpec, convert_frequency_angular, convert_values
 from caelab.mdo.optimize import OptimizationConfig
 from apps.workbench_qt.icons import icon as load_ui_icon
 from apps.workbench_qt.theme import (
@@ -95,6 +98,12 @@ _TRANSFORM_KO = {
     "linear": "선형",
     "log": "로그",
 }
+_WEIGHTS_KO = {
+    "uniform": "균등",
+    "trapezoidal": "사다리꼴",
+    "log10_trapezoidal": "로그 사다리꼴",
+}
+_DMA_OBSERVABLES = ("E_storage", "E_loss", "E_star")
 _STATUS_KO = {
     "pass": "적합",
     "fail": "부적합",
@@ -170,13 +179,92 @@ def _human_error(exc: Exception) -> str:
             "CONFIRMATION_REQUIRES_REFRESH": "보류 시험 최종 확인은 새로 계산 모드만 허용됩니다.",
             "HOLDOUT_EXPOSURE_RECORD_FAILED": "보류 시험 노출 기록 저장에 실패하여 결과를 표시하지 않습니다.",
             "UNSUPPORTED_ATOMIC_APPLY": "현재 모델은 열린 전처리 문서 직접 적용을 지원하지 않습니다.",
-            "INVALID_CSV": "CSV 파일 형식이 올바르지 않거나 비유한 값이 포함되어 있습니다.",
+            "INVALID_CSV": "CSV 파일 형식이 올바르지 않거나 유한한 수가 필요합니다.",
+            "INVALID_PARAMETER": "매개변수의 값, 범위, 역할 또는 변환을 확인하세요.",
+            "INVALID_CONFIGURATION": "연구 설정을 확인하세요.",
+            "INVALID_EVALUATION_POLICY": "평가 방식과 캐시 설정을 확인하세요.",
+            "INVALID_PATH": "연구나 자료의 경로가 올바르지 않습니다.",
+            "STUDY_NOT_FOUND": "연구 파일을 찾을 수 없습니다.",
+            "STUDY_ID_MISMATCH": "프로젝트 노드에 기록된 연구와 현재 파일의 연구가 일치하지 않습니다.",
+            "STUDY_ALREADY_EXISTS": "이 위치에 연구가 이미 있습니다.",
+            "STUDY_CLOSED": "이 연구는 이미 닫혔습니다.",
+            "SOURCE_NOT_FOUND": "원자료 파일을 찾을 수 없습니다.",
+            "SOURCE_CHANGED_DURING_COPY": "복사하는 동안 원본 연구가 바뀌었습니다.",
+            "DESTINATION_ALREADY_EXISTS": "복사 대상 위치에 파일이 이미 있습니다.",
+            "CORRUPT_MANIFEST": "연구 설정 파일이 손상되었습니다.",
+            "CORRUPT_ARTIFACT": "저장된 평가, 노출 기록 또는 자료가 누락되었거나 손상되었습니다.",
+            "EVALUATION_NOT_FOUND": "저장된 평가를 찾을 수 없습니다.",
+            "SELECTION_MISMATCH": "고정한 선택과 현재 연구 내용 또는 매개변수가 일치하지 않습니다.",
+            "HOLDOUT_REUSED_FOR_SELECTION": "이 보류 자료는 다른 선택의 확인에 이미 사용했습니다.",
+            "INVALID_RECOVERY_ACTION": "지원하지 않는 복구 작업입니다.",
+            "RECOVERY_TRANSACTION_NOT_FOUND": "복구할 저장 기록을 찾을 수 없습니다.",
+            "RELINK_HASH_MISMATCH": "선택한 파일의 내용이 기존 원자료와 일치하지 않습니다.",
+            "EXPERIMENT_METADATA_MISSING": "시험에 필요한 조건이나 메타데이터가 빠졌습니다.",
+            "DATA_RECIPE_INCOMPATIBLE": "실험 자료와 지정한 열·분할·변환 조건이 일치하지 않습니다.",
+            "MEASURE_MISMATCH": "관측량의 정의나 측정 방식이 일치하지 않습니다.",
+            "PREDICTION_EXPERIMENT_MISMATCH": "모델이 반환한 예측의 실험 또는 개정이 실행 요청과 일치하지 않습니다.",
+            "UNSUPPORTED_UNIT": "이 계산에서 지원하지 않는 단위입니다.",
+            "UNSUPPORTED_OBSERVABLE": "이 모델에서 지원하지 않는 관측량입니다.",
+            "UNSUPPORTED_MODEL": "이 재료 모델을 사용할 수 없습니다.",
+            "UNSUPPORTED_ADAPTER_VERSION": "연구에 지정된 재료 모델 연결 버전을 사용할 수 없습니다.",
+            "INTEGRATION_FAILED": "모델 계산 또는 결과 수집에 실패했습니다.",
+            "NONFINITE_RESPONSE": "계산 결과에 유한하지 않은 수가 포함되었습니다.",
+            "COVERAGE_INCOMPLETE": "예측 결과가 관측 구간 또는 필요한 표본을 모두 포함하지 않습니다.",
+            "CONSTRAINT_RESPONSE_INVALID": "제약 판정에 필요한 값을 계산할 수 없습니다.",
+            "REQUIRED_FIT_EXPERIMENT_MISSING": "적합에 필요한 실험 결과가 없습니다.",
+            "NO_REQUIRED_FIT_COMPARISONS": "적합에 포함된 비교 설정이 없습니다.",
+            "EXPERIMENT_NOT_EXECUTED": "이 실험은 평가에서 실행되지 않았습니다.",
+            "CANCELLED": "평가를 취소했습니다.",
+            "PYVISCO_VERSION_MISMATCH": "이 연구에는 pyvisco 2.1.3이 필요합니다.",
+            "WLF_PROVENANCE_REQUIRED": "매개변수 탭에서 고정 WLF 계수의 출처와 값을 확인하세요.",
         }
         base = code_map.get(exc.code, "요청을 처리하는 중 오류가 발생했습니다.")
         if reason:
             return f"{base} ({reason})"
         return base
     return str(exc)
+
+
+def _experiment_label(exp: Any) -> str:
+    return getattr(exp, "title", None) or exp.experiment_id
+
+
+def _unit_label(label: str, unit: str) -> str:
+    return f"{label} ({unit})" if unit else label
+
+
+def _number_text(value: float | None) -> str:
+    return str(value) if value is not None else ""
+
+
+def _tinted_icon(icon: QIcon, size: QSize, color: str) -> QIcon:
+    pixmap = icon.pixmap(size)
+    if pixmap.isNull():
+        return icon
+    painter = QPainter(pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(pixmap.rect(), QColor(color))
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _command_icon(symbol: str, color: str) -> QIcon:
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.7)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    if symbol == "plus":
+        painter.drawLine(3, 8, 13, 8)
+        painter.drawLine(8, 3, 8, 13)
+    else:
+        painter.drawLine(4, 4, 12, 12)
+        painter.drawLine(4, 12, 12, 4)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _format_log_tick(val: float, _pos: Any) -> str:
@@ -298,6 +386,16 @@ class ExperimentImportDialog(QDialog):
 
         grid.addWidget(QLabel("탄성계수 단위"), 5, 0)
         grid.addWidget(self.dep_unit_combo, 5, 1)
+        self.weight_policy_combo = _configure_combo(QComboBox())
+        self.weight_policy_combo.addItem("자동", "")
+        for policy, label in _WEIGHTS_KO.items():
+            self.weight_policy_combo.addItem(label, policy)
+        grid.addWidget(QLabel("표본 적분 정책"), 5, 2)
+        grid.addWidget(self.weight_policy_combo, 5, 3)
+        self.acceptance_limit_edit = QLineEdit()
+        self.acceptance_limit_edit.setPlaceholderText("지정하지 않음")
+        grid.addWidget(QLabel("허용 오차 한계"), 6, 0)
+        grid.addWidget(self.acceptance_limit_edit, 6, 1)
 
         layout.addWidget(form_box)
 
@@ -422,6 +520,20 @@ class ExperimentImportDialog(QDialog):
             )
             unit_specs[col1] = QuantityUnitSpec(dep_unit, "relaxation_modulus")
 
+        limit_text = self.acceptance_limit_edit.text().strip()
+        try:
+            limit = float(limit_text) if limit_text else None
+            if limit is not None and (not math.isfinite(limit) or limit < 0):
+                raise ValueError("invalid acceptance limit")
+        except ValueError as exc:
+            raise MaterialStudyError(
+                "INVALID_CONFIGURATION", "import_csv",
+                {"reason": "허용 오차 한계는 0 이상의 유한한 수이거나 빈칸이어야 합니다."},
+            ) from exc
+        sample_policy = self.weight_policy_combo.currentData() or (
+            "trapezoidal" if ind_qkind == "time" else "log10_trapezoidal"
+        )
+
         return {
             "source": self.csv_path,
             "experiment_id": self.exp_name_edit.text().strip() or self.csv_path.stem,
@@ -433,6 +545,8 @@ class ExperimentImportDialog(QDialog):
             "split": split,
             "replicate_group": self.rep_group_edit.text().strip(),
             "scale": float(self.scale_spin.value()),
+            "sample_weights_policy": sample_policy,
+            "acceptance_limit": limit,
         }
 
 
@@ -451,7 +565,7 @@ class MaterialStudyWindow(QMainWindow):
         self._closed = False
         self._close_after = False
         self._generation = 0
-        self._draft_revision = 0
+        self._draft_dirty = False
         self._busy_op: str | None = None
         self._active_campaign_id: str | None = None
         self._op_token: object | None = None
@@ -479,6 +593,7 @@ class MaterialStudyWindow(QMainWindow):
                 adapter="1.0.0",
             )
 
+        self._selected_eval_id = self._saved_selection()
         self.setWindowTitle("CAELAB 재료 물성 보정 연구")
         self.resize(1440, 900)
         self.setMinimumSize(1024, 680)
@@ -495,6 +610,7 @@ class MaterialStudyWindow(QMainWindow):
         self._refresh_all()
 
     def _build_menus_and_toolbar(self) -> None:
+        self._action_icons: list[tuple[QAction, str]] = []
         self.toolbar = QToolBar("연구 도구 모음", self)
         self.toolbar.setObjectName("material.toolbar")
         self.toolbar.setMovable(False)
@@ -509,7 +625,7 @@ class MaterialStudyWindow(QMainWindow):
         def _add(menu, text, slot, shortcut=None, icon_name=None, toolbar=False):
             act = QAction(text, self)
             if icon_name:
-                act.setIcon(load_ui_icon(icon_name, self._theme_mode))
+                self._action_icons.append((act, icon_name))
             act.triggered.connect(slot)
             if shortcut:
                 act.setShortcut(shortcut)
@@ -518,7 +634,7 @@ class MaterialStudyWindow(QMainWindow):
                 self.toolbar.addAction(act)
             return act
 
-        self.act_new = _add(file_menu, "새 연구", self.on_new_study, QKeySequence.StandardKey.New, "folder", True)
+        self.act_new = _add(file_menu, "새 연구", self.on_new_study, QKeySequence.StandardKey.New, "plus", True)
         self.act_open = _add(file_menu, "열기…", self.on_open_study, QKeySequence.StandardKey.Open, "folder", True)
         self.act_save = _add(file_menu, "저장", self.on_save_study, QKeySequence.StandardKey.Save, "save", True)
         self.act_save_as = _add(file_menu, "다른 이름으로 저장…", self.on_save_as_study, "Ctrl+Shift+S", "save")
@@ -529,7 +645,7 @@ class MaterialStudyWindow(QMainWindow):
         self.act_evaluate = _add(study_menu, "단일 평가", self.on_evaluate, "F5", "check", True)
         self.act_optimize = _add(study_menu, "보정 실행", self.on_optimize, "F6", "run", True)
         self.act_stop = _add(study_menu, "최선값 유지 중지(Stop)", self.on_stop, None, "step", True)
-        self.act_cancel = _add(study_menu, "취소(Cancel)", self.on_cancel, None, "solver", True)
+        self.act_cancel = _add(study_menu, "취소(Cancel)", self.on_cancel, None, "close", True)
         study_menu.addSeparator()
         self.act_confirm_holdout = _add(study_menu, "보류 시험 최종 확인(Confirm Holdout)", self.on_confirm_holdout, None, "result", True)
         self.act_export = _add(study_menu, "보고서 내보내기…", self.on_export_report, None, "result")
@@ -582,12 +698,14 @@ class MaterialStudyWindow(QMainWindow):
         self.badge_val = QLabel("검증: 미확인")
         self.badge_hold = QLabel("보류: 미확인")
         self.badge_const = QLabel("제약: 미확인")
-        for b in (self.badge_fit, self.badge_val, self.badge_hold, self.badge_const):
+        self.badge_ident = QLabel("식별: 미확인")
+        for b in (self.badge_fit, self.badge_val, self.badge_hold, self.badge_const, self.badge_ident):
             b.setWordWrap(True)
         badge_grid.addWidget(self.badge_fit, 0, 0)
         badge_grid.addWidget(self.badge_val, 0, 1)
         badge_grid.addWidget(self.badge_hold, 1, 0)
         badge_grid.addWidget(self.badge_const, 1, 1)
+        badge_grid.addWidget(self.badge_ident, 2, 0, 1, 2)
         sum_layout.addLayout(badge_grid)
         dock_layout.addWidget(summary_card)
 
@@ -630,6 +748,10 @@ class MaterialStudyWindow(QMainWindow):
         dock_layout.addWidget(tree_lbl)
         self.study_tree = QTreeWidget()
         self.study_tree.setHeaderHidden(True)
+        self.study_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.study_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.study_tree.header().setStretchLastSection(False)
+        self.study_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.study_tree.itemClicked.connect(self._on_tree_clicked)
         dock_layout.addWidget(self.study_tree, 1)
 
@@ -659,7 +781,7 @@ class MaterialStudyWindow(QMainWindow):
         plot_bar.addWidget(self.plot_selector)
         plot_bar.addStretch(1)
         self.loss_summary_label = QLabel("적합 손실: 미확인")
-        self.loss_summary_label.setWordWrap(False)
+        self.loss_summary_label.setWordWrap(True)
         plot_bar.addWidget(self.loss_summary_label)
         plot_layout.addLayout(plot_bar)
 
@@ -667,6 +789,7 @@ class MaterialStudyWindow(QMainWindow):
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.mpl_toolbar = NavigationToolbar2QT(self.canvas, self)
         self.mpl_toolbar.setObjectName("mplToolbar")
+        self._mpl_icons = [(action, action.icon()) for action in self.mpl_toolbar.actions() if not action.icon().isNull()]
         self.ax_curve = self.fig.add_subplot(121)
         self.ax_resid = self.fig.add_subplot(122)
         plot_layout.addWidget(self.mpl_toolbar)
@@ -704,23 +827,26 @@ class MaterialStudyWindow(QMainWindow):
         self.btn_apply_params.clicked.connect(self.on_apply_parameter_draft)
         param_bar.addWidget(self.btn_apply_params)
         param_bar.addStretch(1)
-        self.param_info_label = QLabel("자유 계수를 편집한 뒤 확정을 누르면 다음 평가에 반영됩니다.")
+        self.btn_wlf_provenance = QPushButton("고정 WLF 계수 출처…")
+        self.btn_wlf_provenance.clicked.connect(self.on_set_wlf_provenance)
+        param_bar.addWidget(self.btn_wlf_provenance)
+        self.param_info_label = QLabel()
         param_bar.addWidget(self.param_info_label)
         param_layout.addLayout(param_bar)
 
         param_split = QSplitter(Qt.Orientation.Horizontal)
-        self.param_table = QTableWidget(0, 7)
+        self.param_table = QTableWidget(0, 11)
         self.param_table.setHorizontalHeaderLabels(
-            ["매개변수", "현재값", "단위", "역할", "최솟값", "최댓값", "변환"]
+            ["매개변수", "초기/초안 값", "단위", "역할", "하한", "상한", "변환", "선택 평가 값", "식/제약", "그룹", "식별 상태"]
         )
         self.param_table.setAlternatingRowColors(True)
         self.param_table.verticalHeader().setVisible(False)
         p_hdr = self.param_table.horizontalHeader()
         p_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in range(1, 7):
+        for col in range(1, self.param_table.columnCount()):
             p_hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        p_hdr.setMinimumSectionSize(52)
-        self.param_table.itemChanged.connect(self._on_param_cell_changed)
+        p_hdr.setMinimumSectionSize(34)
+        self.param_table.itemChanged.connect(self._mark_draft_dirty)
 
         self.constraint_table = QTableWidget(0, 4)
         self.constraint_table.setHorizontalHeaderLabels(["물리 제약 조건", "기준값", "현재값", "판정"])
@@ -735,11 +861,31 @@ class MaterialStudyWindow(QMainWindow):
 
         param_split.addWidget(self.param_table)
         param_split.addWidget(self.constraint_table)
-        param_split.setSizes([640, 420])
+        param_split.setSizes([840, 300])
         param_layout.addWidget(param_split, 1)
         self.detail_tabs.addTab(param_tab, "매개변수 · 제약")
 
-        # Tab 3: 평가 이력 · 잔차 요약
+        comparison_tab = QWidget()
+        comparison_layout = QVBoxLayout(comparison_tab)
+        comparison_apply = QPushButton("비교 초안 확정")
+        comparison_apply.clicked.connect(self.on_apply_parameter_draft)
+        comparison_layout.addWidget(comparison_apply, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.btn_apply_comparisons = comparison_apply
+        self.comparison_table = QTableWidget(0, 8)
+        self.comparison_table.setHorizontalHeaderLabels([
+            "실험", "채널", "스케일", "가중치", "격자/적분 정책", "학습 포함", "검증 포함", "허용 오차 한계"
+        ])
+        self.comparison_table.verticalHeader().hide()
+        self.comparison_table.setAlternatingRowColors(True)
+        comparison_header = self.comparison_table.horizontalHeader()
+        comparison_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        comparison_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        comparison_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.comparison_table.itemChanged.connect(self._mark_draft_dirty)
+        comparison_layout.addWidget(self.comparison_table)
+        self.detail_tabs.addTab(comparison_tab, "비교 설정")
+
+        # 평가 이력 · 잔차 요약
         history_tab = QWidget()
         hist_layout = QVBoxLayout(history_tab)
         hist_layout.setContentsMargins(6, 6, 6, 6)
@@ -753,7 +899,10 @@ class MaterialStudyWindow(QMainWindow):
         self.history_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.history_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        history_header = self.history_table.horizontalHeader()
+        history_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        history_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.history_table.verticalHeader().hide()
         self.history_table.itemSelectionChanged.connect(self._on_history_row_selected)
 
         self.channel_summary_table = QTableWidget(0, 6)
@@ -762,7 +911,11 @@ class MaterialStudyWindow(QMainWindow):
         )
         self.channel_summary_table.setAlternatingRowColors(True)
         self.channel_summary_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.channel_summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        channel_header = self.channel_summary_table.horizontalHeader()
+        channel_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        for col in (0, 1):
+            channel_header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self.channel_summary_table.verticalHeader().hide()
 
         hist_split.addWidget(self.history_table)
         hist_split.addWidget(self.channel_summary_table)
@@ -781,15 +934,24 @@ class MaterialStudyWindow(QMainWindow):
         resolved = mode if mode in ("dark", "light") else current_theme_mode()
         self._theme_mode = resolved
         pal = get_palette(resolved)
-        toolbar_bg = "#cbd5e1" if resolved == "dark" else str(pal["header_bg"])
+        dark = resolved == "dark"
+        toolbar_bg, toolbar_fg = ("#1e293b", "#e2e8f0") if dark else ("#f1f5f9", "#0f172a")
+        for action, name in self._action_icons:
+            if name in ("plus", "close"):
+                action.setIcon(_command_icon(name, toolbar_fg))
+            else:
+                action.setIcon(load_ui_icon(name, resolved))
+        for action, icon in self._mpl_icons:
+            action.setIcon(_tinted_icon(icon, self.mpl_toolbar.iconSize(), toolbar_fg))
         extra_qss = (
             f"\nQScrollArea > QWidget > QWidget {{ background: {pal['surface_bg']}; }}"
             f"\nQWidget#propsPanel {{ background: {pal['surface_bg']}; }}"
             f"\nQTableCornerButton::section {{ background: {pal['header_bg']}; border: none; }}"
             f"\nQTableWidget, QTableView, QTreeWidget, QTreeView, QAbstractItemView {{ background-color: {pal['surface_bg']}; alternate-background-color: {pal['card_alt_bg']}; color: {pal['text_primary']}; gridline-color: {pal['border']}; }}"
             f"\nQToolBar#mplToolbar {{ background: {toolbar_bg}; border-radius: 5px; padding: 2px; border: 1px solid {pal['border']}; }}"
-            f"\nQToolBar#mplToolbar QToolButton {{ color: #0f172a; background: transparent; border-radius: 3px; padding: 2px; }}"
-            f"\nQToolBar#mplToolbar QToolButton:hover {{ background: #94a3b8; }}"
+            f"\nQToolBar#mplToolbar QLabel {{ background: {toolbar_bg}; color: {toolbar_fg}; }}"
+            f"\nQToolBar#mplToolbar QToolButton {{ color: {toolbar_fg}; background: transparent; border-radius: 3px; padding: 2px; }}"
+            f"\nQToolBar#mplToolbar QToolButton:hover {{ background: {'#334155' if dark else '#cbd5e1'}; }}"
         )
         self.setStyleSheet(build_stylesheet(resolved) + extra_qss)
         self.act_theme.setText(theme_toggle_label(resolved))
@@ -806,6 +968,7 @@ class MaterialStudyWindow(QMainWindow):
                 (self.badge_val, "검증"),
                 (self.badge_hold, "보류"),
                 (self.badge_const, "제약"),
+                (self.badge_ident, "식별"),
             ):
                 badge.setText(f"{prefix}: 미확인")
                 badge.setStyleSheet(status_badge_style("neutral", self._theme_mode))
@@ -826,9 +989,11 @@ class MaterialStudyWindow(QMainWindow):
             (self.badge_val, "검증", "validation_status"),
             (self.badge_hold, "보류", "holdout_status"),
             (self.badge_const, "제약", "constraint_status"),
+            (self.badge_ident, "식별", "identifiability_status"),
         ):
             val = str(assess.get(key, "not_assessed"))
-            badge.setText(f"{prefix}: {_ko_status(val)}")
+            label = "식별" if key == "identifiability_status" and val == "pass" else _ko_status(val)
+            badge.setText(f"{prefix}: {label}")
             badge.setStyleSheet(status_badge_style(_tone(val), self._theme_mode))
 
     def _sync_actions(self) -> None:
@@ -871,7 +1036,12 @@ class MaterialStudyWindow(QMainWindow):
         self.act_save_as.setEnabled(not busy)
         self.act_new.setEnabled(not busy)
         self.act_open.setEnabled(not busy)
-        self.btn_apply_params.setEnabled((not busy) and (not ro))
+        self.btn_apply_params.setEnabled(not busy and not ro)
+        self.btn_apply_comparisons.setEnabled(not busy and not ro)
+        self.btn_wlf_provenance.setEnabled(not busy and not ro and self.service._descriptor().model_id == "B-VIS-TRS-1")
+        self.btn_wlf_provenance.setVisible(self.service._descriptor().model_id == "B-VIS-TRS-1")
+        self.param_table.setEnabled(not busy)
+        self.comparison_table.setEnabled(not busy)
 
         self.progress_bar.setVisible(busy)
         if busy:
@@ -889,9 +1059,12 @@ class MaterialStudyWindow(QMainWindow):
         self.model_label.setText(f"모델: {desc.name}")
 
         self._populate_tree()
-        self._populate_preview_selector()
+        if not self._draft_dirty:
+            self._populate_parameter_draft()
+            self._populate_comparison_table()
         self._populate_history_table()
         self._load_selected_evaluation()
+        self._populate_preview_selector()
         self._sync_actions()
 
     def _populate_tree(self) -> None:
@@ -900,59 +1073,74 @@ class MaterialStudyWindow(QMainWindow):
         exps = self.service.experiments()
         params = self.service.parameters()
         comps = self.service.comparisons()
-        evals = self.service.list_evaluations()
+        evals = self.service._manifest.get("evaluations", {})
         camps = self.service._manifest.get("campaigns", {})
         exports = self.service._manifest.get("exports", ())
 
-        def _root(title: str, icon_name: str, key: str) -> QTreeWidgetItem:
+        def _node(title: str, tooltip: str) -> QTreeWidgetItem:
             item = QTreeWidgetItem([title])
+            item.setToolTip(0, tooltip)
+            return item
+
+        def _root(title: str, icon_name: str, key: str) -> QTreeWidgetItem:
+            item = _node(title, title)
             item.setData(0, Qt.ItemDataRole.UserRole, (key, None))
             item.setIcon(0, load_ui_icon(icon_name, self._theme_mode))
             self.study_tree.addTopLevelItem(item)
             return item
 
         m_root = _root("모델", "material", "model")
-        m_root.addChild(QTreeWidgetItem([desc.name]))
+        short_name = desc.name.split(" (", 1)[0]
+        m_root.addChild(_node(short_name, desc.name))
 
         e_root = _root(f"실험 데이터 ({len(exps)})", "folder", "experiments")
         for exp in exps:
             temp = exp.conditions.get("temperature_K")
             t_txt = f" · {temp:.2f} K" if isinstance(temp, (int, float)) else ""
             ch_txt = ", ".join(_ko_observable(ch.observable_id) for ch in exp.channels)
-            child = QTreeWidgetItem([f"{exp.experiment_id} ({_ko_split(exp.split)}{t_txt}) · {ch_txt}"])
+            label = f"{_experiment_label(exp)} · {_ko_split(exp.split)}{t_txt}"
+            child = _node(label, f"{label}\n관측량: {ch_txt}")
             child.setData(0, Qt.ItemDataRole.UserRole, ("experiment", exp.experiment_id))
             e_root.addChild(child)
 
         p_root = _root(f"매개변수 ({len(params)})", "section", "parameters")
         for p in params:
-            p_root.addChild(QTreeWidgetItem([f"{p.name}: {p.default} {p.unit} ({_ROLE_KO.get(p.role, p.role)})"]))
+            value = " ".join(s for s in (f"{p.default:g}" if p.default is not None else "—", p.unit) if s)
+            label = f"{p.id} = {value} ({_ROLE_KO[p.role]})"
+            p_root.addChild(_node(label, f"{p.name}\n{label}"))
 
         c_root = _root(f"비교 설정 ({len(comps)})", "check", "comparisons")
         for c in comps:
-            c_root.addChild(QTreeWidgetItem([f"{c.experiment_id} · {_ko_observable(c.observable_id)} ({_ko_split(c.split)})"]))
+            observable = {"E_storage": "E'", "E_loss": "E''", "E_relax": "E(t)"}.get(c.observable_id, c.observable_id)
+            c_root.addChild(_node(
+                f"{c.experiment_id} · {observable}",
+                f"{c.experiment_id} · {_ko_observable(c.observable_id)} · {_ko_split(c.split)}",
+            ))
 
         camp_root = _root(f"최적화 실행 ({len(camps)})", "run", "campaigns")
         for idx, camp in enumerate(camps.values(), 1):
-            camp_root.addChild(QTreeWidgetItem([f"실행 #{idx} · {_ko_status(camp.get('state'))}"]))
+            label = f"실행 #{idx} · {_ko_status(camp.get('state'))}"
+            camp_root.addChild(_node(label, label))
 
         ev_root = _root(f"평가 이력 ({len(evals)})", "result", "evaluations")
-        for idx, ev in enumerate(evals, 1):
+        for idx, ev in enumerate(evals.values(), 1):
             ev_id = ev["evaluation_id"]
             phase = _ko_status(ev.get("execution_phase"))
             loss = ev.get("fit_loss")
             loss_txt = f"{loss:.3e}" if isinstance(loss, (int, float)) else "미확인"
-            child = QTreeWidgetItem([f"평가 #{idx} ({phase}) · 손실 {loss_txt}"])
+            child = _node(f"평가 #{idx} · {phase}", f"평가 #{idx} · {phase} · 손실 {loss_txt}")
             child.setData(0, Qt.ItemDataRole.UserRole, ("evaluation", ev_id))
             ev_root.addChild(child)
 
         exp_root = _root(f"내보내기 ({len(exports)})", "save", "exports")
         for idx, _ in enumerate(exports, 1):
-            exp_root.addChild(QTreeWidgetItem([f"매개변수·정식화 보고서 #{idx}"]))
+            exp_root.addChild(_node(f"보고서 #{idx}", f"매개변수·정식화 보고서 #{idx}"))
 
         rev_root = _root("검토", "expert", "reviews")
-        rev_root.addChild(QTreeWidgetItem(["독립 평가 기록 준비 상태: " + ("가능" if evals else "미확인")]))
+        rev_root.addChild(_node("독립 평가 기록", "독립 평가 기록 준비 상태: " + ("가능" if evals else "미확인")))
 
-        self.study_tree.expandAll()
+        for root in (m_root, e_root, p_root):
+            root.setExpanded(True)
 
     def _on_tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -965,43 +1153,71 @@ class MaterialStudyWindow(QMainWindow):
                 idx = self.preview_exp_combo.findData(val)
                 if idx >= 0:
                     self.preview_exp_combo.setCurrentIndex(idx)
-        elif kind == "parameters" or kind == "comparisons":
+        elif kind == "parameters":
             self.detail_tabs.setCurrentIndex(1)
-        elif kind == "evaluations" or kind == "evaluation":
+        elif kind == "comparisons":
             self.detail_tabs.setCurrentIndex(2)
+        elif kind == "evaluations" or kind == "evaluation":
+            self.detail_tabs.setCurrentIndex(3)
             if val:
-                self._selected_eval_id = val
-                self._load_selected_evaluation()
+                for row in range(self.history_table.rowCount()):
+                    if self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == val:
+                        self.history_table.selectRow(row)
+                        break
 
-    def _populate_parameter_table(self) -> None:
+    def _populate_parameter_draft(self) -> None:
         params = self.service.parameters()
-        art = self._active_eval_artifact
-        active_vals = dict(art.physical_parameters) if art is not None else {}
-
         self.param_table.blockSignals(True)
         self.param_table.setRowCount(len(params))
-        ro = self.service.read_only
-        for row, p in enumerate(params):
-            val = active_vals.get(p.id, p.default)
-            items = [
-                (p.name, False, p.id),
-                (f"{val:.6g}" if isinstance(val, (int, float)) else str(val or ""), (not ro) and p.role != "linked", None),
-                (p.unit or "-", False, None),
-                (_ROLE_KO.get(p.role, p.role), False, None),
-                (f"{p.lower:.6g}" if p.lower is not None else "-", False, None),
-                (f"{p.upper:.6g}" if p.upper is not None else "-", False, None),
-                (_TRANSFORM_KO.get(p.transform, p.transform), False, None),
-            ]
-            for col, (text, editable, user_id) in enumerate(items):
+        is_prony = self.service._descriptor().model_id == "B-VIS-TRS-1"
+        prony_relations = {
+            "E0": "E∞ = E0(1−a1−a2)",
+            "a1": "a1+a2 ≤ 0.95",
+            "a2": "a1+a2 ≤ 0.95",
+            "tau1": "τ2/τ1 ≥ 2",
+            "tau2": "τ2/τ1 ≥ 2",
+        } if is_prony else {}
+        for row, spec in enumerate(params):
+            group = (
+                "온도 이동" if spec.id in ("C1", "C2", "Tref")
+                else "Prony" if is_prony else ""
+            )
+            items = (
+                spec.name, _number_text(spec.default), spec.unit, _ROLE_KO[spec.role],
+                _number_text(spec.lower), _number_text(spec.upper), _TRANSFORM_KO[spec.transform],
+                "", spec.expression or prony_relations.get(spec.id, ""), group, "",
+            )
+            for col, text in enumerate(items):
                 cell = QTableWidgetItem(text)
-                if user_id is not None:
-                    cell.setData(Qt.ItemDataRole.UserRole, user_id)
-                if not editable:
+                cell.setToolTip(text)
+                if col == 0:
+                    cell.setData(Qt.ItemDataRole.UserRole, spec.id)
+                if self.service.read_only or col not in (1, 3, 4, 5, 6):
                     cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.param_table.setItem(row, col, cell)
         self.param_table.blockSignals(False)
+        self.param_info_label.clear()
 
-        # Populate constraints summary
+    def _populate_parameter_result(self) -> None:
+        art = self._active_eval_artifact
+        active_values = art.physical_parameters if art else {}
+        ident = art.identifiability if art else {}
+        assessed = set(ident.get("parameter_ids", ()))
+        unidentifiable = set(ident.get("unidentifiable_parameters", ()))
+        overall = art.assessment.assessment.get("identifiability_status") if art else None
+        self.param_table.blockSignals(True)
+        for row in range(self.param_table.rowCount()):
+            parameter_id = self.param_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            value = active_values.get(parameter_id)
+            self.param_table.item(row, 7).setText(f"{value:.6g}" if isinstance(value, (int, float)) else str(value or ""))
+            status = (
+                "비식별" if parameter_id in unidentifiable
+                else "식별" if parameter_id in assessed and overall == "pass"
+                else "미확인"
+            )
+            self.param_table.item(row, 10).setText(status)
+        self.param_table.blockSignals(False)
+
         if art is not None:
             checks = art.assessment.assessment.get("constraint_checks", ())
         else:
@@ -1009,57 +1225,96 @@ class MaterialStudyWindow(QMainWindow):
                 {"constraint_id": c.id, "limit": c.limit, "value": None, "status": "NOT_ASSESSED"}
                 for c in (*self.service.mandatory_constraints(), *self.service.user_constraints())
             ]
-        const_names = {
-            "prony_fraction_sum_max": "Prony 분율 합 (a1+a2 <= 0.95)",
-            "prony_tau_order_ratio": "시간상수 순서비 (τ2/τ1 >= 2.0)",
-            "prony_e_inf_positive": "평형 탄성계수 E∞ > 0",
+        constraint_names = {
+            "prony_fraction_sum_max": "Prony 분율 합 (a1+a2)",
+            "prony_tau_order_ratio": "시간상수 순서비 (τ2/τ1)",
+            "prony_e_inf_positive": "평형 탄성계수 E∞",
         }
         self.constraint_table.setRowCount(len(checks))
-        for row, chk in enumerate(checks):
-            cid = str(chk.get("constraint_id", ""))
-            val = chk.get("value")
-            lim = chk.get("limit")
-            st = str(chk.get("status", "NOT_ASSESSED"))
-            self.constraint_table.setItem(row, 0, QTableWidgetItem(const_names.get(cid, cid)))
-            self.constraint_table.setItem(row, 1, QTableWidgetItem(f"{lim:.6g}" if isinstance(lim, (int, float)) else "-"))
-            self.constraint_table.setItem(row, 2, QTableWidgetItem(f"{val:.6g}" if isinstance(val, (int, float)) else "미확인"))
-            self.constraint_table.setItem(row, 3, QTableWidgetItem(_ko_status(st)))
+        for row, check in enumerate(checks):
+            constraint_id = str(check.get("constraint_id", ""))
+            vals = (
+                constraint_names.get(constraint_id, constraint_id.replace("_", " ")),
+                _number_text(check.get("limit")),
+                f"{check['value']:.6g}" if isinstance(check.get("value"), (int, float)) else "미확인",
+                _ko_status(check.get("status")),
+            )
+            for col, value in enumerate(vals):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.constraint_table.setItem(row, col, cell)
 
-    def _on_param_cell_changed(self, _item: QTableWidgetItem) -> None:
-        self._draft_revision += 1
+    def _populate_comparison_table(self) -> None:
+        comparisons = self.service.comparisons()
+        labels = {exp.experiment_id: _experiment_label(exp) for exp in self.service.experiments()}
+        self.comparison_table.blockSignals(True)
+        self.comparison_table.setRowCount(len(comparisons))
+        for row, spec in enumerate(comparisons):
+            values = (
+                labels.get(spec.experiment_id, spec.experiment_id),
+                _ko_observable(spec.observable_id), f"{spec.scale:g}", f"{spec.weight:g}",
+                _WEIGHTS_KO.get(spec.sample_weights_policy, spec.sample_weights_policy),
+                "예" if spec.required_for_fit else "아니요",
+                "예" if spec.required_for_validation else "아니요",
+                _number_text(spec.acceptance_limit),
+            )
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(value)
+                if self.service.read_only or col not in (4, 7):
+                    cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                elif col == 4:
+                    cell.setToolTip("균등, 사다리꼴, 로그 사다리꼴")
+                self.comparison_table.setItem(row, col, cell)
+        self.comparison_table.blockSignals(False)
+
+    def _mark_draft_dirty(self, item: QTableWidgetItem) -> None:
+        if item.flags() & Qt.ItemFlag.ItemIsEditable:
+            self._draft_dirty = True
+            self.param_info_label.setText("저장하지 않은 초안")
 
     def _collect_draft_parameter_specs(self) -> list[ParameterSpec]:
-        specs = list(self.service.parameters())
+        role_keys = {label: key for key, label in _ROLE_KO.items()}
+        transform_keys = {label: key for key, label in _TRANSFORM_KO.items()} | {"log10": "log"}
         updated: list[ParameterSpec] = []
-        for row, p in enumerate(specs):
-            item = self.param_table.item(row, 1)
-            if item is None or p.role == "linked":
-                updated.append(p)
-                continue
+        for row, spec in enumerate(self.service.parameters()):
+            text = [self.param_table.item(row, col).text().strip() for col in range(7)]
+            role = role_keys.get(text[3], text[3])
+            transform = transform_keys.get(text[6], text[6])
             try:
-                val = float(item.text().strip())
+                val, lo, hi = (float(text[col]) if text[col] else None for col in (1, 4, 5))
+                if val is not None and ((lo is not None and val < lo) or (hi is not None and val > hi)):
+                    raise ValueError("초기/초안 값은 하한과 상한 사이여야 합니다.")
+                if transform == "log" and any(x is not None and x <= 0 for x in (val, lo, hi)):
+                    raise ValueError("로그 변환의 값과 경계는 0보다 커야 합니다.")
+                updated.append(replace_spec(
+                    spec, default=val, lower=lo, upper=hi, role=role, transform=transform,
+                    expression=spec.expression if role == "linked" else None,
+                    dependencies=spec.dependencies if role == "linked" else (),
+                ))
             except ValueError as exc:
-                raise MaterialStudyError("INVALID_PARAMETER", "parameter_table", {"reason": f"'{p.name}' 값이 올바른 숫자가 아닙니다."}) from exc
-            lo = p.lower
-            hi = p.upper
-            if lo is not None and val < lo:
-                lo = val
-            if hi is not None and val > hi:
-                hi = val
-            updated.append(
-                ParameterSpec(
-                    id=p.id,
-                    name=p.name,
-                    unit=p.unit,
-                    lower=lo,
-                    upper=hi,
-                    default=val,
-                    transform=p.transform,
-                    role=p.role,
-                    expression=p.expression,
-                    dependencies=p.dependencies,
-                )
-            )
+                reason = str(exc) if str(exc).endswith("합니다.") else "값, 범위, 역할 및 변환을 확인하세요."
+                raise MaterialStudyError("INVALID_PARAMETER", "parameter_table", {"reason": f"{spec.name}. {reason}"}) from exc
+        return updated
+
+    def _collect_draft_comparisons(self) -> list[ComparisonSpec]:
+        policies = {label: key for key, label in _WEIGHTS_KO.items()}
+        updated = []
+        for row, spec in enumerate(self.service.comparisons()):
+            policy = self.comparison_table.item(row, 4).text().strip()
+            policy = policies.get(policy, policy)
+            text = self.comparison_table.item(row, 7).text().strip()
+            try:
+                if policy not in _WEIGHTS_KO:
+                    raise ValueError("unrecognized sample weights policy")
+                updated.append(replace_spec(
+                    spec, sample_weights_policy=policy, acceptance_limit=float(text) if text else None,
+                ))
+            except ValueError as exc:
+                raise MaterialStudyError(
+                    "INVALID_CONFIGURATION", "comparison_table",
+                    {"reason": f"{spec.experiment_id}. 적분 정책과 0 이상의 허용 오차 한계를 확인하세요."},
+                ) from exc
         return updated
 
     def _populate_preview_selector(self) -> None:
@@ -1086,20 +1341,28 @@ class MaterialStudyWindow(QMainWindow):
             self.preview_meta_label.setText("가져온 실험 데이터가 없습니다.")
             return
         exp = exps[exp_id]
+        if exp.split == "holdout" and not self._visible_holdout(exp_id):
+            self.exp_preview_table.setRowCount(0)
+            self.preview_meta_label.setText("보류 시험 최종 확인 후 표시됩니다.")
+            return
         exp_data = self.service._manifest.get("experiment_data", {}).get(exp_id, {})
         if not exp.channels or not exp_data:
             return
         ch0 = exp.channels[0]
-        x_arr, y0_arr, sk_arr, _ = load_experiment_channel_arrays(exp_data[ch0.observable_id], data_root=self.service.data_root)
+        try:
+            x_arr, y0_arr, sk_arr, _ = load_experiment_channel_arrays(exp_data[ch0.observable_id], data_root=self.service.data_root)
+            y_arrays = [y0_arr]
+            for extra_ch in exp.channels[1:]:
+                _, values, _, _ = load_experiment_channel_arrays(exp_data[extra_ch.observable_id], data_root=self.service.data_root)
+                y_arrays.append(values)
+        except (MaterialStudyError, OSError, ValueError) as exc:
+            self.exp_preview_table.setRowCount(0)
+            self.preview_meta_label.setText(_human_error(exc))
+            return
         max_n = min(100, x_arr.size)
-
-        cols = ["원본 행", f"{ch0.independent_column} ({ch0.independent_unit})"]
-        y_arrays = [y0_arr]
-        cols.append(f"{_ko_observable(ch0.observable_id)} ({ch0.observable.unit})")
-        for extra_ch in exp.channels[1:]:
-            _, yk_arr, _, _ = load_experiment_channel_arrays(exp_data[extra_ch.observable_id], data_root=self.service.data_root)
-            y_arrays.append(yk_arr)
-            cols.append(f"{_ko_observable(extra_ch.observable_id)} ({extra_ch.observable.unit})")
+        ind_unit = exp_data[ch0.observable_id]["independent_unit"]
+        cols = ["원본 행", _unit_label(ch0.independent_column, ind_unit)]
+        cols.extend(_unit_label(_ko_observable(ch.observable_id), ch.observable.unit) for ch in exp.channels)
         cols.extend(["분할", "조건(온도)"])
 
         temp = exp.conditions.get("temperature_K")
@@ -1119,172 +1382,176 @@ class MaterialStudyWindow(QMainWindow):
         self.exp_preview_table.resizeColumnsToContents()
         self.preview_meta_label.setText(f"전체 {x_arr.size}행 중 {max_n}행 표시 · 분할: {split_str} · 온도: {temp_str}")
 
+    def _saved_selection(self) -> str | None:
+        manifest = self.service._manifest
+        selected = manifest.get("view_state", {}).get("selected_eval_id")
+        if selected in manifest.get("evaluations", {}):
+            return selected
+        return manifest.get("selected_evaluation_id")
+
+    def _visible_holdout(self, experiment_id: str) -> bool:
+        art = self._active_eval_artifact
+        return art is not None and art.execution_phase == "confirmation" and any(
+            check.get("experiment_id") == experiment_id and check.get("split") == "holdout"
+            for check in art.assessment.assessment.get("channel_checks", ())
+        )
+
     def _populate_history_table(self) -> None:
-        evals = self.service.list_evaluations()
+        evals = tuple(self.service._manifest.get("evaluations", {}).values())
         self.history_table.blockSignals(True)
         self.history_table.setRowCount(len(evals))
-        sel_id = self._selected_eval_id or self.service._manifest.get("selected_evaluation_id")
-        row_to_select: int | None = None
+        if self._selected_eval_id is None and evals:
+            self._selected_eval_id = self._saved_selection() or evals[-1]["evaluation_id"]
 
         for row, ev in enumerate(evals):
             eid = ev["evaluation_id"]
-            if eid == sel_id:
-                row_to_select = row
             loss = ev.get("fit_loss")
-            loss_txt = f"{loss:.3e}" if isinstance(loss, (int, float)) else "미확인"
-
-            fit_s = val_s = hold_s = const_ident_s = "미확인"
-            # Read lightweight assessment summary if present
+            fit = val = hold = constraint = ident = "미확인"
+            problem = None
+            confirmation = ev.get("execution_phase") == "confirmation"
             try:
-                art_path = self.service.data_root / ev["artifact_ref"]["path"]
-                if art_path.is_file():
-                    raw_art = json.loads(art_path.read_text(encoding="utf-8"))
-                    assess = raw_art.get("assessment", {}).get("assessment", {})
-                    fit_s = _ko_status(assess.get("fit_status"))
-                    val_s = _ko_status(assess.get("validation_status"))
-                    # Respect Holdout Seal in history table!
-                    if ev.get("execution_phase") == "confirmation" and ev.get("holdout_exposed", False):
-                        hold_s = _ko_status(assess.get("holdout_status"))
-                    else:
-                        hold_s = "미확인"
-                    const_ident_s = f"{_ko_status(assess.get('constraint_status'))} · {_ko_status(assess.get('identifiability_status'))}"
-            except Exception:
-                pass
+                if confirmation:
+                    art = self.service.evaluation(eid)
+                    assess = art.assessment.assessment
+                    hold = _ko_status(assess.get("holdout_status"))
+                else:
+                    # Exploration metadata contains no holdout result.
+                    ref = ev["artifact_ref"]
+                    with (self.service.data_root / ref["path"]).open(encoding="utf-8") as stream:
+                        assess = json.load(stream)["assessment"]["assessment"]
+                fit = _ko_status(assess.get("fit_status"))
+                val = _ko_status(assess.get("validation_status"))
+                constraint = _ko_status(assess.get("constraint_status"))
+                ident = _ko_status(assess.get("identifiability_status"))
+                if assess.get("identifiability_status") == "pass":
+                    ident = "식별"
+            except (MaterialStudyError, OSError, TypeError, ValueError, KeyError) as exc:
+                problem = _human_error(exc)
+                if confirmation:
+                    hold = "기록 손상"
 
-            vals = [
-                f"#{row + 1}",
-                _ko_status(ev.get("execution_phase")),
-                _ko_status(ev.get("state")),
-                loss_txt,
-                fit_s,
-                val_s,
-                hold_s,
-                const_ident_s,
-            ]
-            for col, text in enumerate(vals):
-                cell = QTableWidgetItem(text)
+            values = (
+                f"#{row + 1}", _ko_status(ev.get("execution_phase")),
+                _ko_status(ev.get("state")), f"{loss:.3e}" if isinstance(loss, (int, float)) else "미확인",
+                fit, val, hold, f"{constraint} · {ident}",
+            )
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(problem or value)
                 if col == 0:
                     cell.setData(Qt.ItemDataRole.UserRole, eid)
                 self.history_table.setItem(row, col, cell)
 
-        if row_to_select is None and evals:
-            row_to_select = len(evals) - 1
-            self._selected_eval_id = evals[-1]["evaluation_id"]
-        if row_to_select is not None:
-            self.history_table.selectRow(row_to_select)
+            if eid == self._selected_eval_id:
+                self.history_table.selectRow(row)
         self.history_table.blockSignals(False)
 
     def _on_history_row_selected(self) -> None:
         rows = self.history_table.selectionModel().selectedRows()
-        if not rows:
-            return
-        item = self.history_table.item(rows[0].row(), 0)
-        if item is None:
-            return
-        eid = item.data(Qt.ItemDataRole.UserRole)
-        if eid:
-            self._selected_eval_id = str(eid)
-            self._load_selected_evaluation()
+        if rows:
+            item = self.history_table.item(rows[0].row(), 0)
+            if item is not None:
+                self._selected_eval_id = item.data(Qt.ItemDataRole.UserRole)
+                self._load_selected_evaluation()
+                self._populate_experiment_preview()
 
     def _load_selected_evaluation(self) -> None:
-        eid = self._selected_eval_id or self.service._manifest.get("selected_evaluation_id")
+        eid = self._selected_eval_id
+        self._active_eval_artifact = None
+        self.channel_summary_table.setRowCount(0)
         if not eid:
-            self._active_eval_artifact = None
             self.loss_summary_label.setText("적합 손실: 미확인")
-            self.channel_summary_table.setRowCount(0)
-            self._populate_parameter_table()
-            self._update_status_badges()
-            self._refresh_plot_selector()
-            self._redraw_plots()
-            return
-
-        # Never trigger holdout exposure automatically on passive UI refresh for unexposed confirmation
-        ev_meta = self.service._manifest.get("evaluations", {}).get(eid, {})
-        if ev_meta.get("execution_phase") == "confirmation" and not ev_meta.get("holdout_exposed", False):
-            self._active_eval_artifact = None
-            self.loss_summary_label.setText("보류 시험 노출 기록 미완료")
-            self.channel_summary_table.setRowCount(0)
-            self._populate_parameter_table()
-            self._update_status_badges()
-            self._refresh_plot_selector()
-            self._redraw_plots()
-            return
-
-        try:
-            art = self.service.evaluation(eid)
-        except Exception:
-            self._active_eval_artifact = None
-            self._populate_parameter_table()
-            self._update_status_badges()
-            self._refresh_plot_selector()
-            self._redraw_plots()
-            return
-
-        self._active_eval_artifact = art
-        self._populate_parameter_table()
-        self._update_status_badges()
-        fit_loss = art.assessment.objective.get("fit_loss")
-        if isinstance(fit_loss, (int, float)):
-            self.loss_summary_label.setText(f"적합 손실: {fit_loss:.3e}")
         else:
-            self.loss_summary_label.setText("적합 손실: 무효")
+            try:
+                art = self.service.evaluation(eid)
+            except (MaterialStudyError, OSError, TypeError, ValueError, KeyError) as exc:
+                self.loss_summary_label.setText(_human_error(exc))
+            else:
+                self._active_eval_artifact = art
+                self._populate_evaluation_summary(art)
 
-        # Populate channel summary table (filtering out sealed holdout during exploration)
-        visible_checks = [
-            chk
-            for chk in art.assessment.assessment.get("channel_checks", ())
-            if not (art.execution_phase == "exploration" and chk.get("split") == "holdout")
-        ]
-        self.channel_summary_table.setRowCount(len(visible_checks))
-        for row, chk in enumerate(visible_checks):
-            loss = chk.get("loss")
-            max_err = chk.get("max_abs_error")
-            self.channel_summary_table.setItem(row, 0, QTableWidgetItem(str(chk.get("experiment_id", ""))))
-            self.channel_summary_table.setItem(row, 1, QTableWidgetItem(_ko_observable(str(chk.get("observable_id", "")))))
-            self.channel_summary_table.setItem(row, 2, QTableWidgetItem(_ko_split(str(chk.get("split", "")))))
-            self.channel_summary_table.setItem(row, 3, QTableWidgetItem(f"{loss:.3e}" if isinstance(loss, (int, float)) else "미확인"))
-            self.channel_summary_table.setItem(row, 4, QTableWidgetItem(f"{max_err:.4g}" if isinstance(max_err, (int, float)) else "미확인"))
-            self.channel_summary_table.setItem(row, 5, QTableWidgetItem(_ko_status(str(chk.get("status", "not_assessed")))))
-
-        self._populate_parameter_table()
+        self._populate_parameter_result()
         self._update_status_badges()
         self._refresh_plot_selector()
         self._redraw_plots()
+
+    def _populate_evaluation_summary(self, art: CalibrationEvaluationArtifact) -> None:
+        assessment = art.assessment.assessment
+        checks = [
+            check for check in assessment.get("channel_checks", ())
+            if art.execution_phase == "confirmation" or check.get("split") != "holdout"
+        ]
+        objective = art.assessment.objective
+        fit_loss = objective.get("fit_loss")
+        label = f"적합 손실: {fit_loss:.3e}" if isinstance(fit_loss, (int, float)) else "적합 손실: 무효"
+        if art.state != "completed" or not objective.get("eligible"):
+            reason_codes = objective.get("reason_codes", ())
+            primary_reason = reason_codes[0] if reason_codes else (
+                "CANCELLED" if art.state == "cancelled" else "INTEGRATION_FAILED"
+            )
+            label = _human_error(MaterialStudyError(primary_reason, "evaluation"))
+            entries = self.service._manifest.get("experiment_data", {})
+            expected = valid = 0
+            prediction_coverage = {
+                (experiment.experiment_id, channel.observable_id): channel.coverage
+                for experiment in art.prediction_bundle.experiments
+                for channel in experiment.channels
+            } if art.prediction_bundle else {}
+            for check in checks:
+                exp_id, obs_id = check.get("experiment_id"), check.get("observable_id")
+                sample_count = int(entries.get(exp_id, {}).get(obs_id, {}).get("row_count", 0))
+                coverage = check.get("coverage") or prediction_coverage.get((exp_id, obs_id), {})
+                expected += int(coverage.get("expected", sample_count))
+                valid += int(coverage.get("valid", sample_count if check.get("loss") is not None else 0))
+            label += f" · 표본 {expected}개 중 유효 {valid}개 · 누락 {expected - valid}개"
+        self.loss_summary_label.setText(label)
+
+        labels = {exp.experiment_id: _experiment_label(exp) for exp in self.service.experiments()}
+        self.channel_summary_table.setRowCount(len(checks))
+        for row, check in enumerate(checks):
+            loss = check.get("loss")
+            max_err = check.get("max_abs_error")
+            exp_id = str(check.get("experiment_id", ""))
+            values = (
+                labels.get(exp_id, exp_id), _ko_observable(str(check.get("observable_id", ""))),
+                _ko_split(check.get("split")), f"{loss:.3e}" if isinstance(loss, (int, float)) else "미확인",
+                f"{max_err:.4g}" if isinstance(max_err, (int, float)) else "미확인", _ko_status(check.get("status")),
+            )
+            reasons = "\n".join(
+                _human_error(MaterialStudyError(code, "residuals")) for code in check.get("reason_codes", ())
+            )
+            for col, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setToolTip(reasons if col == 5 and reasons else value)
+                self.channel_summary_table.setItem(row, col, cell)
 
     def _refresh_plot_selector(self) -> None:
         current = self.plot_selector.currentData()
         self.plot_selector.blockSignals(True)
         self.plot_selector.clear()
-        self.plot_selector.addItem("전체 DMA (저장·손실 곡선 / 잔차)", ("family", "dma"))
-        self.plot_selector.addItem("전체 응력 완화 곡선 / 잔차", ("family", "relax"))
-
-        art = self._active_eval_artifact
-        exps = {e.experiment_id: e for e in self.service.experiments()}
-        for eid, exp in exps.items():
-            # Never show holdout selector entries during exploration unless exposed in confirmation
-            if exp.split == "holdout" and (art is None or art.execution_phase != "confirmation"):
-                continue
+        experiments = [exp for exp in self.service.experiments() if exp.split != "holdout" or self._visible_holdout(exp.experiment_id)]
+        if any(ch.observable_id in _DMA_OBSERVABLES for exp in experiments for ch in exp.channels):
+            self.plot_selector.addItem("전체 DMA (저장·손실 곡선 / 잔차)", ("family", "dma"))
+        if any(ch.observable_id == "E_relax" for exp in experiments for ch in exp.channels):
+            self.plot_selector.addItem("전체 응력 완화 곡선 / 잔차", ("family", "relax"))
+        for exp in experiments:
             temp = exp.conditions.get("temperature_K")
-            t_txt = f" {temp:.1f} K" if isinstance(temp, (int, float)) else ""
-            self.plot_selector.addItem(f"{eid} ({_ko_split(exp.split)}{t_txt})", ("exp", eid))
-
-        if current is not None:
-            idx = self.plot_selector.findData(current)
-            if idx >= 0:
+            t_txt = f" · {temp:.2f} K" if isinstance(temp, (int, float)) else ""
+            self.plot_selector.addItem(
+                f"{_experiment_label(exp)} · {_ko_split(exp.split)}{t_txt}", ("exp", exp.experiment_id)
+            )
+        for idx in range(self.plot_selector.count()):
+            if self.plot_selector.itemData(idx) == current:
                 self.plot_selector.setCurrentIndex(idx)
-        elif art is not None and not any(c.get("observable_id") in ("E_storage", "E_loss") for c in art.channel_results):
-            self.plot_selector.setCurrentIndex(1)
+                break
         self.plot_selector.blockSignals(False)
 
     def _redraw_plots(self) -> None:
-        if getattr(self, "_closed", False):
+        if self._closed:
             return
         p = get_palette(self._theme_mode)
-        bg = str(p["canvas_bg"])
-        panel_bg = str(p["panel_bg"])
-        fg = str(p["text_primary"])
+        bg, panel_bg, fg = (str(p[key]) for key in ("canvas_bg", "panel_bg", "text_primary"))
         grid_color = str(p["canvas_grid_major"])
-
         self.fig.patch.set_facecolor(panel_bg)
         for ax in (self.ax_curve, self.ax_resid):
             ax.clear()
@@ -1298,122 +1565,121 @@ class MaterialStudyWindow(QMainWindow):
             ax.grid(True, alpha=0.35, color=grid_color)
 
         art = self._active_eval_artifact
-        exps = {e.experiment_id: e for e in self.service.experiments()}
-        exp_data = self.service._manifest.get("experiment_data", {})
+        experiment_data = self.service._manifest.get("experiment_data", {})
         data_root = self.service.data_root
-        sel = self.plot_selector.currentData() or ("family", "dma")
-        sel_kind, sel_val = sel
-
-        split_colors = {
-            "train": "#38bdf8" if self._theme_mode == "dark" else "#0284c7",
-            "validation": "#fbbf24" if self._theme_mode == "dark" else "#d97706",
-            "holdout": "#f472b6" if self._theme_mode == "dark" else "#db2777",
+        selected = self.plot_selector.currentData()
+        records = {
+            (entry["experiment_id"], entry["observable_id"]): entry
+            for entry in art.channel_results
+        } if art else {}
+        dark = self._theme_mode == "dark"
+        palettes = {
+            "train": ("#38bdf8", "#2dd4bf", "#a78bfa", "#93c5fd") if dark else ("#0369a1", "#0f766e", "#6d28d9", "#1d4ed8"),
+            "validation": ("#fbbf24", "#fdba74", "#fde047") if dark else ("#a16207", "#c2410c", "#854d0e"),
+            "holdout": ("#f472b6", "#fda4af", "#e879f9") if dark else ("#be185d", "#be123c", "#a21caf"),
         }
+        split_counts = dict.fromkeys(palettes, 0)
+        axis_x: QuantityUnitSpec | None = None
+        axis_y_unit: str | None = None
+        axis_observables: set[str] = set()
+        use_log_x = True
+        plotted_residual = False
 
-        if art is not None and art.channel_results:
-            # Plot evaluated predicted vs observed curves & residuals
-            from caelab.artifact_refs import ArtifactRefV1, read_safe_npy_v2
-
-            channels = list(art.channel_results)
-            if sel_kind == "exp":
-                plot_channels = [c for c in channels if c.get("experiment_id") == sel_val]
-            elif sel_val == "dma":
-                plot_channels = [c for c in channels if c.get("observable_id") in ("E_storage", "E_loss", "E_star")]
-                if not plot_channels:
-                    plot_channels = channels
-            else:
-                plot_channels = [c for c in channels if c.get("observable_id") == "E_relax"]
-                if not plot_channels:
-                    plot_channels = channels
-
-            use_log_x = True
-            for c_entry in plot_channels:
-                eid = str(c_entry["experiment_id"])
-                obs_id = str(c_entry["observable_id"])
-                sp = str(c_entry["split"])
-                if art.execution_phase == "exploration" and sp == "holdout":
+        for exp in self.service.experiments():
+            eid, split = exp.experiment_id, exp.split
+            if selected is None or (selected[0] == "exp" and selected[1] != eid):
+                continue
+            if split == "holdout" and not self._visible_holdout(eid):
+                continue
+            palette = palettes[split]
+            idx = split_counts[split]
+            split_counts[split] += 1
+            color = palette[idx % len(palette)]
+            temp = exp.conditions.get("temperature_K")
+            temp_label = f"{temp:.2f} K" if isinstance(temp, (int, float)) else _experiment_label(exp)
+            for ch_idx, ch in enumerate(exp.channels):
+                obs_id = ch.observable_id
+                if selected == ("family", "dma") and obs_id not in _DMA_OBSERVABLES:
                     continue
-                coords = read_safe_npy_v2(ArtifactRefV1.from_dict(c_entry["observed_coords_ref"]).path, root=data_root)
-                obs_y = read_safe_npy_v2(ArtifactRefV1.from_dict(c_entry["observed_values_ref"]).path, root=data_root)[:, 0]
-                pred_y = read_safe_npy_v2(ArtifactRefV1.from_dict(c_entry["predicted_on_obs_ref"]).path, root=data_root)[:, 0]
-                resid = read_safe_npy_v2(ArtifactRefV1.from_dict(c_entry["residuals_ref"]).path, root=data_root)[:, 0]
-                if np.any(coords <= 0.0):
-                    use_log_x = False
-
-                color = split_colors.get(sp, "#60a5fa")
-                temp = exps[eid].conditions.get("temperature_K") if eid in exps else None
-                t_tag = f" {temp:.1f}K" if isinstance(temp, (int, float)) else ""
-                short_obs = "E'" if obs_id == "E_storage" else ("E''" if obs_id == "E_loss" else "E(t)")
-                lbl = f"{_ko_split(sp)}{t_tag} {short_obs}"
-                marker = "o" if obs_id != "E_loss" else "^"
-                ls = "-" if obs_id != "E_loss" else "--"
-
-                self.ax_curve.plot(coords, obs_y, marker, markersize=3.5, alpha=0.75, color=color)
-                self.ax_curve.plot(coords, pred_y, ls, linewidth=1.6, color=color, label=lbl)
-                self.ax_resid.plot(coords, resid, marker + ls, markersize=3.0, linewidth=1.1, alpha=0.85, color=color, label=lbl)
-
-            if use_log_x:
-                self.ax_curve.set_xscale("log")
-                self.ax_resid.set_xscale("log")
-                fmt = FuncFormatter(_format_log_tick)
-                self.ax_curve.xaxis.set_major_formatter(fmt)
-                self.ax_resid.xaxis.set_major_formatter(fmt)
-            self.ax_resid.axhline(0.0, color=fg, linewidth=0.9, linestyle=":")
-            x_label = "주파수 (Hz)" if any(c.get("observable_id") in ("E_storage", "E_loss") for c in plot_channels) else "시간 (s)"
-            self.ax_curve.set_xlabel(x_label)
-            self.ax_curve.set_ylabel("탄성계수 (MPa)")
-            self.ax_curve.set_title("실험 관측값(점) vs 모델 예측 곡선(선)")
-            self.ax_resid.set_xlabel(x_label)
-            self.ax_resid.set_ylabel("정규화 잔차 (예측 − 관측) / 척도")
-            self.ax_resid.set_title("시리즈 · 분할별 정규화 잔차")
-            if len(plot_channels) <= 10:
-                leg1 = self.ax_curve.legend(fontsize=8, loc="best")
-                if leg1:
-                    leg1.get_frame().set_facecolor(panel_bg)
-                    for txt in leg1.get_texts():
-                        txt.set_color(fg)
-            if len(plot_channels) <= 8:
-                leg2 = self.ax_resid.legend(fontsize=8, loc="best")
-                if leg2:
-                    leg2.get_frame().set_facecolor(panel_bg)
-                    for txt in leg2.get_texts():
-                        txt.set_color(fg)
-        elif exps:
-            # Show imported non-holdout observed curves before first evaluation
-            plotted = False
-            for eid, exp in exps.items():
-                if exp.split == "holdout":
+                if selected == ("family", "relax") and obs_id != "E_relax":
                     continue
-                for ch in exp.channels:
-                    ch_arr = exp_data.get(eid, {}).get(ch.observable_id)
-                    if not ch_arr:
-                        continue
-                    x_obs, y_obs, _, _ = load_experiment_channel_arrays(ch_arr, data_root=data_root)
-                    color = split_colors.get(exp.split, "#38bdf8")
-                    self.ax_curve.plot(x_obs, y_obs[:, 0], "o", markersize=3.5, color=color, label=f"{eid} ({_ko_split(exp.split)})")
-                    if np.all(x_obs > 0.0):
-                        self.ax_curve.set_xscale("log")
-                        self.ax_curve.xaxis.set_major_formatter(FuncFormatter(_format_log_tick))
-                    plotted = True
-            if plotted:
-                self.ax_curve.set_title("가져온 실험 데이터 (단일 평가 또는 보정 실행 대기)")
-                self.ax_curve.set_ylabel("탄성계수 (MPa)")
-                leg = self.ax_curve.legend(fontsize=8, loc="best")
-                if leg:
-                    leg.get_frame().set_facecolor(panel_bg)
-                    for txt in leg.get_texts():
-                        txt.set_color(fg)
-            else:
-                self.ax_curve.text(0.5, 0.5, "실험 CSV를 불러온 뒤 평가 또는 보정을 실행하세요.", ha="center", va="center", color=fg, transform=self.ax_curve.transAxes)
-            self.ax_resid.text(0.5, 0.5, "평가 실행 후 정규화 잔차가 표시됩니다.", ha="center", va="center", color=fg, transform=self.ax_resid.transAxes)
+                observed_entry = experiment_data.get(eid, {}).get(obs_id)
+                saved = records.get((eid, obs_id))
+                if not observed_entry or (art is not None and saved is None):
+                    continue
+                try:
+                    if saved is None:
+                        x, obs_y, _, _ = load_experiment_channel_arrays(observed_entry, data_root=data_root)
+                    else:
+                        x, obs_y, pred_y, residual = (
+                            read_safe_npy_v2(ArtifactRefV1.from_dict(saved[key]).path, root=data_root)
+                            for key in ("observed_coords_ref", "observed_values_ref", "predicted_on_obs_ref", "residuals_ref")
+                        )
+                    current_x = QuantityUnitSpec(observed_entry["independent_unit"], observed_entry["independent_quantity_kind"])
+                    target_x = axis_x or current_x
+                    if current_x.quantity_kind == target_x.quantity_kind:
+                        x = np.asarray(convert_values(x, current_x, target_x))
+                    else:
+                        x = np.asarray(convert_frequency_angular(x, current_x, target_x))
+                    current_y = QuantityUnitSpec(ch.observable.unit, ch.observable.quantity_kind)
+                    target_y = QuantityUnitSpec(axis_y_unit if axis_y_unit is not None else current_y.unit, current_y.quantity_kind)
+                    obs_y = np.asarray(convert_values(obs_y, current_y, target_y))
+                    if saved is not None:
+                        pred_y = np.asarray(convert_values(pred_y, current_y, target_y))
+                except (MaterialStudyError, OSError, ValueError, KeyError) as exc:
+                    self.status_bar.showMessage(f"그래프 자료를 표시할 수 없습니다. {_human_error(exc)}")
+                    continue
+
+                axis_x, axis_y_unit = target_x, target_y.unit
+                axis_observables.add(obs_id)
+                use_log_x &= bool(np.all(x > 0.0))
+                short_obs = {"E_storage": "E'", "E_loss": "E''", "E_star": "E*", "E_relax": "E(t)"}.get(obs_id, _ko_observable(obs_id))
+                caption = f"{_ko_split(split)} {temp_label} {short_obs}"
+                marker = ("o", "s", "^", "D")[(idx + ch_idx) % 4]
+                linestyle = ("-", "--", "-.")[(idx + ch_idx) % 3]
+                self.ax_curve.plot(x, obs_y[:, 0], marker, markersize=3.0, alpha=0.8, color=color,
+                                   label=caption if saved is None else "_nolegend_")
+                if saved is not None:
+                    self.ax_curve.plot(x, pred_y[:, 0], linestyle, linewidth=1.55, color=color, label=caption)
+                    self.ax_resid.plot(x, residual[:, 0], marker + linestyle, markersize=2.8, linewidth=1.15,
+                                       color=color, label=caption)
+                    plotted_residual = True
+
+        if axis_x is not None:
+            x_name = {"frequency": "주파수", "angular_frequency": "각주파수", "time": "시간", "strain": "변형률"}.get(
+                axis_x.quantity_kind, "좌표"
+            )
+            curve_name = (
+                "탄성계수" if axis_observables <= {*_DMA_OBSERVABLES, "E_relax"}
+                else _ko_observable(next(iter(axis_observables))) if len(axis_observables) == 1 else "관측량"
+            )
+            self.ax_curve.set_title("재료 응답 · 점: 관측 / 선: 예측" if plotted_residual else "실험 관측값", fontsize=11)
+            self.ax_curve.set_ylabel(_unit_label(curve_name, axis_y_unit or ""))
+            for ax in (self.ax_curve, self.ax_resid):
+                ax.set_xlabel(_unit_label(x_name, axis_x.unit))
+                if use_log_x:
+                    ax.set_xscale("log")
+                    ax.xaxis.set_major_formatter(FuncFormatter(_format_log_tick))
+            if plotted_residual:
+                self.ax_resid.axhline(0.0, color=fg, linewidth=0.9, linestyle=":")
+                self.ax_resid.set_ylabel("정규화 잔차 (예측 − 관측) / 척도")
+                self.ax_resid.set_title("분할별 정규화 잔차", fontsize=11)
+            for ax in (self.ax_curve, self.ax_resid) if plotted_residual else (self.ax_curve,):
+                legend = ax.legend(
+                    fontsize=8, ncols=2, loc="upper center", bbox_to_anchor=(0.5, -0.19),
+                    facecolor=panel_bg, edgecolor=grid_color, labelcolor=fg, framealpha=1,
+                    borderpad=0.35, handlelength=2, columnspacing=1.1, labelspacing=0.3,
+                )
+                legend.set_draggable(False)
         else:
-            self.ax_curve.text(0.5, 0.5, "실험 CSV를 불러와 재료 보정을 시작하세요.", ha="center", va="center", color=fg, transform=self.ax_curve.transAxes)
-            self.ax_resid.text(0.5, 0.5, "평가 이력이 없습니다.", ha="center", va="center", color=fg, transform=self.ax_resid.transAxes)
+            self.ax_curve.text(0.5, 0.5, "표시할 실험 곡선이 없습니다.", ha="center", va="center", color=fg, transform=self.ax_curve.transAxes)
+        if not plotted_residual:
+            self.ax_resid.text(0.5, 0.5, "표시할 잔차가 없습니다.", ha="center", va="center", color=fg, transform=self.ax_resid.transAxes)
 
-        self.fig.tight_layout()
+        self.fig.tight_layout(pad=0.9, w_pad=1)
         self.canvas.draw_idle()
 
-    def _start_worker(self, op_name: str, fn: Any, *, campaign_mode: bool = False) -> None:
+    def _start_worker(self, op_name: str, fn: Any) -> None:
         if self._busy_op is not None or self._closed:
             self.status_bar.showMessage("이전 작업이 완료될 때까지 기다려 주세요.")
             return
@@ -1448,9 +1714,13 @@ class MaterialStudyWindow(QMainWindow):
                 break
             if gen != self._generation or tok is not self._op_token:
                 continue
-            cid = ev.get("campaign_id")
-            if cid:
-                self._active_campaign_id = str(cid)
+            operation_id = ev.get("campaign_id") or ev.get("operation_id")
+            if operation_id and ev.get("stage") == "started" and self._busy_op in (
+                "단일 평가", "보정 실행", "보류 시험 최종 확인"
+            ):
+                self._active_campaign_id = str(operation_id)
+                if self._close_after:
+                    self.service.cancel(self._active_campaign_id)
                 self._sync_actions()
             if ev.get("stage") == "candidate_evaluated":
                 comp = ev.get("completed", 0)
@@ -1468,6 +1738,11 @@ class MaterialStudyWindow(QMainWindow):
             self._busy_op = None
             self._active_campaign_id = None
             self._op_token = None
+            if self._close_after:
+                self._close_after = False
+                if not (op_name == "다른 이름으로 저장" and ok and val[2] is not None):
+                    self.close()
+                    return
             if not ok:
                 msg = _human_error(val) if isinstance(val, Exception) else str(val)
                 self.status_bar.showMessage(f"{op_name} 실패: {msg}")
@@ -1479,11 +1754,24 @@ class MaterialStudyWindow(QMainWindow):
                     self.status_bar.showMessage(f"{op_name} 완료")
                 elif op_name == "보정 실행":
                     self._last_campaign_receipt = val
-                    if val.selected_ids:
+                    if val.state == "stopped":
+                        self._selected_eval_id = self.service._manifest.get("selected_evaluation_id") or self._selected_eval_id
+                    elif val.state == "completed" and val.selected_ids:
                         self._selected_eval_id = val.selected_ids[0]
                     self.status_bar.showMessage(
                         f"보정 종료 ({_ko_status(val.state)}): 총 {len(val.evaluation_ids)}회 평가"
                     )
+                elif op_name == "다른 이름으로 저장":
+                    receipt, draft_saved, save_error = val
+                    if draft_saved:
+                        self._draft_dirty = False
+                    if save_error is None:
+                        self.status_bar.showMessage(f"연구 복사본을 저장했습니다: {Path(receipt.destination_path).name}")
+                    else:
+                        pending = "초안과 선택 평가" if self._draft_dirty else "선택 평가"
+                        message = f"연구 복사본은 저장했습니다. {pending}를 복사본에 저장하지 못했습니다. {_human_error(save_error)}"
+                        self.status_bar.showMessage(message)
+                        QMessageBox.warning(self, "연구 복사본 설정 저장 실패", message)
                 elif op_name == "보고서 내보내기":
                     self.status_bar.showMessage(f"보고서를 저장했습니다: {val.manifest_ref.path}")
                     if not self._close_after:
@@ -1496,9 +1784,6 @@ class MaterialStudyWindow(QMainWindow):
                 else:
                     self.status_bar.showMessage(f"{op_name} 완료")
             self._refresh_all()
-            if self._close_after:
-                self._close_after = False
-                self.close()
 
     def wait_for_idle(self, timeout: float = 10.0) -> bool:
         import time
@@ -1515,26 +1800,49 @@ class MaterialStudyWindow(QMainWindow):
         self._poll()
         return self._busy_op is None
 
-    def _apply_draft_to_service_sync(self) -> None:
-        if self.service.read_only:
+    def _apply_draft_to_service_sync(self, *, numerical_settings: Mapping[str, Any] | None = None) -> None:
+        if self.service.read_only or (not self._draft_dirty and numerical_settings is None):
             return
-        updated_params = self._collect_draft_parameter_specs()
-        snap = self.service.snapshot()
         self.service.configure(
-            parameters=updated_params,
-            comparisons=self.service.comparisons(),
+            parameters=self._collect_draft_parameter_specs(),
+            comparisons=self._collect_draft_comparisons(),
             assessment_policy=self.service.assessment_policy(),
             user_constraints=self.service.user_constraints(),
-            expected_revision=snap.document_revision,
+            numerical_settings=numerical_settings,
+            expected_revision=self.service.snapshot().document_revision,
         )
+        self._draft_dirty = False
+        self.param_info_label.clear()
 
     def on_apply_parameter_draft(self) -> None:
         try:
-            self._apply_draft_to_service_sync()
-            self.status_bar.showMessage("매개변수 초안을 연구에 반영했습니다.", 3000)
-            self._refresh_all()
+            if self._draft_dirty:
+                self._apply_draft_to_service_sync()
+                self.status_bar.showMessage("연구 설정을 반영했습니다.", 3000)
+                self._refresh_all()
         except Exception as exc:
-            QMessageBox.warning(self, "매개변수 확정 실패", _human_error(exc))
+            QMessageBox.warning(self, "연구 설정을 반영할 수 없습니다", _human_error(exc))
+
+    def on_set_wlf_provenance(self) -> None:
+        try:
+            params = self._collect_draft_parameter_specs()
+            fixed = {p.id: p.default for p in params if p.id in ("C1", "C2", "Tref") and p.role == "fixed"}
+            settings = dict(self.service._manifest.get("numerical_settings", {}))
+            old = settings.get("wlf_provenance")
+            label = ", ".join(f"{name} = {value:g}" for name, value in fixed.items() if value is not None)
+            if not fixed or any(value is None for value in fixed.values()):
+                raise MaterialStudyError("INVALID_PARAMETER", "wlf_provenance", {"reason": "먼저 고정 WLF 계수의 값을 입력하세요."})
+            source, accepted = QInputDialog.getText(
+                self, "고정 WLF 계수 출처", f"다음 고정값의 시험 보고서, 문헌 또는 별도 측정 출처를 입력하세요.\n{label}",
+                text=str(old.get("source", "")) if isinstance(old, Mapping) else "",
+            )
+            if accepted and source.strip():
+                settings["wlf_provenance"] = {"source": source.strip(), **fixed}
+                self._apply_draft_to_service_sync(numerical_settings=settings)
+                self.status_bar.showMessage("고정 WLF 계수의 값과 출처를 저장했습니다.", 4000)
+                self._refresh_all()
+        except Exception as exc:
+            QMessageBox.warning(self, "WLF 출처 저장 실패", _human_error(exc))
 
     def on_new_study(self) -> None:
         if self._busy_op is not None:
@@ -1552,6 +1860,7 @@ class MaterialStudyWindow(QMainWindow):
             self.service.close()
             self.service = new_svc
             self._generation += 1
+            self._draft_dirty = False
             self._selected_eval_id = None
             self._active_eval_artifact = None
             self._refresh_all()
@@ -1562,7 +1871,7 @@ class MaterialStudyWindow(QMainWindow):
     def on_open_study(self) -> None:
         if self._busy_op is not None:
             return
-        src, _ = QFileDialog.getOpenFileName(self, "재료 연구 열기", "", "재료 연구 (*.caemat.json)")
+        src, _ = QFileDialog.getOpenFileName(self, "재료 연구 열기", "", "재료 연구 (*.caemat.json calibration.json)")
         if not src:
             return
         try:
@@ -1570,7 +1879,8 @@ class MaterialStudyWindow(QMainWindow):
             self.service.close()
             self.service = new_svc
             self._generation += 1
-            self._selected_eval_id = self.service._manifest.get("selected_evaluation_id")
+            self._draft_dirty = False
+            self._selected_eval_id = self._saved_selection()
             self._refresh_all()
             self.status_bar.showMessage(f"연구를 열었습니다: {Path(src).name}")
         except Exception as exc:
@@ -1580,7 +1890,8 @@ class MaterialStudyWindow(QMainWindow):
         if self._busy_op is not None or self.service.read_only:
             return
         try:
-            self._apply_draft_to_service_sync()
+            if self._draft_dirty:
+                self._apply_draft_to_service_sync()
             self.service.save(view_state={"selected_eval_id": self._selected_eval_id})
             self._refresh_all()
             self.status_bar.showMessage("연구를 저장했습니다.", 3000)
@@ -1596,11 +1907,37 @@ class MaterialStudyWindow(QMainWindow):
         if not dest.endswith(".caemat.json"):
             dest = dest.removesuffix(".json") + ".caemat.json"
         svc = self.service
+        draft = None
+        if self._draft_dirty:
+            try:
+                parameters = self._collect_draft_parameter_specs()
+                resolve_parameter_values(parameters)
+                build_variable_space(parameters)
+                draft = {
+                    "parameters": parameters,
+                    "comparisons": self._collect_draft_comparisons(),
+                    "assessment_policy": svc.assessment_policy(),
+                    "user_constraints": svc.user_constraints(),
+                }
+            except Exception as exc:
+                QMessageBox.warning(self, "연구 초안 확인 실패", _human_error(exc))
+                return
         expected_rev = svc.snapshot().document_revision
-        self._start_worker(
-            "다른 이름으로 저장",
-            lambda on_prog: svc.save_as(dest, expected_revision=expected_rev, on_progress=on_prog),
-        )
+        view_state = {"selected_eval_id": self._selected_eval_id}
+
+        def copy_study(on_progress: Any) -> tuple[Any, bool, Exception | None]:
+            receipt = svc.save_as(dest, expected_revision=expected_rev, on_progress=on_progress)
+            draft_saved = False
+            try:
+                if draft is not None:
+                    svc.configure(**draft, expected_revision=receipt.document_revision)
+                    draft_saved = True
+                svc.save(view_state=view_state)
+            except Exception as exc:
+                return receipt, draft_saved, exc
+            return receipt, draft_saved, None
+
+        self._start_worker("다른 이름으로 저장", copy_study)
 
     def on_import_csv(self) -> None:
         if self._busy_op is not None or self.service.read_only:
@@ -1617,7 +1954,8 @@ class MaterialStudyWindow(QMainWindow):
             return
         try:
             kw = dlg.build_import_kwargs()
-            scale = kw.pop("scale")
+            if self._draft_dirty:
+                self._apply_draft_to_service_sync()
             snap = self.service.snapshot()
             rec = self.service.import_experiment(
                 kw["source"],
@@ -1642,12 +1980,12 @@ class MaterialStudyWindow(QMainWindow):
                         experiment_id=rec.experiment_id,
                         observable_id=ch.observable_id,
                         split=kw["split"],
-                        scale=scale,
+                        scale=kw["scale"],
                         weight=ch_w,
                         required_for_fit=(kw["split"] == "train"),
                         required_for_validation=(kw["split"] in ("validation", "holdout")),
-                        acceptance_limit=0.05,
-                        sample_weights_policy="log10_trapezoidal",
+                        acceptance_limit=kw["acceptance_limit"],
+                        sample_weights_policy=kw["sample_weights_policy"],
                     )
                 )
             self.service.configure(
@@ -1704,17 +2042,18 @@ class MaterialStudyWindow(QMainWindow):
         self._start_worker(
             "보정 실행",
             lambda on_prog: svc.optimize(cfg, expected_revision=expected_rev, on_progress=on_prog),
-            campaign_mode=True,
         )
 
     def on_stop(self) -> None:
-        cid = self._active_campaign_id or self.service.snapshot().active_campaign_id
+        snap = self.service.snapshot()
+        cid = self._active_campaign_id or snap.active_campaign_id or snap.active_operation_id
         if cid:
             self.service.stop(cid)
             self.status_bar.showMessage("최선값 유지 중지(Stop)를 요청했습니다…")
 
     def on_cancel(self) -> None:
-        cid = self._active_campaign_id or self.service.snapshot().active_campaign_id
+        snap = self.service.snapshot()
+        cid = self._active_campaign_id or snap.active_campaign_id or snap.active_operation_id
         if cid:
             self.service.cancel(cid)
             self.status_bar.showMessage("작업 취소를 요청했습니다…")
@@ -1723,22 +2062,29 @@ class MaterialStudyWindow(QMainWindow):
         if self._busy_op is not None or self.service.read_only:
             return
         try:
-            self._apply_draft_to_service_sync()
+            if self._draft_dirty:
+                self._apply_draft_to_service_sync()
         except Exception as exc:
             QMessageBox.warning(self, "매개변수 확인 실패", _human_error(exc))
             return
         svc = self.service
+        snap = svc.snapshot()
         art = self._active_eval_artifact
+        if art is not None and (art.content_revision != snap.content_revision or art.state != "completed"):
+            QMessageBox.warning(self, "보류 시험 최종 확인", "현재 연구 설정에서 완료한 평가를 선택하세요.")
+            self._refresh_all()
+            return
         vals = dict(art.physical_parameters) if art is not None else None
-        expected_rev = svc.snapshot().document_revision
+        selection_ref = art.selection_ref if art is not None else None
         self._start_worker(
             "보류 시험 최종 확인",
             lambda on_prog: svc.evaluate(
                 vals,
-                expected_revision=expected_rev,
+                expected_revision=snap.document_revision,
                 on_progress=on_prog,
                 cache_policy="refresh",
                 execution_phase="confirmation",
+                selection_ref=selection_ref,
             ),
         )
 
@@ -1791,13 +2137,16 @@ class MaterialStudyWindow(QMainWindow):
     def closeEvent(self, event: Any) -> None:
         if self._busy_op is not None:
             self._close_after = True
-            cid = self._active_campaign_id or self.service.snapshot().active_campaign_id
+            snap = self.service.snapshot()
+            cid = self._active_campaign_id or snap.active_campaign_id or snap.active_operation_id
             if cid:
                 self.service.cancel(cid)
             event.ignore()
             return
         self._closed = True
         self._poll_timer.stop()
+        # Matplotlib queues its idle callback without a Qt receiver.
+        self.canvas._draw_pending = False
         try:
             self.service.close()
         finally:
@@ -1810,20 +2159,68 @@ class MaterialStudyWindow(QMainWindow):
         event.accept()
 
 
+def _project_study_reference(project_file: str, node_id: str) -> tuple[Path, str | None]:
+    from caelab.project import PROJECT_FILENAME, load_native_project
+
+    project_path = Path(project_file).expanduser().resolve()
+    if project_path.is_dir():
+        project_path /= PROJECT_FILENAME
+    raw = json.loads(project_path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict) and raw.get("schema_version") == 4:
+        node = raw.get("nodes", {}).get(node_id)
+        if isinstance(node, dict) and node.get("id") == node_id and node.get("kind") == "research" and (
+            node.get("program_id") or node.get("programid")
+        ) == "caelab_material_study":
+            ref = node.get("files", {}).get("material_study")
+            if isinstance(ref, dict) and isinstance(ref.get("path"), str):
+                study_id = ref.get("study_id")
+                if "study_id" in ref and (not isinstance(study_id, str) or not study_id.strip()):
+                    raise MaterialStudyError(
+                        "CORRUPT_MANIFEST", "project",
+                        {"reason": "프로젝트 노드의 연구 식별자가 올바르지 않습니다."},
+                    )
+                relative_path = validate_relative_artifact_path(ref["path"], root=project_path.parent)
+                return project_path.parent / relative_path, study_id
+    else:
+        project = load_native_project(project_path)
+        node = project.nodes.get(node_id)
+        if node is not None and node.kind == "research" and node.program_id == "caelab_material_study":
+            ref = node.files.get("document")
+            if ref is not None:
+                return Path(ref.path), None
+    raise MaterialStudyError(
+        "STUDY_NOT_FOUND", "project",
+        {"reason": "선택한 프로젝트 노드에 연결된 재료 연구 파일이 없습니다."},
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="CAELAB 재료 물성 보정 연구 창")
-    parser.add_argument("--study", help="열려는 재료 연구 매니페스트(.caemat.json)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--study", help="열려는 재료 연구 매니페스트(.caemat.json)")
+    mode.add_argument("--project", help="프로젝트 파일 경로")
     parser.add_argument("--read-only", action="store_true", help="읽기 전용으로 열기")
-    parser.add_argument("--project", help="프로젝트 파일 경로")
     parser.add_argument("--node", help="프로젝트 노드 ID")
     args = parser.parse_args(argv)
+    if bool(args.project) != bool(args.node):
+        parser.error("--project와 --node를 함께 지정하세요.")
 
-    app = QApplication(sys.argv[:1])
+    app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setStyle("Fusion")
     load_korean_font(app, 10)
+    project_service = None
     try:
-        win = MaterialStudyWindow(study_path=args.study, read_only=args.read_only)
+        if args.project:
+            study_path, expected_study_id = _project_study_reference(args.project, args.node)
+            project_service = CalibrationStudyService.open(study_path, read_only=args.read_only)
+            if expected_study_id is not None and project_service.study_id != expected_study_id:
+                raise MaterialStudyError("STUDY_ID_MISMATCH", "project")
+            win = MaterialStudyWindow(service=project_service)
+        else:
+            win = MaterialStudyWindow(study_path=args.study, read_only=args.read_only)
     except Exception as exc:
+        if project_service is not None:
+            project_service.close()
         traceback.print_exc()
         QMessageBox.critical(None, "재료 연구 창을 열 수 없습니다", _human_error(exc))
         return 1

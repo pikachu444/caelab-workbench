@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import math
@@ -38,6 +39,7 @@ from caelab.materials.registry import (
     MaterialEvaluationRequest,
     MaterialStudyError,
 )
+from caelab.materials.experiments import storage_segment
 from caelab.materials.residuals import (
     ChannelResidualResult,
     ResidualEvaluationOutput,
@@ -345,7 +347,7 @@ def _persist_channel_residual_arrays(
     shared_res_cache = runtime_cache.setdefault("shared_res_refs", {}) if runtime_cache is not None else None
     for item in channel_results:
         comp = item.comparison
-        comp_slug = "".join(c if c.isalnum() or c in "._-" else "_" for c in comp.id).strip("._") or "cmp"
+        comp_slug = storage_segment(comp.id)
         base_rel = f"arrays/residuals/{evaluation_id}/{comp_slug}"
 
         def _save(rel: str, aid: str, role: str, arr: np.ndarray) -> ArtifactRefV1:
@@ -403,6 +405,37 @@ def _persist_channel_residual_arrays(
     return tuple(persisted)
 
 
+def _comparison_inputs(
+    experiments: Sequence[ExperimentSpec],
+    experiment_data: Mapping[str, Mapping[str, Any]],
+    comparisons: Sequence[ComparisonSpec],
+) -> tuple[tuple[ExperimentSpec, ...], dict[str, dict[str, Any]]]:
+    channels: dict[str, set[str]] = {}
+    for comp in comparisons:
+        channels.setdefault(comp.experiment_id, set()).add(comp.observable_id)
+    return (
+        tuple(replace(exp, channels=tuple(ch for ch in exp.channels if ch.observable_id in channels[exp.experiment_id]))
+              for exp in experiments if exp.experiment_id in channels),
+        {eid: {cid: experiment_data[eid][cid] for cid in ids} for eid, ids in channels.items()},
+    )
+
+
+def _verify_prediction_experiments(bundle: PredictionBundleV1, request: MaterialEvaluationRequest) -> None:
+    expected = {exp.experiment_id: exp for exp in request.experiments}
+    for prediction in bundle.experiments:
+        experiment = expected.get(prediction.experiment_id)
+        if experiment is None or experiment.experiment_revision != prediction.experiment_revision:
+            raise MaterialStudyError(
+                "PREDICTION_EXPERIMENT_MISMATCH", "evaluate.collect",
+                {"experiment_id": prediction.experiment_id, "revision": prediction.experiment_revision},
+            )
+        if {ch.observable_id for ch in prediction.channels} - {ch.observable_id for ch in experiment.channels}:
+            raise MaterialStudyError(
+                "PREDICTION_EXPERIMENT_MISMATCH", "evaluate.collect",
+                {"experiment_id": prediction.experiment_id, "reason": "UNDECLARED_PREDICTION_CHANNEL"},
+            )
+
+
 def compute_svd_identifiability(
     *,
     adapter: MaterialAdapter,
@@ -423,6 +456,7 @@ def compute_svd_identifiability(
     constraint_specs: Sequence[ConstraintSpec],
     assessment_policy: Mapping[str, Any],
     runtime_cache: dict[str, Any] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Compute whitened residual Jacobian SVD identifiability in encoded [0,1] space (A2/B3)."""
     rcache = runtime_cache if runtime_cache is not None else {}
@@ -441,8 +475,11 @@ def compute_svd_identifiability(
     planned_ids = [exp.experiment_id for exp in fit_experiments]
     fit_exp_id_set = set(planned_ids)
     fit_comparisons = tuple(c for c in comparisons if c.required_for_fit and c.experiment_id in fit_exp_id_set)
+    fit_experiments, fit_data = _comparison_inputs(fit_experiments, experiment_data, fit_comparisons)
 
     def _eval_whitened(encoded_vec: np.ndarray) -> np.ndarray | None:
+        if cancel_event is not None and cancel_event.is_set():
+            return None
         clipped = np.clip(encoded_vec, 0.0, 1.0)
         phys_part = space.decode(clipped, purpose="optimizer", repair="nearest").values
         merged_overrides = {p.id: phys_part[p.id] for p in parameter_specs if p.role == "free" and p.id in phys_part}
@@ -464,13 +501,16 @@ def compute_svd_identifiability(
             numerical_settings=numerical_settings,
             execution_phase="exploration",
             selection_ref=None,
-            experiment_data=experiment_data,
+            experiment_data=fit_data,
             runtime_cache=rcache,
         )
         try:
             plan = adapter.plan(req)
-            artifacts = adapter.execute(plan, req, data_root=data_root, study_id=study_id)
+            artifacts = adapter.execute(
+                plan, req, data_root=data_root, study_id=study_id, cancel_event=cancel_event,
+            )
             bundle = adapter.collect(plan, artifacts, data_root=data_root, study_id=study_id)
+            _verify_prediction_experiments(bundle, req)
             res_out = evaluate_bundle_residuals(
                 bundle=bundle,
                 experiments=experiments,
@@ -600,24 +640,7 @@ def execute_single_evaluation(
     param_units = {p.id: p.unit for p in parameter_specs}
     planned_ids = [exp.experiment_id for exp in planned_experiments]
     planned_set = set(planned_ids)
-    relevant_comparisons = [c for c in comparisons if c.experiment_id in planned_set or (execution_phase == "exploration" and c.split == "holdout")]
-
-    req = MaterialEvaluationRequest(
-        request_id=request_id,
-        evaluation_id=evaluation_id,
-        study_id=study_id,
-        study_revision=content_revision,
-        model_descriptor=model_descriptor,
-        parameter_specs=tuple(parameter_specs),
-        physical_parameters=physical_parameters,
-        experiments=tuple(planned_experiments),
-        comparisons=tuple(c for c in comparisons if c.experiment_id in planned_set),
-        numerical_settings=numerical_settings,
-        execution_phase=execution_phase,
-        selection_ref=selection_ref,
-        experiment_data=experiment_data,
-        runtime_cache=rcache,
-    )
+    relevant_comparisons = [c for c in comparisons if c.experiment_id in planned_set]
 
     cap = adapter.capabilities(model_descriptor, None)
     bundle: PredictionBundleV1 | None = None
@@ -625,48 +648,99 @@ def execute_single_evaluation(
     diagnostics: list[Any] = []
     eval_state = "completed"
 
-    try:
-        if cancel_event is not None and cancel_event.is_set():
-            raise MaterialStudyError("CANCELLED", "evaluate", {"reason": "USER_CANCEL"})
-        val_diag = adapter.validate(model_descriptor, physical_parameters, planned_experiments, numerical_settings)
-        diagnostics.extend(val_diag)
-        plan = adapter.plan(req)
-        artifacts = adapter.execute(plan, req, data_root=data_root, study_id=study_id, cancel_event=cancel_event)
-        bundle = adapter.collect(plan, artifacts, data_root=data_root, study_id=study_id)
-        bundle.validate_level(cap.level)
-    except MaterialStudyError as exc:
-        if exc.code == "CANCELLED":
-            eval_state = "cancelled"
+    holdout_failures: dict[str, str] = {}
+    holdout_started = False
+    regular = tuple(exp for exp in planned_experiments if exp.split != "holdout")
+    holdouts = tuple(exp for exp in planned_experiments if exp.split == "holdout")
+    groups = [(regular, False)] if regular or not holdouts else []
+    groups.extend(((exp,), True) for exp in holdouts)
+    for index, (group, is_holdout) in enumerate(groups):
+        group_ids = {exp.experiment_id for exp in group}
+        comps = tuple(c for c in relevant_comparisons if c.experiment_id in group_ids)
+        inputs, arrays = _comparison_inputs(group, experiment_data, comps)
+        suffix = f"-holdout-{index}" if is_holdout else ""
+        req = MaterialEvaluationRequest(
+            request_id=request_id + suffix,
+            evaluation_id=evaluation_id + suffix,
+            study_id=study_id,
+            study_revision=content_revision,
+            model_descriptor=model_descriptor,
+            parameter_specs=tuple(parameter_specs),
+            physical_parameters=physical_parameters,
+            experiments=inputs,
+            comparisons=comps,
+            numerical_settings=numerical_settings,
+            execution_phase=execution_phase,
+            selection_ref=selection_ref,
+            experiment_data=arrays,
+            runtime_cache=rcache,
+        )
+        try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise MaterialStudyError("CANCELLED", "evaluate", {"reason": "USER_CANCEL"})
+            holdout_started |= is_holdout
+            diagnostics.extend(adapter.validate(model_descriptor, physical_parameters, inputs, numerical_settings))
+            plan = adapter.plan(req)
+            artifacts = adapter.execute(plan, req, data_root=data_root, study_id=study_id, cancel_event=cancel_event)
+            if cancel_event is not None and cancel_event.is_set():
+                raise MaterialStudyError("CANCELLED", "evaluate", {"reason": "USER_CANCEL"})
+            collected = adapter.collect(plan, artifacts, data_root=data_root, study_id=study_id)
+            collected.validate_level(cap.level)
+            _verify_prediction_experiments(collected, req)
+        except Exception as exc:
+            code = exc.code if isinstance(exc, MaterialStudyError) else "INTEGRATION_FAILED"
+            diagnostic = exc.to_dict() if isinstance(exc, MaterialStudyError) else {"code": code, "error": str(exc)}
+            diagnostics.append(diagnostic)
+            if is_holdout:
+                holdout_failures.update(dict.fromkeys(group_ids, code))
+            else:
+                failure_reasons.append(code)
+            if code == "CANCELLED":
+                eval_state = "cancelled"
+                break
+            if not is_holdout:
+                eval_state = "failed"
+            continue
+        if bundle is None:
+            bundle = replace(collected, evaluation_id=evaluation_id, request_id=request_id)
         else:
-            eval_state = "failed"
-        failure_reasons.append(exc.code)
-        diagnostics.append(exc.to_dict())
-    except Exception as exc:
-        eval_state = "failed"
-        failure_reasons.append("INTEGRATION_FAILED")
-        diagnostics.append({"code": "INTEGRATION_FAILED", "error": str(exc)})
+            bundle = replace(
+                bundle,
+                experiments=(*bundle.experiments, *collected.experiments),
+                artifacts=tuple({ref.id: ref for ref in (*bundle.artifacts, *collected.artifacts)}.values()),
+                artifact_owners={**bundle.artifact_owners, **collected.artifact_owners},
+                run_ids=tuple(dict.fromkeys((*bundle.run_ids, *collected.run_ids))),
+                diagnostics=(*bundle.diagnostics, *collected.diagnostics),
+            )
 
-    res_out = evaluate_bundle_residuals(
-        bundle=bundle,
-        experiments=experiments,
-        experiment_data=experiment_data,
-        comparisons=relevant_comparisons,
-        planned_experiment_ids=planned_ids,
-        physical_parameters=physical_parameters,
-        parameter_units=param_units,
-        registered_responses=registered_responses,
-        constraint_specs=constraint_specs,
-        assessment_policy=assessment_policy,
-        policy_ref=policy_ref,
-        data_root=data_root,
-        execution_phase=execution_phase,
-        identifiability_status="not_computed",
-        extra_split_checks=extra_split_checks,
-        extra_warnings=extra_warnings,
-        failure_reason_codes=failure_reasons,
-        runtime_cache=rcache,
-    )
+    # A stop before dispatch has no holdout result or exposure.
+    if not holdout_started:
+        relevant_comparisons = [comp for comp in relevant_comparisons if comp.split != "holdout"]
 
+    def assess(identifiability: str = "not_computed") -> ResidualEvaluationOutput:
+        return evaluate_bundle_residuals(
+            bundle=bundle,
+            experiments=experiments,
+            experiment_data=experiment_data,
+            comparisons=relevant_comparisons,
+            planned_experiment_ids=planned_ids,
+            physical_parameters=physical_parameters,
+            parameter_units=param_units,
+            registered_responses=registered_responses,
+            constraint_specs=constraint_specs,
+            assessment_policy=assessment_policy,
+            policy_ref=policy_ref,
+            data_root=data_root,
+            execution_phase=execution_phase,
+            identifiability_status=identifiability,
+            extra_split_checks=extra_split_checks,
+            extra_warnings=extra_warnings,
+            failure_reason_codes=failure_reasons,
+            holdout_failures=holdout_failures,
+            runtime_cache=rcache,
+        )
+
+    res_out = assess()
     ident_status = "not_computed"
     ident_info: dict[str, Any] = {}
     if compute_identifiability and eval_state == "completed" and res_out.objective_eligible:
@@ -679,7 +753,7 @@ def execute_single_evaluation(
             experiments=experiments,
             experiment_data=experiment_data,
             comparisons=relevant_comparisons,
-            planned_experiments=planned_experiments,
+            planned_experiments=regular,
             numerical_settings=numerical_settings,
             data_root=data_root,
             study_id=study_id,
@@ -690,31 +764,17 @@ def execute_single_evaluation(
             constraint_specs=constraint_specs,
             assessment_policy=assessment_policy,
             runtime_cache=rcache,
+            cancel_event=cancel_event,
         )
-        if ident_status != "not_computed":
-            res_out = evaluate_bundle_residuals(
-                bundle=bundle,
-                experiments=experiments,
-                experiment_data=experiment_data,
-                comparisons=relevant_comparisons,
-                planned_experiment_ids=planned_ids,
-                physical_parameters=physical_parameters,
-                parameter_units=param_units,
-                registered_responses=registered_responses,
-                constraint_specs=constraint_specs,
-                assessment_policy=assessment_policy,
-                policy_ref=policy_ref,
-                data_root=data_root,
-                execution_phase=execution_phase,
-                identifiability_status=ident_status,
-                extra_split_checks=extra_split_checks,
-                extra_warnings=extra_warnings,
-                failure_reason_codes=failure_reasons,
-                runtime_cache=rcache,
-            )
-
-    if eval_state == "completed" and not res_out.objective_eligible and failure_reasons:
-        eval_state = "failed"
+    if cancel_event is not None and cancel_event.is_set():
+        eval_state = "cancelled"
+        if "CANCELLED" not in failure_reasons:
+            failure_reasons.append("CANCELLED")
+            diagnostics.append({"code": "CANCELLED"})
+        ident_status, ident_info = "not_computed", {}
+        res_out = assess()
+    elif ident_status != "not_computed":
+        res_out = assess(ident_status)
 
     persisted_channels = _persist_channel_residual_arrays(
         data_root=data_root,
@@ -741,6 +801,7 @@ def execute_single_evaluation(
         numerical_settings=numerical_settings,
         state=eval_state,
         cache_hit=False,
+        holdout_exposed=holdout_started,
         prediction_bundle=bundle,
         assessment=res_out.assessment,
         channel_results=persisted_channels,
@@ -815,6 +876,7 @@ class MaterialBatchEvaluator(BatchEvaluator):
         self.completed_count = 0
         self.failed_count = 0
         self.cache_hits = 0
+        self.point_to_evaluation: dict[str, str] = {}
         self.runtime_cache: dict[str, Any] = {}
 
     def evaluate_batch(self, requests: tuple[EvaluationRequest, ...]) -> Mapping[str, EvaluationObservation]:
@@ -864,6 +926,7 @@ class MaterialBatchEvaluator(BatchEvaluator):
                     cache_hit=True,
                 )
                 self.evaluation_ids.append(cached.evaluation_id)
+                self.point_to_evaluation[req.point_id] = cached.evaluation_id
                 continue
 
             artifact, eval_ref, res_out = execute_single_evaluation(
@@ -894,6 +957,7 @@ class MaterialBatchEvaluator(BatchEvaluator):
             )
             self.on_evaluation_recorded(artifact, eval_ref, req.point_id)
             self.evaluation_ids.append(eval_id)
+            self.point_to_evaluation[req.point_id] = eval_id
 
             if res_out.objective_eligible and artifact.state == "completed":
                 self.completed_count += 1

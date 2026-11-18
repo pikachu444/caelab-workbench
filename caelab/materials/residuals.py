@@ -313,7 +313,24 @@ def interpolate_to_observed_grid(
             },
         )
 
-    # Exact grid & sample key match handles repeated cyclic coordinates without interpolation ambiguity.
+    if x_obs.size == 0:
+        raise MaterialStudyError("COVERAGE_INCOMPLETE", "residuals.interpolate", {"reason": "EMPTY_OBSERVED_GRID"})
+    x_min, x_max = float(np.min(x_pred)), float(np.max(x_pred))
+    if float(np.min(x_obs)) < x_min or float(np.max(x_obs)) > x_max:
+        valid = int(np.count_nonzero((x_obs >= x_min) & (x_obs <= x_max)))
+        raise MaterialStudyError(
+            "COVERAGE_INCOMPLETE",
+            "residuals.interpolate",
+            {
+                "reason": "EXTRAPOLATION_FORBIDDEN",
+                "observable_id": pred_channel.observable_id,
+                "obs_range": [float(np.min(x_obs)), float(np.max(x_obs))],
+                "pred_range": [x_min, x_max],
+                "coverage": {"expected": int(x_obs.size), "valid": valid, "missing": int(x_obs.size) - valid},
+            },
+        )
+
+    # Grid and sample key match handles repeated cyclic coordinates without interpolation ambiguity.
     if (
         x_pred.shape == x_obs.shape
         and sk_pred.shape == sample_keys_obs.shape
@@ -342,20 +359,6 @@ def interpolate_to_observed_grid(
             "COVERAGE_INCOMPLETE",
             "residuals.interpolate",
             {"reason": "NON_MONOTONIC_PREDICTION_GRID", "observable_id": pred_channel.observable_id},
-        )
-
-    x_min = float(xs[0])
-    x_max = float(xs[-1])
-    if float(np.min(x_obs)) < x_min or float(np.max(x_obs)) > x_max:
-        raise MaterialStudyError(
-            "COVERAGE_INCOMPLETE",
-            "residuals.interpolate",
-            {
-                "reason": "EXTRAPOLATION_FORBIDDEN",
-                "observable_id": pred_channel.observable_id,
-                "obs_range": [float(np.min(x_obs)), float(np.max(x_obs))],
-                "pred_range": [x_min, x_max],
-            },
         )
 
     out = np.empty((x_obs.shape[0], ys.shape[1]), dtype=np.float64)
@@ -406,6 +409,8 @@ def build_normalization_payload(
 
     entries: list[dict[str, Any]] = []
     for comp in comparisons:
+        if not (comp.required_for_fit or comp.split == "validation" and comp.required_for_validation):
+            continue
         exp = experiments[comp.experiment_id]
         ch_entry = experiment_data[comp.experiment_id][comp.observable_id]
         x_obs, _, _, _ = load_experiment_channel_arrays(ch_entry, data_root=data_root)
@@ -464,7 +469,6 @@ def _compute_constraints_and_scalars(
 
     bundle_scalars = dict(bundle.optimizer_scalars) if bundle is not None else {}
     scalar_units: dict[str, str] = {"fit_loss": ""}
-    scalar_invalid = False
     reason_codes: list[str] = []
 
     for spec in registered_responses:
@@ -475,7 +479,6 @@ def _compute_constraints_and_scalars(
             val = bundle_scalars.get(spec.source_name, bundle_scalars.get(spec.response_id))
             if val is None or isinstance(val, bool) or not math.isfinite(float(val)):
                 all_scalars[spec.response_id] = None
-                scalar_invalid = True
             else:
                 all_scalars[spec.response_id] = float(val)
         elif spec.source_kind == "parameter_expression":
@@ -498,7 +501,6 @@ def _compute_constraints_and_scalars(
                 all_scalars[spec.response_id] = float(val)
             except Exception:
                 all_scalars[spec.response_id] = None
-                scalar_invalid = True
 
     constraint_checks: list[dict[str, Any]] = []
     if not constraint_specs:
@@ -513,29 +515,10 @@ def _compute_constraints_and_scalars(
         if v is not None:
             eval_values[k] = float(v)
     eval_units = dict(parameter_units)
-    eval_units.update(scalar_units)
-
-    missing_required_scalar = False
-    for cspec in constraint_specs:
-        if cspec.response_id is not None:
-            if cspec.response_id not in eval_values or all_scalars.get(cspec.response_id) is None:
-                missing_required_scalar = True
-                break
-
-    if scalar_invalid or missing_required_scalar:
-        for cspec in constraint_specs:
-            constraint_checks.append(
-                {
-                    "constraint_id": cspec.id,
-                    "response_id": cspec.response_id,
-                    "kind": cspec.kind,
-                    "limit": cspec.limit,
-                    "value": all_scalars.get(cspec.response_id) if cspec.response_id else None,
-                    "status": "NOT_ASSESSED",
-                }
-            )
-        reason_codes.append("CONSTRAINT_RESPONSE_INVALID")
-        return all_scalars, "NOT_ASSESSED", constraint_checks, True, reason_codes
+    eval_units.update({key: scalar_units[key] for key, value in all_scalars.items() if value is not None})
+    for spec in constraint_specs:
+        if spec.response_id is not None and all_scalars.get(spec.response_id) is None and spec.response_id in eval_values:
+            all_scalars[spec.response_id] = eval_values[spec.response_id]
 
     assessment = assess_constraints(eval_values, constraint_specs, valid=True, units=eval_units)
     if assessment.feasibility is None:
@@ -590,6 +573,7 @@ def evaluate_bundle_residuals(
     extra_split_checks: Sequence[Mapping[str, Any]] = (),
     extra_warnings: Sequence[str] = (),
     failure_reason_codes: Sequence[str] = (),
+    holdout_failures: Mapping[str, str] | None = None,
     runtime_cache: dict[str, Any] | None = None,
 ) -> ResidualEvaluationOutput:
     """Compute host residuals, split/adequacy verdicts, and strict AssessmentResultV1 (C4/C5)."""
@@ -640,9 +624,11 @@ def evaluate_bundle_residuals(
             )
             continue
 
+        holdout_confirmation = comp.split == "holdout" and execution_phase == "confirmation"
+        missing_status = "fail" if holdout_confirmation else "not_assessed"
         if comp.experiment_id not in planned_set or comp.experiment_id not in bundle_exps:
-            ch_status = "not_assessed"
-            ch_reasons = ["EXPERIMENT_NOT_EXECUTED"]
+            ch_status = missing_status
+            ch_reasons = [(holdout_failures or {}).get(comp.experiment_id, "EXPERIMENT_NOT_EXECUTED")]
             if comp.required_for_fit:
                 fit_invalid = True
                 fit_channel_statuses.append("not_assessed")
@@ -651,7 +637,7 @@ def evaluate_bundle_residuals(
                 if comp.split == "validation":
                     validation_channel_statuses.append("not_assessed")
                 elif comp.split == "holdout":
-                    holdout_channel_statuses.append("not_assessed")
+                    holdout_channel_statuses.append(missing_status)
             channel_checks.append(
                 {
                     "comparison_id": comp.id,
@@ -681,7 +667,7 @@ def evaluate_bundle_residuals(
                 if comp.split == "validation":
                     validation_channel_statuses.append("not_assessed")
                 elif comp.split == "holdout":
-                    holdout_channel_statuses.append("not_assessed")
+                    holdout_channel_statuses.append(missing_status)
             channel_checks.append(
                 {
                     "comparison_id": comp.id,
@@ -690,7 +676,7 @@ def evaluate_bundle_residuals(
                     "split": comp.split,
                     "required_for_fit": comp.required_for_fit,
                     "required_for_validation": comp.required_for_validation,
-                    "status": "not_assessed",
+                    "status": missing_status,
                     "loss": None,
                     "max_abs_error": None,
                     "rmse": None,
@@ -711,7 +697,7 @@ def evaluate_bundle_residuals(
                 if comp.split == "validation":
                     validation_channel_statuses.append("not_assessed")
                 elif comp.split == "holdout":
-                    holdout_channel_statuses.append("not_assessed")
+                    holdout_channel_statuses.append(missing_status)
             channel_checks.append(
                 {
                     "comparison_id": comp.id,
@@ -720,7 +706,7 @@ def evaluate_bundle_residuals(
                     "split": comp.split,
                     "required_for_fit": comp.required_for_fit,
                     "required_for_validation": comp.required_for_validation,
-                    "status": "not_assessed",
+                    "status": missing_status,
                     "loss": None,
                     "max_abs_error": None,
                     "rmse": None,
@@ -733,19 +719,12 @@ def evaluate_bundle_residuals(
         exp_spec = experiments[comp.experiment_id]
         exp_ch_spec = next(c for c in exp_spec.channels if c.observable_id == comp.observable_id)
         ch_entry = experiment_data[comp.experiment_id][comp.observable_id]
-        if runtime_cache is not None:
-            exp_cache = runtime_cache.setdefault("exp_arrays", {})
-            exp_key = (comp.experiment_id, comp.observable_id)
-            if exp_key in exp_cache:
-                x_obs, y_obs, sk_obs, obs_mask = exp_cache[exp_key]
-            else:
-                loaded_exp = load_experiment_channel_arrays(ch_entry, data_root=data_root)
-                exp_cache[exp_key] = loaded_exp
-                x_obs, y_obs, sk_obs, obs_mask = loaded_exp
-        else:
-            x_obs, y_obs, sk_obs, obs_mask = load_experiment_channel_arrays(ch_entry, data_root=data_root)
-
         try:
+            exp_cache = runtime_cache.setdefault("exp_arrays", {}) if runtime_cache is not None else {}
+            exp_key = (comp.experiment_id, comp.observable_id)
+            if exp_key not in exp_cache:
+                exp_cache[exp_key] = load_experiment_channel_arrays(ch_entry, data_root=data_root)
+            x_obs, y_obs, sk_obs, obs_mask = exp_cache[exp_key]
             pred_on_obs = interpolate_to_observed_grid(
                 x_obs,
                 obs_mask,
@@ -774,16 +753,19 @@ def evaluate_bundle_residuals(
                     "residuals.compute",
                     {"reason": "NONFINITE_CHANNEL_METRIC", "comparison_id": comp.id},
                 )
-        except MaterialStudyError as exc:
+        except Exception as exc:
+            if not holdout_confirmation and not isinstance(exc, MaterialStudyError):
+                raise
+            code = exc.code if isinstance(exc, MaterialStudyError) else "INTEGRATION_FAILED"
             if comp.required_for_fit:
                 fit_invalid = True
                 fit_channel_statuses.append("not_assessed")
-                reason_codes.append(exc.code)
+                reason_codes.append(code)
             elif comp.required_for_validation:
                 if comp.split == "validation":
                     validation_channel_statuses.append("not_assessed")
                 elif comp.split == "holdout":
-                    holdout_channel_statuses.append("not_assessed")
+                    holdout_channel_statuses.append(missing_status)
             channel_checks.append(
                 {
                     "comparison_id": comp.id,
@@ -792,12 +774,13 @@ def evaluate_bundle_residuals(
                     "split": comp.split,
                     "required_for_fit": comp.required_for_fit,
                     "required_for_validation": comp.required_for_validation,
-                    "status": "not_assessed",
+                    "status": missing_status,
                     "loss": None,
                     "max_abs_error": None,
                     "rmse": None,
                     "acceptance_limit": comp.acceptance_limit,
-                    "reason_codes": [exc.code],
+                    "reason_codes": [code],
+                    "coverage": exc.details.get("coverage") if isinstance(exc, MaterialStudyError) else None,
                 }
             )
             continue
@@ -850,6 +833,14 @@ def evaluate_bundle_residuals(
                 "reason_codes": [],
             }
         )
+
+    for check in channel_checks:
+        if check.get("coverage") is not None:
+            continue
+        entry = experiment_data.get(check["experiment_id"], {}).get(check["observable_id"], {})
+        expected = int(entry.get("row_count", 0))
+        valid = expected if check["loss"] is not None else 0
+        check["coverage"] = {"expected": expected, "valid": valid, "missing": expected - valid}
 
     if not fit_comps:
         fit_invalid = True
@@ -918,6 +909,8 @@ def evaluate_bundle_residuals(
                 req_checks.append("not_assessed")
             else:
                 req_checks.append(identifiability_status)
+        if adequacy_policy.get("require_uncertainty", False):
+            req_checks.append("not_assessed")
         if not req_checks:
             adequacy_status = "not_assessed"
         elif any(s == "fail" for s in req_checks):

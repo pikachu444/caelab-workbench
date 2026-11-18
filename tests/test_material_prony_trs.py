@@ -452,3 +452,63 @@ def test_prony_domain_failures_and_rank_counterexamples(tmp_path: Path, monkeypa
     bad_cap = adapter.capabilities()
     assert bad_cap.can_run is False
     assert "PYVISCO_SOURCE_HASH_MISMATCH" in bad_cap.reason_codes
+
+
+def test_pyvisco_rejects_wrong_version_even_when_both_hashes_match(monkeypatch):
+    monkeypatch.setattr(prony_trs.importlib.metadata, "version", lambda _: "2.1.4")
+    status = verify_pyvisco_sources()
+    assert all(check["source_match"] for check in status["loaded_source_checks"])
+    assert status["error_code"] == "PYVISCO_VERSION_MISMATCH"
+    assert not PronyTRSAdapter().capabilities().can_run
+
+
+def test_measured_multitemperature_wlf_fixed_values_require_bound_provenance(tmp_path):
+    csv_file = tmp_path / "dma.csv"
+    _write_csv(csv_file, ["frequency_Hz", "storage_MPa"], [[1, 70], [2, 80]])
+    obs = ObservableSpec(
+        id="E_storage", quantity_kind="storage_modulus", unit="MPa", measure="viscoelastic",
+        component_order=("E_storage",),
+    )
+    ch = ExperimentChannelSpec(
+        observable_id=obs.id, observable=obs, column_name="storage_MPa", source_unit="MPa",
+        independent_column="frequency_Hz", independent_unit="Hz",
+    )
+    with CalibrationStudyService.create(tmp_path / "measured.caemat.json", name="DMA", model="B-VIS-TRS-1") as svc:
+        comps = []
+        for eid, split, temperature in (("run A", "train", 293.15), ("run_A", "holdout", 303.15)):
+            svc.import_experiment(
+                csv_file, experiment_id=eid, channels=[ch], split=split, conditions={"temperature_K": temperature},
+                expected_revision=svc.snapshot().document_revision,
+            )
+            comps.append(ComparisonSpec(
+                id=eid, experiment_id=eid, observable_id=obs.id, split=split, scale=10,
+                required_for_fit=split == "train", required_for_validation=split == "holdout", acceptance_limit=10,
+            ))
+
+        def configure(settings):
+            return svc.configure(
+                parameters=svc.parameters(), comparisons=comps, numerical_settings=settings,
+                expected_revision=svc.snapshot().document_revision,
+            )
+
+        rev = configure({})
+        with pytest.raises(MaterialStudyError, match="WLF_PROVENANCE_REQUIRED"):
+            svc.evaluate(expected_revision=rev.document_revision, compute_identifiability=False)
+        with pytest.raises(MaterialStudyError, match="WLF_PROVENANCE_REQUIRED"):
+            svc.optimize(expected_revision=rev.document_revision)
+        fixed = {p.id: p.default for p in svc.parameters() if p.id in ("C1", "C2", "Tref")}
+        rev = configure({"wlf_provenance": {**fixed, "C1": 6, "source": "lab data report 12"}})
+        with pytest.raises(MaterialStudyError, match="WLF_PROVENANCE_REQUIRED"):
+            svc.evaluate(expected_revision=rev.document_revision, compute_identifiability=False)
+
+        provenance = {**fixed, "source": "lab data report 12"}
+        rev = configure({"wlf_provenance": provenance})
+        receipt = svc.evaluate(
+            expected_revision=rev.document_revision, cache_policy="refresh",
+            execution_phase="confirmation", compute_identifiability=False,
+        )
+        result = svc.evaluation(receipt.evaluation_id)
+        assert result.state == "completed"
+        assert dict(result.numerical_settings["wlf_provenance"]) == provenance
+        refs = [exp.channels[0].values_ref.path for exp in result.prediction_bundle.experiments]
+        assert len(set(refs)) == 2

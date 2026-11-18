@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
 import os
 from pathlib import Path
 import re
+import threading
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -14,12 +16,15 @@ import numpy as np
 import pytest
 
 PySide6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QGroupBox,
+    QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTreeWidget,
@@ -38,6 +43,7 @@ from apps.workbench_qt.material_study import (
     ExperimentImportDialog,
     MaterialStudyWindow,
     load_korean_font,
+    main,
 )
 
 
@@ -133,6 +139,9 @@ def _create_b3_study(root: Path, *, with_val_holdout: bool = True) -> Path:
         svc.configure(
             parameters=svc.parameters(),
             comparisons=comps,
+            numerical_settings={
+                "wlf_provenance": {"source": "GUI test fixture generating inputs", "C1": 5.0, "C2": 100.0, "Tref": 293.15},
+            },
             expected_revision=svc.snapshot().document_revision,
         )
     return study_path
@@ -218,6 +227,18 @@ def test_gui_layout_korean_font_design_laws_and_no_forbidden_strings(tmp_path: P
         for lbl in (win.badge_fit, win.badge_val, win.badge_hold, win.badge_const, win.loss_summary_label):
             assert lbl.maximumWidth() >= 320
 
+        assert win.study_tree.textElideMode() == Qt.TextElideMode.ElideNone
+        assert not win.study_tree.header().stretchLastSection()
+        assert win.study_tree.header().sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+        for root_index in range(win.study_tree.topLevelItemCount()):
+            root = win.study_tree.topLevelItem(root_index)
+            assert root.toolTip(0)
+            for child_index in range(root.childCount()):
+                child = root.child(child_index)
+                assert child.toolTip(0) and not child.text(0).endswith("...")
+        assert win.ax_curve.get_xlabel() == "주파수 (Hz)"
+        assert win.ax_curve.get_ylabel() == "탄성계수 (MPa)"
+
         # 150-row CSV previews at most 100 rows in the preview table
         assert win.exp_preview_table.rowCount() == 100
 
@@ -276,22 +297,66 @@ def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(tmp_path:
         assert len(win.ax_curve.lines) >= 4
         assert len(win.ax_resid.lines) >= 2
 
-        # Parameter table updated to calibrated E0 ~ 100 MPa
-        e0_val = float(win.param_table.item(0, 1).text())
+        # The calibrated point is shown separately from the initial specification.
+        selected_exploration = win._selected_eval_id
+        revision = win.service.snapshot().content_revision
+        e0_default = win.service.parameters()[0].default
+        e0_val = float(win.param_table.item(0, 7).text())
         assert abs(e0_val - 100.0) / 100.0 <= 1e-2
+        assert float(win.param_table.item(0, 1).text()) == e0_default
+        assert e0_default != e0_val
+        assert not (win.param_table.item(0, 7).flags() & Qt.ItemFlag.ItemIsEditable)
+        assert all(win.param_table.item(0, col).flags() & Qt.ItemFlag.ItemIsEditable for col in (1, 3, 4, 5, 6))
+        assert not win._draft_dirty
+
+        # Save and confirmation should never configure a clean draft.
+        orig_configure = win.service.configure
+
+        def unexpected_configure(**_kwargs):
+            pytest.fail("clean draft configured again")
+
+        win.service.configure = unexpected_configure
+        win.on_save_study()
+        assert win.service.snapshot().content_revision == revision
 
         # Toggle Light -> Dark theme cleanly
         win.apply_theme("light")
         app.processEvents()
         assert win._theme_mode == "light"
+        light_icon = win.act_new.icon().pixmap(QSize(16, 16)).toImage()
+        light_mpl = win._mpl_icons[0][0].icon().pixmap(QSize(24, 24)).toImage()
+        assert "background: #f1f5f9; color: #0f172a" in win.styleSheet()
         win.apply_theme("dark")
         app.processEvents()
         assert win._theme_mode == "dark"
+        assert win.act_new.icon().pixmap(QSize(16, 16)).toImage() != light_icon
+        assert win._mpl_icons[0][0].icon().pixmap(QSize(24, 24)).toImage() != light_mpl
+        assert "background: #1e293b; color: #e2e8f0" in win.styleSheet()
 
         # 3) Explicit Confirmation Holdout
         win.on_confirm_holdout()
         assert win.wait_for_idle(timeout=60.0)
         assert win.badge_hold.text() == "보류: 적합"
+        assert win.service.snapshot().content_revision == revision
+        confirmation = win._active_eval_artifact
+        selection = json.loads((win.service.data_root / confirmation.selection_ref.path).read_text(encoding="utf-8"))
+        assert selected_exploration in selection["source_evaluation_ids"]
+        assert selection["content_revision"] == revision
+        for axis in (win.ax_curve, win.ax_resid):
+            assert len(axis.get_legend().get_texts()) == 10
+        assert "점: 관측 / 선: 예측" in win.ax_curve.get_title()
+        assert win.ax_curve.get_xlabel() == "주파수 (Hz)"
+        training = [line for line in win.ax_resid.lines if line.get_label().startswith("학습")]
+        assert len({line.get_color() for line in training}) == 3
+        assert len({line.get_marker() for line in training}) >= 3
+        assert len({line.get_linestyle() for line in training}) >= 3
+
+        # Retry of the same frozen selection uses the same immutable reference.
+        win.on_confirm_holdout()
+        assert win.wait_for_idle(timeout=60.0)
+        assert win._active_eval_artifact.selection_ref == confirmation.selection_ref
+        win.service.configure = orig_configure
+
         splits_in_summary = {
             win.channel_summary_table.item(r, 2).text()
             for r in range(win.channel_summary_table.rowCount())
@@ -302,6 +367,17 @@ def test_gui_prony_workflow_plots_tables_holdout_seal_and_theme_toggle(tmp_path:
         for idx in range(win.plot_selector.count()):
             win.plot_selector.setCurrentIndex(idx)
             app.processEvents()
+
+        exposure_meta = win.service._manifest["evaluations"][win._selected_eval_id]
+        exposure_ref = exposure_meta["holdout_exposure_ref"]
+        (win.service.data_root / exposure_ref["path"]).unlink()
+        exposure_meta["holdout_exposed"] = False
+        win._refresh_all()
+        row = win.history_table.selectionModel().selectedRows()[0].row()
+        assert win.history_table.item(row, 6).text() == "기록 손상"
+        assert "손상" in win.loss_summary_label.text()
+        assert win.badge_hold.text() == "보류: 미확인"
+        assert win.channel_summary_table.rowCount() == 0
     finally:
         win.close()
         app.processEvents()
@@ -355,11 +431,13 @@ def test_gui_close_cancels_active_worker_and_readonly_without_pyvisco(
 
     # Active cancel on closeEvent using a delayed execute hook on B-VIS-TRS-1
     orig_execute = prony_trs.PronyTRSAdapter.execute
+    cancelled = threading.Event()
 
     def _delayed_execute(self_adp, plan, request, *, data_root, study_id, cancel_event=None):
-        deadline = time.monotonic() + 0.08
+        deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:
             if cancel_event is not None and cancel_event.is_set():
+                cancelled.set()
                 raise MaterialStudyError("CANCELLED", "slow.execute", {"reason": "USER_CANCEL"})
             time.sleep(0.005)
         return orig_execute(self_adp, plan, request, data_root=data_root, study_id=study_id, cancel_event=cancel_event)
@@ -369,13 +447,10 @@ def test_gui_close_cancels_active_worker_and_readonly_without_pyvisco(
 
     close_win = MaterialStudyWindow(study_path=study_path)
     close_win.show()
-    close_win.on_optimize()
-    deadline = time.monotonic() + 5.0
-    while close_win._active_campaign_id is None and time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
+    close_win.param_table.item(0, 1).setText("91")
+    close_win.on_evaluate()
     assert close_win._busy_op is not None
-    # Request close while optimization is active -> must ignore, trigger cancel, and close after finish
+    # The close can arrive before the standalone evaluation publishes its operation ID.
     close_win.close()
     assert not close_win._closed
     assert close_win.wait_for_idle(timeout=15.0)
@@ -384,3 +459,240 @@ def test_gui_close_cancels_active_worker_and_readonly_without_pyvisco(
     # Lock must have been released so opening writable again succeeds immediately
     with CalibrationStudyService.open(study_path) as reopened:
         assert reopened.name == "점탄성 재료 보정 UI 테스트"
+        assert cancelled.is_set() or any(ev["state"] == "cancelled" for ev in reopened.list_evaluations())
+
+
+def test_gui_drafts_failed_history_and_selected_view_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _get_app()
+    study_path = _create_b3_study(tmp_path, with_val_holdout=False)
+    win = MaterialStudyWindow(study_path=study_path)
+    messages = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, message: messages.append(message))
+    try:
+        win.on_evaluate()
+        assert win.wait_for_idle(timeout=30)
+        good_id = win._selected_eval_id
+        assert win.ax_resid.get_legend() is not None
+
+        def fail_execute(*_args, **_kwargs):
+            raise MaterialStudyError("COVERAGE_INCOMPLETE", "test", {"reason": "failed input grid"})
+
+        with monkeypatch.context() as patch:
+            patch.setattr(prony_trs.PronyTRSAdapter, "execute", fail_execute)
+            win.service.evaluate(None, expected_revision=win.service.snapshot().document_revision, cache_policy="refresh")
+        win._refresh_all()
+        win.history_table.selectRow(1)
+        failed_id = win._selected_eval_id
+        assert failed_id != good_id
+        failure = win.loss_summary_label.text()
+        assert "관측 구간" in failure and "유효 0개" in failure and "누락" in failure
+        assert all(win.channel_summary_table.item(row, 3).text() == "미확인"
+                   for row in range(win.channel_summary_table.rowCount()))
+        assert win.ax_resid.get_legend() is None
+
+        revision = win.service.snapshot().content_revision
+        default_cell = win.param_table.item(0, 1)
+        default_cell.setText("1500")
+        assert win._draft_dirty
+        win.history_table.selectRow(0)
+        win._refresh_all()
+        assert win.param_table.item(0, 1).text() == "1500"
+        win.on_save_study()
+        assert "하한과 상한" in messages[-1]
+        assert win.service.snapshot().content_revision == revision
+
+        win.param_table.item(0, 1).setText("0")
+        win.param_table.item(0, 4).setText("0")
+        win.on_save_study()
+        assert "0보다" in messages[-1]
+        assert win.service.snapshot().content_revision == revision
+
+        win.param_table.item(0, 1).setText("95")
+        win.param_table.item(0, 4).setText("10")
+        win.comparison_table.item(0, 4).setText("사다리꼴")
+        win.comparison_table.item(0, 7).setText("0.001")
+        win.on_save_study()
+        assert not win._draft_dirty
+        assert win.service.parameters()[0].default == 95.0
+        assert win.service.comparisons()[0].sample_weights_policy == "trapezoidal"
+        assert win.service.comparisons()[0].acceptance_limit == 0.001
+
+        # Save the view of a row other than the service's selected result.
+        win.history_table.selectRow(1)
+        assert win._selected_eval_id == failed_id
+        win.on_save_study()
+    finally:
+        win.close()
+        app.processEvents()
+
+    reopened = MaterialStudyWindow(study_path=study_path, read_only=True)
+    try:
+        assert reopened._selected_eval_id == failed_id
+        assert reopened._active_eval_artifact.evaluation_id == failed_id
+    finally:
+        reopened.close()
+
+
+def test_gui_import_zero_time_weights_and_plot_units(tmp_path: Path) -> None:
+    app = _get_app()
+    csv_path = tmp_path / "relax_ms.csv"
+    _write_csv(csv_path, ["time_ms", "E_relax_MPa"], [[0, 90], [1000, 65], [4000, 55]])
+    dlg = ExperimentImportDialog(csv_path)
+    try:
+        dlg.ind_col_combo.setCurrentText("time_ms")
+        dlg.val1_col_combo.setCurrentText("E_relax_MPa")
+        dlg.ind_unit_combo.setCurrentIndex(1)
+        dlg.dep_unit_combo.setCurrentText("kPa")
+        default_payload = dlg.build_import_kwargs()
+        assert default_payload["sample_weights_policy"] == "trapezoidal"
+        assert default_payload["acceptance_limit"] is None
+        dlg.weight_policy_combo.setCurrentIndex(dlg.weight_policy_combo.findData("uniform"))
+        dlg.acceptance_limit_edit.setText("0.02")
+        explicit_payload = dlg.build_import_kwargs()
+        assert explicit_payload["sample_weights_policy"] == "uniform"
+        assert explicit_payload["acceptance_limit"] == 0.02
+    finally:
+        dlg.close()
+
+    study_path = _create_b3_study(tmp_path, with_val_holdout=False)
+    with CalibrationStudyService.open(study_path) as service:
+        service.import_experiment(
+            default_payload["source"], experiment_id=default_payload["experiment_id"],
+            channels=default_payload["channels"], unit_specs=default_payload["unit_specs"],
+            column_mapping=default_payload["column_mapping"], conditions=default_payload["conditions"],
+            split="train", expected_revision=service.snapshot().document_revision,
+        )
+    win = MaterialStudyWindow(study_path=study_path)
+    try:
+        assert win.ax_curve.get_xlabel() == "주파수 (Hz)"
+        index = next(i for i in range(win.plot_selector.count()) if win.plot_selector.itemData(i) == ("exp", "relax_ms"))
+        win.plot_selector.setCurrentIndex(index)
+        app.processEvents()
+        win._refresh_all()
+        assert win.plot_selector.currentData() == ("exp", "relax_ms")
+        assert win.ax_curve.get_xlabel() == "시간 (ms)"
+        assert win.ax_curve.get_ylabel() == "탄성계수 (kPa)"
+        assert len(win.ax_curve.lines) == 1
+        assert win.ax_curve.get_xscale() == "linear"
+    finally:
+        win.close()
+
+
+def test_gui_cli_opens_project_material_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _get_app()
+    path = tmp_path / "연구 폴더" / "calibration.json"
+    with CalibrationStudyService.create(path, name="노드 재료 연구", model="B-VIS-TRS-1") as service:
+        study_id = service.study_id
+    project_file = tmp_path / "프로젝트.json"
+    project_file.write_text(json.dumps({
+        "schema_version": 4, "name": "프로젝트", "connections": [],
+        "nodes": {"mat1": {
+            "id": "mat1", "program_id": "caelab_material_study", "kind": "research",
+            "files": {"material_study": {"path": path.relative_to(tmp_path).as_posix(), "study_id": study_id}},
+        }},
+    }), encoding="utf-8")
+
+    def check_window():
+        win = next(widget for widget in app.topLevelWidgets() if isinstance(widget, MaterialStudyWindow) and widget.isVisible())
+        assert win.service.path == path
+        assert win.service.read_only
+        assert "노드 재료 연구" in win.study_title_label.text()
+        win.close()
+        return 0
+
+    monkeypatch.setattr(app, "exec", check_window)
+    assert main(["--project", str(project_file), "--node", "mat1", "--read-only"]) == 0
+    with pytest.raises(SystemExit) as error:
+        main(["--project", str(project_file)])
+    assert error.value.code == 2
+
+
+    replacement = tmp_path / "다른 연구" / "calibration.json"
+    with CalibrationStudyService.create(replacement, name="다른 재료 연구", model="B-VIS-TRS-1") as service:
+        replacement_id = service.study_id
+    path.write_bytes(replacement.read_bytes())
+    errors = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda _parent, _title, message: errors.append(message))
+    assert main(["--project", str(project_file), "--node", "mat1"]) == 1
+    assert "현재 파일의 연구가 일치하지 않습니다" in errors[-1]
+    with CalibrationStudyService.open(path) as service:
+        assert service.study_id == replacement_id
+
+
+def test_gui_save_as_persists_draft_and_view_in_copy_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _get_app()
+    original = _create_b3_study(tmp_path, with_val_holdout=False)
+    copy_path = tmp_path / "다른 이름.caemat.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(copy_path), ""))
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, message: warnings.append(message))
+
+    win = MaterialStudyWindow(study_path=original)
+    try:
+        win.on_evaluate()
+        assert win.wait_for_idle(timeout=30)
+        first_id = win._selected_eval_id
+        last = win.service.evaluate(
+            {"E0": 95}, expected_revision=win.service.snapshot().document_revision, cache_policy="refresh"
+        )
+        assert first_id != last.evaluation_id
+        win._refresh_all()
+        win.history_table.selectRow(0)
+        assert win._selected_eval_id == first_id
+        original_document = original.read_bytes()
+
+        win.param_table.item(0, 1).setText("10000")
+        win.on_save_as_study()
+        assert "하한과 상한" in warnings.pop()
+        assert not copy_path.exists()
+
+        win.param_table.item(0, 1).setText("91")
+        win.comparison_table.item(0, 7).setText("0.001")
+        win.on_save_as_study()
+        assert win.wait_for_idle(timeout=30)
+        assert not warnings
+        assert not win._draft_dirty
+        assert win.service.path == copy_path
+        assert original.read_bytes() == original_document
+        assert win.service.parameters()[0].default == 91
+        assert win.service.comparisons()[0].acceptance_limit == 0.001
+    finally:
+        win.close()
+        app.processEvents()
+
+    reopened = MaterialStudyWindow(study_path=copy_path, read_only=True)
+    try:
+        assert reopened._selected_eval_id == first_id
+        assert reopened.service.parameters()[0].default == 91
+    finally:
+        reopened.close()
+
+
+def test_gui_save_as_reports_committed_copy_when_draft_write_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _get_app()
+    original = tmp_path / "original.caemat.json"
+    copy_path = tmp_path / "copy.caemat.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: (str(copy_path), ""))
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, message: warnings.append(message))
+    with CalibrationStudyService.create(original, name="원본", model="B-VIS-TRS-1"):
+        pass
+    original_document = original.read_bytes()
+    win = MaterialStudyWindow(study_path=original)
+    try:
+        def fail_configure(**_kwargs):
+            raise MaterialStudyError("EXTERNAL_MANIFEST_CHANGED", "configure")
+
+        monkeypatch.setattr(win.service, "configure", fail_configure)
+        win.param_table.item(0, 1).setText("91")
+        win.on_save_as_study()
+        assert win.wait_for_idle(timeout=30)
+        assert win.service.path == copy_path
+        assert win._draft_dirty
+        assert win.param_table.item(0, 1).text() == "91"
+        assert "복사본은 저장했습니다" in warnings[-1]
+        assert original.read_bytes() == original_document
+        assert win.service.parameters()[0].default == 90
+    finally:
+        win.close()
+        app.processEvents()

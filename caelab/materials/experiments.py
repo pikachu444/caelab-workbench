@@ -91,6 +91,11 @@ def _sanitize_segment(name: str, fallback: str = "item") -> str:
     return cleaned or fallback
 
 
+def storage_segment(identifier: str) -> str:
+    """Keep a readable prefix and distinguish IDs on case-insensitive filesystems."""
+    return f"{_sanitize_segment(identifier)[:64]}-{hashlib.sha256(identifier.encode('utf-8')).hexdigest()[:20]}"
+
+
 def _atomic_write_bytes(target: Path, data: bytes) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -464,11 +469,7 @@ def import_csv_experiment(
     selected_rows: list[dict[str, str]] = []
     for idx, row in enumerate(all_rows):
         row_map = dict(zip(headers, row))
-        if row_filter is not None:
-            if _match_row_filter(row_map, row_filter):
-                selected_indices.append(idx)
-                selected_rows.append(row_map)
-        else:
+        if row_filter is None or _match_row_filter(row_map, row_filter):
             if "split" in row_map and row_map["split"].strip() != split:
                 raise MaterialStudyError(
                     "DATA_RECIPE_INCOMPATIBLE",
@@ -530,7 +531,7 @@ def import_csv_experiment(
         producer=_PRODUCER,
     )
 
-    exp_slug = _sanitize_segment(experiment_id, "exp")
+    exp_slug = storage_segment(experiment_id)
     channel_arrays: dict[str, dict[str, Any]] = {}
     converted_refs: list[ArtifactRefV1] = []
     array_sha_summary: dict[str, dict[str, str]] = {}
@@ -699,7 +700,7 @@ def import_csv_experiment(
         sample_keys_2d = np.asarray([[r] for r in selected_indices], dtype="<i8")
         mask_2d = np.ones((len(selected_indices), 1), dtype="|b1")
 
-        ch_slug = _sanitize_segment(ch.observable_id, "channel")
+        ch_slug = storage_segment(ch.observable_id)
         base_rel = f"arrays/experiments/{exp_slug}/{ch_slug}"
 
         def _save_npy(suffix: str, role: str, arr: np.ndarray) -> ArtifactRefV1:
@@ -797,7 +798,15 @@ def import_csv_experiment(
         "sequence": [_to_plain_json(seg) for seg in sequence],
         "source_kind": source_kind,
         "array_sha256s": array_sha_summary,
-        "recipe_sha256": recipe_ref.sha256,
+        "recipe_sha256": canonical_sha256(
+            {
+                **{key: value for key, value in recipe_payload.items()
+                   if key not in ("study_id", "source_ref", "original_source_path")},
+                "source_filename": source_path.name,
+                "source_file_sha256": source_sha256,
+            },
+            exclude_keys=(),
+        ),
     }
     experiment_revision = canonical_sha256(exp_rev_preimage, exclude_keys=())
 
