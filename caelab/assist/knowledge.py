@@ -240,7 +240,7 @@ def configured_sources() -> list[tuple[str, Path, str]]:
 _index_cache: dict[tuple, rag.HybridIndex] = {}
 
 
-def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
+def _load_prebuilt(root: Path, embedder_id: str, *, check_cancelled=lambda: None) -> rag.HybridIndex | None:
     """Load a legacy prebuilt index from `root` or merge its per-solver subfolders. Chunks that carry no solver
     tag yet (older builds) take the solver of their subfolder name.
     None when any folder's embedder differs from the configured one."""
@@ -255,6 +255,7 @@ def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
         return None
     merged: rag.HybridIndex | None = None
     for folder in folders:
+        check_cancelled()
         loaded = rag.load_index(folder)
         if loaded.embedder_id != embedder_id:
             return None
@@ -273,7 +274,7 @@ def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
     return merged
 
 
-def default_index() -> rag.HybridIndex:
+def default_index(*, cancel_event=None, deadline: float | None = None) -> rag.HybridIndex:
     """The shared index: seed notes + configured manual files,
     embedded with the configured embedder. Rebuilt only when the
     source set or embedder changes.
@@ -281,6 +282,16 @@ def default_index() -> rag.HybridIndex:
     Prebuilt indexes (CAELAB_CORPUS_INDEX_DIR or CAELAB_RAG_INDEX_DIR, made once — e.g. on the
     GPU laptop — and copied over) are loaded instead of rebuilt. A corpus bundle uses
     its fixed retrieval profile. Legacy indexes use the configured embedder."""
+    def check_cancelled():
+        rag.check_index_budget(cancel_event, deadline)
+
+    def publish(key, index):
+        check_cancelled()
+        _index_cache.clear()
+        _index_cache[key] = index
+        return index
+
+    check_cancelled()
     corpus_dir = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "")
     legacy_dir = os.environ.get("CAELAB_RAG_INDEX_DIR", "")
     if corpus_dir or (legacy_dir and ((Path(legacy_dir) / "current.json").is_file()
@@ -289,37 +300,42 @@ def default_index() -> rag.HybridIndex:
 
         root = Path(corpus_dir or legacy_dir).resolve()
         # Validate the current bundle even when its immutable index was seen before.
-        loaded, _ = load_corpus_bundle(root)
+        loaded, _ = load_corpus_bundle(root, check_cancelled=check_cancelled)
         key = ("corpus", root, loaded.corpus_revision, loaded.index_digest)
-        if key in _index_cache:
-            return _index_cache[key]
-        _index_cache.clear()
-        _index_cache[key] = loaded
-        return loaded
+        cached = _index_cache.get(key)
+        if cached is not None:
+            check_cancelled()
+            return cached
+        return publish(key, loaded)
 
     embedder = rag.get_embedder()
     prebuilt = legacy_dir
     if prebuilt:
         key = ("prebuilt", prebuilt, embedder.id)
-        if key in _index_cache:
-            return _index_cache[key]
-        loaded = _load_prebuilt(Path(prebuilt), embedder.id)
+        cached = _index_cache.get(key)
+        if cached is not None:
+            check_cancelled()
+            return cached
+        loaded = _load_prebuilt(Path(prebuilt), embedder.id, check_cancelled=check_cancelled)
         if loaded is not None:
-            _index_cache.clear()
-            _index_cache[key] = loaded
-            return loaded
+            return publish(key, loaded)
         raise ValueError(f"Configured RAG index is missing or incompatible: {prebuilt}")
     sources = configured_sources()
-    key = (embedder.id, tuple((sid, str(p), p.stat().st_mtime if p.exists() else 0)
-                               for sid, p, _solver in sources))
-    if key in _index_cache:
-        return _index_cache[key]
-    index = rag.HybridIndex.build(notes_chunks(), embedder)
+    source_keys = []
+    for source_id, path, _solver in sources:
+        check_cancelled()
+        source_keys.append((source_id, str(path), path.stat().st_mtime if path.exists() else 0))
+    key = (embedder.id, tuple(source_keys))
+    cached = _index_cache.get(key)
+    if cached is not None:
+        check_cancelled()
+        return cached
+    index = rag.HybridIndex.build(notes_chunks(), embedder, cancel_event=cancel_event, deadline=deadline)
     for source_id, path, solver in sources:
-        index.add_chunks(rag.load_source_chunks(path, source_id, solver), embedder)
-    _index_cache.clear()
-    _index_cache[key] = index
-    return index
+        check_cancelled()
+        index.add_chunks(rag.load_source_chunks(path, source_id, solver), embedder,
+                         cancel_event=cancel_event, deadline=deadline)
+    return publish(key, index)
 
 
 @dataclass(frozen=True)
@@ -328,9 +344,11 @@ class PinnedKnowledgeIndex:
     error: str | None = None
 
 
-def pin_knowledge_index() -> PinnedKnowledgeIndex:
+def pin_knowledge_index(*, cancel_event=None, deadline: float | None = None) -> PinnedKnowledgeIndex:
     try:
-        return PinnedKnowledgeIndex(default_index())
+        if cancel_event is None and deadline is None:
+            return PinnedKnowledgeIndex(default_index())
+        return PinnedKnowledgeIndex(default_index(cancel_event=cancel_event, deadline=deadline))
     except Exception as error:
         return PinnedKnowledgeIndex(None, f"{type(error).__name__}: {error}")
 
@@ -351,7 +369,8 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
 
 def search_knowledge_result(query: str, limit: int = 3,
                             solver: str | None = None, *,
-                            pinned_index: PinnedKnowledgeIndex | None = None) -> KnowledgeSearchResult:
+                            pinned_index: PinnedKnowledgeIndex | None = None,
+                            cancel_event=None, deadline: float | None = None) -> KnowledgeSearchResult:
     """Keep solver scope and distinguish absent material from retrieval failure."""
     from .corpus import mismatched_corpus_candidates, search_hybrid_with_plan
     from .query_language import normalize_solver, prepare_query
@@ -362,7 +381,7 @@ def search_knowledge_result(query: str, limit: int = 3,
         return KnowledgeSearchResult("no_material", [], resolved)
     try:
         plan = prepare_query(query, explicit_facets={"solver": resolved} if resolved else None)
-        pinned = pinned_index if pinned_index is not None else pin_knowledge_index()
+        pinned = pinned_index if pinned_index is not None else pin_knowledge_index(cancel_event=cancel_event, deadline=deadline)
         index = pinned.index
         if index is None:
             return KnowledgeSearchResult("error", [], resolved, pinned.error)
@@ -377,6 +396,8 @@ def search_knowledge_result(query: str, limit: int = 3,
             reranker=reranker,
             limit=limit,
             solver=resolved or None,
+            cancel_event=cancel_event,
+            deadline=deadline,
         )
     except Exception as error:
         return KnowledgeSearchResult("error", [], resolved,

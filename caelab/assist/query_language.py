@@ -208,9 +208,11 @@ _SOLVER_MENTION = re.compile(
 )
 _EDITION_RE = re.compile(r"(?<![0-9A-Za-z_.])v?\d+(?:\.\d+)*(?![0-9A-Za-z]|\.\d)", re.I)
 _PRE_SOLVER_EDITIONS = re.compile(
-    r"(?<![\w.])v?\d+(?:\.\d+)+(?:\s+(?:vs\.?|versus|and|to)\s+v?\d+(?:\.\d+)+)+\s+(?:in|for|of)\s*$",
+    r"(?<![\w.])v?\d+(?:\.\d+)*(?:\s+(?:vs\.?|versus|and|to)\s+v?\d+(?:\.\d+)*)*"
+    r"\s+(?:in|for|of|on|with)\s+$",
     re.I,
 )
+_PARENTHETIC_SOLVER_EDITION = re.compile(r"(?<![\w.])v?\d+(?:\.\d+)*\s*\(\s*$", re.I)
 _UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|bar|mbar|psi|ksi|atm|rpm|deg|rad|MN|mJ|kJ|W|kW|C)"
 _EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
 _VERSION_MARKER = re.compile(r"(?:\b(?:versions?|ver\.?|editions?)\s*[:=]?|버전|판본)\s*$", re.I)
@@ -777,7 +779,10 @@ def extract_query_scope(plan, explicit_facets=None):
     editions = {}
     pre_solver_editions = {}
     for mention in mentions:
-        comparison = _PRE_SOLVER_EDITIONS.search(normalized[:mention.start()])
+        prefix = normalized[:mention.start()]
+        comparison = _PRE_SOLVER_EDITIONS.search(prefix)
+        if comparison is None and re.match(r"\s*\)", normalized[mention.end():]):
+            comparison = _PARENTHETIC_SOLVER_EDITION.search(prefix)
         if comparison:
             pre_solver_editions.update(
                 (number.span(), normalize_solver(mention[0]))
@@ -1018,32 +1023,60 @@ def _candidate_source_span(candidate):
         return {"source_id": candidate.source_id, "source_sha256": candidate.document_sha256,
                 "start_line": candidate.line_start, "end_line": candidate.line_end,
                 "char_start": candidate.char_start, "char_end": candidate.char_end,
-                "page_start": candidate.page_start, "page_end": candidate.page_end}
+                "page_start": candidate.page_start, "page_end": candidate.page_end,
+                "page_breaks": candidate.page_breaks}
     nested = candidate.get("source_span")
     if nested is not None and not isinstance(nested, Mapping):
         raise ValueError("Candidate source_span must be an object")
     fields = ("source_id", "source_sha256", "document_sha256", "start_line", "end_line",
-              "line_start", "line_end", "char_start", "char_end", "page", "page_start", "page_end")
+              "line_start", "line_end", "char_start", "char_end", "byte_start", "byte_end",
+              "page", "page_start", "page_end", "start_page", "end_page", "page_breaks")
     top = {key: candidate[key] for key in fields if key in candidate}
     aliases = (("start_line", "line_start"), ("end_line", "line_end"),
                ("source_sha256", "document_sha256"),
-               ("page", "page_start"), ("page", "page_end"))
+               ("page_start", "start_page"), ("page_end", "end_page"),
+               ("page", "page_start"), ("page", "page_end"), ("page", "start_page"), ("page", "end_page"))
     combined = {}
-    positions = {"start_line", "end_line", "line_start", "line_end", "page", "page_start", "page_end"}
+    positive = {"start_line", "end_line", "line_start", "line_end", "page",
+                "page_start", "page_end", "start_page", "end_page"}
+    nonnegative = {"char_start", "char_end", "byte_start", "byte_end"}
     for span in (top, nested or {}):
         for key in fields:
             if key in span:
                 value = span[key]
-                if key in positions and not (key.startswith("page") and value is None):
-                    if type(value) is not int or value < 1:
-                        raise ValueError(f"Invalid candidate source_span position: {key}")
+                if ((key in positive and not ("page" in key and value is None)
+                     and (type(value) is not int or value < 1))
+                        or (key in nonnegative and (type(value) is not int or value < 0))):
+                    raise ValueError(f"Invalid candidate source_span position: {key}")
                 if key in combined and combined[key] != span[key]:
                     raise ValueError(f"Candidate source_span conflict: {key}")
                 combined[key] = span[key]
     for first, second in aliases:
         if first in combined and second in combined and combined[first] != combined[second]:
             raise ValueError(f"Candidate source_span conflict: {first}/{second}")
+    for start, end in (
+        (combined.get("start_line", combined.get("line_start")), combined.get("end_line", combined.get("line_end"))),
+        (combined.get("start_page", combined.get("page_start")), combined.get("end_page", combined.get("page_end"))),
+        (combined.get("char_start"), combined.get("char_end")),
+        (combined.get("byte_start"), combined.get("byte_end")),
+    ):
+        if start is not None and end is not None and start > end:
+            raise ValueError("Reversed candidate source_span range")
     return {"top": top, "nested": nested}
+
+
+def _quote_page_bounds(positions, text):
+    first = positions.get("page_start", positions.get("start_page", positions.get("page")))
+    last = positions.get("page_end", positions.get("end_page", positions.get("page")))
+    breaks = positions.get("page_breaks")
+    if breaks is None:
+        return {first: (0, len(text))} if first is not None and first == last else {}
+    if (first is None or last is None or not isinstance(breaks, (tuple, list))
+            or len(breaks) != last - first
+            or any(type(offset) is not int or not 0 < offset < len(text) for offset in breaks)
+            or sorted(breaks) != list(breaks)):
+        raise ValueError("Invalid candidate page_breaks")
+    return dict(zip(range(first, last + 1), zip((0, *breaks), (*breaks, len(text)))))
 
 
 def _trace_objects(value):
@@ -1058,8 +1091,10 @@ def _trace_objects(value):
 
 def _trace_blocks_support(value):
     states = {"decision", "status", "outcome", "relation", "scope_status", "retrieval_decision"}
-    denied = ("insufficient", "out_of_scope", "missing", "unsatisfied")
+    denied = ("insufficient", "out_of_scope", "missing", "unsatisfied", "uncertain",
+              "cancelled", "timed_out", "failed")
     return (value.get("is_non_cae") is True or value.get("satisfied") is False
+            or any(key in value and not value[key] for key in ("checks", "requirement_checks"))
             or any((key in states or key.startswith("req-")) and item in denied for key, item in value.items()))
 
 
@@ -1075,26 +1110,21 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, pages,
     if len(raw) != ref.size or hashlib.sha256(raw).hexdigest() != ref.sha256:
         raise ValueError("Retrieval assessment trace digest or size mismatch")
     trace = json.loads(raw)
-    if (not isinstance(trace, dict) or "schema_version" in trace
+    if (not isinstance(trace, dict) or trace.get("schema") != "caelab.retrieval_trace.v1"
+            or ref.format_id != "cae-retrieval-trace-v1" or "schema_version" in trace
             and (type(trace["schema_version"]) is not int or trace["schema_version"] != 1)):
         raise ValueError("Invalid retrieval assessment trace format")
-    events = trace.get("events", [])
+    events = trace.get("events")
     event_kinds = {"retrieval", "retrieval_assessment", "retrieval_decision", "retrieval_response",
                    "retrieval_start", "retrieval_completion", "query_plan", "search", "candidate_selection",
-                   "assessment", "response", "requirement_checks", "decision"}
+                   "assessment", "response", "requirement_checks", "decision", "terminal", "completion"}
     if not isinstance(events, list) or any(
-        not isinstance(event, dict) or any(
+        not isinstance(event, dict) or not ({"kind", "stage"} & event.keys()) or any(
             key in event and (not isinstance(event[key], str) or event[key] not in event_kinds)
-            for key in ("kind", "step_kind", "step_type", "event_kind", "type")
+            for key in ("kind", "stage", "step_kind", "step_type", "event_kind", "type")
         ) for event in events
     ):
         raise ValueError("Invalid retrieval assessment trace events")
-    retrieval_events = [event for event in events if {"query_plan_sha256", "candidate_set_sha256"} <= event.keys()]
-    if (trace.get("schema") != "caelab.retrieval_trace.v1" and not retrieval_events
-            and not (ref.format_id == "cae-retrieval-trace-v1"
-                     and type(trace.get("schema_version")) is int and trace["schema_version"] == 1
-                     and trace.get("type") == "retrieval_assessment")):
-        raise ValueError("Invalid retrieval assessment trace format")
     trace_identity = {key: event[key] for event in (trace, *events) for key in identity if key in event}
     if (trace_identity != identity
             or any(event[key] != identity[key] for event in (trace, *events)
@@ -1104,46 +1134,32 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, pages,
     if any(record[key] != identity[key] for record in trace_objects
            for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256") if key in record):
         raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
+    for record in trace_objects:
+        if ("candidate_id" in record
+                and (not isinstance(record["candidate_id"], str) or record["candidate_id"] not in texts)):
+            raise ValueError("Retrieval trace contains an unknown cited candidate")
+        if "candidate_ids" in record and (not isinstance(record["candidate_ids"], list) or any(
+            not isinstance(cid, str) or cid not in texts for cid in record["candidate_ids"]
+        )):
+            raise ValueError("Retrieval trace contains an unknown cited candidate")
+        if "citations" in record and (not isinstance(record["citations"], list) or any(
+            cid not in texts if isinstance(cid, str) else not isinstance(cid, Mapping) or "candidate_id" not in cid
+            for cid in record["citations"]
+        )):
+            raise ValueError("Retrieval trace contains an unknown cited candidate")
     trace_blocks_support = any(_trace_blocks_support(record) for record in trace_objects)
     if not isinstance(payload, Mapping):
         raise ValueError("Retrieval assessment fields are missing or unexpected")
     raw_keys = {"type", "checks", "out_of_scope", "limitations"}
     host_keys = (set(identity) - {"candidate_ids"}) | {"trace_ref", "decision"}
     supplied_keys = set(payload)
-    compact = supplied_keys - host_keys in (
-        {"candidate_ids", "citations", "scope_status", "quotes", "requirement_checks"},
-        {"candidate_ids", "citations", "relevance", "quotes", "requirement_checks"},
-    )
-    structured = supplied_keys in (raw_keys, raw_keys | host_keys | {"candidate_ids"})
     full_keys = raw_keys | host_keys | {"candidate_ids", "citations", "scope_status", "insufficiency_reasons"}
-    if (not (compact or structured or supplied_keys == full_keys)
-            or supplied_keys & host_keys and not host_keys <= supplied_keys):
+    if supplied_keys == raw_keys:
+        payload = {**payload, "decision": "supported", "scope_status": "in_scope", "insufficiency_reasons": []}
+    elif supplied_keys != full_keys:
         raise ValueError("Retrieval assessment fields are missing or unexpected")
-    if supplied_keys & host_keys and (
-        payload["trace_ref"] != ref.to_dict() or any(payload.get(key) != value for key, value in identity.items())
-    ):
+    elif payload["trace_ref"] != ref.to_dict() or any(payload.get(key) != value for key, value in identity.items()):
         raise ValueError("Retrieval assessment identity, trace_ref or candidate_ids mismatch")
-    requested_decision = payload.get("decision", "supported")
-
-    if compact:
-        if payload["candidate_ids"] != identity["candidate_ids"]:
-            raise ValueError("Retrieval assessment candidate_ids mismatch")
-        scope = payload.get("scope_status", "in_scope")
-        relation = payload.get("relevance", "relevant")
-        if scope not in ("in_scope", "out_of_scope") or relation not in ("relevant", "irrelevant", "uncertain"):
-            raise ValueError("Invalid retrieval assessment relevance or scope_status")
-        citations, quotes = payload["citations"], payload["quotes"]
-        if not isinstance(citations, list) or not isinstance(quotes, list):
-            raise ValueError("Retrieval assessment citations and quotes must be lists")
-        if relation != "relevant":
-            requested_decision = "insufficient"
-        payload = {"type": "retrieval_assessment", "checks": payload["requirement_checks"], "limitations": [],
-                   "out_of_scope": {"is_non_cae": False, "original_spans": [], "reason": ""},
-                   "scope_status": scope, "citations": citations, "quotes": quotes}
-    if structured or compact:
-        payload = {**payload, **identity, "trace_ref": ref.to_dict(), "decision": requested_decision,
-                   "scope_status": payload.get("scope_status", "in_scope"),
-                   "insufficiency_reasons": []}
     if payload["type"] != "retrieval_assessment":
         raise ValueError("Invalid retrieval assessment type")
     if payload["scope_status"] not in ("in_scope", "out_of_scope") or payload["decision"] not in (
@@ -1164,23 +1180,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, pages,
         if (not isinstance(cid, str) or cid not in texts or type(start) is not int or type(end) is not int
                 or not 0 <= start < end <= len(texts[cid])
                 or ("text" in value and value["text"] != texts[cid][start:end])
-                or (page is not None and (type(page) is not int or page < 1 or pages[cid][0] is None
-                                          or pages[cid][1] is None or not pages[cid][0] <= page <= pages[cid][1]))):
+                or (page is not None and (type(page) is not int or page < 1 or page not in pages[cid]
+                                          or not pages[cid][page][0] <= start < end <= pages[cid][page][1]))):
             raise ValueError("Invalid retrieval assessment citation or quotation")
         return cid, start, end
 
     if not isinstance(payload.get("citations", []), list) or not isinstance(payload["checks"], list):
         raise ValueError("Retrieval assessment citations and checks must be lists")
-    citations = {quote(value) for value in payload.get("citations", []) if not compact or not isinstance(value, str)}
-    if compact:
-        flat_quotes = {quote(value) for value in payload["quotes"]}
-        flat_ids = {value[0] for value in flat_quotes}
-        if all(isinstance(value, str) for value in payload["citations"]):
-            if set(payload["citations"]) != flat_ids:
-                raise ValueError("Retrieval assessment citations do not match quotations")
-        elif citations != flat_quotes or any(isinstance(value, str) for value in payload["citations"]):
-            raise ValueError("Retrieval assessment citations do not match quotations")
-        citations = flat_quotes
+    citations = {quote(value) for value in payload.get("citations", [])}
     by_req = {}
     checked_citations = set()
     for check in payload["checks"]:
@@ -1251,8 +1258,7 @@ def build_retrieval_decision(
         source_span = _candidate_source_span(cand)
         positions = ({**source_span["top"], **(source_span["nested"] or {})}
                      if "top" in source_span else source_span)
-        candidate_pages[cid] = (positions.get("page_start", positions.get("page")),
-                                positions.get("page_end", positions.get("page")))
+        candidate_pages[cid] = _quote_page_bounds(positions, text)
         cand_summary.append({"candidate_id": cid, "source_sha256": sha, "edition": edition,
                              "solver_scope": list(scope), "scope_limit": list(override) if override is not None else None,
                              "source_span": source_span,

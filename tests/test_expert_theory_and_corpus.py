@@ -991,8 +991,8 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     def assess(target, *, approved=True, include_good=False, trace_role="retrieval_trace",
                candidate_scopes=None, facets=None, out_of_scope=None, drop=(), invalid_quote=None,
                trace_ids=None, assessment_ids=None, gaps=(), question_plan=plan,
-               response_format=None, trace_outcome=None, trace_format="cae-retrieval-trace-v1", trace_schema=None,
-               trace_events=False, host_overrides=None, trace_overrides=None, companion=None):
+               response_format=None, trace_outcome=None, trace_format="cae-retrieval-trace-v1", trace_schema="caelab.retrieval_trace.v1",
+               trace_events=False, host_overrides=None, trace_overrides=None, companion=None, grouped=False):
         candidates = [companion or candidate, target] if include_good else [target]
         probe = query_language.build_retrieval_decision(
             question_plan, candidates, explicit_facets=facets, candidate_solver_scopes=candidate_scopes,
@@ -1000,15 +1000,15 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
         identity = {key: getattr(probe, key) for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")}
         ids = [item["citation"] for item in candidates]
         trace_payload = {"type": "retrieval_assessment", "schema_version": 1, **identity,
-                         "candidate_ids": ids if trace_ids is None else trace_ids}
+                         "candidate_ids": ids if trace_ids is None else trace_ids,
+                         "events": [{"kind": "retrieval_completion", "status": "completed"}]}
         if trace_outcome is not None:
             trace_payload["decision"] = trace_outcome
-        if trace_schema is not None:
-            trace_payload["schema"] = trace_schema
+        trace_payload["schema"] = trace_schema
         if trace_events:
-            trace_payload = {"events": [
+            trace_payload = {"schema": trace_schema, "events": [
                 {"kind": "retrieval", **{key: trace_payload[key] for key in (*identity, "candidate_ids")}},
-                {"status": trace_outcome},
+                {"stage": "terminal", "status": trace_outcome},
             ]}
         trace_payload.update(trace_overrides or {})
         raw = canonical_json_bytes(trace_payload)
@@ -1034,9 +1034,7 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
         }
         if invalid_quote is not None:
             result["checks"][0]["quoted_spans"] = [*quotes, invalid_quote]
-        if response_format == "frozen":
-            result = {key: result[key] for key in ("type", "checks", "out_of_scope", "limitations")}
-        elif response_format in ("compact", "persisted_compact"):
+        if grouped:
             flat = [{"candidate_id": item["citation"], "start": 0, "end": len(text)} for item in candidates]
             checks = []
             for req in probe.requirements:
@@ -1052,11 +1050,13 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
                                "candidate_ids": [q["candidate_id"] for q in checked],
                                "relation": "satisfied" if checked else "missing",
                                "quoted_spans": checked, "reason": "reviewed original text"})
+            result.update(checks=checks, citations=flat)
+        if response_format == "frozen":
+            result = {key: result[key] for key in ("type", "checks", "out_of_scope", "limitations")}
+        elif response_format == "hybrid":
             result = {"candidate_ids": ids, "citations": ids, "scope_status": "in_scope",
-                      "quotes": flat, "requirement_checks": checks}
-            if response_format == "persisted_compact":
-                result.update(**identity, trace_ref=trace.to_dict(), decision="supported")
-                result.update(host_overrides or {})
+                      "quotes": quotes, "requirement_checks": result["checks"]}
+        result.update(host_overrides or {})
         for field in drop:
             result.pop(field)
         return query_language.build_retrieval_decision(
@@ -1092,24 +1092,30 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
         assess(candidate, out_of_scope=bad_span)
     assert assess(candidate).status == "supported"
     assert assess(candidate, response_format="frozen").status == "supported"
-    assert assess(candidate, response_format="compact").status == "supported"
-    assert assess(candidate, response_format="persisted_compact").status == "supported"
+    with pytest.raises(ValueError, match="fields"):
+        assess(candidate, response_format="hybrid")
     with pytest.raises(ValueError, match="identity"):
-        assess(candidate, response_format="persisted_compact", host_overrides={"query_plan_sha256": "0" * 64})
-    assert assess(candidate, response_format="compact", trace_schema="caelab.retrieval_trace.v1",
-                  trace_format="other-format").status == "supported"
-    for response_format in ("frozen", "compact"):
-        with pytest.raises(ValueError, match="fields"):
-            assess(candidate, response_format=response_format,
-                   drop=("checks",) if response_format == "frozen" else ("requirement_checks",))
-    for trace_outcome in ("insufficient", "out_of_scope"):
+        assess(candidate, host_overrides={"query_plan_sha256": "0" * 64})
+    for schema, format_id in (("unrelated", "cae-retrieval-trace-v1"),
+                              ("caelab.retrieval_trace.v1", "other-format")):
+        with pytest.raises(ValueError, match="trace format"):
+            assess(candidate, trace_schema=schema, trace_format=format_id, trace_events=True)
+    with pytest.raises(ValueError, match="fields"):
+        assess(candidate, response_format="frozen", drop=("checks",))
+    for trace_outcome in ("insufficient", "out_of_scope", "cancelled", "timed_out", "failed"):
         assert assess(candidate, trace_outcome=trace_outcome).status == "insufficient"
         assert assess(candidate, trace_outcome=trace_outcome, trace_events=True).status == "insufficient"
     for response in ({"decision": {"status": "insufficient"}},
-                     {"assessment": {"requirement_checks": [{"relation": "missing"}]}}):
+                     {"assessment": {"requirement_checks": [{"relation": "missing"}]}},
+                     {"requirement_checks": [{"status": "uncertain"}]},
+                     {"requirement_checks": []}):
         assert assess(candidate, trace_overrides={"response": response}).status == "insufficient"
-    with pytest.raises(ValueError, match="trace events"):
-        assess(candidate, trace_overrides={"events": [{"kind": "solver_step"}]})
+    for event in ({"kind": "solver_step"}, {"status": "completed"}):
+        with pytest.raises(ValueError, match="trace events"):
+            assess(candidate, trace_overrides={"events": [event]})
+    for citation in ("unknown:chunk", {"candidate_id": "unknown:chunk"}):
+        with pytest.raises(ValueError, match="unknown cited candidate"):
+            assess(candidate, trace_overrides={"response": {"citations": [citation]}})
     with pytest.raises(ValueError, match="trace identity"):
         assess(candidate, trace_overrides={"assessment_id": None})
     with pytest.raises(ValueError, match="retrieval trace artifact"):
@@ -1121,19 +1127,19 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     wrong_solver = dict(candidate, solver_scope=["calculix"])
     comparison = query_language.prepare_query("Compare GEOS and CalculiX Drucker-Prager")
     ccx = dict(wrong_solver, citation="calculix-manual:chapter-1")
-    both_solvers = assess(ccx, include_good=True, response_format="compact", question_plan=comparison)
+    both_solvers = assess(ccx, include_good=True, grouped=True, question_plan=comparison)
     assert both_solvers.status == "supported"
     assert {item.candidate_id for item in both_solvers.candidate_checks if item.relation == "relevant"} == {
         candidate["citation"], ccx["citation"]
     }
-    one_solver = assess(ccx, response_format="compact", question_plan=comparison)
+    one_solver = assess(ccx, grouped=True, question_plan=comparison)
     assert one_solver.status == "insufficient" and "missing_solver" in one_solver.missing_evidence
     assert one_solver.candidate_checks[0].relation == "relevant"
     paired = query_language.prepare_query("Compare GEOS 2.23 and CCX 2.24: Drucker-Prager")
-    assert assess(dict(ccx, edition="2.24"), include_good=True, response_format="compact",
+    assert assess(dict(ccx, edition="2.24"), include_good=True, grouped=True,
                   question_plan=paired).status == "supported"
     swapped = assess(ccx, include_good=True, companion=dict(candidate, edition="2.24"),
-                     response_format="compact", question_plan=paired)
+                     grouped=True, question_plan=paired)
     assert swapped.status == "insufficient" and "edition_mismatch" in swapped.missing_evidence
     assert assess(wrong_solver, candidate_scopes={candidate["citation"]: ["geos"]}).status == "insufficient"
     assert assess(wrong_solver, facets={"solver": "calculix"}).status == "insufficient"
@@ -1147,9 +1153,14 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     for bad in (dict(start_line=13), dict(end_line=15), dict(source_id="other"), dict(page=1)):
         with pytest.raises(ValueError, match="source_span conflict"):
             query_language.build_retrieval_decision(plan, [dict(candidate, page=None, source_span={**matching, **bad})])
-    for bad in (dict(start_line=True), dict(end_line=False), dict(page=True), dict(page=-1), dict(page=0)):
+    for bad in (dict(start_line=True), dict(end_line=False), dict(page=True), dict(page=-1), dict(page=0),
+                dict(char_start=True), dict(char_end=False), dict(char_start=-1), dict(byte_start=-1), dict(byte_end=True)):
         with pytest.raises(ValueError, match="source_span position"):
             query_language.build_retrieval_decision(plan, [dict(candidate, source_span={**matching, **bad})])
+    for bad in (dict(start_page=5, end_page=2), dict(line_start=13), dict(char_start=200),
+                dict(byte_start=10, byte_end=8)):
+        with pytest.raises(ValueError, match="Reversed candidate source_span range"):
+            query_language.build_retrieval_decision(plan, [dict(candidate, **bad)])
     for changed in (dict(text=text[:-1] + "X"), dict(line_start=13, line_end=13), dict(source_id="other"),
                     dict(coverage_facets={"topics": ["restart"]}), dict(topics=["restart"]),
                     dict(source_kind="solver_manual"), dict(review_status="approved"), dict(solver="geos")):
@@ -1260,7 +1271,7 @@ def test_d09_review_overlay_applies_per_source_and_image_only_fails(tmp_path):
         corpus.build_corpus(manifest, output_root=out, verify_only=True)
 
 
-@pytest.mark.parametrize("false_page, diagnostic", [(999, "PAGE_OUT_OF_RANGE"), (2, "PDF_PAGE_SPAN_MISMATCH")])
+@pytest.mark.parametrize("false_page, diagnostic", [(999, "PAGE_OUT_OF_RANGE"), (2, "PDF_PAGE_SPAN_MISMATCH"), (None, "PAGE_OUT_OF_RANGE")])
 def test_d09_pdf_chunk_page_is_bounded_at_build_and_load(tmp_path, monkeypatch, false_page, diagnostic):
     from pypdf import PdfWriter
 
@@ -1298,6 +1309,69 @@ def test_d09_pdf_chunk_page_is_bounded_at_build_and_load(tmp_path, monkeypatch, 
     altered = index_path.rename(tmp_path / digest)
     with pytest.raises(ValueError, match=diagnostic):
         corpus.load_corpus_bundle(altered)
+
+
+@pytest.mark.parametrize("local_only", [False, True])
+def test_assessment_quote_must_fit_the_claimed_page_of_a_pdf_chunk(tmp_path, monkeypatch, local_only):
+    from pypdf import PdfWriter
+
+    root, manifest, data = _make_sample_corpus(tmp_path)
+    source = data["sources"][0]
+    pdf = root / ("manual.data" if local_only else "manual.pdf")
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.add_blank_page(width=100, height=100)
+    writer.write(pdf)
+    raw = pdf.read_bytes()
+    source.update(local_relative_path=pdf.name, source_format="pdf", sha256=hashlib.sha256(raw).hexdigest(),
+                  byte_length=len(raw))
+    if local_only:
+        source["license"]["redistribution"] = "local_only"
+    manifest.write_bytes(canonical_json_bytes(data))
+    monkeypatch.setattr(corpus, "_pdf_page_texts", lambda reader: ["Weak form\n", "Boundary\n"])
+    overlay = tmp_path / "overlay.json"
+    overlay.write_bytes(canonical_json_bytes({"schema_version": 1, "chunks": [{
+        "source_id": source["source_id"], "chunk_id": "combined", "section_path": ["Weak form"],
+        "line_start": 1, "line_end": 2, "page_start": 1, "page_end": 2,
+    }]}))
+    out = tmp_path / "out"
+    corpus.build_corpus(manifest, output_root=out, review_overlay_path=overlay)
+    index, _ = corpus.load_corpus_bundle(out)
+    spec = next(chunk.corpus_chunk for chunk in index.chunks if chunk.chunk_id == "combined")
+    assert spec.page_breaks == (len("Weak form\n"),)
+
+    plan = query_language.prepare_query("Weak form?")
+    probe = query_language.build_retrieval_decision(plan, [spec])
+    producer = ProducerIdentity("pytest", "1")
+    review = ArtifactRefV1(id="review", role="source_review", path="review.json", sha256="d" * 64,
+                           size=1, format_id="cae-source-review-v1", producer=producer)
+    trace_bytes = canonical_json_bytes({
+        "schema": "caelab.retrieval_trace.v1",
+        "assessment_id": probe.assessment_id, "query_plan_sha256": probe.query_plan_sha256,
+        "candidate_set_sha256": probe.candidate_set_sha256, "candidate_ids": [spec.citation],
+        "events": [{"kind": "retrieval_completion", "status": "completed"}],
+    })
+    (tmp_path / "trace.json").write_bytes(trace_bytes)
+    trace_ref = ArtifactRefV1(id="trace", role="retrieval_trace", path="trace.json",
+                              sha256=hashlib.sha256(trace_bytes).hexdigest(), size=len(trace_bytes),
+                              format_id="cae-retrieval-trace-v1", producer=producer)
+
+    def assess(page):
+        quotes = [{"candidate_id": spec.citation, "start": 0, "end": len("Weak form"), "page": page}]
+        checks = [{"requirement_id": req.requirement_id, "relation": "satisfied", "reason": "page evidence",
+                   "candidate_ids": [spec.citation], "quoted_spans": quotes} for req in probe.requirements]
+        return query_language.build_retrieval_decision(
+            plan, [spec], assessment_trace_ref=trace_ref, assessment_trace_root=tmp_path,
+            assessment_profile_sha256="f" * 64, source_review_refs=[review],
+            approved_source_reviews={spec.document_sha256: review}, assessment_result={
+                "type": "retrieval_assessment", "checks": checks, "limitations": [],
+                "out_of_scope": {"is_non_cae": False, "original_spans": [], "reason": ""},
+            },
+        )
+
+    assert assess(1).status == "supported"
+    with pytest.raises(ValueError, match="citation or quotation"):
+        assess(2)
 
 
 @pytest.mark.parametrize("defect", ["wrong_schema", "wrong_version", "wrong_discussion", "wrong_turn", "alias", "event", "chunk", "no_terminal"])
@@ -1403,13 +1477,13 @@ def test_cancelling_attachment_dialog_keeps_v1_unchanged(tmp_path, monkeypatch, 
 
 @pytest.mark.parametrize("mode", ["source_missing", "source_tampered", "vectors_nonfinite", "vector_meta_missing",
                                   "forged_quotation", "notice_missing", "notice_tampered",
-                                  "code_page", "local_quotation", "local_line"])
+                                  "code_page", "local_quotation", "local_line", "local_heading"])
 def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_path, mode):
     import io
     import shutil
 
     _, manifest_path, manifest_data = _make_sample_corpus(tmp_path)
-    if mode in ("local_quotation", "local_line"):
+    if mode in ("local_quotation", "local_line", "local_heading"):
         for source in manifest_data["sources"]:
             source["review_status"] = "approved"
         manifest_data["sources"][0]["license"]["redistribution"] = "local_only"
@@ -1426,13 +1500,16 @@ def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_p
         raw = path.read_bytes()
         path.write_bytes(b"x" + raw[1:])
         error = "SHA256_MISMATCH"
-    elif mode in ("forged_quotation", "local_quotation", "local_line", "code_page"):
+    elif mode in ("forged_quotation", "local_quotation", "local_line", "local_heading", "code_page"):
         path = staged / "chunks.json"
         payload = json.loads(path.read_bytes())
         quoted = payload["chunks"][0]
         if mode == "code_page":
             quoted.update(page_start=1, page_end=1)
             error = "PAGE_NOT_APPLICABLE"
+        elif mode == "local_heading":
+            quoted.update(section_path=["Forged clause 9.9"], heading_path=["Forged clause 9.9"])
+            error = "LOCAL_CHUNK_DIGEST_MISMATCH"
         elif mode == "local_line":
             quoted.update(line_start=999, line_end=999 + quoted["line_end"] - quoted["line_start"])
             error = "LOCAL_CHUNK_DIGEST_MISMATCH"
@@ -1440,7 +1517,7 @@ def test_d09_index_integrity_against_manifest_even_after_digest_recomputed(tmp_p
             quoted["text"] = "x" + quoted["text"][1:]
             quoted["text_sha256"] = hashlib.sha256(quoted["text"].encode()).hexdigest()
             error = "LOCAL_CHUNK_DIGEST_MISMATCH" if mode == "local_quotation" else "PACKAGED_SOURCE_SPAN_MISMATCH"
-        if mode in ("local_quotation", "local_line"):
+        if mode in ("local_quotation", "local_line", "local_heading"):
             assert not (staged / "sources" / "calculix_theory.md").exists()
             assert corpus.load_corpus_bundle(original)[1]["verification_status"] == "verified_with_limitations"
         path.write_bytes(canonical_json_bytes(payload))
@@ -1685,15 +1762,21 @@ def test_d08_case_attachment_mismatch_excluded_from_history_and_save_as(tmp_path
 
 
 @pytest.mark.parametrize("editions", [("2.23", "2.24"), ("2.24", "2.23")])
-def test_d09_corpus_search_matches_solver_and_edition_together(tmp_path, editions):
+@pytest.mark.parametrize("comparison", [
+    "GEOS 2.23 and CCX 2.24",
+    "2.23 (GEOS) vs 2.24 (CCX)",
+    "v2.23 in GEOS and v2.24 in CCX",
+])
+def test_d09_corpus_search_matches_solver_and_edition_together(tmp_path, editions, comparison):
     _, manifest, data = _make_sample_corpus(tmp_path)
     for src, solver, edition in zip(data["sources"], ("geos", "calculix"), editions):
         src.update(solver_scope=[solver], edition=edition)
     manifest.write_bytes(canonical_json_bytes(data))
     out = tmp_path / "index"
     corpus.build_corpus(manifest, output_root=out)
-    _, hits, decision = corpus.search_corpus(out, "Compare GEOS 2.23 and CCX 2.24: weak form and Drucker-Prager")
+    _, hits, decision = corpus.search_corpus(out, f"Compare {comparison}: weak form and Drucker-Prager")
     assert [req.expected for req in decision.requirements if req.facet == "solver"] == ["GEOS", "CCX"]
+    assert len([req for req in decision.requirements if req.facet == "edition"]) == 2
     if editions == ("2.23", "2.24"):
         assert {(hit.coverage_facets["solver"][0], hit.edition) for hit in hits} == {
             ("geos", "2.23"), ("calculix", "2.24"),

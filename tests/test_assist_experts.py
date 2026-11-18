@@ -20,7 +20,7 @@ def offline_knowledge(monkeypatch):
     monkeypatch.setattr(rag, "get_embedder", rag.HashingEmbedder)
     monkeypatch.setattr(rag, "get_reranker", rag.LexicalReranker)
     monkeypatch.setattr(knowledge, "default_index",
-                        lambda: rag.HybridIndex.build(knowledge.notes_chunks(), rag.HashingEmbedder()))
+                        lambda **_: rag.HybridIndex.build(knowledge.notes_chunks(), rag.HashingEmbedder()))
 
 
 class FakeProvider(ExpertProvider):

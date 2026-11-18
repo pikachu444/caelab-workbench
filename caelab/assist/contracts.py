@@ -529,6 +529,7 @@ class CorpusSourceSpec:
     extraction_quality: str
     review_status: str | None = None
     page_count: int | None = None
+    source_format: str | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self.source_id, "CorpusSourceSpec.source_id")
@@ -595,6 +596,7 @@ class CorpusSourceSpec:
             raise ValueError(f"Invalid source review status: {self.review_status!r}")
         if self.page_count is not None:
             _require_int(self.page_count, "CorpusSourceSpec.page_count", minimum=1)
+        _require_optional_nonempty_str(self.source_format, "CorpusSourceSpec.source_format")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -613,6 +615,7 @@ class CorpusSourceSpec:
             "extraction_quality": self.extraction_quality,
             **({"review_status": self.review_status} if self.review_status is not None else {}),
             **({"page_count": self.page_count} if self.page_count is not None else {}),
+            **({"source_format": self.source_format} if self.source_format is not None else {}),
         }
 
     @classmethod
@@ -641,7 +644,7 @@ class CorpusSourceSpec:
                 "parser",
                 "extraction_quality",
             },
-            optional={"review_status", "page_count"},
+            optional={"review_status", "page_count", "source_format"},
             context="CorpusSourceSpec",
         )
         return cls(**m)
@@ -793,6 +796,8 @@ class CorpusChunkSpec:
     # Resolved from the published manifest, outside the source-span wire record.
     source_kind: str | None = field(default=None, compare=False)
     review_status: str | None = field(default=None, compare=False)
+    # Relative character offsets at the starts of subsequent pages.
+    page_breaks: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self.source_id, "CorpusChunkSpec.source_id")
@@ -828,6 +833,13 @@ class CorpusChunkSpec:
             raise ValueError("CorpusChunkSpec page_start and page_end must both be int or both be None")
         if ps is not None and pe is not None and pe < ps:
             raise ValueError("CorpusChunkSpec.page_end must be >= page_start")
+        if self.page_breaks is not None:
+            if (ps is None or pe is None or not isinstance(self.page_breaks, (list, tuple))
+                    or len(self.page_breaks) != pe - ps
+                    or any(type(offset) is not int or not 0 < offset < len(self.text) for offset in self.page_breaks)
+                    or list(self.page_breaks) != sorted(self.page_breaks)):
+                raise ValueError("Invalid CorpusChunkSpec.page_breaks")
+            object.__setattr__(self, "page_breaks", tuple(self.page_breaks))
         if not isinstance(self.coverage_facets, Mapping):
             raise ValueError("CorpusChunkSpec.coverage_facets must be a mapping")
         object.__setattr__(
@@ -856,6 +868,7 @@ class CorpusChunkSpec:
             "page_start": self.page_start,
             "page_end": self.page_end,
             "coverage_facets": _to_plain(self.coverage_facets),
+            **({"page_breaks": list(self.page_breaks)} if self.page_breaks is not None else {}),
         }
 
     @classmethod
@@ -878,6 +891,7 @@ class CorpusChunkSpec:
                 "page_end",
                 "coverage_facets",
             },
+            optional={"page_breaks"},
             context="CorpusChunkSpec",
         )
         return cls(**m)

@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -264,6 +265,18 @@ class BM25:
 
 
 # ---------------------------------------------------------------- embedders
+def check_index_budget(cancel_event=None, deadline: float | None = None) -> float | None:
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if (cancel_event is not None and cancel_event.is_set()) or (remaining is not None and remaining <= 0):
+        raise TimeoutError("Knowledge retrieval stopped")
+    return remaining
+
+
+def _endpoint_timeout(cancel_event, deadline):
+    remaining = check_index_budget(cancel_event, deadline)
+    return 600 if remaining is None else min(600, max(0.01, remaining))
+
+
 class Embedder:
     id = "base"
 
@@ -306,12 +319,12 @@ class EndpointEmbedder(Embedder):
         self.id = f"endpoint:{model}"
         self.query_instruction = os.environ.get("CAELAB_EMBED_QUERY_INSTRUCTION", "")
 
-    def embed_query(self, text: str) -> np.ndarray:
+    def embed_query(self, text: str, *, cancel_event=None, deadline: float | None = None) -> np.ndarray:
         if self.query_instruction:
             text = f"{self.query_instruction}\n{text}"
-        return self.embed([text])[0]
+        return self.embed([text], cancel_event=cancel_event, deadline=deadline)[0]
 
-    def embed(self, texts: list[str]) -> np.ndarray:
+    def embed(self, texts: list[str], *, cancel_event=None, deadline: float | None = None) -> np.ndarray:
         vectors: list[list[float]] = []
         for start in range(0, len(texts), 32):
             batch = texts[start: start + 32]
@@ -321,8 +334,9 @@ class EndpointEmbedder(Embedder):
                 headers={"Content-Type": "application/json"}, method="POST")
             if self.api_key:
                 request.add_header("Authorization", f"Bearer {self.api_key}")
-            with urllib.request.urlopen(request, timeout=600) as response:
+            with urllib.request.urlopen(request, timeout=_endpoint_timeout(cancel_event, deadline)) as response:
                 data = json.loads(response.read().decode("utf-8"))
+            check_index_budget(cancel_event, deadline)
             vectors.extend(item["embedding"] for item in sorted(data["data"], key=lambda d: d["index"]))
         return _normalize(np.array(vectors, dtype=np.float32))
 
@@ -378,7 +392,7 @@ class EndpointReranker(Reranker):
         self.api_key = api_key
         self.id = f"endpoint:{model}"
 
-    def rerank(self, query: str, chunks: list[Chunk]) -> list[float]:
+    def rerank(self, query: str, chunks: list[Chunk], *, cancel_event=None, deadline: float | None = None) -> list[float]:
         # Heading + lead is what relevance turns on; sending whole
         # chunks for 20 candidates would overflow the model context.
         body = json.dumps({
@@ -390,8 +404,9 @@ class EndpointReranker(Reranker):
             headers={"Content-Type": "application/json"}, method="POST")
         if self.api_key:
             request.add_header("Authorization", f"Bearer {self.api_key}")
-        with urllib.request.urlopen(request, timeout=600) as response:
+        with urllib.request.urlopen(request, timeout=_endpoint_timeout(cancel_event, deadline)) as response:
             data = json.loads(response.read().decode("utf-8"))
+        check_index_budget(cancel_event, deadline)
         scores = [0.0] * len(chunks)
         for item in data["results"]:
             scores[item["index"]] = float(item["relevance_score"])
@@ -422,16 +437,18 @@ class HybridIndex:
 
     # -- construction ------------------------------------------------------
     @classmethod
-    def build(cls, chunks: list[Chunk], embedder: Embedder) -> "HybridIndex":
-        vectors = embedder.embed([_embed_text(c) for c in chunks]) if chunks else None
+    def build(cls, chunks: list[Chunk], embedder: Embedder, *, cancel_event=None,
+              deadline: float | None = None) -> "HybridIndex":
+        vectors = _embed_chunks(chunks, embedder, cancel_event, deadline) if chunks else None
         return cls(chunks=list(chunks), embedder_id=embedder.id, vectors=vectors)
 
-    def add_chunks(self, chunks: list[Chunk], embedder: Embedder) -> None:
+    def add_chunks(self, chunks: list[Chunk], embedder: Embedder, *, cancel_event=None,
+                   deadline: float | None = None) -> None:
         """Add one source's chunks independently of the others, so a
         new manual re-embeds only its own chunks."""
         if not chunks:
             return
-        new_vectors = embedder.embed([_embed_text(c) for c in chunks])
+        new_vectors = _embed_chunks(chunks, embedder, cancel_event, deadline)
         self.chunks.extend(chunks)
         self.vectors = new_vectors if self.vectors is None else np.vstack([self.vectors, new_vectors])
         self.embedder_id = embedder.id
@@ -495,6 +512,14 @@ class HybridIndex:
         return self._search_with_scores(query, top_k, reranker, candidate_count,
                                         bm25_scores, query_vector=query_vector,
                                         allowed=allowed)
+
+
+def _embed_chunks(chunks, embedder, cancel_event, deadline):
+    check_index_budget(cancel_event, deadline)
+    texts = [_embed_text(chunk) for chunk in chunks]
+    if isinstance(embedder, EndpointEmbedder):
+        return embedder.embed(texts, cancel_event=cancel_event, deadline=deadline)
+    return embedder.embed(texts)
 
 
 def _embed_text(chunk: Chunk) -> str:

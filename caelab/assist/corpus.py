@@ -311,7 +311,7 @@ def _line_spans(text: str) -> tuple[list[str], list[int], list[int]]:
 
 
 def _is_paginated(source):
-    return Path(source.local_relative_path or "").suffix.lower() == ".pdf"
+    return (source.source_format or "").lower() == "pdf" or Path(source.local_relative_path or "").suffix.lower() == ".pdf"
 
 
 def _chunk_pages(source, fields, page_count):
@@ -321,9 +321,9 @@ def _chunk_pages(source, fields, page_count):
         if any(value is not None and (type(value) is not int or value != page) for value in (start, end)):
             raise ValueError(f"PAGE_SPAN_MISMATCH: {source.source_id}")
         start = end = page
-    if start is None and end is None:
-        return start, end
     if not _is_paginated(source):
+        if start is None and end is None:
+            return start, end
         raise ValueError(f"PAGE_NOT_APPLICABLE: {source.source_id}")
     if (page_count is None or type(start) is not int or type(end) is not int
             or not 1 <= start <= end <= page_count):
@@ -332,21 +332,23 @@ def _chunk_pages(source, fields, page_count):
 
 
 def _verify_pdf_page_span(chunk, offsets):
-    if chunk.page_start is None:
-        return
     start, end = chunk.page_start, chunk.page_end
     if (not offsets[start - 1] <= chunk.char_start < offsets[start]
             or not offsets[end - 1] < chunk.char_end <= offsets[end]):
         raise ValueError(f"PDF_PAGE_SPAN_MISMATCH: {chunk.citation}")
+    breaks = tuple(offset - chunk.char_start for offset in offsets[start:end])
+    if chunk.page_breaks is not None and chunk.page_breaks != breaks:
+        raise ValueError(f"PDF_PAGE_SPAN_MISMATCH: {chunk.citation}")
+    return replace(chunk, page_breaks=breaks) if breaks else chunk
 
 
-def _local_chunk_digest(chunk):
-    return canonical_sha256({
+def _local_chunk_digest(chunk, source):
+    return canonical_sha256({"source_title": source.title, **{
         key: getattr(chunk, key) for key in (
             "chunk_id", "source_id", "document_sha256", "line_start", "line_end",
-            "char_start", "char_end", "page_start", "page_end", "text_sha256",
+            "char_start", "char_end", "page_start", "page_end", "page_breaks", "text_sha256", "section_path",
         )
-    })
+    }})
 
 
 def _extract_curated_chunk(
@@ -522,9 +524,7 @@ def _chunk_pdf_with_spans(
             for item in curated
         ]
         offsets = (0, *accumulate(map(len, page_texts)))
-        for chunk in chunks:
-            _verify_pdf_page_span(chunk, offsets)
-        return chunks
+        return [_verify_pdf_page_span(chunk, offsets) for chunk in chunks]
 
     # Map each page to 1-based line ranges and heading path
     chunks: list[CorpusChunkSpec] = []
@@ -582,9 +582,10 @@ def _validate_vectors(vectors: np.ndarray, count: int) -> np.ndarray:
     return np.ascontiguousarray(vectors, dtype=np.float32)
 
 
-def _dir_snapshot(directory: Path) -> dict[str, bytes]:
+def _dir_snapshot(directory: Path, *, check_cancelled=None) -> dict[str, bytes]:
     snapshot: dict[str, bytes] = {}
     for p in sorted(directory.rglob("*")):
+        _check_cancel(check_cancelled)
         if p.is_file():
             snapshot[p.relative_to(directory).as_posix()] = p.read_bytes()
     return snapshot
@@ -676,7 +677,7 @@ def build_corpus(
             if not set(scope) <= set(src.solver_scope):
                 raise ValueError(f"Chunk solver scope exceeds source scope: {chunk.citation}")
             if src.license["redistribution"] not in _REDISTRIBUTABLE_VALUES:
-                local_chunk_sha256[chunk.citation] = _local_chunk_digest(chunk)
+                local_chunk_sha256[chunk.citation] = _local_chunk_digest(chunk, src)
         chunks.extend(extracted)
         source_statuses[src.source_id] = review_status
         if review_status != "approved":
@@ -890,7 +891,8 @@ def _chunk_solver_scope(chunk: CorpusChunkSpec) -> tuple[str, ...]:
     return scope
 
 
-def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | None = None) -> tuple[rag.HybridIndex, dict[str, Any]]:
+def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | None = None,
+                       check_cancelled=None) -> tuple[rag.HybridIndex, dict[str, Any]]:
     """Verify every file from a single published index and load that same snapshot."""
     base = Path(root_or_index_dir).expanduser().resolve()
     index_dir = base
@@ -907,7 +909,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
             raise ValueError("Corpus pointer path does not match index_digest")
         index_dir = base / validate_relative_artifact_path(pointer["index_relative_path"], root=base)
 
-    files = _dir_snapshot(index_dir)
+    files = _dir_snapshot(index_dir, check_cancelled=check_cancelled)
     for filename in ("chunks.json", "manifest.json"):
         if filename not in files:
             raise FileNotFoundError(f"Corpus {filename} missing: {index_dir}")
@@ -947,7 +949,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
             raise ValueError("Corpus pointer metadata does not match the verified index")
 
     vectors = _load_vectors(files, index_dir, len(meta["chunks"]), has_vectors)
-    review_statuses = _verify_packaged_sources(manifest, files, index_dir)
+    review_statuses = _verify_packaged_sources(manifest, files, index_dir, check_cancelled=check_cancelled)
     if meta.get("source_statuses") != review_statuses:
         raise ValueError("Source review metadata does not match the manifest and review overlay")
     sources = {source.source_id: source for source in manifest.sources}
@@ -957,6 +959,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
     local_chunks = {}
     originals_missing = False
     for raw in meta["chunks"]:
+        _check_cancel(check_cancelled)
         if not isinstance(raw, dict):
             raise ValueError("Corpus chunk must be an object")
         source = sources.get(raw.get("source_id"))
@@ -995,10 +998,11 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                 or tuple(raw["solver_scope"]) != scope or not set(scope) <= set(source.solver_scope)
                 or raw.get("source_kind") != source.source_kind or raw.get("review_status") != review_statuses[spec.source_id]
                 or review_statuses[spec.source_id] in {"rejected", "source_unavailable"}
-                or spec.char_end - spec.char_start != len(spec.text) or spec.citation in citations):
+                or spec.char_end - spec.char_start != len(spec.text) or spec.citation in citations
+                or raw.get("heading_path", list(spec.section_path)) != list(spec.section_path)):
             raise ValueError(f"Invalid corpus chunk provenance: {spec.citation}")
         if source.license["redistribution"] not in _REDISTRIBUTABLE_VALUES:
-            local_chunks[spec.citation] = _local_chunk_digest(spec)
+            local_chunks[spec.citation] = _local_chunk_digest(spec, source)
         if text is None:
             originals_missing = True
         else:
@@ -1008,7 +1012,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                     or text[spec.char_start:spec.char_end] != spec.text):
                 raise ValueError(f"PACKAGED_SOURCE_SPAN_MISMATCH: {spec.citation}")
         if page_offsets is not None:
-            _verify_pdf_page_span(spec, page_offsets)
+            spec = _verify_pdf_page_span(spec, page_offsets)
         citations.add(spec.citation)
         chunks.append(rag.Chunk(
             chunk_id=spec.chunk_id, source_id=spec.source_id, heading_path=spec.section_path, text=spec.text,
@@ -1029,7 +1033,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                        else "verified_with_limitations")
 
 
-def _verify_packaged_sources(manifest, files, index_dir):
+def _verify_packaged_sources(manifest, files, index_dir, *, check_cancelled=None):
     sources = {source.source_id: source for source in manifest.sources}
     reviews = {}
     if "reviews.json" in files:
@@ -1042,6 +1046,7 @@ def _verify_packaged_sources(manifest, files, index_dir):
             reviews[sid] = review["status"]
     statuses = {}
     for sid, source in sources.items():
+        _check_cancel(check_cancelled)
         review_status = reviews.get(sid, source.review_status or "unreviewed")
         if "rejected" in (review_status, source.review_status):
             statuses[sid] = "rejected"
@@ -1082,6 +1087,8 @@ def search_hybrid_with_plan(
     candidate_count: int = rag.RERANK_CANDIDATES,
     solver: str | None = None,
     edition: str | None = None,
+    cancel_event=None,
+    deadline: float | None = None,
 ) -> list[rag.Chunk]:
     """Run cae-small-bm25-hash-v1 multi-query top-20 BM25 + vector RRF(k=60) + lexical rerank."""
     if not index.chunks or classify_non_cae_intent(plan)[0]:
@@ -1112,13 +1119,16 @@ def search_hybrid_with_plan(
     fused_scores: dict[int, float] = {}
 
     for qtext in query_texts:
+        rag.check_index_budget(cancel_event, deadline)
         bm25_scores = index.bm25.scores(rag.tokenize(qtext))
         bm25_order = [i for i in sorted(pool, key=lambda i: (-bm25_scores[i], i)) if bm25_scores[i] > 0][:candidate_count]
         for rank, idx in enumerate(bm25_order):
             fused_scores[idx] = fused_scores.get(idx, 0.0) + 1.0 / (rag.RRF_K + rank + 1)
 
         if index.vectors is not None:
-            qvec = np.asarray(embedder.embed_query(qtext), dtype=np.float32)
+            vector = (embedder.embed_query(qtext, cancel_event=cancel_event, deadline=deadline)
+                      if isinstance(embedder, rag.EndpointEmbedder) else embedder.embed_query(qtext))
+            qvec = np.asarray(vector, dtype=np.float32)
             if qvec.ndim != 1 or qvec.shape[0] != index.vectors.shape[1]:
                 raise ValueError(
                     f"Query embedding dimension {qvec.shape} mismatches index dimension {index.vectors.shape[1]}"
@@ -1136,8 +1146,10 @@ def search_hybrid_with_plan(
         top_indices = pool[:candidate_count]
     candidates = [index.chunks[i] for i in top_indices]
     if reranker is not None and candidates:
+        rag.check_index_budget(cancel_event, deadline)
         combined_query = " ".join(query_texts)
-        scores = reranker.rerank(combined_query, candidates)
+        scores = (reranker.rerank(combined_query, candidates, cancel_event=cancel_event, deadline=deadline)
+                  if isinstance(reranker, rag.EndpointReranker) else reranker.rerank(combined_query, candidates))
         candidates = [c for _s, c in sorted(zip(scores, candidates), key=lambda p: -p[0])]
     return candidates[:limit]
 

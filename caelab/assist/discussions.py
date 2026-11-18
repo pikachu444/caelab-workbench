@@ -1176,7 +1176,8 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                     problems = verify_evidence(evidence, path.parent / "assets")
                     if problems:
                         raise ValueError("근거 무결성 확인 실패: " + "; ".join(problems))
-                pinned = pin_knowledge_index() if "knowledge" in template.allowed_tools else None
+                pinned = (pin_knowledge_index(cancel_event=stopped, deadline=prep_deadline)
+                          if "knowledge" in template.allowed_tools else None)
                 checkpoint("prep")
                 index = pinned.index if pinned is not None else None
                 discussion.history = []
@@ -1186,7 +1187,7 @@ def ask_discussion(path, question, *, evidence_id: str | None = None, template_i
                         document, prior_turn, asset_root
                     ):
                         discussion.history.append(prior_turn)
-                prompt = discussion.build_prompt(question, pinned_index=pinned)
+                prompt = discussion.build_prompt(question, pinned_index=pinned, cancel_event=stopped, deadline=prep_deadline)
                 materials = _provided_materials(discussion, evidence, origin)
                 k_res = discussion.knowledge_result
                 retrieval_decisions = []

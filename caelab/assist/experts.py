@@ -312,7 +312,8 @@ class Discussion:
             raise ValueError("theory role cannot be used with case_analysis request_scope")
         return self.question_scope == "theory"
 
-    def build_prompt(self, question: str, *, pinned_index: PinnedKnowledgeIndex | None = None) -> str:
+    def build_prompt(self, question: str, *, pinned_index: PinnedKnowledgeIndex | None = None,
+                     cancel_event=None, deadline: float | None = None) -> str:
         self.knowledge_ids = []  # citations are checked against this request only
         self.knowledge_result = None
         theory_mode = self._is_theory_mode()
@@ -352,7 +353,10 @@ class Discussion:
             search_solver = infer_solver(question) if theory_mode else (
                 self.solver_id or infer_solver(self.summary_text) or infer_solver(question)
             )
-            self.knowledge_result = search_knowledge_result(question, limit=5, solver=search_solver, pinned_index=pinned_index)
+            self.knowledge_result = search_knowledge_result(
+                question, limit=5, solver=search_solver, pinned_index=pinned_index,
+                cancel_event=cancel_event, deadline=deadline,
+            )
             entries = self.knowledge_result.entries
             if entries:
                 self.evidence_sources.append("knowledge")

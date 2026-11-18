@@ -50,12 +50,12 @@ def _deck_lines(root: Path, files):
                 yield key, number, line.strip()
     card = ""
     for filename, number, line in expand(root, ()):
-        if line.startswith("**"):
+        compact = re.sub(r"[ \t]+", "", line)
+        if not compact or compact.startswith("**"):
             continue
-        if line.startswith("*"):
-            card = re.sub(r"[ \t]+", "", line.split(",", 1)[0]).upper()
-        if line:
-            yield filename, number, card, line
+        if compact.startswith("*"):
+            card = compact.split(",", 1)[0].upper()
+        yield filename, number, card, line
 
 
 def _mesh_topology(root: Path, files):

@@ -778,7 +778,7 @@ def test_index_loading_consumes_request_budget(tmp_path, monkeypatch, load_durat
         clock[0] += provider_duration
         return "provider response"
 
-    def load_index():
+    def load_index(**_):
         clock[0] += load_duration
         return SimpleNamespace(index=None)
 
@@ -800,7 +800,7 @@ def test_index_loading_can_be_abandoned_before_it_returns(tmp_path, monkeypatch,
     provider = Provider()
     provider.availability = lambda: (calls.append("availability") or True, "")
 
-    def load_index():
+    def load_index(**_):
         entered.set()
         release.wait(2)
         return None
@@ -827,6 +827,66 @@ def test_index_loading_can_be_abandoned_before_it_returns(tmp_path, monkeypatch,
     finally:
         timer.cancel()
         release.set()
+
+
+@pytest.mark.parametrize("stop", ["cancel", "expire"])
+def test_stopped_request_does_not_continue_index_build(tmp_path, monkeypatch, stop):
+    from io import BytesIO
+    from caelab.assist import knowledge, rag
+
+    entered, release, done = threading.Event(), threading.Event(), threading.Event()
+    cancelled = threading.Event()
+    calls = []
+    for name in ("CAELAB_CORPUS_INDEX_DIR", "CAELAB_RAG_INDEX_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(knowledge, "_index_cache", {})
+    monkeypatch.setattr(knowledge, "notes_chunks", lambda: [
+        rag.Chunk(source_id="note", chunk_id=str(i), heading_path=("note",), text="weak form")
+        for i in range(65)
+    ])
+    monkeypatch.setattr(knowledge, "configured_sources", lambda: [])
+    monkeypatch.setattr(rag, "get_embedder", lambda: rag.EndpointEmbedder("http://localhost", "stub"))
+    real_pin = service.pin_knowledge_index
+
+    def load(**kwargs):
+        try:
+            return real_pin(**kwargs)
+        finally:
+            done.set()
+
+    def urlopen(request, *, timeout):
+        calls.append(timeout)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        batch = json.loads(request.data)["input"]
+        return BytesIO(json.dumps({"data": [
+            {"index": i, "embedding": [1.0, 0.0]} for i in range(len(batch))
+        ]}).encode())
+
+    def check_cancelled():
+        if cancelled.is_set():
+            raise RuntimeError("cancelled during embedding")
+
+    monkeypatch.setattr(service, "pin_knowledge_index", load)
+    monkeypatch.setattr(rag.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 0.5)
+    path, doc, provider = prepared(tmp_path, monkeypatch)
+    def cancel_after_http_starts():
+        if entered.wait(2):
+            cancelled.set()
+    if stop == "cancel":
+        threading.Thread(target=cancel_after_http_starts, daemon=True).start()
+    try:
+        turn = ask(path, doc, template_id="material", check_cancelled=check_cancelled)["turns"][-1]
+        assert turn["status"] == ("cancelled" if stop == "cancel" else "timed_out")
+        assert entered.is_set()
+    finally:
+        release.set()
+        assert done.wait(3)
+    assert len(calls) == 1
+    assert 0.01 <= calls[0] <= 0.5
+    assert knowledge._index_cache == {} and provider.prompts == []
 
 
 def test_split_timeout_budgets_dedicated_provider_budget_and_caller_monotonic_anchor(tmp_path, monkeypatch):
