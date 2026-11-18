@@ -196,6 +196,36 @@ def _resume_owned_windows_process(process):
         raise OSError(f"Could not resume converter (NTSTATUS {status & 0xffffffff:#010x})")
 
 
+_WINDOWS_CONVERTER_SPAWN_LOCK = threading.Lock()
+
+
+def _start_windows_converter(control, executor, argv, kwargs):
+    import ctypes as c
+    from ctypes import wintypes as w
+
+    api = c.WinDLL("kernel32", use_last_error=True)
+    api.GetDllDirectoryW.argtypes, api.GetDllDirectoryW.restype = [w.DWORD, w.LPWSTR], w.DWORD
+    api.SetDllDirectoryW.argtypes, api.SetDllDirectoryW.restype = [w.LPCWSTR], w.BOOL
+    with _WINDOWS_CONVERTER_SPAWN_LOCK:
+        size = api.GetDllDirectoryW(0, None)
+        previous = c.create_unicode_buffer(max(1, size))
+        if size:
+            c.set_last_error(0)
+            copied = api.GetDllDirectoryW(size, previous)
+            if (copied == 0 and c.get_last_error()) or copied >= size:
+                raise OSError("could not read the current DLL search directory")
+        if not api.SetDllDirectoryW(None):
+            raise c.WinError(c.get_last_error())
+        try:
+            # Windows inherits the DLL directory at creation. The child stays
+            # suspended until it joins the owned Job Object.
+            control["process"] = executor(argv, **kwargs)
+        finally:
+            if not api.SetDllDirectoryW(previous.value or None):
+                raise c.WinError(c.get_last_error())
+        return control["process"]
+
+
 class _WindowsRunGroup:
     """Kernel Job ownership, with solver release gated until assignment succeeds."""
     def __init__(self, process):
@@ -590,7 +620,7 @@ class JobManager:
             cleanup_error = ""
             try:
                 if control["process"] is not None:
-                    run.returncode = _finish_owned(control, cancel=True)
+                    run.returncode = _finish_owned(control, cancel=True, term_grace=5, wait_timeout=5, confirm_tree=True)
                     if current_stage is not None:
                         current_stage["returncode"] = run.returncode
                     control["process"] = None
@@ -650,7 +680,8 @@ class JobManager:
                         store.write(run)
                     except Exception:
                         pass
-            self._release_native_lease(run, control)
+            if not control["cleanup_failed"]:
+                self._release_native_lease(run, control)
 
     def native_run_activity(self, run_id: str) -> RunActivity | None:
         """Observe this manager's ownership; never adopt a restored PID."""
@@ -701,7 +732,7 @@ class JobManager:
                         and control["receipt"]["state"] in ACTIVE_OPERATIONS
                         and not control["cancel"].is_set()):
                     return copy.deepcopy(control["receipt"])
-            published = time.monotonic() + .25
+            published = time.monotonic() + 2.5
             while True:
                 try:
                     lease = store.lease()
@@ -714,24 +745,28 @@ class JobManager:
                         return duplicate
                     if time.monotonic() >= published:
                         raise
-                    time.sleep(.01)
+                    time.sleep(.025)
             try:
                 recover_derived_operations(store)
                 receipt = {
                     "schema_version": 1, "id": op_id, "source_run_id": source_id, "source_node_id": plan["source_node_id"],
                     "operation_kind": "extract" if plan["profile"] == "VTU-1" else "convert",
-                    "state": "queued", "parse_state": "unparsed", "stage": "queued", "progress": 0.0,
+                    "state": "queued", "parse_state": "unparsed", "stage": "queued",
+                    "progress": {"completed": 0, "total": 1, "unit": "steps"},
                     "created_at": utc_now(), "started_at": None, "finished_at": None,
                     "source_receipt_ref": None, "source_receipt_sha256": None,
                     "source_input_revision": plan["source_input_revision"], "source_mesh_revision": plan.get("source_mesh_revision"),
                     "source_fingerprint": plan["source_fingerprint"],
                     "source_artifacts": plan["source_artifacts"], "staged_artifacts": [], "outputs": [],
                     "adapter": {"id": plan["profile"], "version": plan["reader_version"], "code_sha256": plan["reader_sha256"]},
+                    "adapter_id": plan["profile"], "adapter_version": plan["reader_version"],
+                    "adapter_code_sha256": plan["reader_sha256"],
                     "reader_code_sha256": plan["reader_sha256"],
-                    "executable": plan["executable"], "plan_hash": plan["plan_hash"], "cache_key": plan["cache_key"],
+                    "executable": plan["executable"], "plan_sha256": plan["plan_hash"], "plan_hash": plan["plan_hash"],
+                    "cache_key": plan["cache_key"],
                     "units": plan["units"], "options": plan["options"], "execution": [], "pid": None,
                     "returncode": None, "error": None, "warnings": [], "artifact_owners": {}, "dataset_ref": None,
-                    "dataset_manifest_sha256": None, "cleanup_failed": False,
+                    "dataset_manifest_sha256": None, "cleanup_failed": False, "result": None,
                     "reused_from_operation_id": None,
                 }
                 folder.mkdir(parents=True)
@@ -753,7 +788,8 @@ class JobManager:
                 try:
                     if "receipt" in locals() and folder.is_dir():
                         receipt.update(state="failed", stage="failed", finished_at=utc_now(),
-                                       error={"code": "STARTUP_FAILED", "detail": str(exc)})
+                                       error={"code": "STARTUP_FAILED", "message": str(exc) or "converter startup failed",
+                                              "detail": str(exc)})
                         atomic_json(folder / "operation.json", receipt)
                 finally:
                     try:
@@ -808,8 +844,9 @@ class JobManager:
         try:
             with stdout.open("ab") as log, stderr.open("ab") as err:
                 check()
-                process = executor(step["argv"], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                   stdout=log, stderr=err, shell=False, **config)
+                kwargs = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=err, shell=False, **config)
+                process = (_start_windows_converter(control, executor, step["argv"], kwargs) if os.name == "nt"
+                           else executor(step["argv"], **kwargs))
                 control["process"] = process
                 if os.name == "nt":
                     control["group"] = _WindowsRunGroup(process)
@@ -858,11 +895,12 @@ class JobManager:
             code = error.code if isinstance(error, ResultError) else "INVALID_DATASET"
             if control["cancel"].is_set() and code != "PROCESS_CLEANUP_FAILED":
                 code = "CANCELLED"
-            state = {"CANCELLED": "cancelled", "TIMEOUT": "timed_out"}.get(code, "failed")
+            state = "cancelled" if code == "CANCELLED" else "failed"
             detail = error.detail if isinstance(error, ResultError) else str(error)
             fields = {"state": state, "stage": state, "parse_state": "failed", "finished_at": utc_now(),
-                      "dataset_ref": None, "dataset_manifest_sha256": None,
-                      "cleanup_failed": control["cleanup_failed"], "error": {"code": code, "detail": detail}}
+                      "dataset_ref": None, "dataset_manifest_sha256": None, "result": None,
+                      "cleanup_failed": control["cleanup_failed"],
+                      "error": {"code": code, "message": detail or code, "detail": detail}}
             try:
                 dataset_path.unlink(missing_ok=True)
                 update(**fields)
@@ -873,7 +911,7 @@ class JobManager:
         failure = None
         try:
             check()
-            update(state="preparing", stage="preparing", started_at=utc_now(), progress=.1)
+            update(state="preparing", stage="preparing", started_at=utc_now())
             frozen, staged, steps = prepare_conversion(store, folder, plan, check)
             env = {key: value for key, value in external_environment().items()
                    if key.upper() not in {"PYTHONPATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QML2_IMPORT_PATH"}}
@@ -882,7 +920,7 @@ class JobManager:
                 artifact_path(folder, name).touch()
             execution = [{**step, "stdin_role": "devnull", "env_names": sorted(env),
                           "tool_version": plan["executable"]["version"]} for step in steps]
-            update(state="running", stage="running", progress=.25, source_receipt_ref=frozen.to_dict(),
+            update(state="running", stage="running", source_receipt_ref=frozen.to_dict(),
                    source_receipt_sha256=frozen.sha256, staged_artifacts=[r.to_dict() for r in staged], execution=execution,
                    artifact_owners=receipt_owners(receipt["source_run_id"], receipt["id"],
                                                  plan["source_artifacts"], [frozen, *staged]))
@@ -893,7 +931,7 @@ class JobManager:
                     raise ResultError("STALE_PLAN", "converter executable changed")
                 self._run_conversion_step(control, step, env, executor, check, update)
             check()
-            update(state="validating", stage="validating", parse_state="reading", progress=.7)
+            update(state="validating", stage="validating", parse_state="reading")
             for ref in (frozen, *staged):
                 verify_artifact(folder, ref, check=check)
             converted = validate_oc_outputs(folder, plan, check_cancelled=check)
@@ -920,7 +958,8 @@ class JobManager:
                     dataset = artifact(folder, dataset_path, "dataset", "json", POST_PRODUCER, check=check)
                     owners = receipt_owners(receipt["source_run_id"], receipt["id"], plan["source_artifacts"],
                                             [frozen, *staged, *output, dataset])
-                    update(state="completed", stage="completed", progress=1.0, parse_state="readable", finished_at=utc_now(),
+                    update(state="completed", stage="completed", progress={"completed": 1, "total": 1, "unit": "steps"},
+                           parse_state="readable", finished_at=utc_now(), result={"dataset_id": converted["dataset"]["dataset_id"]},
                            outputs=[r.to_dict() for r in output], dataset_ref=dataset.to_dict(), artifact_owners=owners,
                            dataset_manifest_sha256=converted["dataset_manifest_sha256"])
             except Exception as exc:
@@ -1222,6 +1261,33 @@ class JobManager:
                 except Exception:
                     pass
 
+    def _retry_owned_cleanup(self, deadline):
+        with self._native_lock:
+            operations = tuple(self._operations.items())
+            native = tuple(self._controls.items())
+            for identifier, control in (*native, *operations):
+                if not control["cleanup_failed"] or control["thread"] is not None and control["thread"].is_alive():
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                try:
+                    if control["process"] is not None:
+                        _finish_owned(control, cancel=True, term_grace=5,
+                                      wait_timeout=min(5, remaining / 2), confirm_tree=True)
+                        control["process"] = None
+                    if "operation_lock" in control:
+                        receipt = {**control["receipt"], "cleanup_failed": False}
+                        atomic_json(control["folder"] / "operation.json", receipt)
+                        control["receipt"].update(receipt)
+                        control["operation_lock"].release()
+                    control["lease"].release()
+                except Exception:
+                    continue
+                control["cleanup_failed"] = False
+                if "operation_lock" in control:
+                    self._operations.pop(identifier, None)
+
     def close(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout
         with self._batch_lock:
@@ -1232,6 +1298,7 @@ class JobManager:
             batch_threads = [b_ctrl["thread"] for b_ctrl in self._batch_controls.values() if b_ctrl.get("thread") is not None]
         with self._native_lock:
             self._closed = True
+            self._retry_owned_cleanup(deadline)
             for run_id, control in self._controls.items():
                 if self._native[run_id].state not in TERMINAL_STATES or self._native[run_id].parse_state == "reading":
                     control["cancel"].set()

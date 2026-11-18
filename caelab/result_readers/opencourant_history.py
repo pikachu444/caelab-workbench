@@ -16,10 +16,12 @@ from . import ResultError, no_checkpoint
 
 _PRODUCER = ProducerIdentity("OC-TH4-1", "1")
 _STRESS = dict(zip(("SX", "SY", "SZ", "SXY", "SYZ", "SXZ"), ("xx", "yy", "zz", "xy", "yz", "xz")))
+_STRAIN = dict(zip(("EPSX", "EPSY", "EPSZ", "EPSXY", "EPSYZ", "EPSXZ"), ("xx", "yy", "zz", "xy", "yz", "xz")))
 _SOLID = {"DENS": ("density", "density", "current_density"), "VOL": ("volume", "volume", "current_volume"),
+          "MASS": ("mass", "mass", "mass"), "ENER": ("energy", "energy", "element_energy"),
           "IE": ("internal_energy_density", "energy_density", "per_initial_volume"),
           "BULK": ("bulk_viscosity", "stress", "native_bulk_viscosity")}
-_GROUP = re.compile(r"(BRIC|NODE) ([1-9][0-9]*) (.+)")
+_GROUP = re.compile(r"(.+?) ([1-9][0-9]*) (.+)")
 _CODE = re.compile(r"[A-Za-z0-9_*+|/-]+")
 
 
@@ -109,6 +111,8 @@ def _quantity(kind, code):
     if kind == 1:
         if code in _STRESS:
             return "stress", _STRESS[code], "stress", "Cauchy"
+        if code in _STRAIN:
+            return "strain", _STRAIN[code], "strain", "unknown"
         if code in _SOLID:
             quantity, dimension, measure = _SOLID[code]
             return quantity, None, dimension, measure
@@ -119,7 +123,7 @@ def _quantity(kind, code):
 
 
 def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exact_required_set=None,
-                         expected_bindings=None, solid_formulation=None, units=None) -> tuple[dict, ...]:
+                         expected_bindings=None, source_bindings=None, solid_formulation=None, units=None) -> tuple[dict, ...]:
     """Match entity columns against the positional TITLES pairs and fixed requests."""
     normalized = _headers(raw_headers)
     pairs = titles_meta["pairs"]
@@ -127,11 +131,21 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
     if first < 1:
         raise ResultError("INVALID_DATASET", "TITLES count exceeds CSV column count")
     bindings = []
+    entity_columns = []
     identities = set()
+    requests = [request for request in (expected_bindings, source_bindings) if request is not None]
+    keys = {"entity_id", "group_title", "variable_code"}
+    for request in requests:
+        if (not isinstance(request, (list, tuple)) or any(
+                not isinstance(item, dict) or not keys <= item.keys() or
+                not item.keys() <= keys | {"entity_title", "output_type"} or type(item["entity_id"]) is not int
+                for item in request)):
+            raise ResultError("SOURCE_MISMATCH", "invalid source history requests")
+    group_titles = {"BRIC", "NODE"} | {item["group_title"] for request in requests for item in request}
     for index, header in enumerate(normalized[1:], 1):
         group = _GROUP.fullmatch(header)
         if index < first:
-            if group:
+            if group and group[1] in group_titles:
                 raise ResultError("INVALID_DATASET", "entity column is missing a TITLES pair")
             entry = _GLOBAL.get(header)
             if entry is None:
@@ -143,26 +157,27 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
             pair_index = index - first
             pair = pairs[pair_index]
             kind, code, title = pair["output_type"], pair["variable_code"], pair["title"]
-            quantity_info = _quantity(kind, code)
-            if quantity_info is None:
-                # Unknown solver columns remain visible in the raw CSV headers.
-                if group and group[1] != {0: "NODE", 1: "BRIC"}.get(kind):
-                    raise ResultError("INVALID_DATASET", f"TITLES type conflicts with {header!r}")
-                continue
-            group_title = {0: "NODE", 1: "BRIC"}[kind]
+            group_kind = {0: "NODE", 1: "BRIC"}.get(kind)
             suffix = " " + code
-            if group is None or group[1] != group_title or not group[3].endswith(suffix):
+            if (group is None or (group_kind is not None and group[1] in {"BRIC", "NODE"} and group[1] != group_kind)
+                    or not group[3].endswith(suffix)):
                 raise ResultError("INVALID_DATASET", f"TITLES pair {pair_index} does not bind {header!r}")
+            group_title = group[1]
             entity_id, entity = int(group[2]), group[3][:-len(suffix)]
             if not entity or (title and title not in {entity, header}):
                 raise ResultError("INVALID_DATASET", f"TITLES title does not bind {header!r}")
-            identity = (kind, entity_id, code)
+            identity = (kind, group_title, entity_id, code)
             if identity in identities:
                 raise ResultError("INVALID_DATASET", f"duplicate entity-variable binding {identity}")
             identities.add(identity)
+            output_type = {0: "Node", 1: "Solid"}.get(kind, "Unsupported")
+            entity_columns.append({"entity_id": entity_id, "group_title": group_title, "entity_title": entity,
+                                   "output_type": output_type, "variable_code": code, "header": header})
+            quantity_info = _quantity(kind, code)
+            if quantity_info is None:
+                continue
             quantity, component, dimension, measure = quantity_info
-            output_type = {0: "Node", 1: "Solid"}[kind]
-            basis = "global" if quantity in {"stress", "displacement", "velocity"} else "unknown"
+            basis = "global" if quantity in {"stress", "strain", "displacement", "velocity"} else "unknown"
         declared_units = units or {}
         declaration = declared_units.get(dimension, declared_units.get("pressure", "unknown")
                                          if dimension == "stress" else "unknown")
@@ -182,6 +197,11 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
         missing = set(map(_normalized, expected_columns)) - {b["normalized_header"] for b in bindings}
         if missing:
             raise ResultError("COVERAGE_INCOMPLETE", ", ".join(sorted(missing)))
+        requested_headers = set(map(_normalized, expected_columns))
+        if not requests and any(column["header"] in requested_headers for column in entity_columns):
+            extra = {column["header"] for column in entity_columns} - requested_headers
+            if extra:
+                raise ResultError("SOURCE_MISMATCH", f"unexpected history columns: {', '.join(sorted(extra))}")
     by_header = {binding["normalized_header"]: binding for binding in bindings}
     if exact_required_set is not None:
         if not isinstance(exact_required_set, (list, tuple)) or any(not isinstance(h, str) for h in exact_required_set):
@@ -189,16 +209,16 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
         missing = set(map(_normalized, exact_required_set)) - by_header.keys()
         if missing:
             raise ResultError("SCHEMA_MISMATCH", f"missing or unsupported history fields: {', '.join(sorted(missing))}")
-    if expected_bindings is not None:
-        if not isinstance(expected_bindings, (list, tuple)):
-            raise ResultError("SOURCE_MISMATCH", "expected_bindings must list source history requests")
-        match_keys = {"entity_id", "group_title", "variable_code"}
-        for expected in expected_bindings:
-            if (not isinstance(expected, dict) or not match_keys <= expected.keys()
-                    or not expected.keys() <= match_keys | {"entity_title", "output_type"}
-                    or type(expected["entity_id"]) is not int
-                    or not any(all(binding.get(key) == value for key, value in expected.items()) for binding in bindings)):
+    def matches(column, expected):
+        return all(column.get(key) == value for key, value in expected.items())
+
+    for request in requests:
+        for expected in request:
+            if not any(matches(binding, expected) for binding in bindings):
                 raise ResultError("SOURCE_MISMATCH", f"unmatched source history request: {expected}")
+        for column in entity_columns:
+            if not any(matches(column, expected) for expected in request):
+                raise ResultError("SOURCE_MISMATCH", f"unexpected history column: {column['header']}")
     for binding in bindings:
         if binding["output_type"] != "Solid":
             continue
@@ -206,8 +226,8 @@ def bind_history_columns(titles_meta, raw_headers, *, expected_columns=None, exa
                        else solid_formulation)
         if binding["quantity"] in {"stress", "strain"} and formulation != "hex8_1pt":
             raise ResultError("SOURCE_MISMATCH", f"1-point HEX8 required for {binding['normalized_header']}")
-        if formulation == "hex8_1pt":
-            binding["integration_point"] = "IPpoint"
+        if binding["quantity"] in {"stress", "strain"}:
+            binding["integration_point"] = "ip1"
     return tuple(bindings)
 
 
@@ -227,7 +247,7 @@ def extract_history(csv_path: Path, titles_path: Path, request_spec) -> DatasetM
     titles = read_titles(titles_path, check_cancelled=check)
     table = read_th_csv(csv_path, check_cancelled=check)
     bindings = bind_history_columns(titles, table["raw_header"], **{
-        key: request_spec.get(key) for key in ("expected_columns", "exact_required_set", "expected_bindings",
+        key: request_spec.get(key) for key in ("expected_columns", "exact_required_set", "expected_bindings", "source_bindings",
                                               "solid_formulation", "units")})
     if not bindings:
         raise ResultError("UNSUPPORTED_OBSERVABLE", "no supported history columns")
@@ -240,7 +260,15 @@ def extract_history(csv_path: Path, titles_path: Path, request_spec) -> DatasetM
         index = binding["column_index"]
         field_id = binding["normalized_header"]
         ref = _npy(root, output / f"history-column-{index}.npy", table["values"][:, index], "history_values")
-        fields[field_id] = {"binding": binding, "values_ref": ref.to_dict()}
+        group_kind, entity_kind = {"Global": ("global", "global"), "Solid": ("BRIC", "element"),
+                                   "Node": ("NODE", "node")}[binding["output_type"]]
+        frozen_binding = {key: binding[key] for key in (
+            "column_index", "raw_header", "entity_id", "group_title", "variable_code", "component")}
+        frozen_binding.update(group_kind=group_kind, entity_kind=entity_kind, quantity_id=binding["quantity"],
+                              supported=True, reason=None)
+        semantics = {key: binding[key] for key in ("measure", "basis", "unit", "unit_dimension",
+                                                    "integration_point") if key in binding}
+        fields[field_id] = {"binding": frozen_binding, "semantics": semantics, "values_ref": ref.to_dict()}
     atomic_json(output / "history-columns.json", {"schema_version": 1, "titles_sha256": titles["sha256"],
                                                   "raw_header": table["raw_header"], "fields": fields})
     series = SeriesManifestV1("history:all", coordinates, len(table["times"]), rows, tuple(fields))

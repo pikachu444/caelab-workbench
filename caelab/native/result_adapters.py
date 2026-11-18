@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -10,7 +12,7 @@ from ..artifact_refs import ArtifactRefV1, DatasetManifestV1, NumericResultV1, R
 from ..result_readers import ResultError, no_checkpoint
 from ..result_readers import opencourant_history, vtk_fields
 from . import converters
-from .operations import (artifact_path, load_completed_operation, owning_store, read_object, resolve_result_ref,
+from .operations import (artifact_path, decode_json, load_completed_operation, owning_store, read_object, resolve_result_ref,
                          sha256_file, verify_artifact)
 from .run_store import RunStore
 
@@ -87,18 +89,19 @@ def _find_location(dataset, frame_id, field_id):
 def _semantics(folder, receipt, dataset, frame_id, field_id, check):
     item = _find_location(dataset, frame_id, field_id)
     if dataset.dataset_kind == "history":
-        binding = _history_column(folder, receipt, field_id, check)["binding"]
-        association = {"Global": "global", "Solid": "element", "Node": "point"}[binding["output_type"]]
+        column = _history_column(folder, receipt, field_id, check)
+        binding, semantics = column["binding"], column["semantics"]
+        association = {"global": "global", "element": "element", "node": "point"}[binding["entity_kind"]]
         location = {"association": association}
-        if binding["output_type"] == "Node":
+        if association == "point":
             location["integration_point"] = "none"
-        if "integration_point" in binding:
-            location["integration_point"] = binding["integration_point"]
+        if "integration_point" in semantics:
+            location["integration_point"] = semantics["integration_point"]
         if binding["entity_id"] is not None:
             location["entity_id"] = binding["entity_id"]
-        return item, location, binding["basis"], binding["measure"], (
-            "tensor" if binding["quantity"] == "stress" else "unknown"), {
-                "symbol": binding["unit"], "dimension": binding["unit_dimension"]}, "unknown", binding
+        return item, location, semantics["basis"], semantics["measure"], (
+            "tensor" if binding["quantity_id"] == "stress" else "unknown"), {
+                "symbol": semantics["unit"], "dimension": semantics["unit_dimension"]}, "unknown", binding
     association = "point" if field_id in item["fields"] else "element"
     location = {"association": association}
     if association == "point":
@@ -125,13 +128,18 @@ def _semantics(folder, receipt, dataset, frame_id, field_id, check):
 def make_result_ref(store: RunStore, source_run_id: str, operation_id: str, frame_id: str, field_id: str,
                     *, component=None, selection=None, basis=None, operator=None, coverage=None) -> ResultRefV1:
     """Pin a user's exact frame, field and selection to the completed bundle."""
-    folder, receipt, dataset, _ = load_completed_operation(owning_store(store), source_run_id, operation_id)
+    store = owning_store(store)
+    folder, receipt, dataset, _ = load_completed_operation(store, source_run_id, operation_id)
     _, location, native_basis, measure, shear, units, geometry, binding = _semantics(
         folder, receipt, dataset, frame_id, field_id, no_checkpoint)
     if binding is not None and component is None:
         component = binding["component"]
     default_operator = _CANONICAL_OPERATOR if binding is None else {"id": "curve_extract", "version": "1", "params": {}}
     reason = "MEASURE_UNKNOWN" if measure == "unknown" else "PROFILE_NOT_PHYSICALLY_VERIFIED"
+    selection = selection or {}
+    if "selection_id" in selection:
+        _, revision = _saved_selection(store, receipt, selection, location, no_checkpoint)
+        selection = {**selection, "revision_sha256": revision}
     return ResultRefV1(
         source_run_id=source_run_id, source_node_id=receipt["source_node_id"],
         source_receipt_sha256=receipt["source_receipt_sha256"],
@@ -146,6 +154,99 @@ def make_result_ref(store: RunStore, source_run_id: str, operation_id: str, fram
     )
 
 
+def _selection_payload(root, directory, descriptor, check):
+    if not isinstance(descriptor, Mapping):
+        raise ResultError("SCHEMA_MISMATCH", "invalid selection payload reference")
+    relative = descriptor.get("path")
+    path = artifact_path(directory, relative)
+    if not path.is_file():
+        path = artifact_path(root, relative)
+    try:
+        check()
+        size = path.stat().st_size
+        if "size" in descriptor and size != descriptor["size"]:
+            raise ResultError("HASH_MISMATCH", "selection payload size changed")
+        if path.suffix.lower() == ".npy":
+            if sha256_file(path, check) != descriptor.get("sha256"):
+                raise ResultError("HASH_MISMATCH", "selection payload bytes changed")
+            array = read_safe_npy_v2(path, root=root)
+            if array.ndim != 1 or array.dtype.kind not in "iu":
+                raise ResultError("SCHEMA_MISMATCH", "selection payload must be a one-dimensional integer array")
+            payload = array.tolist()
+        elif path.suffix.lower() == ".json":
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != descriptor.get("sha256"):
+                raise ResultError("HASH_MISMATCH", "selection payload bytes changed")
+            payload = decode_json(raw)
+        else:
+            raise ResultError("SCHEMA_MISMATCH", "selection payload must be JSON or NPY")
+    except FileNotFoundError as exc:
+        raise ResultError("HASH_MISMATCH", "selection payload is missing") from exc
+    return path, payload
+
+
+def _saved_selection(store, receipt, selection, location, check):
+    selection_id = selection["selection_id"]
+    if not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id):
+        raise ResultError("PATH_ESCAPE", f"invalid selection ID {selection_id!r}")
+    directory = artifact_path(store.root, f"selections/{selection_id}")
+    path = artifact_path(directory, "selection.json")
+    if not path.is_file():
+        path = artifact_path(directory, "payload.json")
+    check()
+    try:
+        saved = read_object(path)
+    except FileNotFoundError as exc:
+        raise ResultError("OBSERVABLE_MISMATCH", f"missing selection {selection_id}") from exc
+    except (OSError, ValueError) as exc:
+        raise ResultError("SCHEMA_MISMATCH", f"selection {selection_id}: {exc}") from exc
+    if saved.get("schema", saved.get("schema_id")) != "caelab.selection.v1":
+        raise ResultError("SCHEMA_MISMATCH", "expected caelab.selection.v1")
+    entity = {"point": "node", "element": "element"}.get(location["association"])
+    aliases = {"node": ("node", "nodes", "node_ids"), "element": ("element", "elements", "element_ids")}
+    if saved.get("entity_kind") not in aliases.get(entity, ()):
+        raise ResultError("OBSERVABLE_MISMATCH", "selection entity kind")
+    run_id, mesh_revision = saved.get("run_id"), saved.get("mesh_revision")
+    expected_revision = receipt.get("source_mesh_revision") or receipt["source_input_revision"]
+    if ((run_id is None and mesh_revision is None)
+            or (run_id is not None and run_id != receipt["source_run_id"])
+            or (mesh_revision is not None and mesh_revision != expected_revision)):
+        raise ResultError("SOURCE_MISMATCH", "selection run or mesh revision")
+    if "sha256" in selection and sha256_file(path, check) != selection["sha256"]:
+        raise ResultError("HASH_MISMATCH", "saved selection digest")
+    payload_ref = saved.get("payload_ref")
+    entity_ref = selection.get("entity_selection_ref")
+    if entity_ref is not None and not isinstance(entity_ref, Mapping):
+        raise ResultError("SCHEMA_MISMATCH", "invalid entity selection reference")
+    reference = selection.get("artifact_ref", selection.get("payload_ref",
+                              (entity_ref or {}).get("artifact_ref", (entity_ref or {}).get("payload_ref"))))
+    if payload_ref is None:
+        payload = saved.get("ids")
+        if reference is not None:
+            verified_path, _ = _selection_payload(store.root, directory, reference, check)
+            if verified_path != path:
+                raise ResultError("HASH_MISMATCH", "caller selection artifact differs from the saved selection")
+    else:
+        if not isinstance(payload_ref, dict) or "ids" in saved:
+            raise ResultError("SCHEMA_MISMATCH", "invalid selection payload reference")
+        payload_path, payload = _selection_payload(store.root, directory, payload_ref, check)
+        if reference is not None:
+            checked, _ = _selection_payload(store.root, directory, reference, check)
+            if checked != payload_path:
+                raise ResultError("HASH_MISMATCH", "caller selection artifact differs from the saved payload")
+        if "revision_sha256" not in saved:
+            raise ResultError("HASH_MISMATCH", "saved selection has no revision digest")
+    ids = payload.get("ids") if isinstance(payload, dict) else payload
+    if not isinstance(ids, (list, tuple)):
+        raise ResultError("SCHEMA_MISMATCH", "selection IDs must be a list")
+    digest = canonical_sha256({"selection": {k: v for k, v in saved.items() if k != "revision_sha256"},
+                               "payload": payload}, exclude_keys=())
+    for record in (saved, selection, entity_ref or {}):
+        if "revision_sha256" in record and record["revision_sha256"] != digest:
+            raise ResultError("HASH_MISMATCH", "selection revision changed")
+    return ids, digest
+
+
 def _selection(store, folder, receipt, selection, location, check):
     ids = selection.get("ids")
     kind = selection.get("kind")
@@ -153,45 +254,7 @@ def _selection(store, folder, receipt, selection, location, check):
     if "selection_id" in selection:
         if ids is not None:
             raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
-        selection_id = selection["selection_id"]
-        if (not isinstance(selection_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", selection_id)):
-            raise ResultError("PATH_ESCAPE", f"invalid selection ID {selection_id!r}")
-        paths = [artifact_path(store.root, f"selections/{selection_id}/{name}")
-                 for name in ("selection.json", "payload.json")]
-        existing = [path for path in paths if path.is_file()]
-        if not existing:
-            raise ResultError("OBSERVABLE_MISMATCH", f"missing selection {selection_id}")
-        reference = selection.get("artifact_ref")
-        if reference is not None:
-            ref = ArtifactRefV1.from_dict(reference)
-            verified = verify_artifact(store.root, ref, check=check)
-            if verified not in existing:
-                raise ResultError("OBSERVABLE_MISMATCH", "selection artifact does not belong to the selection")
-            existing = [verified]
-        for path in existing:
-            check()
-            try:
-                saved = read_object(path)
-            except (OSError, ValueError) as exc:
-                raise ResultError("SCHEMA_MISMATCH", f"selection {selection_id}: {exc}") from exc
-            if saved.get("schema", saved.get("schema_id")) != "caelab.selection.v1":
-                raise ResultError("SCHEMA_MISMATCH", "expected caelab.selection.v1")
-            aliases = {"node": {"node", "nodes", "node_ids"}, "element": {"element", "elements", "element_ids"}}
-            saved_kind = saved.get("entity_kind")
-            if not isinstance(saved_kind, str) or saved_kind not in aliases.get(entity, set()):
-                raise ResultError("OBSERVABLE_MISMATCH", "selection entity kind")
-            run_id = saved.get("run_id")
-            mesh_revision = saved.get("mesh_revision")
-            expected_revision = receipt.get("source_mesh_revision") or receipt["source_input_revision"]
-            if ((run_id is None and mesh_revision is None)
-                    or (run_id is not None and run_id != receipt["source_run_id"])
-                    or (mesh_revision is not None and mesh_revision != expected_revision)):
-                raise ResultError("SOURCE_MISMATCH", "selection run or mesh revision")
-            if "sha256" in selection and sha256_file(path, check) != selection["sha256"]:
-                raise ResultError("HASH_MISMATCH", "saved selection digest")
-            if not isinstance(saved.get("ids"), (list, tuple)) or (ids is not None and ids != saved["ids"]):
-                raise ResultError("SCHEMA_MISMATCH", "missing or conflicting selection ID lists")
-            ids = saved["ids"]
+        ids, _ = _saved_selection(store, receipt, selection, location, check)
     elif "artifact_ref" in selection:
         if ids is not None:
             raise ResultError("OBSERVABLE_MISMATCH", "selection has two ID lists")
@@ -224,13 +287,15 @@ def _operator(ref):
     return op
 
 
-def _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding):
+def _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding, item):
     if any(ref.location.get(key, "none" if key == "integration_point" else None) != expected
            for key, expected in location.items()) or ref.geometry_state != geometry:
         raise ResultError("SEMANTIC_MISMATCH", "result location or geometry state")
     for key in ("integration_point", "ip"):
         if key in ref.location and ref.location[key] != location.get("integration_point", "none"):
             raise ResultError("SEMANTIC_MISMATCH", "unsupported integration point")
+    if "layer" not in location and ref.location.get("layer") not in (None, "", "none"):
+        raise ResultError("SEMANTIC_MISMATCH", "field does not have a shell layer")
     if ref.measure.casefold() != measure.casefold() or ref.shear_convention != shear:
         raise ResultError("MEASURE_UNKNOWN", "result measure or shear convention is not verified")
     if ref.eligibility.get("fit") or ref.eligibility.get("fit_eligible"):
@@ -243,15 +308,21 @@ def _validate_semantics(ref, location, basis, measure, shear, units, geometry, b
     if "scale_to_si" in ref.units and ref.units["scale_to_si"] != units.get("scale_to_si"):
         raise ResultError("UNIT_UNKNOWN", "result unit scale differs from the dataset declaration")
     requested_basis = ref.basis.get("kind")
+    orientation = ref.basis.get("orientation_sha256")
+    if orientation and (requested_basis != "element_local" or location["association"] != "element"
+                        or binding is not None or orientation != item.get("orientation_sha256")):
+        raise ResultError("SEMANTIC_MISMATCH", "orientation does not match the field basis")
     if requested_basis != basis and not (basis == "element_local" and requested_basis == "global"):
         raise ResultError("UNSUPPORTED_BASIS", str(requested_basis))
     if binding is not None and ref.component != binding["component"]:
         raise ResultError("OBSERVABLE_MISMATCH", "history column component")
 
 
-def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live_stale=False) -> NumericResultV1:
+def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live_stale=None) -> NumericResultV1:
     """Read the pinned numeric selection with the reference preserved verbatim."""
     check = check_cancelled or no_checkpoint
+    if isinstance(ref, ResultRefV1) and not ref.eligibility.get("query", True):
+        raise ResultError("SEMANTIC_MISMATCH", "Quantity reference is not query-eligible")
     store = owning_store(store)
     resolved = resolve_result_ref(store, ref, check_cancelled=check, live_stale=live_stale)
     folder, receipt, dataset = (resolved[key] for key in ("operation_dir", "operation", "dataset"))
@@ -264,17 +335,16 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
         raise ResultError("HASH_MISMATCH", "active reader code differs from the operation receipt")
     item, location, basis, measure, shear, units, geometry, binding = _semantics(
         folder, receipt, dataset, ref.frame_id, ref.field_id, check)
-    _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding)
+    _validate_semantics(ref, location, basis, measure, shear, units, geometry, binding, item)
     op = _operator(ref)
     normalized = "identity" if op == "values" else op
     base_operator = {"id": "curve_extract", "version": "1", "params": {}} if binding else _CANONICAL_OPERATOR
     base_hash = canonical_sha256(ref.with_operator(base_operator).to_dict(), exclude_keys=())
-    requested_hash = canonical_sha256(ref.with_operator({"id": normalized, "version": "1", "params": {}}).to_dict(),
-                                      exclude_keys=())
+    requested_hash = canonical_sha256(ref.to_dict(), exclude_keys=())
     coordinates = ()
     audit = {"id": normalized, "version": "1", "params": {}, "base_quantity_ref_sha256": base_hash,
              "requested_quantity_ref_sha256": requested_hash, "base_ref_sha256": base_hash,
-             "requested_ref_sha256": canonical_sha256(ref.to_dict(), exclude_keys=())}
+             "requested_ref_sha256": requested_hash}
     eroded = ()
     if dataset.dataset_kind == "history":
         if profile != "OC-TH4-1" or op != "curve_extract" or ref.selection:
@@ -301,7 +371,7 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
         kwargs = {"exact_required_set": options.get("exact_required_set")}
         if profile == "OC-ANIM-1":
             kwargs["expected"] = options.get("expected_mesh")
-            kwargs["active_erosion_status"] = options.get("active_erosion_status", 0)
+            kwargs["erosion_active_value"] = options.get("erosion_active_value", options.get("active_erosion_status"))
         else:
             kwargs["node_id_policy"] = options.get("node_id_policy")
         grid = _SPATIAL_READERS[profile](source, check_cancelled=check, **kwargs)

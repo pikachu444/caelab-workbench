@@ -344,7 +344,7 @@ def _scalar(grid, *names):
 
 
 def _time(grid, *, required):
-    name, value = _scalar(grid, "TIME") if required else _scalar(grid, "TIME", "TimeValue")
+    name, value = _scalar(grid, "TIME") if required else _scalar(grid, "TimeValue", "TIME")
     if name is None and required:
         raise ResultError("MISSING_TIME", "FIELD TIME is required")
     if name is not None:
@@ -360,7 +360,7 @@ def sample_metadata(grid):
         _, value = _scalar(grid, *names)
         if value is not None:
             metadata[key] = value
-    name, _ = _scalar(grid, "TIME", "TimeValue")
+    name, _ = _scalar(grid, *("TimeValue", "TIME") if grid.profile == "VTU-1" else ("TIME",))
     if grid.time is not None:
         metadata["time_source"] = name or "Native_value"
     if "native_value" in metadata:
@@ -370,6 +370,9 @@ def sample_metadata(grid):
 
 
 def _validate_identity(grid, expected):
+    for key, family in (("shell_ids", "2DELEM"), ("solid_ids", "3DELEM")):
+        if key in expected and set(expected[key]) != set(grid.element_ids[grid.family_masks[family]]):
+            raise ResultError("SOURCE_MISMATCH", f"{key} differs from the saved RAD deck")
     if "node_coordinates" in expected:
         oracle = {int(key): value for key, value in expected["node_coordinates"].items()}
         if set(oracle) != set(grid.node_ids):
@@ -385,16 +388,23 @@ def _validate_identity(grid, expected):
         for element, part, kind, cell in zip(grid.element_ids, grid.part_ids, grid.cell_types, grid.cells):
             actual = {"part_id": int(part), "cell_type": int(kind),
                       "node_ids": [int(grid.node_ids[i]) for i in cell]}
-            if actual != oracle[element]:
+            registered = oracle[element]
+            if kind == 10:
+                actual["node_ids"] = sorted(actual["node_ids"])
+                registered = {**registered, "node_ids": sorted(registered["node_ids"])}
+            if actual != registered:
                 raise ResultError("SOURCE_MISMATCH", f"topology or part for element {element}")
 
 
-def read_vtk(path, *, exact_required_set=None, expected=None, active_erosion_status=0,
+def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_value=None, active_erosion_status=None,
              check_cancelled=None) -> FieldGrid:
     """Validate OC-ANIM-1 and bind optional source geometry by native ID."""
     check = check_cancelled or no_checkpoint
     grid = _read(path, _legacy, check)
-    grid.active_erosion_status = active_erosion_status
+    if erosion_active_value is None:
+        erosion_active_value = active_erosion_status
+    if erosion_active_value is not None and (type(erosion_active_value) is not int or erosion_active_value not in {0, 1}):
+        raise ResultError("INVALID_DATASET", "erosion_active_value must be 0 or 1")
     # anim_to_vtk emits a repeated fourth connectivity index for triangles.
     if len(grid.cells) == len(grid.cell_types):
         cells = []
@@ -418,12 +428,30 @@ def read_vtk(path, *, exact_required_set=None, expected=None, active_erosion_sta
     masks = grid.family_masks
     tensors = tensor_fields(grid)
     required = set(exact_required_set or ())
-    if exact_required_set is None:
-        if masks["2DELEM"].any():
-            required.update(("2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)"))
-            required.update(f"2DELEM_Stress_(layer__{i})_" for i in range(1, 6))
-        if masks["3DELEM"].any():
-            required.add("3DELEM_Stress")
+    if masks["2DELEM"].any():
+        nip = (expected or {}).get("shell_nip", (expected or {}).get("shell_layers"))
+        if isinstance(nip, dict):
+            shell_ids = grid.element_ids[masks["2DELEM"]]
+            try:
+                counts = [nip[str(shell)] if str(shell) in nip else nip[int(shell)] for shell in shell_ids]
+            except KeyError as exc:
+                raise ResultError("SOURCE_MISMATCH", "missing shell integration count") from exc
+            if any(type(count) is not int or count < 0 for count in counts):
+                raise ResultError("SOURCE_MISMATCH", "invalid shell integration count")
+            nip = max(counts)
+        if nip is not None and (type(nip) is not int or nip < 0):
+            raise ResultError("SOURCE_MISMATCH", "invalid shell integration count")
+        faces = {"2DELEM_Stress_(upper)", "2DELEM_Stress_(lower)"}
+        detected = any(name in tensors for name in faces) or any(
+            re.search(r"layer__[2-9][0-9]*|layer__1[0-9]+", name) for name in tensors)
+        multi = (nip is not None and nip >= 2) or (nip is None and detected)
+        if multi:
+            required.update(faces)
+            required.update(f"2DELEM_Stress_(layer__{i})_" for i in range(1, max(5, nip or 0) + 1))
+        else:
+            required.add("2DELEM_Stress_(layer__1)_")
+    if exact_required_set is None and masks["3DELEM"].any():
+        required.add("3DELEM_Stress")
     available = grid.point_data.keys() | grid.cell_data.keys() | grid.field_data.keys()
     missing = {name for name in required if _TENSOR.fullmatch(name) and name not in tensors}
     missing.update(name for name in required if not _TENSOR.fullmatch(name) and name not in available)
@@ -434,7 +462,8 @@ def read_vtk(path, *, exact_required_set=None, expected=None, active_erosion_sta
         status = grid.cell_data[erosion]
         if status.shape != (m, 1) or not np.isin(status, [0, 1]).all():
             raise ResultError("SCHEMA_MISMATCH", f"{erosion} must be scalar")
-        active = status[:, 0] == active_erosion_status
+        grid.active_erosion_status = int(np.all(status == 1)) if erosion_active_value is None else erosion_active_value
+        active = status[:, 0] == grid.active_erosion_status
     else:
         active = np.ones(m, dtype=bool)
     for arrays in (grid.point_data, grid.cell_data, grid.field_data):
@@ -485,6 +514,22 @@ def read_vtu(path, *, exact_required_set=None, node_id_policy=None, entity="node
     if grid.time is None and _scalar(grid, "Native_analysis_type", "analysis_type")[1] == 1:
         _, time = _scalar(grid, "Native_value")
         grid.time = float(time) if time is not None else None
+    candidates = {name for name in grid.point_data
+                  if name not in {"NODE_ID", "NativeNodeId", "node_id", "vtkGhostType"} and not name.startswith("Coverage_")}
+    for name in candidates:
+        check()
+        data = grid.point_data[name]
+        valid = np.isfinite(data).all(axis=1)
+        coverage = grid.point_data.get("Coverage_" + name)
+        if coverage is not None:
+            if coverage.shape != (len(data), 1) or not np.isin(coverage, [0, 1]).all():
+                raise ResultError("SCHEMA_MISMATCH", f"invalid VTU coverage for {name}")
+            valid &= coverage[:, 0] == 1
+        if not valid.any():
+            raise ResultError("COVERAGE_INCOMPLETE", f"{name} has zero valid samples")
+    missing = set(exact_required_set or ()) - nodal_fields(grid)
+    if missing:
+        raise ResultError("SCHEMA_MISMATCH", f"missing queryable VTU fields: {', '.join(sorted(missing))}")
 
     def grid_ids(arrays, names, rows, *, required, ordinal=False):
         found = [name for name in names if name in arrays]
@@ -500,9 +545,6 @@ def read_vtu(path, *, exact_required_set=None, node_id_policy=None, entity="node
                              required=entity == "node", ordinal=node_id_policy == "one_based")
     grid.element_ids = grid_ids(grid.cell_data, ("NativeElementId", "ELEMENT_ID"), len(grid.cells),
                                 required=entity == "element")
-    missing = set(exact_required_set or ()) - nodal_fields(grid)
-    if missing:
-        raise ResultError("SCHEMA_MISMATCH", f"missing queryable VTU fields: {', '.join(sorted(missing))}")
     return grid
 
 
@@ -598,7 +640,7 @@ def query_field(grid, field_id, *, ids=None, component=None, operator="values", 
             values = rotation.transpose(0, 2, 1) @ values @ rotation
         elif field_id.startswith("3DELEM") and basis != "global":
             raise ResultError("UNSUPPORTED_BASIS", "solid tensors are stored in the global basis")
-        if field_id == "3DELEM_Stress":
+        if field_id in {"3DELEM_Stress", "3DELEM_Strain"}:
             # anim_to_vtk serializes the native yz slot in xz and vice versa.
             values[:, [0, 1], 2] = values[:, [1, 0], 2]
             values[:, 2, [0, 1]] = values[:, 2, [1, 0]]

@@ -99,6 +99,7 @@ class RunStore:
     def __init__(self, root: str | Path, *, expected: bool = False):
         self.root = Path(root).resolve()
         self.expected = expected
+        self.live_stale = None
         self._cache = {}
         self._known_selections = set()
 
