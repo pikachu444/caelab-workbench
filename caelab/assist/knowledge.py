@@ -354,7 +354,7 @@ def search_knowledge_result(query: str, limit: int = 3,
                             pinned_index: PinnedKnowledgeIndex | None = None) -> KnowledgeSearchResult:
     """Keep solver scope and distinguish absent material from retrieval failure."""
     from .corpus import mismatched_corpus_candidates, search_hybrid_with_plan
-    from .query_language import extract_query_requirements, normalize_solver, prepare_query
+    from .query_language import normalize_solver, prepare_query
 
     requested = solver or os.environ.get("CAELAB_KNOWLEDGE_SOLVER", "") or infer_solver(query)
     resolved = infer_solver(requested) or normalize_solver(requested) or ""
@@ -362,12 +362,6 @@ def search_knowledge_result(query: str, limit: int = 3,
         return KnowledgeSearchResult("no_material", [], resolved)
     try:
         plan = prepare_query(query, explicit_facets={"solver": resolved} if resolved else None)
-        requirements = {
-            req.facet: req.expected
-            for req in extract_query_requirements(plan, {"solver": resolved} if resolved else None)
-        }
-        resolved = normalize_solver(requirements.get("solver")) or ""
-        edition = requirements.get("edition")
         pinned = pinned_index if pinned_index is not None else pin_knowledge_index()
         index = pinned.index
         if index is None:
@@ -383,7 +377,6 @@ def search_knowledge_result(query: str, limit: int = 3,
             reranker=reranker,
             limit=limit,
             solver=resolved or None,
-            edition=edition,
         )
     except Exception as error:
         return KnowledgeSearchResult("error", [], resolved,
@@ -391,7 +384,7 @@ def search_knowledge_result(query: str, limit: int = 3,
     return KnowledgeSearchResult(
         "ok" if chunks else "no_material", [_to_entry(c) for c in chunks], resolved,
         query_plan=plan, corpus_revision=index.corpus_revision,
-        mismatched_candidates=tuple(mismatched_corpus_candidates(index, plan, resolved, edition)) if not chunks else (),
+        mismatched_candidates=tuple(mismatched_corpus_candidates(index, plan, resolved, None)) if not chunks else (),
         index_digest=index.index_digest,
     )
 

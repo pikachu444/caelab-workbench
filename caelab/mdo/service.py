@@ -53,7 +53,7 @@ def _deck_lines(root: Path, files):
         if line.startswith("**"):
             continue
         if line.startswith("*"):
-            card = line.split(",", 1)[0].strip().upper()
+            card = re.sub(r"[ \t]+", "", line.split(",", 1)[0]).upper()
         if line:
             yield filename, number, card, line
 
@@ -436,8 +436,8 @@ class MDOStudyService:
         templates = dict(self._originals)
         grouped = {}
         allowed = {"*ELASTIC", "*PLASTIC", "*DENSITY", "*CLOAD", "*DLOAD", "*BOUNDARY",
-                   "*BEAM SECTION", "*SHELL SECTION", "*SOLID SECTION", "*SPRING", "*DASHPOT",
-                   "*CONDUCTIVITY", "*SPECIFIC HEAT", "*EXPANSION", "*AMPLITUDE"}
+                   "*BEAMSECTION", "*SHELLSECTION", "*SOLIDSECTION", "*SPRING", "*DASHPOT",
+                   "*CONDUCTIVITY", "*SPECIFICHEAT", "*EXPANSION", "*AMPLITUDE"}
         cards_by_line = {}
         for source, number, card, _ in _deck_lines(self.input_path, self._originals):
             cards_by_line.setdefault((source, number), set()).add(card)

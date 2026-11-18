@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 import hashlib
 import io
+from itertools import accumulate
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -34,7 +35,10 @@ from .contracts import (
     QueryPlan,
     RetrievalDecisionV1,
 )
-from .query_language import build_retrieval_decision, classify_non_cae_intent, editions_match, extract_query_requirements, normalize_solver, prepare_query
+from .query_language import (
+    build_retrieval_decision, classify_non_cae_intent, extract_query_scope, match_query_scope, normalize_solver,
+    prepare_query,
+)
 
 __all__ = [
     "build_corpus",
@@ -314,7 +318,7 @@ def _chunk_pages(source, fields, page_count):
     start, end = fields.get("page_start"), fields.get("page_end")
     if fields.get("page") is not None:
         page = fields["page"]
-        if any(value is not None and value != page for value in (start, end)):
+        if any(value is not None and (type(value) is not int or value != page) for value in (start, end)):
             raise ValueError(f"PAGE_SPAN_MISMATCH: {source.source_id}")
         start = end = page
     if start is None and end is None:
@@ -325,6 +329,24 @@ def _chunk_pages(source, fields, page_count):
             or not 1 <= start <= end <= page_count):
         raise ValueError(f"PAGE_OUT_OF_RANGE: {source.source_id}")
     return start, end
+
+
+def _verify_pdf_page_span(chunk, offsets):
+    if chunk.page_start is None:
+        return
+    start, end = chunk.page_start, chunk.page_end
+    if (not offsets[start - 1] <= chunk.char_start < offsets[start]
+            or not offsets[end - 1] < chunk.char_end <= offsets[end]):
+        raise ValueError(f"PDF_PAGE_SPAN_MISMATCH: {chunk.citation}")
+
+
+def _local_chunk_digest(chunk):
+    return canonical_sha256({
+        key: getattr(chunk, key) for key in (
+            "chunk_id", "source_id", "document_sha256", "line_start", "line_end",
+            "char_start", "char_end", "page_start", "page_end", "text_sha256",
+        )
+    })
 
 
 def _extract_curated_chunk(
@@ -495,10 +517,14 @@ def _chunk_pdf_with_spans(
     lines, line_starts, line_ends = _line_spans(full_text)
 
     if curated:
-        return [
+        chunks = [
             _extract_curated_chunk(source, full_text, lines, line_starts, line_ends, item)
             for item in curated
         ]
+        offsets = (0, *accumulate(map(len, page_texts)))
+        for chunk in chunks:
+            _verify_pdf_page_span(chunk, offsets)
+        return chunks
 
     # Map each page to 1-based line ranges and heading path
     chunks: list[CorpusChunkSpec] = []
@@ -650,7 +676,7 @@ def build_corpus(
             if not set(scope) <= set(src.solver_scope):
                 raise ValueError(f"Chunk solver scope exceeds source scope: {chunk.citation}")
             if src.license["redistribution"] not in _REDISTRIBUTABLE_VALUES:
-                local_chunk_sha256[chunk.citation] = chunk.text_sha256
+                local_chunk_sha256[chunk.citation] = _local_chunk_digest(chunk)
         chunks.extend(extracted)
         source_statuses[src.source_id] = review_status
         if review_status != "approved":
@@ -942,6 +968,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
             if not _is_paginated(source) and page_count is not None:
                 raise ValueError(f"PAGE_NOT_APPLICABLE: {source.source_id}")
             text = None
+            page_offsets = None
             if packaged is not None:
                 if _is_paginated(source):
                     from pypdf import PdfReader
@@ -950,10 +977,13 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                         raise ValueError(f"PAGE_COUNT_MISMATCH: {source.source_id}")
                     page_count = len(pages)
                     text = "".join(pages)
+                    page_offsets = (0, *accumulate(map(len, pages)))
                 else:
                     text = packaged.decode("utf-8")
-            source_texts[source.source_id] = (page_count, text, _line_spans(text)[1:] if text is not None else None)
-        page_count, text, line_spans = source_texts[source.source_id]
+            source_texts[source.source_id] = (
+                page_count, text, _line_spans(text)[1:] if text is not None else None, page_offsets,
+            )
+        page_count, text, line_spans, page_offsets = source_texts[source.source_id]
         page_start, page_end = _chunk_pages(source, raw, page_count)
         chunk_data = {key: value for key, value in raw.items()
                       if key not in {"heading_path", "solver", "solver_scope", "source_kind", "review_status", "page"}}
@@ -968,7 +998,7 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                 or spec.char_end - spec.char_start != len(spec.text) or spec.citation in citations):
             raise ValueError(f"Invalid corpus chunk provenance: {spec.citation}")
         if source.license["redistribution"] not in _REDISTRIBUTABLE_VALUES:
-            local_chunks[spec.citation] = spec.text_sha256
+            local_chunks[spec.citation] = _local_chunk_digest(spec)
         if text is None:
             originals_missing = True
         else:
@@ -977,10 +1007,13 @@ def load_corpus_bundle(root_or_index_dir: str | Path, *, with_vectors: bool | No
                     or ends[spec.line_end - 1] != spec.char_end
                     or text[spec.char_start:spec.char_end] != spec.text):
                 raise ValueError(f"PACKAGED_SOURCE_SPAN_MISMATCH: {spec.citation}")
+        if page_offsets is not None:
+            _verify_pdf_page_span(spec, page_offsets)
         citations.add(spec.citation)
         chunks.append(rag.Chunk(
             chunk_id=spec.chunk_id, source_id=spec.source_id, heading_path=spec.section_path, text=spec.text,
-            solver=scope[0] if len(scope) == 1 else "", solver_scope=scope, corpus_chunk=spec,
+            solver=scope[0] if len(scope) == 1 else "", solver_scope=scope,
+            corpus_chunk=replace(spec, source_kind=source.source_kind, review_status=review_statuses[spec.source_id]),
             source_kind=source.source_kind, review_status=review_statuses[spec.source_id],
         ))
     if local_chunks != (manifest.local_chunk_sha256 or {}):
@@ -1129,9 +1162,8 @@ def search_corpus(
 
     plan = prepare_query(question, query_language=query_language, explicit_facets=facets or None)
     index, _ = load_corpus_bundle(root_or_index_dir)
-    requirements = {req.facet: req.expected for req in extract_query_requirements(plan, facets)}
-    target_solver = normalize_solver(requirements.get("solver"))
-    target_edition = requirements.get("edition")
+    target_solver = normalize_solver(facets.get("solver"))
+    target_edition = facets.get("edition")
     hits = search_hybrid_with_plan(
         index, plan, embedder=rag.HashingEmbedder(), reranker=rag.LexicalReranker(),
         limit=limit, solver=target_solver, edition=target_edition,
@@ -1146,19 +1178,17 @@ def search_corpus(
 
 
 def _search_scope(plan, solver, edition):
-    return extract_query_requirements(plan, {"solver": solver, "edition": edition})
+    return extract_query_scope(plan, {"solver": solver, "edition": edition})
 
 
-def _matches_scope(chunk: rag.Chunk, requirements) -> bool:
-    editions = [req.expected for req in requirements if req.facet == "edition"]
-    if editions and (chunk.corpus_chunk is None
-                     or not any(editions_match(edition, chunk.corpus_chunk.edition) for edition in editions)):
-        return False
-    mentions = [req.expected for req in requirements if req.facet == "solver" and req.original_span is not None]
-    facets = [req.expected for req in requirements if req.facet == "solver" and req.original_span is None]
-    return all(chunk.matches_solver(solver) for solver in facets) and (
-        not mentions or any(chunk.matches_solver(solver) for solver in mentions)
-    )
+def _matches_scope(chunk: rag.Chunk, query_scope) -> bool:
+    requirements, edition_owners = query_scope
+    scope = {normalize_solver(value) for value in (chunk.solver_scope or ((chunk.solver,) if chunk.solver else ()))}
+    if not scope and chunk.corpus_chunk is None:
+        scope = {normalize_solver(req.expected) for req in requirements if req.facet == "solver"}
+    edition = chunk.corpus_chunk.edition if chunk.corpus_chunk is not None else None
+    solver_ok, edition_ok, _, _ = match_query_scope(requirements, edition_owners, scope, edition)
+    return solver_ok and edition_ok
 
 
 def mismatched_corpus_candidates(

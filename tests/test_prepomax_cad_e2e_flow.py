@@ -381,12 +381,15 @@ def test_d32_freecad_prepomax_calculix_paraview_and_expert_e2e(tmp_path: Path, m
 
 def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkeypatch):
     """Invalidate old exports and receipts on STEP, PMX and INP edits, then reopen a fresh export/run."""
-    pytest.importorskip("PySide6")
-    from PySide6.QtWidgets import QApplication
-    from apps.workbench_qt.native_analysis import NativeAnalysisWindow
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        app = None
+    else:
+        from apps.workbench_qt.native_analysis import NativeAnalysisWindow
+        monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "native.ini"))
+        app = QApplication.instance() or QApplication([])
 
-    monkeypatch.setenv("CAELAB_UI_SETTINGS_PATH", str(tmp_path / "native.ini"))
-    app = QApplication.instance() or QApplication([])
     wb, _jobs, project, cad, pre, solver, pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
     auxiliary = None
     try:
@@ -408,9 +411,10 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkey
 
         middle_run = wb.submit_native(project, solver.id)
         assert not wb.selected_native_run(project, solver.id).stale
-        auxiliary = NativeAnalysisWindow(saved, solver.id, Workbench())
-        auxiliary.timer.stop()
-        assert auxiliary.run_selector.currentData() == middle_run.id
+        if app is not None:
+            auxiliary = NativeAnalysisWindow(saved, solver.id, Workbench())
+            auxiliary.timer.stop()
+            assert auxiliary.run_selector.currentData() == middle_run.id
         updated_bytes = initial_bytes.replace(b"2.0, 2.0", b"2.5, 2.0")
         assert updated_bytes != initial_bytes
         files["inp"].write_bytes(updated_bytes)
@@ -432,16 +436,17 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkey
             (refreshed.workdir / "results" / "results.pvd").resolve()
         )
         wb.save_native_project(project)
-        auxiliary.refresh_runs()
-        assert auxiliary.run_selector.currentData() == refreshed.id
-        assert auxiliary.run_selector.findData(middle_run.id) >= 0
-        assert auxiliary.close()
-        auxiliary = NativeAnalysisWindow(saved, solver.id, Workbench())
-        auxiliary.timer.stop()
-        assert auxiliary.run_selector.currentData() == refreshed.id
-        assert {auxiliary.run_selector.itemData(i) for i in range(auxiliary.run_selector.count())} == {
-            initial_run.id, middle_run.id, refreshed.id,
-        }
+        if auxiliary is not None:
+            auxiliary.refresh_runs()
+            assert auxiliary.run_selector.currentData() == refreshed.id
+            assert auxiliary.run_selector.findData(middle_run.id) >= 0
+            assert auxiliary.close()
+            auxiliary = NativeAnalysisWindow(saved, solver.id, Workbench())
+            auxiliary.timer.stop()
+            assert auxiliary.run_selector.currentData() == refreshed.id
+            assert {auxiliary.run_selector.itemData(i) for i in range(auxiliary.run_selector.count())} == {
+                initial_run.id, middle_run.id, refreshed.id,
+            }
 
         reopened_wb = Workbench()
         try:
@@ -459,20 +464,14 @@ def test_d32_step_and_pmx_stale_invalidation_and_reexport(tmp_path: Path, monkey
     finally:
         if auxiliary is not None:
             auxiliary.close()
-        app.processEvents()
+        if app is not None:
+            app.processEvents()
         wb.close()
 
 
 def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path, monkeypatch):
     """Exercise scalar CalculiX MDO using synthetic receipts, plus independent study and project copies."""
-    pytest.importorskip("PySide6")
-    from PySide6.QtWidgets import QApplication, QMessageBox
-    from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
-
-    monkeypatch.setenv("CAELAB_MDO_SETTINGS_PATH", str(tmp_path / "mdo.ini"))
-    app = QApplication.instance() or QApplication([])
-    warnings = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(_args[-1]))
+    app = None
     wb, jobs, project, _cad, _pre, solver, _pv, _pre_res, files = _build_freecad_prepomax_calculix_project(tmp_path)
     studio = None
     try:
@@ -557,6 +556,17 @@ def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path, mo
         assert str((tmp_path / "copied_project").resolve()) in reopened_study_ref.path
         reopened_mdo = wb.open_mdo_study(reopened_study_ref.path, project=reopened_proj, node_id=solver.id)
         assert reopened_mdo.is_verified(actual_clone.point_id)
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+        except ImportError:
+            reopened_mdo.close()
+            return
+        from apps.workbench_qt.mdo_studio.window import MDOStudioWindow
+
+        monkeypatch.setenv("CAELAB_MDO_SETTINGS_PATH", str(tmp_path / "mdo.ini"))
+        app = QApplication.instance() or QApplication([])
+        warnings = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *_args: warnings.append(_args[-1]))
         studio = MDOStudioWindow(service=reopened_mdo)
         previous = studio.service.current_rerun_id
         historical_runs = [attempt["run_id"] for attempt in studio.service.point_details(actual_clone.point_id).attempts]
@@ -584,7 +594,8 @@ def test_d32_prepomax_inp_to_mdo_study_full_cycle_and_save_as(tmp_path: Path, mo
     finally:
         if studio is not None:
             studio.close()
-        app.processEvents()
+        if app is not None:
+            app.processEvents()
         wb.close()
 
 
@@ -625,7 +636,7 @@ def test_d32_contract_boundaries_and_discipline_graph_gap(tmp_path: Path):
 
 
 
-@pytest.mark.parametrize("element_header", ["*ELEMENT,TYPE=C3D4", "*ELEMENT ,TYPE=C3D4"])
+@pytest.mark.parametrize("element_header", ["*ELEMENT,TYPE=C3D4", "*ELEMENT ,TYPE=C3D4", "* ELEMENT,TYPE=C3D4", "*\tELE MENT,TYPE=C3D4"])
 def test_d32_include_card_state_and_rendered_connectivity_guard(tmp_path, element_header):
     root = tmp_path / "part.inp"
     include = tmp_path / "rows.inc"

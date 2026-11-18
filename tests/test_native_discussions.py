@@ -793,6 +793,42 @@ def test_index_loading_consumes_request_budget(tmp_path, monkeypatch, load_durat
     assert turn["budget_used"]["total_seconds"] == load_duration + provider_duration
 
 
+@pytest.mark.parametrize("stop", ["cancel", "expire"])
+def test_index_loading_can_be_abandoned_before_it_returns(tmp_path, monkeypatch, stop):
+    entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+    provider = Provider()
+    provider.availability = lambda: (calls.append("availability") or True, "")
+
+    def load_index():
+        entered.set()
+        release.wait(2)
+        return None
+
+    def check_cancelled():
+        if cancelled.is_set():
+            raise RuntimeError("cancelled during index load")
+
+    path, doc, _ = prepared(tmp_path, monkeypatch, provider)
+    monkeypatch.setattr(service, "pin_knowledge_index", load_index)
+    monkeypatch.setattr(service, "REQUEST_TIMEOUT_SECONDS", 0.1 if stop == "expire" else 1)
+    timer = threading.Timer(0.04, cancelled.set)
+    if stop == "cancel":
+        timer.start()
+    started = time.monotonic()
+    try:
+        turn = ask(path, doc, template_id="material", check_cancelled=check_cancelled)["turns"][-1]
+        assert entered.is_set()
+        assert time.monotonic() - started < 1
+        assert turn["status"] == ("cancelled" if stop == "cancel" else "timed_out")
+        assert not calls and turn["budget_used"]["rounds"] == 0
+        assert turn["request_context_ref"] is None and turn["tool_trace_ref"] is None
+        assert service.load_discussion(path)["turns"][-1]["status"] == turn["status"]
+    finally:
+        timer.cancel()
+        release.set()
+
+
 def test_split_timeout_budgets_dedicated_provider_budget_and_caller_monotonic_anchor(tmp_path, monkeypatch):
     entered_search = threading.Event()
     release_search = threading.Event()

@@ -790,6 +790,9 @@ class CorpusChunkSpec:
     page_start: int | None
     page_end: int | None
     coverage_facets: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    # Resolved from the published manifest, outside the source-span wire record.
+    source_kind: str | None = field(default=None, compare=False)
+    review_status: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self.source_id, "CorpusChunkSpec.source_id")
@@ -1132,6 +1135,8 @@ class RetrievalDecisionV1:
         missing = _require_str_tuple(self.missing_evidence, "RetrievalDecisionV1.missing_evidence")
         limits = _require_str_tuple(self.limitations, "RetrievalDecisionV1.limitations")
         trace_ref = _coerce_optional_artifact_ref(self.assessment_trace_ref, "RetrievalDecisionV1.assessment_trace_ref")
+        if trace_ref is not None and trace_ref.role != "retrieval_trace":
+            raise ValueError("RetrievalDecisionV1.assessment_trace_ref requires a retrieval trace artifact")
 
         if self.status == "supported":
             if missing:
@@ -1146,7 +1151,7 @@ class RetrievalDecisionV1:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires source_review_refs")
             if self.assessment_profile_sha256 is None:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires assessment_profile_sha256")
-            if trace_ref is None or trace_ref.size <= 0 or trace_ref.role not in {"retrieval_trace", "tool_trace"}:
+            if trace_ref is None or trace_ref.size <= 0:
                 raise ValueError("RetrievalDecisionV1.status='supported' requires a valid assessment_trace_ref")
 
         object.__setattr__(self, "requirements", reqs)
