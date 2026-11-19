@@ -21,6 +21,7 @@ from .contracts import (
     RetrievalDecisionV1,
     RetrievalRequirementV1,
     RetrievalTraceRecord,
+    _RETRIEVAL_STAGES,
     _RETRIEVAL_TERMINAL_STAGES,
     _is_retrieval_event,
     _retrieval_stage,
@@ -1384,6 +1385,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     has_review_quotes = False
     trace_checks = []
     review_checks = []
+    review_checks_ancestors = frozenset()
     review_quotes_ancestors = frozenset()
     review_candidate_ids = None
     review_candidate_ancestors = frozenset()
@@ -1391,6 +1393,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
             _validate_trace_sequence(nested, "stage_events" in record)
+        if "steps" in record:
+            validate_events(record["steps"])
+        if "stage" in record and (not isinstance(record["stage"], str) or record["stage"] not in _RETRIEVAL_STAGES):
+            raise ValueError("Invalid retrieval assessment trace events")
         if "embedding_provider" in record:
             _validate_embedding_provider(record["embedding_provider"])
         if "stage_events" in record:
@@ -1439,21 +1445,31 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if phase == "review":
             if record is trace and record_ids == all_candidate_ids:
                 record_ids = None
-            repeated_summary = (has_review_quotes and not record_checks and record_quotes == review_quotes
-                                and id(record) in review_quotes_ancestors)
-            if has_quotes and not repeated_summary:
-                has_review_quotes = True
-                review_quotes, review_checks = record_quotes, record_checks
-                review_quotes_ancestors = ancestors
+            if has_quotes or record_ids is not None:
+                if has_quotes:
+                    has_review_quotes = True
+                    review_quotes = record_quotes
+                    review_quotes_ancestors = ancestors
+                elif id(record) not in review_quotes_ancestors:
+                    has_review_quotes = False
+                    review_quotes = set()
+                    review_quotes_ancestors = frozenset()
+                if record_checks:
+                    review_checks = record_checks
+                    review_checks_ancestors = ancestors
+                elif id(record) not in review_checks_ancestors:
+                    review_checks = []
+                    review_checks_ancestors = frozenset()
                 if record_ids is not None:
-                    review_candidate_ids = record_ids
+                    review_candidate_ids = (
+                        review_candidate_ids & record_ids
+                        if review_candidate_ids is not None and id(record) in review_candidate_ancestors
+                        else record_ids
+                    )
                     review_candidate_ancestors = ancestors
                 elif id(record) not in review_candidate_ancestors:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
-            elif record_ids is not None:
-                review_candidate_ids = record_ids
-                review_candidate_ancestors = ancestors
         elif has_quotes and phase not in {"search", "detail"}:
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
