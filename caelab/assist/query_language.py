@@ -1284,14 +1284,17 @@ def _history_lists(value):
             yield history
 
 
-def _history_events(value):
+def _history_events(value, *, prior=(), prior_keys=()):
     if isinstance(value, Mapping):
         yield value
         for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS):
-            yield from _history_events(value.get(key))
+            yield from _history_events(value.get(key), prior=prior, prior_keys=prior_keys)
     elif isinstance(value, (list, tuple)):
-        for item in value:
-            yield from _history_events(item)
+        start = 0
+        if prior:
+            start = _unchanged_history_prefix(value, prior, tuple(map(canonical_json_bytes, value)), prior_keys)
+        for item in value[start:]:
+            yield from _history_events(item, prior=prior, prior_keys=prior_keys)
 
 
 def _starts_new_history_round(item, prior):
@@ -1299,10 +1302,21 @@ def _starts_new_history_round(item, prior):
     if stage not in _EXECUTION_SEARCH_STAGES and stage not in ({"retrieval"} | _COMPLETION_STAGES):
         return False
     prior_ids = {event_id for event in _history_events(prior) for event_id in _event_ids(event)}
-    events = tuple(_history_events(item))
+    if isinstance(item, Mapping) and _event_ids(item) & prior_ids:
+        return False
+    if stage in _EXECUTION_SEARCH_STAGES:
+        return True
+    events = tuple(_history_events(item, prior=prior, prior_keys=tuple(map(canonical_json_bytes, prior))))
     if any(_event_ids(event) & prior_ids for event in events):
         return False
-    return stage in _EXECUTION_SEARCH_STAGES or any(_history_stage(event) in _EXECUTION_SEARCH_STAGES for event in events)
+    for event in events:
+        event_stage = _history_stage(event)
+        if event_stage in _EXECUTION_SEARCH_STAGES:
+            return True
+        if (_EVIDENCE_FIELDS & event.keys() and event_stage in _REVIEW_STAGES
+                and not any(key in event for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS))):
+            return False
+    return False
 
 
 def _novel_history_items(items, prior_histories, *, only_altered=False, identified_owner=False):
@@ -1666,7 +1680,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     new_round_selection_after_review = False
     new_round_selection_history = frozenset()
     new_round_selection_ancestors = frozenset()
-    reviewed_event_ids: dict[bytes, set[int]] = {}
+    seen_search_event_ids: dict[bytes, set[int]] = {}
+    seen_selection_event_ids: dict[bytes, set[int]] = {}
+    reviewed_event_evidence = {}
     for (record, phase, ancestors, history_ancestors, report_of, _,
          altered_replay, record_event_ids) in _trace_records(trace, root=True):
         record_id = id(record)
@@ -1674,10 +1690,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if ((phase == "selection" and record_ids and not cited_ids <= record_ids)
                 or (selected and not cited_ids <= selected)):
             raise ValueError("Retrieval assessment contradicts trace selection or review")
-        reuses_reviewed_event_id = any(
-            event_id in reviewed_event_ids and owner_id not in reviewed_event_ids[event_id]
-            for event_id, owner_id in record_event_ids
-        )
         non_history_ancestors = ancestors - history_ancestors
         summarized_containers = (report_of | non_history_ancestors) & history_review_containers
         encloses_quotes = record_id in review_quotes_ancestors or bool(
@@ -1689,13 +1701,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         encloses_candidates = record_id in review_candidate_ancestors or bool(
             report_of & review_candidate_ancestors & history_review_containers
         )
-        nests_reviewed_quotes = reuses_reviewed_event_id or bool(summarized_containers & review_quotes_ancestors)
-        constrains_checks = reuses_reviewed_event_id or encloses_checks or bool(
-            summarized_containers & review_checks_ancestors
-        )
-        constrains_candidates = reuses_reviewed_event_id or encloses_candidates or bool(
-            summarized_containers & review_candidate_ancestors
-        )
+        nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
+        constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
+        constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
@@ -1703,10 +1711,38 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if record is trace and record_ids == all_candidate_ids:
             record_ids = None
         has_review_update = has_quotes or record_ids is not None
+        if effective_phase == "review" and has_review_update:
+            check_evidence = {
+                rid: (check["relation"], frozenset(check["candidate_ids"]), frozenset(quotes))
+                for rid, (check, quotes) in record_checks
+            }
+            reused_evidence = [
+                reviewed_event_evidence[event_id]
+                for event_id, owner_id in record_event_ids
+                if event_id in reviewed_event_evidence and owner_id not in reviewed_event_evidence[event_id]["owners"]
+            ]
+            if reused_evidence:
+                for prior in reused_evidence:
+                    if ((check_evidence and prior["checks"] and check_evidence != prior["checks"])
+                            or (has_quotes and prior["quotes"] is not None and record_quotes != prior["quotes"])
+                            or (record_ids is not None and prior["candidate_ids"] is not None
+                                and not record_ids <= prior["candidate_ids"])):
+                        raise ValueError("Retrieval assessment contradicts trace selection or review")
+                # An unchanged historical review contributes no evidence to the active round.
+                continue
+
+        reuses_round_event_id = False
+        if effective_phase in {"search", "selection"}:
+            seen_ids = seen_search_event_ids if effective_phase == "search" else seen_selection_event_ids
+            for event_id in _event_ids(record):
+                owners = seen_ids.setdefault(event_id, set())
+                reuses_round_event_id |= bool(owners) and record_id not in owners
+                owners.add(record_id)
+        novel_round_event = not altered_replay and not reuses_round_event_id
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
-        if effective_phase == "search" and has_active_review:
+        if effective_phase == "search" and has_active_review and novel_round_event:
             saw_search_after_review = True
-        elif effective_phase == "selection" and saw_search_after_review:
+        elif effective_phase == "selection" and saw_search_after_review and novel_round_event:
             new_round_selection_after_review = True
             new_round_selection_history = history_ancestors
             new_round_selection_ancestors = ancestors
@@ -1731,10 +1767,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             and new_round_selection_after_review
             and belongs_to_new_round
             and not altered_replay
-            and not reuses_reviewed_event_id
         )
         quoted_selection = (effective_phase == "selection" and (record_quotes or record_checks)
-                            and (review_superseded_quotes or has_active_review))
+                            and (review_superseded_quotes or has_active_review) and novel_round_event)
         if fresh_review or quoted_selection:
             trace_quotes.clear()
             trace_checks.clear()
@@ -1761,15 +1796,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_ancestors = frozenset()
         if effective_phase == "review":
             if has_review_update:
-                if reuses_reviewed_event_id and not has_review_quotes and has_recorded_quotes:
-                    review_quotes = set(trace_quotes)
-                    has_review_quotes = True
-                    review_checks = list(trace_checks)
-                for event_id, owner_id in record_event_ids:
-                    reviewed_event_ids.setdefault(event_id, set()).add(owner_id)
                 history_review_containers.update(history_ancestors)
                 if has_quotes:
-                    if has_review_quotes and (reuses_reviewed_event_id or (nests_reviewed_quotes and not encloses_quotes)):
+                    if has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
                         review_quotes_constrained_by_replay = True
@@ -1807,6 +1836,17 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 elif not constrains_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
+                for event_id, owner_id in record_event_ids:
+                    recorded = reviewed_event_evidence.setdefault(event_id, {
+                        "owners": set(), "quotes": None, "checks": {}, "candidate_ids": None,
+                    })
+                    recorded["owners"].add(owner_id)
+                    if has_quotes or fresh_review:
+                        recorded["quotes"] = frozenset(record_quotes) if has_quotes else None
+                    if record_checks or fresh_review:
+                        recorded["checks"] = check_evidence
+                    if record_ids is not None or fresh_review:
+                        recorded["candidate_ids"] = frozenset(record_ids) if record_ids is not None else None
         elif has_quotes and effective_phase not in {"search", "detail"}:
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)

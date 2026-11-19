@@ -1345,6 +1345,10 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
     "quoted-output-wrapper-events", "quoted-output-wrapper-steps",
     "quoted-output-wrapper-history-events", "quoted-output-wrapper-history-steps",
     "replayed-search-round-events", "replayed-search-round-steps",
+    "quoted-replayed-search-round-events", "quoted-replayed-search-round-steps",
+    "unchecked-output-wrapper-events", "unchecked-output-wrapper-steps",
+    "unchecked-output-wrapper-history-events", "unchecked-output-wrapper-history-steps",
+    "new-review-output-wrapper-events", "new-review-output-wrapper-steps",
 ])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
@@ -1428,9 +1432,11 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             wrapper["result"] = {history_field: wrapper[history_field]}
         else:
             wrapper["output"] = summary
-    elif layout.startswith(("altered-output-replay-", "altered-output-wrapper-", "quoted-output-wrapper-")):
+    elif layout.startswith(("altered-output-replay-", "altered-output-wrapper-", "quoted-output-wrapper-",
+                            "unchecked-output-wrapper-", "new-review-output-wrapper-")):
         history_field = layout.rsplit("-", 1)[1]
-        quoted_round = layout.startswith("quoted-output-wrapper-")
+        quoted_round = layout.startswith(("quoted-output-wrapper-", "unchecked-output-wrapper-",
+                                          "new-review-output-wrapper-"))
         earlier_history = [{"stage": "prepare_query", "event_id": "prepare-1"}]
         if "-wrapper-history-" in layout:
             earlier_history.append({
@@ -1447,25 +1453,35 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
         selection = {"stage": "candidate_selection", "candidate_ids": response["candidate_ids"]}
         if quoted_round:
             selection.update(response)
+        if layout.startswith("unchecked-output-wrapper-"):
+            del selection["checks"]
+        if layout.startswith("new-review-output-wrapper-"):
+            selection["checks"] = checks(reversed(quotes))
+        later_history = [
+            {"stage": "search", "event_id": "search-2"}, selection,
+            {"stage": "retrieval_completion", "event_id": "completion-2"},
+        ]
+        if layout.startswith("new-review-output-wrapper-"):
+            later_history.insert(-1, {
+                "stage": "assessment", "event_id": "review-2", **response, "checks": selection["checks"],
+            })
         wrapper = {
             "stage": "retrieval_completion",
             history_field: earlier_history,
-            "result": {history_field: [
-                {"stage": "search", "event_id": "search-2"},
-                selection,
-                {"stage": "retrieval_completion", "event_id": "completion-2"},
-            ]},
+            "result": {history_field: later_history},
         }
         if not quoted_round:
             wrapper["output"] = {history_field: earlier_history}
         trace = {"events": [wrapper]}
-    elif layout.startswith("replayed-search-round-"):
+    elif layout.startswith(("replayed-search-round-", "quoted-replayed-search-round-")):
         history_field = layout.rsplit("-", 1)[1]
         prepare = {"stage": "prepare_query"}
         search = {"stage": "search", "event_id": "s1"}
         selection = {"stage": "candidate_selection", "event_id": "sel1",
                      "candidate_ids": response["candidate_ids"]}
         review = {"stage": "assessment", **response}
+        if layout.startswith("quoted-replayed-search-round-"):
+            selection["citations"] = quotes
         complete = {"stage": "retrieval_completion", "event_id": "done1"}
         wrapper = {"stage": "retrieval_completion", history_field: [prepare, search, selection, review, complete]}
         trace = {"events": [wrapper]}
@@ -1479,10 +1495,20 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
                       trace_overrides=trace, response_format=response_format,
                       host_overrides={**host_citations, "checks": checks(spans)})
 
+    if layout.startswith("new-review-output-wrapper-"):
+        assert assess_assignments(reversed(quotes)).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_assignments(quotes)
+        wrapper["output"] = {history_field: [earlier_history[-1]]}
+        assert assess_assignments(reversed(quotes)).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_assignments(quotes)
+        return
+
     assert assess_assignments(quotes).status == "supported"
     if layout == "sibling":
         assert assess_assignments(reversed(quotes)).status == "supported"
-    else:
+    elif not layout.startswith("unchecked-output-wrapper-"):
         with pytest.raises(ValueError, match="trace selection or review"):
             assess_assignments(reversed(quotes))
     if selection_result:
@@ -1505,11 +1531,12 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             wrapper["output"][history_field] = replay
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess_assignments(reversed(quotes))
-    if layout.startswith(("altered-output-wrapper-", "quoted-output-wrapper-")):
+    if layout.startswith(("altered-output-wrapper-", "quoted-output-wrapper-", "unchecked-output-wrapper-")):
         wrapper["output"] = {history_field: [earlier_history[-1]]}
         assert assess_assignments(quotes).status == "supported"
-        with pytest.raises(ValueError, match="trace selection or review"):
-            assess_assignments(reversed(quotes))
+        if not layout.startswith("unchecked-output-wrapper-"):
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_assignments(reversed(quotes))
         changed_review = dict(response, checks=checks(reversed(quotes)))
         if "-wrapper-history-" in layout:
             swapped = {**earlier_history[-1], history_field: [{"stage": "assessment", **changed_review}]}
@@ -1518,7 +1545,7 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
         wrapper["output"][history_field] = [swapped]
         with pytest.raises(ValueError, match="trace selection or review"):
             assess_assignments(reversed(quotes))
-        if layout.startswith("quoted-output-wrapper-"):
+        if layout.startswith(("quoted-output-wrapper-", "unchecked-output-wrapper-")):
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess_assignments(quotes)
         if layout.startswith("altered-output-wrapper-history-"):
@@ -1526,15 +1553,25 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             trace["events"].append(swapped)
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess_assignments(reversed(quotes))
-    if layout.startswith("replayed-search-round-"):
-        swapped = dict(review, checks=checks(reversed(quotes)))
-        wrapper["result"] = {history_field: [prepare, review, complete, {
+    if layout.startswith(("replayed-search-round-", "quoted-replayed-search-round-")):
+        round_wrapper = {
             "stage": "retrieval_completion", "event_id": "round-2",
-            history_field: [prepare, search, selection, swapped,
+            history_field: [prepare, search, selection, review,
                             {"stage": "retrieval_completion", "event_id": "done2"}],
-        }]}
-        with pytest.raises(ValueError, match="trace selection or review"):
-            assess_assignments(reversed(quotes))
+        }
+        prefixes = ([prepare, review, complete],) if layout.startswith("quoted-replayed-search-round-") else (
+            [], [prepare, search, selection, review, complete], [prepare, review, complete],
+        )
+        for prefix in prefixes:
+            wrapper["result"] = {history_field: [*prefix, round_wrapper]}
+            assert assess_assignments(quotes).status == "supported"
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_assignments(reversed(quotes))
+            changed_history = list(round_wrapper[history_field])
+            changed_history[3] = dict(review, checks=checks(reversed(quotes)))
+            wrapper["result"][history_field][-1] = {**round_wrapper, history_field: changed_history}
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_assignments(reversed(quotes))
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
@@ -1934,6 +1971,50 @@ def test_d09_replayed_search_validates_raw_trace(assessed_retrieval, response_fo
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("review_location", ["response", "history"])
+def test_d09_historical_review_cannot_change_its_citations(
+    assessed_retrieval, response_format, history_field, review_location,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    quotes = [{"candidate_id": candidate["citation"], "start": 0, "end": len(candidate["text"])}
+              for candidate in (first, second)]
+    ids = [quote["candidate_id"] for quote in quotes]
+
+    def completion(citations):
+        evidence = {"citations": citations}
+        recorded = {"response": evidence} if review_location == "response" else {
+            history_field: [{"stage": "assessment", **evidence}],
+        }
+        return {"stage": "retrieval_completion", "event_id": "rc1", **recorded}
+
+    earlier = completion(quotes[:1])
+    wrapper = {
+        "stage": "retrieval_completion",
+        history_field: [{"stage": "prepare_query"}, earlier],
+        "result": {history_field: [
+            {"stage": "search", "event_id": "s2"},
+            {"stage": "candidate_selection", "event_id": "sel2", "candidate_ids": ids, "citations": quotes},
+            {"stage": "retrieval_completion"},
+        ]},
+    }
+    trace = {"events": [wrapper]}
+
+    def assess_target(candidate, companion):
+        return assess(candidate, companion=companion, include_good=True, trace_overrides=trace,
+                      response_format=response_format)
+
+    assert assess_target(second, first).status == "supported"
+    wrapper["output"] = {history_field: [completion(quotes[1:])]}
+    for candidate, companion in ((first, second), (second, first)):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_target(candidate, companion)
+    wrapper["output"] = {history_field: [earlier]}
+    assert assess_target(second, first).status == "supported"
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize(("layout", "completion_stage"), [
     *(pytest.param(layout, None, id=layout) for layout in (
         "short-replay", "closed-short-replay", "subsequence", "continuation", "extension", "continued-review",
@@ -1944,6 +2025,7 @@ def test_d09_replayed_search_validates_raw_trace(assessed_retrieval, response_fo
         "shortened-search-status", "anonymous-query-change",
         "wrapped-round-prefix-retrieval", "wrapped-round-prefix-retrieval_completion",
         "search-replay-field-aliases", "wrapped-reports-round-retrieval", "wrapped-reports-round-retrieval_completion",
+        "wrapped-fresh-tail-retrieval", "wrapped-fresh-tail-retrieval_completion",
         "changed-quote", "boolean-offset", "changed-check",
     )),
     *(pytest.param("subsequence-omitting-first-search", stage, id=f"subsequence-omitting-first-search-{stage}")
@@ -2028,7 +2110,7 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
     else:
         selection = {"stage": "candidate_selection", "candidate_ids": ids}
         ids_only = (
-            layout.startswith(("ids-only-", "wrapped-round-prefix-", "wrapped-reports-round-"))
+            layout.startswith(("ids-only-", "wrapped-round-prefix-", "wrapped-reports-round-", "wrapped-fresh-tail-"))
             or layout in {"shortened-round-prefix", "anonymous-query-change"}
         )
         if not ids_only:
@@ -2105,7 +2187,7 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
                     with pytest.raises(ValueError, match="trace selection or review"):
                         assess(second, companion=first, **options)
             return
-        if layout == "shortened-round-prefix" or layout.startswith("wrapped-round-prefix-"):
+        if layout == "shortened-round-prefix" or layout.startswith(("wrapped-round-prefix-", "wrapped-fresh-tail-")):
             wrapper["event_id"] = "round-report"
             history = [prepare, dict(search, event_id="s1"), review_a, done]
             continuation = [
@@ -2120,9 +2202,20 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
                     "stage": layout.removeprefix("wrapped-round-prefix-"), "event_id": "round-2",
                     history_field: continuation,
                 }]
+            elif layout.startswith("wrapped-fresh-tail-"):
+                continuation = [{
+                    "stage": layout.removeprefix("wrapped-fresh-tail-"), "event_id": "round-2",
+                    history_field: history + continuation,
+                }]
             for report_history in (history + continuation, [prepare, review_a, done, *continuation]):
                 wrapper["result"] = {history_field: report_history}
                 assert_only(second, first)
+            if layout.startswith("wrapped-fresh-tail-"):
+                altered_prefix = list(continuation[0][history_field])
+                altered_prefix[2] = review_b
+                wrapper["result"][history_field][-1] = {**continuation[0], history_field: altered_prefix}
+                with pytest.raises(ValueError, match="trace selection or review"):
+                    assess(second, companion=first, **options)
             return
         if layout == "repeated-nested-selection":
             selection_history = [prepare, selection, done] if history_field == "events" else [selection]
