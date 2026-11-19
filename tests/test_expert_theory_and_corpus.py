@@ -1680,21 +1680,25 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-def test_d09_altered_review_replay_cannot_replace_quotations(assessed_retrieval, response_format, history_field):
+@pytest.mark.parametrize("partial_overlap", [False, True], ids=["disjoint", "partial-overlap"])
+def test_d09_altered_review_replay_cannot_replace_quotations(
+    assessed_retrieval, response_format, history_field, partial_overlap,
+):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
     quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
               for item in (first, second)]
+    shared = [dict(quotes[0], end=8)] if partial_overlap else []
     wrapper = {
         "stage": "retrieval_completion",
-        history_field: [{"stage": "assessment", "citations": quotes[:1]}],
+        history_field: [{"stage": "assessment", "citations": [quotes[0], *shared]}],
     }
     trace = {"events": [wrapper]}
     assert assess(first, companion=second, include_good=True,
                   trace_overrides=trace, response_format=response_format).status == "supported"
     with pytest.raises(ValueError, match="trace selection or review"):
         assess(second, include_good=True, trace_overrides=trace, response_format=response_format)
-    wrapper["result"] = {history_field: [{"stage": "assessment", "citations": quotes[1:]}]}
+    wrapper["result"] = {history_field: [{"stage": "assessment", "citations": [quotes[1], *shared]}]}
     for summary in ({}, {"output": {"citations": quotes[1:]}}):
         wrapper.update(summary)
         for target, companion in ((second, first), (first, second)):
@@ -1856,17 +1860,13 @@ def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_key", ["stage_events", "events", "steps"])
-@pytest.mark.parametrize("reviewed_final_quote", [True, False], ids=["overlapping-citations", "disjoint-citations"])
-def test_d09_nested_final_response_is_independent_of_dict_order(
-    assessed_retrieval, response_format, history_key, reviewed_final_quote,
-):
+def test_d09_nested_final_response_is_independent_of_dict_order(assessed_retrieval, response_format, history_key):
     assess, candidate = assessed_retrieval
     other = dict(candidate, citation="geos-manual:chapter-2")
     final_quote, earlier_quote = (
         {"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (candidate, other)
     )
-    reviewed = [earlier_quote, final_quote] if reviewed_final_quote else [earlier_quote]
-    history = [{"stage": "prepare_query"}, {"stage": "assessment", "citations": reviewed},
+    history = [{"stage": "prepare_query"}, {"stage": "assessment", "citations": [earlier_quote]},
                {"stage": "retrieval_completion"}]
     event = {"stage": "retrieval_completion", "response": {"citations": [final_quote]}, history_key: history}
     for completion, serializer in (
@@ -1875,13 +1875,8 @@ def test_d09_nested_final_response_is_independent_of_dict_order(
         (dict(reversed(event.items())), lambda value: json.dumps(value).encode("utf-8")),
     ):
         trace = {"events": [completion]}
-        if reviewed_final_quote:
-            assert assess(candidate, companion=other, include_good=True, trace_overrides=trace,
-                          response_format=response_format, trace_serializer=serializer).status == "supported"
-        else:
-            with pytest.raises(ValueError, match="trace selection or review"):
-                assess(candidate, companion=other, include_good=True, trace_overrides=trace,
-                       response_format=response_format, trace_serializer=serializer)
+        assert assess(candidate, companion=other, include_good=True, trace_overrides=trace,
+                      response_format=response_format, trace_serializer=serializer).status == "supported"
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(other, include_good=True, trace_overrides=trace,
                    response_format=response_format, trace_serializer=serializer)

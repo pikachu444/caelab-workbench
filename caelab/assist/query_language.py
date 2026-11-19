@@ -1446,6 +1446,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_quotes = set()
     has_recorded_quotes = False
     review_quotes = set()
+    review_quotes_constrained_by_replay = False
     has_review_quotes = False
     review_superseded_quotes = False
     trace_checks = []
@@ -1525,7 +1526,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         encloses_candidates = record_id in review_candidate_ancestors or bool(
             report_of & review_candidate_ancestors & history_review_containers
         )
-        summarizes_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
+        nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
         constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
         constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
@@ -1549,6 +1550,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             has_review_quotes = False
             review_superseded_quotes = False
             review_quotes = set()
+            review_quotes_constrained_by_replay = False
             review_quotes_ancestors = frozenset()
             review_checks = []
             review_checks_ancestors = frozenset()
@@ -1559,7 +1561,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             else:
                 history_review_containers.clear()
             encloses_quotes = False
-            summarizes_reviewed_quotes = False
+            nests_reviewed_quotes = False
             constrains_checks = False
             constrains_candidates = False
             saw_search_after_review = False
@@ -1568,7 +1570,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             if has_review_update:
                 history_review_containers.update(history_ancestors)
                 if has_quotes:
-                    if has_review_quotes and summarizes_reviewed_quotes:
+                    if has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
+                        review_quotes &= record_quotes
+                        review_quotes_ancestors |= ancestors
+                        review_quotes_constrained_by_replay = True
+                    elif has_review_quotes and encloses_quotes and review_quotes_constrained_by_replay:
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
                     else:
@@ -1577,9 +1583,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     has_review_quotes = True
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
-                elif not (encloses_quotes or summarizes_reviewed_quotes):
+                elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
+                    review_quotes_constrained_by_replay = False
                     review_quotes_ancestors = frozenset()
                 if record_checks:
                     if constrains_checks:
