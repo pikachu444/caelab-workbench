@@ -972,7 +972,8 @@ def test_d09_full_frozen_evaluation_against_bm25_baseline(tmp_path):
     assert hybrid_hits >= 22 and hybrid_hits >= bm25_hits, (hybrid_hits, bm25_hits)
 
 
-def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_path):
+@pytest.fixture
+def assessed_retrieval(tmp_path):
     text = "Drucker-Prager yield condition"
     digest = hashlib.sha256(text.encode()).hexdigest()
     reviewed_sha = "a" * 64
@@ -1076,6 +1077,13 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
             explicit_facets=facets, candidate_solver_scopes=candidate_scopes,
         )
 
+    return assess, candidate
+
+
+def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(assessed_retrieval):
+    assess, candidate = assessed_retrieval
+    text = candidate["text"]
+    plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield")
     with pytest.raises(ValueError, match="assessment_trace_ref"):
         assess(candidate, trace_role=None)
     with pytest.raises(ValueError, match="retrieval trace artifact"):
@@ -1257,6 +1265,82 @@ def test_d09_assessment_cannot_promote_wrong_source_edition_review_or_span(tmp_p
     prony = query_language.build_retrieval_decision(plan, [candidate], explicit_facets={"model": "Prony"})
     assert norton.assessment_id != prony.assessment_id
     assert next(req for req in norton.requirements if req.facet == "model").original_span is None
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("review_location", ["event", "nested-event", "root-response", "root-citations", "completion"])
+def test_d09_search_quotes_cannot_substitute_for_review(assessed_retrieval, response_format, review_location):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    reviewed, searched = (
+        {"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (candidate, other)
+    )
+    result = {"stage": "retrieval_completion"}
+    search = {"stage": "search", "citations": [searched]}
+    if review_location == "nested-event":
+        search = {"stage": "search", "response": {"citations": [searched]}}
+    trace = {"events": [
+        {"stage": "prepare_query"},
+        search,
+        result,
+    ]}
+    if review_location == "event":
+        result.update(stage="response", citations=[reviewed])
+    elif review_location == "nested-event":
+        result.update(assessment={"citations": [reviewed]})
+    elif review_location == "root-response":
+        trace["response"] = {"citations": [reviewed]}
+    elif review_location == "root-citations":
+        trace["citations"] = [reviewed]
+    else:
+        result["citations"] = [reviewed]
+
+    assert assess(candidate, companion=other, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, include_good=True, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+def test_d09_trace_binds_singular_candidate_selection(assessed_retrieval, response_format):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    selection = {"kind": "candidate_selection", "candidate_id": candidate["citation"]}
+    trace = {"events": [{"stage": "prepare_query"}, selection, {"stage": "assessment"}]}
+    assert assess(candidate, companion=other, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, include_good=True, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+def test_d09_trace_accepts_full_reranked_candidate_selection(assessed_retrieval, response_format):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    reranked = [other["citation"], candidate["citation"]]
+    trace = {"events": [{"stage": "prepare_query"}, {"stage": "candidate_selection", "candidate_ids": reranked},
+                        {"stage": "assessment"}]}
+    assert assess(other, include_good=True, trace_overrides=trace, response_format=response_format).status == "supported"
+    trace["events"][0]["candidate_ids"] = reranked
+    with pytest.raises(ValueError, match="trace identity"):
+        assess(other, include_good=True, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("stages", [
+    ("retrieval_completion", "prepare_query"),
+    ("prepare_query", "search", "retrieval_completion", "prepare_query"),
+    ("retrieval_completion", "query_plan", "response"),
+    ("retrieval_completion", "search"),
+])
+def test_d09_trace_result_ends_the_sequence(assessed_retrieval, response_format, stages):
+    assess, candidate = assessed_retrieval
+    compact = {"events": [{"kind": "retrieval"}]}
+    assert assess(candidate, trace_overrides=compact, response_format=response_format).status == "supported"
+    trace = {"events": [{"stage": stage} for stage in stages]}
+    for trailer in ({}, {"stage_events": ["prepare_query", "retrieval_completion"]}):
+        with pytest.raises(ValueError, match="trace events"):
+            assess(candidate, trace_overrides={**trace, **trailer}, response_format=response_format)
 
 
 def test_d09_rejects_corrupt_artifacts_and_refreshes_ask_cache(tmp_path, monkeypatch):
@@ -1952,6 +2036,10 @@ def test_d09_comparison_editions_and_unmentioned_facet_spans(tmp_path, question)
     ("Equation 3.4 in Radioss", "Radioss"),
     ("See fig. 1.2 (CalculiX)", "CalculiX"),
     ("절 2.3 in CalculiX", "CalculiX"),
+    ("Sections 2.3 and 2.4 in CalculiX", "CalculiX"),
+    ("Sections 2.3, 2.4 and 2.5 in CalculiX", "CalculiX"),
+    ("Sections 2.3 to 2.5 in CalculiX", "CalculiX"),
+    ("Sections 2.3-2.5 in CalculiX", "CalculiX"),
 ])
 def test_d09_entity_numbers_are_not_solver_editions(question, solver):
     plan = query_language.prepare_query(question)
@@ -1959,6 +2047,30 @@ def test_d09_entity_numbers_are_not_solver_editions(question, solver):
     assert any(req.facet == "solver" and req.expected == solver for req in requirements)
     assert not owners
     assert not any(req.facet == "edition" for req in requirements)
+
+
+def test_d09_section_list_preserves_search_hits_for_both_editions(tmp_path):
+    _, manifest, data = _make_sample_corpus(tmp_path)
+    for source, edition in zip(data["sources"], ("2.23", "2.24")):
+        source.update(solver_scope=["calculix"], edition=edition)
+    manifest.write_bytes(canonical_json_bytes(data))
+    index_root = tmp_path / "index"
+    corpus.build_corpus(manifest, output_root=index_root)
+    _, hits, decision = corpus.search_corpus(
+        index_root, "Sections 2.3 and 2.4 in CalculiX: weak form and Drucker-Prager",
+    )
+    assert {hit.edition for hit in hits} == {"2.23", "2.24"}
+    assert not any(req.facet == "edition" for req in decision.requirements)
+
+
+@pytest.mark.parametrize(("question", "editions"), [
+    ("Compare 2.24 (GEOS) vs 2.23 (CCX) contact", {"geos": "2.24", "calculix": "2.23"}),
+    ("Compare v2.23 in GEOS and v2.24 in CCX", {"geos": "2.23", "calculix": "2.24"}),
+])
+def test_d09_edition_first_comparisons_keep_explicit_solver_pairs(question, editions):
+    requirements, owners = query_language.extract_query_scope(query_language.prepare_query(question))
+    assert {owners[req.requirement_id]: req.expected.lower().removeprefix("v")
+            for req in requirements if req.facet == "edition"} == editions
 
 
 @pytest.mark.parametrize("phrase", ["release 42 in CalculiX", "V42 (CalculiX)"])

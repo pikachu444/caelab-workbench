@@ -228,6 +228,7 @@ _ENTITY_PREFIX = re.compile(
     r"problems?|examples?|items?|articles?|appendix|appendices|절점|요소|파트|단계|페이지|절|장|항|표|그림|식|예제)"
     r"\s*(?:[.#:]\s*)?$", re.I,
 )
+_ENTITY_CONNECTOR = re.compile(r"\s*(?:(?:,\s*)?(?:and|or|to|through|및|와|과)|,|/|-)\s*", re.I)
 _UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|bar|mbar|psi|ksi|atm|rpm|deg|rad|MN|mJ|kJ|W|kW|C)"
 _EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
 _VERSION_MARKER = re.compile(rf"{_VERSION_LABEL}\s*[:=]?\s*$", re.I)
@@ -794,28 +795,38 @@ def extract_query_scope(plan, explicit_facets=None):
     editions = {}
     pre_solver_editions = {}
 
+    def has_version_marker(number, prefix):
+        return number.lower().startswith("v") or bool(_VERSION_MARKER.search(prefix))
+
     def is_entity_number(number, prefix):
-        return (not number.lower().startswith("v") and not _VERSION_MARKER.search(prefix)
-                and bool(_ENTITY_PREFIX.search(prefix)))
+        return bool(_ENTITY_PREFIX.search(prefix)) and not has_version_marker(number, prefix)
 
     for mention in mentions:
         prefix = normalized[:mention.start()]
         comparison = _PRE_SOLVER_EDITIONS.search(prefix)
         if comparison is None and re.match(r"\s*\)", normalized[mention.end():]):
             comparison = _PARENTHETIC_SOLVER_EDITION.search(prefix)
-        if comparison:
-            pre_solver_editions.update(
-                (number.span(), normalize_solver(mention[0]))
-                for number in _EDITION_RE.finditer(normalized, comparison.start(), comparison.end())
-                if not is_entity_number(number[0], normalized[:number.start()])
-            )
+        if comparison is None:
+            continue
+        numbers = list(_EDITION_RE.finditer(normalized, comparison.start(), comparison.end()))
+        if numbers and not is_entity_number(numbers[0][0], normalized[:numbers[0].start()]):
+            solver = normalize_solver(mention[0])
+            pre_solver_editions.update((number.span(), solver) for number in numbers)
+
+    last_entity_end = None
     last_edition_end = None
     last_owner = None
     for match in _EDITION_RE.finditer(normalized):
         if _EDITION_UNIT.match(normalized[match.end():]):
             continue
         prefix = normalized[:match.start()]
-        if is_entity_number(match[0], prefix):
+        explicit_version = has_version_marker(match[0], prefix)
+        if not explicit_version and (
+            _ENTITY_PREFIX.search(prefix)
+            or (last_entity_end is not None and _ENTITY_CONNECTOR.fullmatch(prefix[last_entity_end:]))
+        ):
+            last_entity_end = match.end()
+            last_edition_end = None
             continue
         continued = last_edition_end is not None and re.fullmatch(
             r"\s*(?:(?:,\s*)?(?:and|or|versus|vs\.?|및|와|과)|,|/)\s*", prefix[last_edition_end:], re.I,
@@ -823,12 +834,12 @@ def extract_query_scope(plan, explicit_facets=None):
         preceding = next((m for m in reversed(mentions) if m.end() <= match.start()), None)
         gap = prefix[preceding.end():].strip(" \t,(:") if preceding else None
         attached = preceding is not None and (not gap or _VERSION_MARKER.fullmatch(gap))
-        if (match.span() in pre_solver_editions or continued or match[0][0].lower() == "v"
-                or _VERSION_MARKER.search(prefix) or attached):
+        if match.span() in pre_solver_editions or continued or explicit_version or attached:
             version = match[0]
             owner = pre_solver_editions.get(match.span())
             if owner is None:
                 owner = normalize_solver(preceding[0]) if attached else last_owner if continued else None
+            last_entity_end = None
             last_edition_end = match.end()
             last_owner = owner
             if not any(editions_match(version, current) and owner == bound for current, bound in editions):
@@ -1111,16 +1122,6 @@ def _quote_page_bounds(positions, text):
     return dict(zip(range(first, last + 1), zip((0, *breaks), (*breaks, len(text)))))
 
 
-def _trace_objects(value):
-    if isinstance(value, list):
-        for item in value:
-            yield from _trace_objects(item)
-    elif isinstance(value, Mapping):
-        yield value
-        for item in value.values():
-            yield from _trace_objects(item)
-
-
 def _trace_blocks_support(value):
     states = {"decision", "status", "outcome", "relation", "scope_status", "retrieval_decision", "kind", "stage"}
     denied = ("insufficient", "out_of_scope", "missing", "unsatisfied", "uncertain",
@@ -1171,14 +1172,43 @@ _SELECTION_STAGES = {"candidate_selection", "select_candidates", "candidates_sel
 _REVIEW_STAGES = {"assessment", "retrieval_assessment", "decision", "retrieval_decision",
                   "response", "retrieval_response", "requirement_checks"}
 _CANDIDATE_SUBSET_STAGES = _SELECTION_STAGES | _REVIEW_STAGES
-_INITIAL_STAGES = {"prepare_query", "query_plan", "retrieval_start", "retrieval"}
+_PREPARATION_STAGES = {"prepare_query", "query_plan", "retrieval_start"}
+_INITIAL_STAGES = _PREPARATION_STAGES | {"retrieval"}
+_SEARCH_STAGES = _PREPARATION_STAGES | {"search", "embed_query", "rank_candidates", "rerank"}
+_REVIEW_FIELDS = _REVIEW_STAGES | {"checks"}
 _RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAGES - {"supported"}
+
+
+def _has_trace_stage(record, stages):
+    return any(isinstance(name, str) and name in stages for name in (record.get("stage"), record.get("kind")))
+
+
+def _trace_records(value, phase=None):
+    if isinstance(value, list):
+        for item in value:
+            yield from _trace_records(item, phase)
+    elif isinstance(value, Mapping):
+        if phase == "search" or _has_trace_stage(value, _SEARCH_STAGES):
+            phase = "search"
+        elif _has_trace_stage(value, _REVIEW_STAGES):
+            phase = "review"
+        yield value, phase
+        for key, item in value.items():
+            child_phase = phase
+            if key in _SEARCH_STAGES:
+                child_phase = "search"
+            elif phase is None and key in _REVIEW_FIELDS:
+                child_phase = "review"
+            yield from _trace_records(item, child_phase)
 
 
 def _validate_trace_sequence(events, has_stage_events):
     stages = [_retrieval_stage(event) for event in events]
-    if not set(stages) & (_RESULT_STAGES | {"retrieval"}):
-        raise ValueError("Retrieval assessment trace events must include a result")
+    if stages[-1] not in (_RESULT_STAGES | {"retrieval"}):
+        raise ValueError("Retrieval assessment trace events must end with a result")
+    first_result = next((i for i, stage in enumerate(stages) if stage in _RESULT_STAGES), len(stages))
+    if _PREPARATION_STAGES.intersection(stages[first_result + 1:]):
+        raise ValueError("Retrieval assessment trace events must finish preparation before the first result")
     if has_stage_events:
         return
     work_steps = [i for i, stage in enumerate(stages) if stage == "search" or stage in _SELECTION_STAGES]
@@ -1216,9 +1246,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     def declares_subset(record):
         ids = record.get("candidate_ids")
         return (record is not trace and isinstance(ids, list) and all(isinstance(cid, str) for cid in ids)
-                and set(ids) < all_candidate_ids
-                and any(isinstance(name, str) and name in _CANDIDATE_SUBSET_STAGES
-                        for name in (record.get("stage"), record.get("kind"))))
+                and set(ids) <= all_candidate_ids and _has_trace_stage(record, _CANDIDATE_SUBSET_STAGES))
 
     # The trace identifies the complete input set separately from any later selection.
     trace_identity = {}
@@ -1231,11 +1259,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             trace_identity[key] = record[key]
     if trace_identity != identity:
         raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
-    trace_objects = list(_trace_objects(trace))
-    if any(record[key] != identity[key] for record in trace_objects
+    trace_records = list(_trace_records(trace))
+    if any(record[key] != identity[key] for record, _ in trace_records
            for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256") if key in record):
         raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
-    trace_blocks_support = any(_trace_blocks_support(record) for record in trace_objects)
+    trace_blocks_support = any(_trace_blocks_support(record) for record, _ in trace_records)
     if not isinstance(payload, Mapping):
         raise ValueError("Retrieval assessment fields are missing or unexpected")
     raw_keys = {"type", "checks", "out_of_scope", "limitations"}
@@ -1324,7 +1352,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     cited_ids = {cid for cid, _, _ in checked_citations}
     trace_quotes = set()
     has_recorded_quotes = False
-    for record in trace_objects:
+    review_quotes = set()
+    has_review_quotes = False
+    for record, phase in trace_records:
         if record is not trace and "events" in record:
             validate_events(record["events"])
         if "embedding_provider" in record:
@@ -1354,10 +1384,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 raise ValueError("Retrieval assessment contradicts trace selection or review")
         recorded_citations = {key: validate_quotes(record[key]) for key in ("citations", "quoted_spans")
                               if key in record}
-        if recorded_citations:
-            has_recorded_quotes = True
-            for quotes in recorded_citations.values():
-                trace_quotes.update(quotes)
+        if recorded_citations and phase != "search":
+            if phase == "review" or (record is trace and "citations" in recorded_citations):
+                has_review_quotes = True
+                review_quotes.update(*recorded_citations.values())
+            else:
+                has_recorded_quotes = True
+                trace_quotes.update(*recorded_citations.values())
         for key in ("checks", "requirement_checks"):
             if key in record and record[key] != []:
                 recorded_checks, recorded_spans = validate_checks(record[key])
@@ -1370,13 +1403,17 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         raise ValueError("Retrieval assessment contradicts trace selection or review")
         if "candidate_id" in record:
             cid = record["candidate_id"]
-            validate_candidate_ids([cid])
+            singular_selection = validate_candidate_ids([cid])
+            if ("candidate_ids" not in record and _has_trace_stage(record, _CANDIDATE_SUBSET_STAGES)
+                    and not cited_ids <= singular_selection):
+                raise ValueError("Retrieval assessment contradicts trace selection or review")
             if "start" in record or "end" in record:
                 quote({key: record[key] for key in allowed_quote_fields if key in record})
             elif _QUOTATION_PROVENANCE.intersection(record):
                 _validate_quote_provenance(record, provenance[cid])
 
-    if has_recorded_quotes and not checked_citations <= trace_quotes:
+    verified_quotes = review_quotes if has_review_quotes else trace_quotes
+    if (has_review_quotes or has_recorded_quotes) and not checked_citations <= verified_quotes:
         raise ValueError("Retrieval assessment contradicts trace selection or review")
 
     scope = payload["out_of_scope"]
