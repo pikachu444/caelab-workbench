@@ -1219,10 +1219,10 @@ def _novel_history_items(items, prior_histories):
             return ()
         if prefix_size == len(prior):
             return items[prefix_size:]
-        if (prefix_size > 0 and stage(items[prefix_size]) in _REVIEW_STAGES
-                and not any(stage(item) in _SELECTION_STAGES for item in items[prefix_size:])):
+        if (prefix_size > 0 and stage(items[prefix_size]) in _FINAL_REVIEW_STAGES
+                and items[prefix_size] not in _BARE_COMPLETIONS):
             return items[prefix_size:]
-        if stage(prior[-1]) in _COMPLETION_STAGES:
+        if stage(items[0]) not in _INITIAL_STAGES:
             continue
         remaining = iter(prior_keys)
         for index, item_key in enumerate(item_keys):
@@ -1455,6 +1455,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     review_candidate_ids = None
     review_candidate_ancestors = frozenset()
     history_review_containers: set[int] = set()
+    saw_search_after_review = False
+    new_round_selection_after_review = False
     for record, phase, ancestors, history_ancestors, report_of, report_histories in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
@@ -1523,20 +1525,50 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         encloses_candidates = record_id in review_candidate_ancestors or bool(
             report_of & review_candidate_ancestors & history_review_containers
         )
-        nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
+        summarizes_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
         constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
         constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
         )
+        if record is trace and record_ids == all_candidate_ids:
+            record_ids = None
+        has_review_update = has_quotes or record_ids is not None
+        has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
+        if effective_phase == "search" and has_active_review:
+            saw_search_after_review = True
+        elif effective_phase == "selection" and saw_search_after_review:
+            new_round_selection_after_review = True
+        fresh_review = effective_phase == "review" and has_review_update and new_round_selection_after_review
+        quoted_selection = (effective_phase == "selection" and (record_quotes or record_checks)
+                            and (review_superseded_quotes or has_active_review))
+        if fresh_review or quoted_selection:
+            trace_quotes.clear()
+            trace_checks.clear()
+            has_review_quotes = False
+            review_superseded_quotes = False
+            review_quotes = set()
+            review_quotes_ancestors = frozenset()
+            review_checks = []
+            review_checks_ancestors = frozenset()
+            review_candidate_ids = None
+            review_candidate_ancestors = frozenset()
+            if (ancestors - history_ancestors) & history_review_containers:
+                history_review_containers.intersection_update(ancestors)
+            else:
+                history_review_containers.clear()
+            encloses_quotes = False
+            summarizes_reviewed_quotes = False
+            constrains_checks = False
+            constrains_candidates = False
+            saw_search_after_review = False
+            new_round_selection_after_review = False
         if effective_phase == "review":
-            if record is trace and record_ids == all_candidate_ids:
-                record_ids = None
-            if has_quotes or record_ids is not None:
+            if has_review_update:
                 history_review_containers.update(history_ancestors)
                 if has_quotes:
-                    if has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
+                    if has_review_quotes and summarizes_reviewed_quotes:
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
                     else:
@@ -1545,7 +1577,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     has_review_quotes = True
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
-                elif not (encloses_quotes or nests_reviewed_quotes):
+                elif not (encloses_quotes or summarizes_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
                     review_quotes_ancestors = frozenset()
@@ -1570,22 +1602,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
         elif has_quotes and effective_phase not in {"search", "detail"}:
-            if (effective_phase == "selection" and (record_quotes or record_checks)
-                    and (review_superseded_quotes or has_review_quotes or review_candidate_ids is not None)):
-                trace_quotes.clear()
-                trace_checks.clear()
-                has_review_quotes = False
-                review_superseded_quotes = False
-                review_quotes = set()
-                review_quotes_ancestors = frozenset()
-                review_checks = []
-                review_checks_ancestors = frozenset()
-                review_candidate_ids = None
-                review_candidate_ancestors = frozenset()
-                if (ancestors - history_ancestors) & history_review_containers:
-                    history_review_containers.intersection_update(ancestors)
-                else:
-                    history_review_containers.clear()
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
