@@ -1480,6 +1480,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     saw_search_after_review = False
     new_round_selection_after_review = False
     new_round_selection_history = frozenset()
+    new_round_selection_ancestors = frozenset()
     for record, phase, ancestors, history_ancestors, report_of, report_histories in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
@@ -1564,8 +1565,16 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         elif effective_phase == "selection" and saw_search_after_review:
             new_round_selection_after_review = True
             new_round_selection_history = history_ancestors
-        supplies_required_evidence = bool(record_checks) if review_checks else has_review_update
-        belongs_to_new_round = not encloses_review or bool(report_of & new_round_selection_history)
+            new_round_selection_ancestors = ancestors
+        supplies_required_evidence = (
+            (not review_checks or bool(record_checks))
+            and (review_candidate_ids is None or record_ids is not None or bool(record_checks))
+            and has_review_update
+        )
+        belongs_to_new_round = (
+            (not encloses_review and (not new_round_selection_history or new_round_selection_history <= history_ancestors))
+            or bool(report_of & new_round_selection_ancestors)
+        )
         fresh_review = (
             effective_phase == "review"
             and supplies_required_evidence
@@ -1597,6 +1606,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             saw_search_after_review = False
             new_round_selection_after_review = False
             new_round_selection_history = frozenset()
+            new_round_selection_ancestors = frozenset()
         if effective_phase == "review":
             if has_review_update:
                 history_review_containers.update(history_ancestors)
