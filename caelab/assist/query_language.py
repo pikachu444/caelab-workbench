@@ -1466,7 +1466,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         )
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
-            "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
+            "review"
+            if phase == "review"
+            or (phase not in {"search", "detail"} and (encloses_review or bool(report_of & history_review_containers)))
+            else phase
         )
         if effective_phase == "review":
             if record is trace and record_ids == all_candidate_ids:
@@ -1512,7 +1515,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 review_checks_ancestors = frozenset()
                 review_candidate_ids = None
                 review_candidate_ancestors = frozenset()
-                history_review_containers.clear()
+                if (ancestors - history_ancestors) & history_review_containers:
+                    history_review_containers.intersection_update(ancestors)
+                else:
+                    history_review_containers.clear()
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)

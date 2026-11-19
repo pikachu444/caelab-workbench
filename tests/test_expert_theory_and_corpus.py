@@ -1536,7 +1536,42 @@ def test_d09_history_summary_can_narrow_review_citations(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-@pytest.mark.parametrize("review_field", ["candidate_ids", "checks"])
+@pytest.mark.parametrize("wrapper_stage", ["retrieval", "candidate_selection"])
+@pytest.mark.parametrize("repeat", ["full", "full-with-citations", "selection-only"])
+def test_d09_empty_summary_applies_after_repeated_selection(
+    assessed_retrieval, response_format, history_field, wrapper_stage, repeat,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    citations = [{"candidate_id": first["citation"], "start": 0, "end": len(first["text"])}]
+    prepare = {"stage": "prepare_query"}
+    selection = {"stage": "candidate_selection", "citations": citations}
+    review = {"stage": "assessment", "citations": citations}
+    complete = {"stage": "retrieval_completion"}
+    history = [prepare, selection, review]
+    repeated = history
+    if repeat == "selection-only":
+        repeated = history[:-1]
+        if history_field == "events":
+            # Event sequences require a result stage even when selection is the last evidence.
+            repeated.append(complete)
+    result = {history_field: repeated}
+    if repeat == "full-with-citations":
+        result["citations"] = citations
+    wrapper = {"stage": wrapper_stage, history_field: history, "result": result}
+    trace = {"events": [prepare, wrapper, complete]}
+
+    assert assess(first, companion=second, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    wrapper["output"] = {"citations": []}
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(first, companion=second, include_good=True,
+               trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("review_field", ["candidate_ids", "checks", "checks-after-repeated-selection"])
 def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
     assessed_retrieval, response_format, history_field, review_field,
 ):
@@ -1545,7 +1580,7 @@ def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
     quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
               for item in (first, second)]
     ids = [span["candidate_id"] for span in quotes]
-    if review_field == "checks":
+    if review_field != "candidate_ids":
         plan = query_language.prepare_query("Explain Drucker-Prager yield")
         [topic] = query_language.extract_query_requirements(plan)
         history_review = {"checks": [
@@ -1557,13 +1592,17 @@ def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
         plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield")
         history_review = {"candidate_ids": ids, "citations": quotes}
         output = {"candidate_ids": ids}
+    history = [{"stage": "prepare_query"}, {"stage": "assessment", **history_review}]
+    result = {"candidate_ids": ids[:1]}
+    stage = "retrieval"
+    if review_field == "checks-after-repeated-selection":
+        history.insert(1, {"stage": "candidate_selection", "citations": quotes[:1]})
+        result[history_field] = history
+        stage = "retrieval_completion"
     trace = {"events": [{
-        "stage": "retrieval",
-        history_field: [
-            {"stage": "prepare_query"},
-            {"stage": "assessment", **history_review},
-        ],
-        "result": {"candidate_ids": ids[:1]},
+        "stage": stage,
+        history_field: history,
+        "result": result,
         "output": output,
     }]}
     assert assess(first, companion=second, include_good=True, question_plan=plan,
