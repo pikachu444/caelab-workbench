@@ -2106,8 +2106,12 @@ def test_d09_replayed_review_validates_ordered_evidence(assessed_retrieval, resp
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-@pytest.mark.parametrize("layout", ["repeated-wrapper-id", "shortened-review-history",
-                                   "fresh-preparation", "fresh-nested-retrieval"])
+@pytest.mark.parametrize("layout", [
+    "repeated-wrapper-id", "shortened-review-history", "fresh-preparation", "fresh-nested-retrieval",
+    "replayed-anonymous-selection", "missing-history-field", "duplicate-history-field", "swapped-history-fields",
+    "shortened-nested-review", "altered-preparation-history", "preparation-result", "preparation-retrieval",
+    "nested-retrieval-citations",
+])
 def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
@@ -2148,6 +2152,45 @@ def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, 
     search_2 = {"stage": "search", "event_id": "search-2"}
     done_2 = {"stage": "retrieval_completion", "event_id": "done-2"}
     selection = {"stage": "candidate_selection", "event_id": "selection-2", "candidate_ids": ids}
+    if layout == "replayed-anonymous-selection":
+        rc1 = {"stage": "retrieval_completion", "event_id": "rc1", history_field: [
+            {"stage": "prepare_query"}, {"stage": "search"},
+            {"stage": "candidate_selection", **review(first), "candidate_ids": ids}, review_a,
+        ]}
+        wrapper[history_field] = [prepare, rc1, done]
+        wrapper["result"] = {history_field: [search_2, selection, review_b, done_2]}
+        assert_only(second, first)
+        wrapper["output"] = {history_field: [rc1]}
+        assert_only(second, first)
+        return
+
+    if layout in {"missing-history-field", "duplicate-history-field", "swapped-history-fields",
+                  "shortened-nested-review"}:
+        rc1 = {"stage": "retrieval_completion", "event_id": "rc1"}
+        if layout == "shortened-nested-review":
+            nested = {"stage": "retrieval", history_field: [review_a, review_b]}
+            rc1[history_field] = [nested]
+            changed = {**rc1, history_field: [{**nested, history_field: [review_a]}]}
+        else:
+            other_field = "steps" if history_field == "events" else "events"
+            rc1.update({history_field: [review_a], other_field: [review_b]})
+            changed = dict(rc1)
+            if layout == "missing-history-field":
+                del changed[other_field]
+            elif layout == "duplicate-history-field":
+                changed[other_field] = [review_a]
+            else:
+                changed.update({history_field: [review_b], other_field: [review_a]})
+        wrapper[history_field] = [prepare, rc1, done]
+        selection.update(review(first), candidate_ids=ids)
+        wrapper["result"] = {history_field: [search_2, selection, done_2]}
+        wrapper["output"] = {history_field: [prepare, rc1]}
+        assert_only(first, second)
+        wrapper["output"][history_field][-1] = changed
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        return
+
     if layout == "shortened-review-history":
         rc1 = {"stage": "retrieval_completion", "event_id": "rc1", history_field: [review_a, review_b]}
         wrapper[history_field] = [prepare, rc1, done]
@@ -2164,6 +2207,37 @@ def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, 
     wrapper[history_field] = [prepare, search_1, review_a, done]
     prepare_2 = {"stage": "prepare_query", "event_id": "prepare-2"}
     new_history = [search_2, selection, dict(review_b, event_id="review-2"), done_2]
+    if layout == "altered-preparation-history":
+        anonymous_prepare = {"stage": "prepare_query", history_field: [review_a]}
+        anonymous_done = {"stage": "retrieval_completion"}
+        prior = [anonymous_prepare, {"stage": "search"}, review_a, anonymous_done]
+        wrapper[history_field] = prior
+        fresh = {"stage": "retrieval_completion", history_field: [*prior, *new_history]}
+        wrapper["result"] = {history_field: [anonymous_prepare, review_a, anonymous_done, fresh]}
+        assert_only(second, first)
+        fresh[history_field][0] = {**anonymous_prepare, history_field: [review_b]}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(second, companion=first, **options)
+        return
+
+    if layout in {"preparation-result", "preparation-retrieval", "nested-retrieval-citations"}:
+        if layout == "preparation-result":
+            prepare_2["result"] = {"query": "new subquery"}
+        if layout == "preparation-retrieval":
+            new_history.insert(0, {"stage": "retrieval", history_field: [
+                {"stage": "retrieval_start", "event_id": "start-2"}, {"stage": "retrieval_completion"},
+            ]})
+        if layout == "nested-retrieval-citations":
+            new_history = [{"stage": "retrieval", "citations": review_b["citations"], history_field: [
+                {"stage": "retrieval_start", "event_id": "start-2"}, *new_history,
+            ]}, {"stage": "retrieval_completion"}]
+        fresh = {"stage": "retrieval_completion", history_field: [prepare_2, *new_history]}
+        wrapper["result"] = {history_field: [*wrapper[history_field], fresh]}
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [prepare, review_a, done, fresh]}
+        assert_only(second, first)
+        return
+
     if layout == "fresh-nested-retrieval":
         new_history = [{"stage": "retrieval", "event_id": "nested-2", history_field: [
             {"stage": "retrieval_start", "event_id": "start-2"}, *new_history,

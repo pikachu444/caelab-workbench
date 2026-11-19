@@ -1237,7 +1237,7 @@ def _same_history_owner(owner, prior_owner):
     return stage == prior_stage and (bool(ids & prior_ids) if ids or prior_ids else content == prior_content)
 
 
-def _same_history_step(item, prior_item, item_key, prior_key):
+def _same_history_step(item, prior_item, item_key, prior_key, *, require_complete=False):
     if item_key == prior_key:
         return True
     if not isinstance(item, Mapping) or not isinstance(prior_item, Mapping) or _trace_blocks_support(item):
@@ -1261,23 +1261,38 @@ def _same_history_step(item, prior_item, item_key, prior_key):
     if replay_content(item) != replay_content(prior_item):
         return False
 
+    if require_complete or _history_stage(item) in _FINAL_REVIEW_STAGES:
+        for key in _TRACE_HISTORY_FIELDS:
+            nested, prior_nested = item.get(key), prior_item.get(key)
+            if bool(nested) != bool(prior_nested):
+                return False
+            if not nested:
+                continue
+            if (not isinstance(nested, (list, tuple)) or not isinstance(prior_nested, (list, tuple))
+                    or len(nested) != len(prior_nested)):
+                return False
+            keys = tuple(map(canonical_json_bytes, nested))
+            prior_keys = tuple(map(canonical_json_bytes, prior_nested))
+            if _unchanged_history_prefix(nested, prior_nested, keys, prior_keys, require_complete=True) != len(nested):
+                return False
+        return True
+
     prior_histories = [(history, tuple(map(canonical_json_bytes, history))) for history in _history_lists(prior_item)]
-    complete_history = _history_stage(item) in _FINAL_REVIEW_STAGES
     for nested in _history_lists(item):
         keys = tuple(map(canonical_json_bytes, nested))
         if not any(
-            (not complete_history or len(nested) == len(history))
-            and _unchanged_history_prefix(nested, history, keys, prior_keys) == len(nested)
+            _unchanged_history_prefix(nested, history, keys, prior_keys) == len(nested)
             for history, prior_keys in prior_histories
         ):
             return False
     return True
 
 
-def _unchanged_history_prefix(items, prior, item_keys, prior_keys):
+def _unchanged_history_prefix(items, prior, item_keys, prior_keys, *, require_complete=False):
     remaining = iter(zip(prior, prior_keys))
     for index, (item, item_key) in enumerate(zip(items, item_keys)):
-        if not any(_same_history_step(item, other, item_key, other_key) for other, other_key in remaining):
+        if not any(_same_history_step(item, other, item_key, other_key, require_complete=require_complete)
+                   for other, other_key in remaining):
             return index
     return len(items)
 
@@ -1302,6 +1317,18 @@ def _history_events(value, *, prior=(), prior_keys=()):
             yield from _history_events(item, prior=prior, prior_keys=prior_keys)
 
 
+def _has_substantive_review_or_evidence(node):
+    if isinstance(node, Mapping):
+        return (
+            bool(node.keys() & (_EVIDENCE_FIELDS | {"candidate_ids", "candidate_id", "selected_chunk_ids"}))
+            or _history_stage(node) in (_SELECTION_STAGES | _REVIEW_STAGES)
+            or any(_has_substantive_review_or_evidence(child) for child in node.values())
+        )
+    if isinstance(node, (list, tuple)):
+        return any(_has_substantive_review_or_evidence(child) for child in node)
+    return False
+
+
 def _starts_new_history_round(item, prior):
     stage = _history_stage(item)
     if stage not in _EXECUTION_SEARCH_STAGES and stage not in ({"retrieval"} | _COMPLETION_STAGES):
@@ -1316,13 +1343,19 @@ def _starts_new_history_round(item, prior):
            for event in _history_events(item, prior=prior, prior_keys=prior_keys)):
         return False
 
-    preparation_evidence_fields = _NON_BARE_FIELDS.difference(_TRACE_HISTORY_FIELDS)
-
-    def is_fresh_preparation(step):
-        return _history_stage(step) in _PREPARATION_STAGES and (
-            not isinstance(step, Mapping)
-            or (not (_event_ids(step) & prior_ids)
-                and step.keys().isdisjoint(preparation_evidence_fields))
+    def is_skippable_setup(step):
+        if _is_bare_completion(step):
+            return True
+        stage = _history_stage(step)
+        if stage not in _PREPARATION_STAGES and stage != "retrieval":
+            return False
+        if isinstance(step, Mapping) and _event_ids(step) & prior_ids:
+            return False
+        if _has_substantive_review_or_evidence(step):
+            return False
+        return stage != "retrieval" or (
+            isinstance(step, Mapping)
+            and not any(_history_stage(event) in _EXECUTION_SEARCH_STAGES for event in _history_events(step))
         )
 
     def first_novel_step(value):
@@ -1334,8 +1367,7 @@ def _starts_new_history_round(item, prior):
         elif isinstance(value, (list, tuple)):
             keys = tuple(map(canonical_json_bytes, value))
             prefix_end = _unchanged_history_prefix(value, prior, keys, prior_keys)
-            return next((step for step in value[prefix_end:]
-                         if not _is_bare_completion(step) and not is_fresh_preparation(step)), None)
+            return next((step for step in value[prefix_end:] if not is_skippable_setup(step)), None)
         return None
 
     def starts_with_search(value):
@@ -1344,7 +1376,7 @@ def _starts_new_history_round(item, prior):
         if stage in _EXECUTION_SEARCH_STAGES:
             return True
         return (isinstance(step, Mapping) and stage in ({"retrieval"} | _COMPLETION_STAGES)
-                and not (_EVIDENCE_FIELDS & step.keys()) and starts_with_search(step))
+                and starts_with_search(step))
 
     return starts_with_search(item)
 
@@ -1775,8 +1807,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if record is trace and record_ids == all_candidate_ids:
             record_ids = None
         has_review_update = has_quotes or record_ids is not None
+        in_replayed_review = any(
+            event_id in reviewed_event_evidence and owner_id not in reviewed_event_evidence[event_id]["owners"]
+            for event_id, owner_id in record_event_ids
+        )
         if effective_phase == "review" and has_review_update:
-            is_replay = False
             for event_id, owner_id in record_event_ids:
                 snapshot = (
                     owner_id in history_ancestors,
@@ -1788,12 +1823,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 if prior is not None and owner_id not in prior["owners"]:
                     key = event_id, owner_id
                     replay_cursors[key] = _advance_review_replay(prior["sequence"], snapshot, replay_cursors.get(key))
-                    is_replay = True
                 else:
                     recorded = reviewed_event_evidence.setdefault(event_id, {"owners": set(), "sequence": []})
                     recorded["owners"].add(owner_id)
                     recorded["sequence"].append(snapshot)
-            if is_replay:
+            if in_replayed_review:
                 # An unchanged historical review contributes no evidence to the active round.
                 continue
 
@@ -1802,7 +1836,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             seen_ids = seen_search_event_ids if effective_phase == "search" else seen_selection_event_ids
             for event_id, owner_id in round_event_ids:
                 reuses_round_event_id |= seen_ids.setdefault(event_id, owner_id) != owner_id
-        novel_round_event = not altered_replay and not reuses_round_event_id
+        novel_round_event = not altered_replay and not reuses_round_event_id and not in_replayed_review
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
         if effective_phase == "search" and has_active_review and novel_round_event:
             saw_search_after_review = True
@@ -1900,7 +1934,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 elif not constrains_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
-        elif has_quotes and effective_phase not in {"search", "detail"}:
+        elif has_quotes and effective_phase not in {"search", "detail"} and not in_replayed_review:
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
