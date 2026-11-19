@@ -1257,6 +1257,20 @@ def _novel_history_items(items, prior_histories):
     return items
 
 
+def _collect_nested_histories(value):
+    if isinstance(value, Mapping):
+        for key in _TRACE_HISTORY_FIELDS:
+            history = value.get(key)
+            if isinstance(history, (list, tuple)) and history:
+                yield history
+                yield from _collect_nested_histories(history)
+        for key in sorted(set(value).difference(_TRACE_HISTORY_FIELDS)):
+            yield from _collect_nested_histories(value[key])
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _collect_nested_histories(item)
+
+
 def _trace_records(
     value, phase=None, ancestors=frozenset(), history_ancestors=frozenset(), report_of=frozenset(),
     report_histories=(), *, root=False,
@@ -1280,11 +1294,15 @@ def _trace_records(
             *sorted(set(value).difference(_TRACE_HISTORY_FIELDS, _TRACE_RESPONSE_FIELDS)),
             *(key for key in _TRACE_RESPONSE_FIELDS if key in value),
         )
-        has_history = any(key in value for key in _TRACE_HISTORY_FIELDS)
-        histories = tuple(value[key] for key in _TRACE_HISTORY_FIELDS if isinstance(value.get(key), (list, tuple))
-                          and value[key])
+        history_fields = {key: value[key] for key in _TRACE_HISTORY_FIELDS if key in value}
+        histories = tuple(_collect_nested_histories(history_fields))
         value_id = id(value)
         child_ancestors = ancestors | {value_id}
+        record = value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories
+        # A search starts before the selection events recorded in its history.
+        search_starts_history = phase == "search" and bool(history_fields)
+        if search_starts_history:
+            yield record
         for key in fields:
             child_phase = phase
             child_history = history_ancestors
@@ -1297,20 +1315,20 @@ def _trace_records(
                 child_report_of = frozenset()
                 if isinstance(child_value, (list, tuple)):
                     child_value = _novel_history_items(child_value, report_histories)
-                child_report_histories = ()
             elif key in _EVIDENCE_FIELDS:
                 child_phase = "detail"
             elif key in _SEARCH_STAGES:
                 child_phase = "search"
             elif phase is None and key in _FINAL_REVIEW_STAGES:
                 child_phase = "review"
-            if has_history and key in _TRACE_RESPONSE_FIELDS:
+            if history_fields and key in _TRACE_RESPONSE_FIELDS:
                 child_report_of = report_of | {value_id}
                 child_report_histories = report_histories + histories
             yield from _trace_records(
                 child_value, child_phase, child_ancestors, child_history, child_report_of, child_report_histories,
             )
-        yield value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories
+        if not search_starts_history:
+            yield record
 
 
 def _validate_trace_sequence(events, has_stage_events, *, continues_history=False):
@@ -1539,7 +1557,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 record_quotes.update(recorded_spans)
         has_quotes = bool(recorded_citations or record_checks)
         record_id = id(record)
-        summarized_containers = (report_of | (ancestors - history_ancestors)) & history_review_containers
+        non_history_ancestors = ancestors - history_ancestors
+        summarized_containers = (report_of | non_history_ancestors) & history_review_containers
         encloses_quotes = record_id in review_quotes_ancestors or bool(
             report_of & review_quotes_ancestors & history_review_containers
         )
@@ -1567,13 +1586,19 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_history = history_ancestors
             new_round_selection_ancestors = ancestors
         supplies_required_evidence = (
-            (not review_checks or bool(record_checks))
-            and (review_candidate_ids is None or record_ids is not None or bool(record_checks))
-            and has_review_update
+            bool(record_checks)
+            if (review_checks or encloses_review or review_quotes_constrained_by_replay)
+            else (review_candidate_ids is None or record_ids is not None) and has_review_update
         )
-        belongs_to_new_round = (
-            (not encloses_review and (not new_round_selection_history or new_round_selection_history <= history_ancestors))
-            or bool(report_of & new_round_selection_ancestors)
+        not_replaying_selection_container = not (non_history_ancestors & new_round_selection_history)
+        belongs_to_new_round = bool(report_of & new_round_selection_ancestors) or (
+            not encloses_review
+            and not_replaying_selection_container
+            and (
+                not new_round_selection_history
+                or bool(new_round_selection_history & history_ancestors)
+                or bool(non_history_ancestors & (new_round_selection_ancestors - new_round_selection_history))
+            )
         )
         fresh_review = (
             effective_phase == "review"
@@ -1595,7 +1620,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             review_checks_ancestors = frozenset()
             review_candidate_ids = None
             review_candidate_ancestors = frozenset()
-            if (ancestors - history_ancestors) & history_review_containers:
+            if non_history_ancestors & history_review_containers:
                 history_review_containers.intersection_update(ancestors)
             else:
                 history_review_containers.clear()

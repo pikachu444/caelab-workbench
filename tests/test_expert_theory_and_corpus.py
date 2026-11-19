@@ -1511,7 +1511,7 @@ def test_d09_review_wrappers_preserve_nested_candidate_ids(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-@pytest.mark.parametrize("summary_location", ["same-quote", "output", "root", "repeated-completion"])
+@pytest.mark.parametrize("summary_location", ["same-quote", "output", "root", "repeated-completion", "output-with-ids"])
 def test_d09_citation_only_summary_preserves_reviewed_candidate_limit(
     assessed_retrieval, response_format, history_field, summary_location,
 ):
@@ -1534,6 +1534,8 @@ def test_d09_citation_only_summary_preserves_reviewed_candidate_limit(
         wrapper["output"] = {history_field: [dict(completion, citations=quotes)]}
     else:
         wrapper["output"] = {"citations": quotes[:1] if summary_location == "same-quote" else quotes}
+        if summary_location == "output-with-ids":
+            wrapper["output"]["candidate_ids"] = [first["citation"], second["citation"]]
 
     assert assess(first, companion=second, include_good=True, trace_overrides=trace,
                   response_format=response_format).status == "supported"
@@ -1687,6 +1689,7 @@ def test_d09_short_selection_replay_preserves_review_checks(
 @pytest.mark.parametrize("quoted_selection", [False, True], ids=["unquoted-selection", "quoted-selection"])
 @pytest.mark.parametrize("altered_stage", [
     "assessment", "retrieval_completion", "assessment-before-ids", "retrieval-response", "shortened-retrieval-response",
+    "nested-search",
 ])
 def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     assessed_retrieval, response_format, history_field, quoted_selection, altered_stage,
@@ -1717,6 +1720,8 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     history = [prepare, selection, review, {"stage": "retrieval_completion"}]
     if altered_stage == "shortened-retrieval-response":
         history.insert(1, {"stage": "search"})
+    if altered_stage == "nested-search":
+        history = [prepare, {"stage": "search", history_field: history}, history[-1]]
     wrapper = {"stage": "retrieval_completion", history_field: history, "result": {history_field: history}}
     trace = {"events": [wrapper]}
 
@@ -1741,7 +1746,10 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
         tail.insert(0, {"stage": "candidate_selection", "candidate_ids": ids})
     elif altered_stage in {"retrieval-response", "shortened-retrieval-response"}:
         altered = dict(review, response=dict(recorded, checks=swapped_checks))
-    wrapper["result"][history_field] = [prepare, selection, altered, *tail]
+    replay = [prepare, selection, altered, *tail]
+    if altered_stage == "nested-search":
+        replay = [prepare, {"stage": "search", history_field: replay}, history[-1]]
+    wrapper["result"][history_field] = replay
     for spans in (reversed(quotes), quotes):
         with pytest.raises(ValueError, match="trace selection or review"):
             assess_assignment(spans)
@@ -1749,9 +1757,13 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-@pytest.mark.parametrize("partial_overlap", [False, True], ids=["disjoint", "partial-overlap"])
+@pytest.mark.parametrize(("partial_overlap", "later_selection"), [
+    pytest.param(False, False, id="disjoint"),
+    pytest.param(True, False, id="partial-overlap"),
+    pytest.param(False, True, id="disjoint-with-later-selection"),
+])
 def test_d09_altered_review_replay_cannot_replace_quotations(
-    assessed_retrieval, response_format, history_field, partial_overlap,
+    assessed_retrieval, response_format, history_field, partial_overlap, later_selection,
 ):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
@@ -1767,7 +1779,14 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
                   trace_overrides=trace, response_format=response_format).status == "supported"
     with pytest.raises(ValueError, match="trace selection or review"):
         assess(second, include_good=True, trace_overrides=trace, response_format=response_format)
-    wrapper["result"] = {history_field: [{"stage": "assessment", "citations": [quotes[1], *shared]}]}
+    replay = [{"stage": "assessment", "citations": [quotes[1], *shared]}]
+    if later_selection:
+        replay.extend([
+            {"stage": "search"},
+            {"stage": "candidate_selection", "candidate_ids": [first["citation"], second["citation"]]},
+            {"stage": "retrieval_completion"},
+        ])
+    wrapper["result"] = {history_field: replay}
     for summary in ({}, {"output": {"citations": quotes[1:]}}):
         wrapper.update(summary)
         for target, companion in ((second, first), (first, second)):
@@ -1782,7 +1801,8 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
     *(pytest.param(layout, None, id=layout) for layout in (
         "short-replay", "closed-short-replay", "subsequence", "continuation", "extension", "continued-review",
         "repeated-content", "unclosed-repeated-content", "ids-only-continuation", "ids-only-response",
-        "ids-only-sibling-response", "changed-quote", "boolean-offset", "changed-check",
+        "ids-only-sibling-response", "ids-only-search-history", "ids-only-sibling-response-history",
+        "changed-quote", "boolean-offset", "changed-check",
     )),
     *(pytest.param("subsequence-omitting-first-search", stage, id=f"subsequence-omitting-first-search-{stage}")
       for stage in ("retrieval_completion", "complete", "completed", "completion", "finalize", "terminal")),
@@ -1865,7 +1885,7 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
                 assess(first, companion=second, **options)
     else:
         selection = {"stage": "candidate_selection", "candidate_ids": ids}
-        ids_only = layout in {"ids-only-continuation", "ids-only-response", "ids-only-sibling-response"}
+        ids_only = layout.startswith("ids-only-")
         if not ids_only:
             selection.update(evidence(second))
         new_round = [search, selection, review_b if layout == "continued-review" else done]
@@ -1881,12 +1901,21 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
         wrapper[history_field] = flat_history + new_round
         assert_only(second, first)
         wrapper[history_field] = history
-        if layout in {"ids-only-response", "ids-only-sibling-response"}:
+        if layout == "ids-only-search-history":
+            selection_history = [prepare, selection, done] if history_field == "events" else [selection]
+            continuation = [dict(search, **{history_field: selection_history}), review_b, done]
+            for report_history in (continuation, history + continuation):
+                wrapper["result"] = {history_field: report_history}
+                assert_only(second, first)
+            return
+        if layout in {"ids-only-response", "ids-only-sibling-response", "ids-only-sibling-response-history"}:
             continuation = [search, selection, done]
             for report_history in (continuation, history + continuation):
                 wrapper["result"] = {history_field: report_history}
-                response_container = wrapper if layout == "ids-only-sibling-response" else wrapper["result"]
-                response_container["response"] = evidence(second)
+                response_container = wrapper["result"] if layout == "ids-only-response" else wrapper
+                response_container["response"] = (
+                    {history_field: [review_b]} if layout == "ids-only-sibling-response-history" else evidence(second)
+                )
                 assert_only(second, first)
                 if layout == "ids-only-response":
                     wrapper["output"] = {"citations": []}
