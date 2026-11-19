@@ -1627,8 +1627,77 @@ def test_d09_short_selection_replay_preserves_review_checks(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("quoted_selection", [False, True], ids=["unquoted-selection", "quoted-selection"])
+def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
+    assessed_retrieval, response_format, history_field, quoted_selection,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield in version 2.23")
+    requirements = query_language.extract_query_requirements(plan)
+    assert [req.facet for req in requirements] == ["topic", "edition"]
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
+              for item in (first, second)]
+
+    def checks(spans):
+        return [{"requirement_id": req.requirement_id, "candidate_ids": [span["candidate_id"]],
+                 "relation": "satisfied", "quoted_spans": [span], "reason": "recorded review"}
+                for req, span in zip(requirements, spans, strict=True)]
+
+    ids = [q["candidate_id"] for q in quotes]
+    selection = {"stage": "candidate_selection", "candidate_ids": ids}
+    if quoted_selection:
+        selection["citations"] = quotes
+    review = {"stage": "assessment", "candidate_ids": ids, "citations": quotes, "checks": checks(quotes)}
+    history = [{"stage": "prepare_query"}, selection, review, {"stage": "retrieval_completion"}]
+    wrapper = {"stage": "retrieval_completion", history_field: history, "result": {history_field: history}}
+    trace = {"events": [wrapper]}
+
+    def assess_assignment(spans):
+        overrides = {"checks": checks(spans)}
+        if response_format is None:
+            overrides["citations"] = quotes
+        return assess(first, companion=second, include_good=True, question_plan=plan,
+                      trace_overrides=trace, response_format=response_format, host_overrides=overrides)
+
+    assert assess_assignment(quotes).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess_assignment(reversed(quotes))
+
+    altered = dict(review, checks=checks(reversed(quotes)))
+    wrapper["result"][history_field] = [*history[:2], altered, history[-1]]
+    for spans in (reversed(quotes), quotes):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_assignment(spans)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+def test_d09_altered_review_replay_cannot_replace_quotations(assessed_retrieval, response_format, history_field):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
+              for item in (first, second)]
+    wrapper = {
+        "stage": "retrieval_completion",
+        history_field: [{"stage": "assessment", "citations": quotes[:1]}],
+    }
+    trace = {"events": [wrapper]}
+    assert assess(first, companion=second, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, include_good=True, trace_overrides=trace, response_format=response_format)
+    wrapper["result"] = {history_field: [{"stage": "assessment", "citations": quotes[1:]}]}
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, include_good=True, trace_overrides=trace, response_format=response_format)
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(first, companion=second, include_good=True, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("layout", [
-    "short-replay", "subsequence", "continuation", "extension", "continued-review",
+    "short-replay", "subsequence", "continuation", "extension", "continued-review", "repeated-content",
     "changed-quote", "boolean-offset", "changed-check",
 ])
 def test_d09_two_round_report_history(assessed_retrieval, response_format, history_field, layout):
@@ -1693,10 +1762,16 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
     else:
         selection = {"stage": "candidate_selection", "candidate_ids": ids, **evidence(second)}
         new_round = [search, selection, review_b if layout == "continued-review" else done]
-        wrapper[history_field] = [prepare, review_a, *new_round]
-        assert_only(second, first)
         history = [review_a]
+        flat_history = [prepare, review_a]
+        if layout == "repeated-content":
+            history = flat_history = [prepare, search, selection, review_a, done]
+        wrapper[history_field] = flat_history + new_round
+        assert_only(second, first)
         wrapper[history_field] = history
+        if layout == "repeated-content":
+            wrapper["result"] = {history_field: history + new_round}
+            assert_only(second, first)
         wrapper["result"] = {history_field: history + new_round if layout == "extension" else new_round}
         assert_only(second, first)
         if layout == "continued-review":

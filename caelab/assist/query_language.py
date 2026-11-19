@@ -1182,9 +1182,11 @@ def _validate_quote_provenance(value, provenance, span=None, *, require_page=Fal
 _SELECTION_STAGES = {"candidate_selection", "select_candidates", "candidates_selected"}
 _REVIEW_STAGES = {"assessment", "retrieval_assessment", "decision", "retrieval_decision",
                   "response", "retrieval_response", "requirement_checks"}
-_FINAL_REVIEW_STAGES = _REVIEW_STAGES | {
+_COMPLETION_STAGES = {
     "retrieval_completion", "completion", "complete", "completed", "finalize", "terminal",
 }
+_FINAL_REVIEW_STAGES = _REVIEW_STAGES | _COMPLETION_STAGES
+_BARE_COMPLETIONS = ({"stage": "retrieval_completion"}, {"kind": "retrieval_completion"})
 _CANDIDATE_SUBSET_STAGES = _SELECTION_STAGES | _FINAL_REVIEW_STAGES
 _PREPARATION_STAGES = {"prepare_query", "query_plan", "retrieval_start"}
 _INITIAL_STAGES = _PREPARATION_STAGES | {"retrieval"}
@@ -1198,10 +1200,30 @@ _RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAG
 def _novel_history_items(items, prior_histories):
     if not items or not prior_histories:
         return items
+
+    def stage(item):
+        if _is_retrieval_event(item):
+            return _retrieval_stage(item)
+        return item if isinstance(item, str) else None
+
     # Preserve JSON types in comparisons, including booleans in numeric fields.
     item_keys = tuple(map(canonical_json_bytes, items))
     for prior in prior_histories:
         prior_keys = tuple(map(canonical_json_bytes, prior))
+        prefix_size = 0
+        for item_key, prior_key in zip(item_keys, prior_keys):
+            if item_key != prior_key:
+                break
+            prefix_size += 1
+        if prefix_size == len(items):
+            return ()
+        if prefix_size == len(prior):
+            return items[prefix_size:]
+        if (prefix_size > 0 and stage(items[prefix_size]) in _REVIEW_STAGES
+                and not any(stage(item) in _SELECTION_STAGES for item in items[prefix_size:])):
+            return items[prefix_size:]
+        if stage(prior[-1]) in _COMPLETION_STAGES:
+            continue
         remaining = iter(prior_keys)
         for index, item_key in enumerate(item_keys):
             if item_key not in remaining:
@@ -1209,13 +1231,8 @@ def _novel_history_items(items, prior_histories):
         else:
             return ()
         # An event replay may append a bare completion to close a partial history.
-        if index == len(items) - 1 and items[index] in (
-            {"stage": "retrieval_completion"}, {"kind": "retrieval_completion"},
-        ):
+        if 0 < index == len(items) - 1 and items[index] in _BARE_COMPLETIONS:
             return items[index:]
-        prefix_size = len(prior_keys)
-        if 0 < prefix_size < len(items) and item_keys[:prefix_size] == prior_keys:
-            return items[prefix_size:]
     return items
 
 
@@ -1496,6 +1513,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 record_quotes.update(recorded_spans)
         has_quotes = bool(recorded_citations or record_checks)
         record_id = id(record)
+        summarized_containers = (report_of | (ancestors - history_ancestors)) & history_review_containers
         encloses_quotes = record_id in review_quotes_ancestors or bool(
             report_of & review_quotes_ancestors & history_review_containers
         )
@@ -1505,6 +1523,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         encloses_candidates = record_id in review_candidate_ancestors or bool(
             report_of & review_candidate_ancestors & history_review_containers
         )
+        nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
+        constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
+        constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
@@ -1515,29 +1536,37 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             if has_quotes or record_ids is not None:
                 history_review_containers.update(history_ancestors)
                 if has_quotes:
+                    if has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
+                        review_quotes &= record_quotes
+                        review_quotes_ancestors |= ancestors
+                    else:
+                        review_quotes = record_quotes
+                        review_quotes_ancestors = ancestors
                     has_review_quotes = True
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
-                    review_quotes = record_quotes
-                    review_quotes_ancestors = ancestors
-                elif not encloses_quotes:
+                elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
                     review_quotes_ancestors = frozenset()
                 if record_checks:
-                    review_checks = record_checks
-                    review_checks_ancestors = ancestors
-                elif not encloses_checks:
+                    if constrains_checks:
+                        review_checks.extend(record_checks)
+                        review_checks_ancestors |= ancestors
+                    else:
+                        review_checks = record_checks
+                        review_checks_ancestors = ancestors
+                elif not constrains_checks:
                     review_checks = []
                     review_checks_ancestors = frozenset()
                 if record_ids is not None:
-                    review_candidate_ids = (
-                        review_candidate_ids & record_ids
-                        if review_candidate_ids is not None and encloses_candidates
-                        else record_ids
-                    )
-                    review_candidate_ancestors = ancestors
-                elif not encloses_candidates:
+                    if review_candidate_ids is not None and constrains_candidates:
+                        review_candidate_ids &= record_ids
+                        review_candidate_ancestors |= ancestors
+                    else:
+                        review_candidate_ids = record_ids
+                        review_candidate_ancestors = ancestors
+                elif not constrains_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
         elif has_quotes and effective_phase not in {"search", "detail"}:
