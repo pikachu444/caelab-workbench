@@ -1194,22 +1194,20 @@ _TRACE_RESPONSE_FIELDS = ("result", "output", "assessment", "decision", "respons
 _RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAGES - {"supported"}
 
 
-def _has_trace_stage(record, stages):
-    return any(isinstance(name, str) and name in stages for name in (record.get("stage"), record.get("kind")))
-
-
 def _trace_records(value, phase=None, ancestors=frozenset(), *, root=False):
     if isinstance(value, list):
         for item in value:
             yield from _trace_records(item, phase, ancestors)
     elif isinstance(value, Mapping):
         if not root and phase not in {"search", "detail", "selection"}:
-            if _has_trace_stage(value, _SEARCH_STAGES):
-                phase = "search"
-            elif _has_trace_stage(value, _SELECTION_STAGES):
-                phase = "selection"
-            elif _has_trace_stage(value, _FINAL_REVIEW_STAGES):
-                phase = "review"
+            stage = _retrieval_stage(value)
+            if isinstance(stage, str):
+                if stage in _SEARCH_STAGES:
+                    phase = "search"
+                elif stage in _SELECTION_STAGES:
+                    phase = "selection"
+                elif stage in _FINAL_REVIEW_STAGES:
+                    phase = "review"
         # A mapping's history precedes its reports regardless of JSON key order.
         fields = (
             *(key for key in _TRACE_HISTORY_FIELDS if key in value),
@@ -1274,8 +1272,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
 
     def declares_subset(record):
         ids = record.get("candidate_ids")
+        stage = _retrieval_stage(record)
         return (record is not trace and isinstance(ids, list) and all(isinstance(cid, str) for cid in ids)
-                and set(ids) <= all_candidate_ids and _has_trace_stage(record, _CANDIDATE_SUBSET_STAGES))
+                and set(ids) <= all_candidate_ids and isinstance(stage, str) and stage in _CANDIDATE_SUBSET_STAGES)
 
     # The trace identifies the complete input set separately from any later selection.
     trace_identity = {}
@@ -1385,8 +1384,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     has_review_quotes = False
     trace_checks = []
     review_checks = []
-    review_checks_ancestors = frozenset()
+    review_quotes_ancestors = frozenset()
     review_candidate_ids = None
+    review_candidate_ancestors = frozenset()
     for record, phase, ancestors in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
@@ -1439,15 +1439,21 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if phase == "review":
             if record is trace and record_ids == all_candidate_ids:
                 record_ids = None
-            repeated_summary = (has_review_quotes and bool(review_checks) and not record_checks
-                                and record_quotes == review_quotes and id(record) in review_checks_ancestors)
+            repeated_summary = (has_review_quotes and not record_checks and record_quotes == review_quotes
+                                and id(record) in review_quotes_ancestors)
             if has_quotes and not repeated_summary:
                 has_review_quotes = True
                 review_quotes, review_checks = record_quotes, record_checks
-                review_checks_ancestors = ancestors if record_checks else frozenset()
-                review_candidate_ids = record_ids
+                review_quotes_ancestors = ancestors
+                if record_ids is not None:
+                    review_candidate_ids = record_ids
+                    review_candidate_ancestors = ancestors
+                elif id(record) not in review_candidate_ancestors:
+                    review_candidate_ids = None
+                    review_candidate_ancestors = frozenset()
             elif record_ids is not None:
                 review_candidate_ids = record_ids
+                review_candidate_ancestors = ancestors
         elif has_quotes and phase not in {"search", "detail"}:
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)

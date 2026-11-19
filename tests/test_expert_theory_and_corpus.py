@@ -1375,6 +1375,42 @@ def test_d09_repeated_citations_preserve_requirement_bindings_only_for_wrappers(
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize(("summary_kind", "with_checks"), [
+    ("repeated", False), ("repeated", True), ("expanded", False), ("expanded", True), ("ids-only", False),
+])
+def test_d09_review_wrappers_preserve_nested_candidate_ids(
+    assessed_retrieval, response_format, summary_kind, with_checks,
+):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
+              for item in (candidate, other)]
+    response = {"candidate_ids": [candidate["citation"]]}
+    reviewed_quotes = quotes[:1] if summary_kind == "expanded" else quotes
+    if summary_kind != "ids-only":
+        response["citations"] = reviewed_quotes
+    if with_checks:
+        plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield")
+        response["checks"] = [
+            {"requirement_id": req.requirement_id, "candidate_ids": [span["candidate_id"] for span in reviewed_quotes],
+             "relation": "satisfied", "quoted_spans": reviewed_quotes, "reason": "recorded review"}
+            for req in query_language.extract_query_requirements(plan)
+        ]
+    trace = {
+        "events": [{"stage": "retrieval_completion", "response": response, "citations": quotes}],
+        "citations": quotes,
+    }
+    assert assess(candidate, companion=other, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, include_good=True, trace_overrides=trace, response_format=response_format)
+
+    later_review = {"stage": "retrieval_completion", "citations": quotes}
+    trace = {"events": [*trace["events"], later_review]}
+    assert assess(other, include_good=True, trace_overrides=trace, response_format=response_format).status == "supported"
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_key", ["stage_events", "events", "steps"])
 def test_d09_nested_final_response_is_independent_of_dict_order(assessed_retrieval, response_format, history_key):
     assess, candidate = assessed_retrieval
@@ -1439,6 +1475,26 @@ def test_d09_trace_binds_nested_candidate_selection(assessed_retrieval, response
     final_quote["candidate_id"] = candidate["citation"]
     assert assess(candidate, companion=other, include_good=True,
                   trace_overrides=trace, response_format=response_format).status == "supported"
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+def test_d09_explicit_trace_stage_takes_precedence_over_kind(assessed_retrieval, response_format):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    selection = {
+        "kind": "search",
+        "stage": "candidate_selection",
+        "result": {"kind": "response", "candidate_ids": [candidate["citation"]]},
+    }
+    trace = {"events": [{"stage": "prepare_query"}, selection, {"stage": "retrieval_completion"}]}
+    assert assess(candidate, companion=other, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, include_good=True, trace_overrides=trace, response_format=response_format)
+
+    selection["stage"] = None
+    with pytest.raises(ValueError, match="trace events"):
+        assess(candidate, companion=other, include_good=True, trace_overrides=trace, response_format=response_format)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
