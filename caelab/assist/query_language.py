@@ -1262,10 +1262,14 @@ def _same_history_step(item, prior_item, item_key, prior_key):
         return False
 
     prior_histories = [(history, tuple(map(canonical_json_bytes, history))) for history in _history_lists(prior_item)]
+    complete_history = _history_stage(item) in _FINAL_REVIEW_STAGES
     for nested in _history_lists(item):
         keys = tuple(map(canonical_json_bytes, nested))
-        if not any(_unchanged_history_prefix(nested, history, keys, prior_keys) == len(nested)
-                   for history, prior_keys in prior_histories):
+        if not any(
+            (not complete_history or len(nested) == len(history))
+            and _unchanged_history_prefix(nested, history, keys, prior_keys) == len(nested)
+            for history, prior_keys in prior_histories
+        ):
             return False
     return True
 
@@ -1312,6 +1316,15 @@ def _starts_new_history_round(item, prior):
            for event in _history_events(item, prior=prior, prior_keys=prior_keys)):
         return False
 
+    preparation_evidence_fields = _NON_BARE_FIELDS.difference(_TRACE_HISTORY_FIELDS)
+
+    def is_fresh_preparation(step):
+        return _history_stage(step) in _PREPARATION_STAGES and (
+            not isinstance(step, Mapping)
+            or (not (_event_ids(step) & prior_ids)
+                and step.keys().isdisjoint(preparation_evidence_fields))
+        )
+
     def first_novel_step(value):
         if isinstance(value, Mapping):
             for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS):
@@ -1321,10 +1334,19 @@ def _starts_new_history_round(item, prior):
         elif isinstance(value, (list, tuple)):
             keys = tuple(map(canonical_json_bytes, value))
             prefix_end = _unchanged_history_prefix(value, prior, keys, prior_keys)
-            return next((step for step in value[prefix_end:] if not _is_bare_completion(step)), None)
+            return next((step for step in value[prefix_end:]
+                         if not _is_bare_completion(step) and not is_fresh_preparation(step)), None)
         return None
 
-    return _history_stage(first_novel_step(item)) in _EXECUTION_SEARCH_STAGES
+    def starts_with_search(value):
+        step = first_novel_step(value)
+        stage = _history_stage(step)
+        if stage in _EXECUTION_SEARCH_STAGES:
+            return True
+        return (isinstance(step, Mapping) and stage in ({"retrieval"} | _COMPLETION_STAGES)
+                and not (_EVIDENCE_FIELDS & step.keys()) and starts_with_search(step))
+
+    return starts_with_search(item)
 
 
 def _novel_history_items(items, prior_histories, *, only_altered=False, identified_owner=False):
@@ -1419,7 +1441,8 @@ def _trace_records(
         value_id = id(value)
         child_ancestors = ancestors | {value_id}
         own_event_ids = frozenset((event_id, value_id) for event_id in _event_ids(value)) if not root else frozenset()
-        event_ids = wrapper_event_ids | own_event_ids
+        inherited_wrapper_ids = {event_id for event_id, _ in wrapper_event_ids}
+        event_ids = wrapper_event_ids | {pair for pair in own_event_ids if pair[0] not in inherited_wrapper_ids}
         round_event_ids = frozenset()
         if phase in {"search", "selection"}:
             inherited_ids = {event_id for event_id, _ in phase_event_ids}
@@ -1446,13 +1469,15 @@ def _trace_records(
                 if deduplicate and isinstance(child_value, (list, tuple)) and report_histories:
                     signature = None if report_of else _history_owner_signature(value)
                     identified_owner = signature is not None and bool(signature[1])
-                    prior_histories = tuple(items for owner, items in report_histories
-                                            if _same_history_owner(signature, owner))
-                    child_value, stripped_altered_replay = _novel_history_items(
-                        child_value, prior_histories,
-                        only_altered=not (report_of or identified_owner), identified_owner=identified_owner,
-                    )
-                    child_altered_replay |= stripped_altered_replay
+                    # The identified review's cursor must see its entire child history.
+                    if not (identified_owner and _history_stage(value) in _FINAL_REVIEW_STAGES):
+                        prior_histories = tuple(items for owner, items in report_histories
+                                                if _same_history_owner(signature, owner))
+                        child_value, stripped_altered_replay = _novel_history_items(
+                            child_value, prior_histories,
+                            only_altered=not (report_of or identified_owner), identified_owner=identified_owner,
+                        )
+                        child_altered_replay |= stripped_altered_replay
             elif key in _EVIDENCE_FIELDS:
                 child_phase = "detail"
             elif key in _SEARCH_STAGES:

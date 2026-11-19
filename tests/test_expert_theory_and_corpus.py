@@ -2106,6 +2106,80 @@ def test_d09_replayed_review_validates_ordered_evidence(assessed_retrieval, resp
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("layout", ["repeated-wrapper-id", "shortened-review-history",
+                                   "fresh-preparation", "fresh-nested-retrieval"])
+def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, history_field, layout):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+    ids = [first["citation"], second["citation"]]
+
+    def review(candidate):
+        cid = candidate["citation"]
+        quote = {"candidate_id": cid, "start": 0, "end": len(candidate["text"])}
+        return {"candidate_ids": [cid], "citations": [quote], "checks": [{
+            "requirement_id": topic.requirement_id, "candidate_ids": [cid], "relation": "satisfied",
+            "quoted_spans": [quote], "reason": "recorded evidence",
+        }]}
+
+    prepare = {"stage": "prepare_query", "event_id": "prepare-1"}
+    done = {"stage": "retrieval_completion", "event_id": "done-1"}
+    review_a = {"stage": "assessment", **review(first)}
+    review_b = {"stage": "assessment", **review(second)}
+    wrapper = {"stage": "retrieval_completion"}
+    options = {"include_good": True, "question_plan": plan, "trace_overrides": {"events": [wrapper]},
+               "response_format": response_format}
+
+    def assert_only(supported, rejected):
+        assert assess(supported, companion=rejected, **options).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(rejected, companion=supported, **options)
+
+    if layout == "repeated-wrapper-id":
+        response = dict(review(first), event_id="rc1")
+        for child in ({"response": response}, {history_field: [dict(response, stage="assessment")]}):
+            rc1 = {"stage": "retrieval_completion", "event_id": "rc1", **child}
+            wrapper[history_field] = [prepare, rc1, done]
+            assert_only(first, second)
+        return
+
+    search_1 = {"stage": "search", "event_id": "search-1"}
+    search_2 = {"stage": "search", "event_id": "search-2"}
+    done_2 = {"stage": "retrieval_completion", "event_id": "done-2"}
+    selection = {"stage": "candidate_selection", "event_id": "selection-2", "candidate_ids": ids}
+    if layout == "shortened-review-history":
+        rc1 = {"stage": "retrieval_completion", "event_id": "rc1", history_field: [review_a, review_b]}
+        wrapper[history_field] = [prepare, rc1, done]
+        selection.update(review(first), candidate_ids=ids)
+        wrapper["result"] = {history_field: [search_2, selection, done_2]}
+        assert_only(first, second)
+        wrapper["output"] = {history_field: [prepare, rc1]}
+        assert_only(first, second)
+        wrapper["output"][history_field][-1] = {**rc1, history_field: [review_a]}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        return
+
+    wrapper[history_field] = [prepare, search_1, review_a, done]
+    prepare_2 = {"stage": "prepare_query", "event_id": "prepare-2"}
+    new_history = [search_2, selection, dict(review_b, event_id="review-2"), done_2]
+    if layout == "fresh-nested-retrieval":
+        new_history = [{"stage": "retrieval", "event_id": "nested-2", history_field: [
+            {"stage": "retrieval_start", "event_id": "start-2"}, *new_history,
+        ]}, {"stage": "retrieval_completion", "event_id": "nested-done-2"}]
+    fresh = {"stage": "retrieval_completion", "event_id": "round-2", history_field: [prepare_2, *new_history]}
+    wrapper["result"] = {history_field: [prepare, review_a, done, fresh]}
+    assert_only(second, first)
+    for bad_preparation in (dict(prepare_2, event_id=search_1["event_id"]),
+                            dict(prepare_2, citations=review_a["citations"])):
+        fresh[history_field][0] = bad_preparation
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(second, companion=first, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize(("layout", "completion_stage"), [
     *(pytest.param(layout, None, id=layout) for layout in (
         "short-replay", "closed-short-replay", "subsequence", "continuation", "extension", "continued-review",
