@@ -1210,14 +1210,88 @@ def _is_bare_completion(item):
     return isinstance(stage, str) and stage in _COMPLETION_STAGES and not (_NON_BARE_FIELDS & item.keys())
 
 
+def _history_stage(item):
+    if _is_retrieval_event(item):
+        return _retrieval_stage(item)
+    return item if isinstance(item, str) else None
+
+
+def _event_ids(item):
+    return frozenset(canonical_json_bytes(item[key]) for key in ("event_id", "id") if item.get(key) is not None)
+
+
+def _history_owner_signature(owner):
+    content = {key: value for key, value in owner.items()
+               if key not in _TRACE_HISTORY_FIELDS and key not in _TRACE_RESPONSE_FIELDS and key != "status"}
+    return _retrieval_stage(owner), _event_ids(owner), canonical_json_bytes(content)
+
+
+def _same_history_owner(owner, prior_owner):
+    if owner is None or prior_owner is None:
+        return owner is prior_owner
+    stage, ids, content = owner
+    prior_stage, prior_ids, prior_content = prior_owner
+    return stage == prior_stage and (bool(ids & prior_ids) if ids or prior_ids else content == prior_content)
+
+
+def _same_history_step(item, prior_item, item_key, prior_key):
+    if item_key == prior_key:
+        return True
+    if not isinstance(item, Mapping) or not isinstance(prior_item, Mapping) or _trace_blocks_support(item):
+        return False
+    if not _same_history_owner(_history_owner_signature(item), _history_owner_signature(prior_item)):
+        return False
+
+    # Check evidence and responses as well as owner metadata before skipping a replay.
+    replay_fields = {*_TRACE_HISTORY_FIELDS, "event_id", "id", "status"}
+    if canonical_json_bytes({k: v for k, v in item.items() if k not in replay_fields}) != canonical_json_bytes(
+        {k: v for k, v in prior_item.items() if k not in replay_fields}
+    ):
+        return False
+    for key in _TRACE_HISTORY_FIELDS:
+        if key in item:
+            nested, prior_nested = item[key], prior_item.get(key)
+            if (not isinstance(nested, (list, tuple)) or not nested
+                    or not isinstance(prior_nested, (list, tuple))
+                    or _unchanged_history_prefix(nested, prior_nested, tuple(map(canonical_json_bytes, nested)),
+                                                 tuple(map(canonical_json_bytes, prior_nested))) != len(nested)):
+                return False
+    return True
+
+
+def _unchanged_history_prefix(items, prior, item_keys, prior_keys):
+    remaining = iter(zip(prior, prior_keys))
+    for index, (item, item_key) in enumerate(zip(items, item_keys)):
+        if not any(_same_history_step(item, other, item_key, other_key) for other, other_key in remaining):
+            return index
+    return len(items)
+
+
+def _history_events(items):
+    for item in items:
+        if isinstance(item, Mapping):
+            yield item
+            for key in _TRACE_HISTORY_FIELDS:
+                if isinstance(item.get(key), (list, tuple)):
+                    yield from _history_events(item[key])
+
+
+def _starts_new_history_round(item, prior):
+    stage = _history_stage(item)
+    if stage not in _SEARCH_STAGES and stage not in ({"retrieval"} | _COMPLETION_STAGES):
+        return False
+    prior_ids = {event_id for event in _history_events(prior) for event_id in _event_ids(event)}
+    if isinstance(item, Mapping) and _event_ids(item) & prior_ids:
+        return False
+    return stage in _SEARCH_STAGES or any(
+        _history_stage(event) in _SEARCH_STAGES and not (_event_ids(event) & prior_ids)
+        for event in _history_events((item,))
+    )
+
+
 def _novel_history_items(items, prior_histories, *, only_altered=False, identified_owner=False):
     if not items or not prior_histories:
         return items, False
-
-    def stage(item):
-        if _is_retrieval_event(item):
-            return _retrieval_stage(item)
-        return item if isinstance(item, str) else None
 
     # Preserve JSON types in comparisons, including booleans in numeric fields.
     item_keys = tuple(map(canonical_json_bytes, items))
@@ -1231,18 +1305,15 @@ def _novel_history_items(items, prior_histories, *, only_altered=False, identifi
         if prefix_size == len(items):
             if identified_owner and prefix_size == len(prior):
                 # A new search can repeat a complete selection-only history.
-                stages = {stage(item) for item in items if not _is_bare_completion(item)}
+                stages = {_history_stage(item) for item in items if not _is_bare_completion(item)}
                 if stages & _SELECTION_STAGES and stages <= (_SEARCH_STAGES | _SELECTION_STAGES):
                     return items, False
             return (items if only_altered else ()), False
         if prefix_size == len(prior):
             return (items if only_altered else items[prefix_size:]), False
-        if identified_owner or stage(items[0]) in _INITIAL_STAGES:
-            remaining = iter(prior_keys)
-            for index, item_key in enumerate(item_keys):
-                if item_key not in remaining:
-                    break
-            else:
+        if identified_owner or _history_stage(items[0]) in _INITIAL_STAGES:
+            index = _unchanged_history_prefix(items, prior, item_keys, prior_keys)
+            if index == len(items):
                 return (items if only_altered else ()), False
             if index > 0:
                 first_changed = items[index]
@@ -1250,24 +1321,19 @@ def _novel_history_items(items, prior_histories, *, only_altered=False, identifi
                     # A replay may append a bare completion to close a partial history.
                     if index == len(items) - 1:
                         return (items if only_altered else items[index:]), False
-                elif stage(first_changed) in _SEARCH_STAGES:
+                elif _starts_new_history_round(first_changed, prior):
                     if not only_altered:
                         return items[index:], False
-                elif stage(first_changed) not in _SELECTION_STAGES:
+                elif _history_stage(first_changed) not in _SELECTION_STAGES:
                     return items[index:], True
         if prefix_size and not _is_bare_completion(items[prefix_size]):
-            changed_stage = stage(items[prefix_size])
+            changed_stage = _history_stage(items[prefix_size])
             if changed_stage in _FINAL_REVIEW_STAGES or (
-                changed_stage == stage(prior[prefix_size])
+                changed_stage == _history_stage(prior[prefix_size])
                 and changed_stage not in (_SEARCH_STAGES | _SELECTION_STAGES)
             ):
                 return items[prefix_size:], True
     return items, False
-
-
-def _history_owner_signature(owner):
-    identity = tuple((key, owner[key]) for key in ("event_id", "id") if owner.get(key) is not None)
-    return canonical_json_bytes({"stage": _retrieval_stage(owner), "identity": identity}), bool(identity)
 
 
 def _collect_nested_histories(value, *, direct=False):
@@ -1275,7 +1341,7 @@ def _collect_nested_histories(value, *, direct=False):
         histories = [value[key] for key in _TRACE_HISTORY_FIELDS if isinstance(value.get(key), (list, tuple))
                      and value[key]]
         if histories:
-            signature = None if direct else _history_owner_signature(value)[0]
+            signature = None if direct else _history_owner_signature(value)
             for history in histories:
                 yield signature, history
                 yield from _collect_nested_histories(history)
@@ -1314,9 +1380,7 @@ def _trace_records(
         histories = tuple(_collect_nested_histories(history_fields, direct=True))
         value_id = id(value)
         child_ancestors = ancestors | {value_id}
-        own_event_ids = frozenset(
-            canonical_json_bytes(value[key]) for key in ("event_id", "id") if value.get(key) is not None
-        )
+        own_event_ids = frozenset((event_id, value_id) for event_id in _event_ids(value)) if not root else frozenset()
         event_ids = wrapper_event_ids | own_event_ids
         record = (value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories,
                   altered_replay, event_ids)
@@ -1336,10 +1400,12 @@ def _trace_records(
                 child_phase = None
                 child_history = history_ancestors | {value_id}
                 child_report_of = frozenset()
-                child_wrapper_event_ids = frozenset()
+                child_wrapper_event_ids = event_ids if phase == "review" else wrapper_event_ids
                 if isinstance(child_value, (list, tuple)) and report_histories:
-                    signature, identified_owner = (None, False) if report_of else _history_owner_signature(value)
-                    prior_histories = tuple(items for owner, items in report_histories if owner == signature)
+                    signature = None if report_of else _history_owner_signature(value)
+                    identified_owner = signature is not None and bool(signature[1])
+                    prior_histories = tuple(items for owner, items in report_histories
+                                            if _same_history_owner(signature, owner))
                     child_value, stripped_altered_replay = _novel_history_items(
                         child_value, prior_histories,
                         only_altered=not (report_of or identified_owner), identified_owner=identified_owner,
@@ -1530,7 +1596,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     new_round_selection_after_review = False
     new_round_selection_history = frozenset()
     new_round_selection_ancestors = frozenset()
-    reviewed_event_ids: set[bytes] = set()
+    reviewed_event_ids: dict[bytes, set[int]] = {}
     for (record, phase, ancestors, history_ancestors, report_of, report_histories,
          altered_replay, record_event_ids) in trace_records:
         if record is not trace and "events" in record:
@@ -1590,6 +1656,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 record_quotes.update(recorded_spans)
         has_quotes = bool(recorded_citations or record_checks)
         record_id = id(record)
+        reuses_reviewed_event_id = any(
+            event_id in reviewed_event_ids and owner_id not in reviewed_event_ids[event_id]
+            for event_id, owner_id in record_event_ids
+        )
         non_history_ancestors = ancestors - history_ancestors
         summarized_containers = (report_of | non_history_ancestors) & history_review_containers
         encloses_quotes = record_id in review_quotes_ancestors or bool(
@@ -1601,9 +1671,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         encloses_candidates = record_id in review_candidate_ancestors or bool(
             report_of & review_candidate_ancestors & history_review_containers
         )
-        nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
-        constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
-        constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
+        nests_reviewed_quotes = reuses_reviewed_event_id or bool(summarized_containers & review_quotes_ancestors)
+        constrains_checks = reuses_reviewed_event_id or encloses_checks or bool(
+            summarized_containers & review_checks_ancestors
+        )
+        constrains_candidates = reuses_reviewed_event_id or encloses_candidates or bool(
+            summarized_containers & review_candidate_ancestors
+        )
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
@@ -1611,7 +1685,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if record is trace and record_ids == all_candidate_ids:
             record_ids = None
         has_review_update = has_quotes or record_ids is not None
-        reuses_reviewed_event_id = bool(record_event_ids & reviewed_event_ids)
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
         if effective_phase == "search" and has_active_review:
             saw_search_after_review = True
@@ -1671,10 +1744,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             reviewed_event_ids.clear()
         if effective_phase == "review":
             if has_review_update:
-                reviewed_event_ids.update(record_event_ids)
+                for event_id, owner_id in record_event_ids:
+                    reviewed_event_ids.setdefault(event_id, set()).add(owner_id)
                 history_review_containers.update(history_ancestors)
                 if has_quotes:
-                    if has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
+                    if has_review_quotes and (reuses_reviewed_event_id or (nests_reviewed_quotes and not encloses_quotes)):
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
                         review_quotes_constrained_by_replay = True

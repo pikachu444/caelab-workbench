@@ -1341,6 +1341,7 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
     "altered-round-replay-events", "altered-round-replay-steps",
     "altered-output-replay-events", "altered-output-replay-steps",
     "altered-output-wrapper-events", "altered-output-wrapper-steps",
+    "altered-output-wrapper-history-events", "altered-output-wrapper-history-steps",
 ])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
@@ -1427,7 +1428,12 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
     elif layout.startswith(("altered-output-replay-", "altered-output-wrapper-")):
         history_field = layout.rsplit("-", 1)[1]
         earlier_history = [{"stage": "prepare_query", "event_id": "prepare-1"}]
-        if layout.startswith("altered-output-wrapper-"):
+        if layout.startswith("altered-output-wrapper-history-"):
+            earlier_history.append({
+                "stage": "retrieval_completion", "event_id": "rc-1",
+                history_field: [{"stage": "assessment", **response}],
+            })
+        elif layout.startswith("altered-output-wrapper-"):
             earlier_history.append({"stage": "retrieval_completion", "event_id": "rc-1", "response": response})
         else:
             earlier_history.extend([
@@ -1484,10 +1490,19 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
     if layout.startswith("altered-output-wrapper-"):
         wrapper["output"][history_field] = [earlier_history[-1]]
         assert assess_assignments(quotes).status == "supported"
-        swapped = dict(earlier_history[-1], response=dict(response, checks=checks(reversed(quotes))))
+        changed_review = dict(response, checks=checks(reversed(quotes)))
+        if layout.startswith("altered-output-wrapper-history-"):
+            swapped = {**earlier_history[-1], history_field: [{"stage": "assessment", **changed_review}]}
+        else:
+            swapped = dict(earlier_history[-1], response=changed_review)
         wrapper["output"][history_field] = [swapped]
         with pytest.raises(ValueError, match="trace selection or review"):
             assess_assignments(reversed(quotes))
+        if layout.startswith("altered-output-wrapper-history-"):
+            del wrapper["output"]
+            trace["events"].append(swapped)
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_assignments(reversed(quotes))
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
@@ -1730,7 +1745,7 @@ def test_d09_short_selection_replay_preserves_review_checks(
 @pytest.mark.parametrize("quoted_selection", [False, True], ids=["unquoted-selection", "quoted-selection"])
 @pytest.mark.parametrize("altered_stage", [
     "assessment", "retrieval_completion", "assessment-before-ids", "retrieval-response", "shortened-retrieval-response",
-    "nested-search", "nested-search-status",
+    "nested-search", "nested-search-status", "nested-search-id-alias",
 ])
 def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     assessed_retrieval, response_format, history_field, quoted_selection, altered_stage,
@@ -1761,10 +1776,14 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     history = [prepare, selection, review, {"stage": "retrieval_completion"}]
     if altered_stage == "shortened-retrieval-response":
         history.insert(1, {"stage": "search"})
-    nested_search = altered_stage in {"nested-search", "nested-search-status"}
+    nested_search = altered_stage.startswith("nested-search")
+    owner_updates = {
+        "nested-search-status": {"status": "completed"},
+        "nested-search-id-alias": {"id": "s1"},
+    }.get(altered_stage)
     if nested_search:
         search = {"stage": "search", history_field: history}
-        if altered_stage == "nested-search-status":
+        if owner_updates:
             search["event_id"] = "s1"
             review["event_id"] = "review-1"
         history = [prepare, search, history[-1]]
@@ -1781,8 +1800,8 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     assert assess_assignment(quotes).status == "supported"
     with pytest.raises(ValueError, match="trace selection or review"):
         assess_assignment(reversed(quotes))
-    if altered_stage == "nested-search-status":
-        search = dict(search, status="completed")
+    if owner_updates:
+        search = {**search, **owner_updates}
         wrapper["result"][history_field] = [prepare, search, history[-1]]
         assert assess_assignment(quotes).status == "supported"
         with pytest.raises(ValueError, match="trace selection or review"):
@@ -1856,6 +1875,8 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
         "ids-only-sibling-response", "ids-only-search-history", "ids-only-sibling-response-history",
         "repeated-nested-selection", "ids-only-checked-review-after-limit",
         "shortened-identified-search", "shortened-round-prefix",
+        "shortened-search-status", "anonymous-query-change",
+        "wrapped-round-prefix-retrieval", "wrapped-round-prefix-retrieval_completion",
         "changed-quote", "boolean-offset", "changed-check",
     )),
     *(pytest.param("subsequence-omitting-first-search", stage, id=f"subsequence-omitting-first-search-{stage}")
@@ -1939,7 +1960,10 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
                 assess(first, companion=second, **options)
     else:
         selection = {"stage": "candidate_selection", "candidate_ids": ids}
-        ids_only = layout.startswith("ids-only-") or layout == "shortened-round-prefix"
+        ids_only = (
+            layout.startswith(("ids-only-", "wrapped-round-prefix-"))
+            or layout in {"shortened-round-prefix", "anonymous-query-change"}
+        )
         if not ids_only:
             selection.update(evidence(second))
         new_round = [search, selection, review_b if layout == "continued-review" else done]
@@ -1959,13 +1983,44 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
             wrapper["result"] = {history_field: replay}
             assert_only(first, second)
             return
-        if layout == "shortened-round-prefix":
-            wrapper["event_id"] = "round-report"
-            history = [prepare, dict(search, event_id="s1"), review_a, done]
-            continuation = [dict(search, event_id="s2"), selection, review_b, done]
+        if layout == "shortened-search-status":
+            selection_history = [prepare, selection, done] if history_field == "events" else [selection]
+            first_search = {"stage": "search", "event_id": "s1", history_field: selection_history}
+            wrapper[history_field] = [prepare, first_search, review_a, done]
+            assert_only(first, second)
+            replay = [prepare, dict(first_search, status="completed"), done]
+            wrapper["result"] = {history_field: replay}
+            assert_only(first, second)
+            return
+        if layout == "anonymous-query-change":
+            first_search = {"stage": "search", "query": "first query",
+                            history_field: [prepare, selection, dict(review_a, event_id="review-1"), done]}
+            second_search = {"stage": "search", "query": "second query",
+                             history_field: [prepare, selection, dict(review_b, event_id="review-2"), done]}
+            history = [prepare, first_search, done]
+            continuation = [second_search, done]
             wrapper[history_field] = history + continuation
             assert_only(second, first)
             wrapper[history_field] = history
+            for report_history in (continuation, history + continuation):
+                wrapper["result"] = {history_field: report_history}
+                assert_only(second, first)
+            return
+        if layout == "shortened-round-prefix" or layout.startswith("wrapped-round-prefix-"):
+            wrapper["event_id"] = "round-report"
+            history = [prepare, dict(search, event_id="s1"), review_a, done]
+            continuation = [
+                dict(search, event_id="s2"), dict(selection, event_id="selection-2"),
+                dict(review_b, event_id="review-2"), dict(done, event_id="completion-2"),
+            ]
+            wrapper[history_field] = history + continuation
+            assert_only(second, first)
+            wrapper[history_field] = history
+            if layout.startswith("wrapped-round-prefix-"):
+                continuation = [{
+                    "stage": layout.removeprefix("wrapped-round-prefix-"), "event_id": "round-2",
+                    history_field: continuation,
+                }]
             for report_history in (history + continuation, [prepare, review_a, done, *continuation]):
                 wrapper["result"] = {history_field: report_history}
                 assert_only(second, first)
