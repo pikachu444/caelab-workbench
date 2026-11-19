@@ -1383,6 +1383,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     has_recorded_quotes = False
     review_quotes = set()
     has_review_quotes = False
+    review_superseded_quotes = False
     trace_checks = []
     review_checks = []
     review_checks_ancestors = frozenset()
@@ -1448,6 +1449,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             if has_quotes or record_ids is not None:
                 if has_quotes:
                     has_review_quotes = True
+                    review_superseded_quotes = True
                     review_quotes = record_quotes
                     review_quotes_ancestors = ancestors
                 elif id(record) not in review_quotes_ancestors:
@@ -1477,10 +1479,17 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
 
     if review_candidate_ids is not None and not cited_ids <= review_candidate_ids:
         raise ValueError("Retrieval assessment contradicts trace selection or review")
-    verified_quotes = review_quotes if has_review_quotes else trace_quotes
-    if (has_review_quotes or has_recorded_quotes) and not checked_citations <= verified_quotes:
-        raise ValueError("Retrieval assessment contradicts trace selection or review")
-    for rid, (check, quotes) in (review_checks if has_review_quotes else trace_checks):
+    if has_review_quotes:
+        if not checked_citations <= review_quotes:
+            raise ValueError("Retrieval assessment contradicts trace selection or review")
+        active_checks = review_checks
+    elif not review_superseded_quotes and has_recorded_quotes:
+        if not checked_citations <= trace_quotes:
+            raise ValueError("Retrieval assessment contradicts trace selection or review")
+        active_checks = trace_checks
+    else:
+        active_checks = ()
+    for rid, (check, quotes) in active_checks:
         supplied_check, supplied_quotes = by_req[rid]
         if (supplied_check["relation"] != check["relation"] or not supplied_quotes <= quotes
                 or not set(supplied_check["candidate_ids"]) <= set(check["candidate_ids"])):

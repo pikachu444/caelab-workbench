@@ -1491,6 +1491,53 @@ def test_d09_ids_only_final_sibling_replaces_interim_review_evidence(assessed_re
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize(("interim_review", "final_candidate", "supported_candidate"), [
+    ("B", "B", "B"),
+    ("A", "B", "B"),
+    (None, "B", None),
+    (None, None, "A"),
+], ids=["review-B", "review-A", "ids-only", "bare-completion"])
+def test_d09_selection_evidence_stays_superseded_after_review(
+    assessed_retrieval, response_format, interim_review, final_candidate, supported_candidate,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    candidates = {"A": first, "B": second}
+    candidate_ids = {name: item["citation"] for name, item in candidates.items()}
+    quotes = {name: {"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
+              for name, item in candidates.items()}
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+    events = [
+        {"stage": "prepare_query"},
+        {"stage": "candidate_selection", "candidate_ids": list(candidate_ids.values()), "citations": [quotes["A"]]},
+    ]
+    if interim_review is not None:
+        events.append({
+            "stage": "assessment",
+            "candidate_ids": [candidate_ids[interim_review]],
+            "citations": [quotes[interim_review]],
+            "checks": [{"requirement_id": topic.requirement_id, "candidate_ids": [candidate_ids[interim_review]],
+                        "relation": "satisfied", "quoted_spans": [quotes[interim_review]], "reason": "interim review"}],
+        })
+    completion = {"stage": "retrieval_completion"}
+    if final_candidate is not None:
+        completion["candidate_ids"] = [candidate_ids[final_candidate]]
+    trace = {"events": [*events, completion]}
+
+    def assess_candidate(target, companion):
+        return assess(target, companion=companion, include_good=True, question_plan=plan,
+                      trace_overrides=trace, response_format=response_format)
+
+    for name, target, companion in (("A", first, second), ("B", second, first)):
+        if name == supported_candidate:
+            assert assess_candidate(target, companion).status == "supported"
+        else:
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_candidate(target, companion)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize(("container", "id_field", "inner_stage"), [
     ("result", "candidate_ids", {}), ("output", "candidate_id", {}), ("response", "candidate_ids", {}),
     ("result", "candidate_ids", {"kind": "response"}),
