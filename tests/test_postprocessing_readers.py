@@ -1382,16 +1382,47 @@ def test_save_as_recovers_interrupted_creation_of_initial_receipt(tmp_path, mana
     op_id = "f" * 32
     folder = operation_dir(store, ROOT_ID, op_id)
     folder.mkdir(parents=True)
-    leftover = folder / "operation.json.part.a1b2c3.tmp"
-    leftover.write_bytes(b'{"state":')
+    leftovers = [folder / name for name in ("operation.json.part.abcd1234.tmp", "operation.json.abcd1234.tmp")]
+    for leftover in leftovers:
+        leftover.write_bytes(b'{"state":')
     for name in extra_startup_files:
         (folder / name).touch()
     assert operation_snapshot(manager, store, ROOT_ID, op_id) is None
-    assert leftover.exists()
+    assert all(leftover.exists() for leftover in leftovers)
     saved = tmp_path / "saved"
     store.copy_to(saved)
     assert not folder.exists()
     assert not operation_dir(RunStore(saved), ROOT_ID, op_id).exists()
+
+
+def test_save_as_preserves_review_copy_in_operation_without_receipt(tmp_path):
+    store, _ = _run(tmp_path, {})
+    folder = operation_dir(store, ROOT_ID, "f" * 32)
+    folder.mkdir(parents=True)
+    review = folder / "operation.json.part.review-copy.2026-11-19.tmp"
+    review.write_bytes(b"review notes")
+    saved = tmp_path / "saved"
+    with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+        store.copy_to(saved)
+    assert review.read_bytes() == b"review notes"
+    assert not saved.exists()
+
+
+def test_save_as_preserves_directory_matching_startup_temp_name(tmp_path):
+    store, _ = _run(tmp_path, {})
+    folder = operation_dir(store, ROOT_ID, "f" * 32)
+    review = folder / "operation.json.part.abcd1234.tmp"
+    review.mkdir(parents=True)
+    field = review / "field.vtu"
+    field.write_bytes(b"saved field")
+    partial = review / "review.part"
+    partial.write_bytes(b"saved partial field")
+    saved = tmp_path / "saved"
+    with pytest.raises(ResultError, match="CORRUPT_OPERATION"):
+        store.copy_to(saved)
+    assert field.read_bytes() == b"saved field"
+    assert partial.read_bytes() == b"saved partial field"
+    assert not saved.exists()
 
 
 def test_completed_receipt_accepts_top_level_or_result_manifest_reference(tmp_path, manager):

@@ -24,6 +24,7 @@ INPUT_SNAPSHOT = "input/snapshot.json"
 _ID = re.compile(r"[0-9a-f]{32}")
 _CHUNK = 1024 * 1024
 _OPERATION_STARTUP_FILES = {"operation.lock", "operation.json.part"}
+_STARTUP_TEMP_RE = re.compile(r"operation\.json(?:\.part)?\.[a-z0-9_]{8}\.tmp")
 # Reader source hashes from 5e59f175, for LF and CRLF checkouts.
 _ORIGINAL_FIELD_READERS = {
     "3d5c291d80078f4653e776c1aedc5234f1c9a0bd6cbe58a1e482a121fab14f76",
@@ -35,8 +36,10 @@ _ORIGINAL_HISTORY_READERS = {
 }
 
 
-def _is_startup_temp_file(name: str) -> bool:
-    return name in _OPERATION_STARTUP_FILES or (name.startswith("operation.json.part.") and name.endswith(".tmp"))
+def _is_startup_temp_file(path: Path) -> bool:
+    if path.is_symlink() or not path.is_file():
+        return False
+    return path.name in _OPERATION_STARTUP_FILES or bool(_STARTUP_TEMP_RE.fullmatch(path.name))
 
 
 def _original_reader(receipt):
@@ -284,7 +287,7 @@ def _read_receipt(folder, source_run_id, operation_id):
         data = read_object(artifact_path(folder, "operation.json"))
     except FileNotFoundError:
         try:
-            has_artifacts = any(not _is_startup_temp_file(path.name) for path in folder.iterdir())
+            has_artifacts = any(not _is_startup_temp_file(path) for path in folder.iterdir())
         except FileNotFoundError:
             return None
         if has_artifacts:
@@ -366,7 +369,8 @@ def _operation_receipts(store, *, strict=False, recover_orphans=False, reject_co
                 if strict:
                     raise
                 if recover_orphans and exc.code == "CORRUPT_OPERATION" and _ID.fullmatch(source.name) and _ID.fullmatch(path.name):
-                    _quarantine_parts(folder)
+                    if artifact_path(folder, "operation.json").is_file():
+                        _quarantine_parts(folder)
                     dataset = artifact_path(folder, "dataset.json")
                     if dataset.is_file():
                         dataset.replace(artifact_path(folder, "dataset.json.orphaned"))
@@ -378,7 +382,7 @@ def _operation_receipts(store, *, strict=False, recover_orphans=False, reject_co
             elif recover_orphans:
                 with suppress(OSError):
                     for candidate in folder.iterdir():
-                        if _is_startup_temp_file(candidate.name):
+                        if _is_startup_temp_file(candidate):
                             with suppress(OSError):
                                 artifact_path(folder, candidate.name).unlink(missing_ok=True)
                 with suppress(OSError):
