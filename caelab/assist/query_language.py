@@ -1474,7 +1474,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_superseded_quotes = True
                     review_quotes = record_quotes
                     review_quotes_ancestors = ancestors
-                    review_quotes_history = history_ancestors
+                    review_quotes_history = history_ancestors | (report_of & review_quotes_history)
                 elif not encloses_quotes:
                     has_review_quotes = False
                     review_quotes = set()
@@ -1483,7 +1483,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 if record_checks:
                     review_checks = record_checks
                     review_checks_ancestors = ancestors
-                    review_checks_history = history_ancestors
+                    review_checks_history = history_ancestors | (report_of & review_checks_history)
                 elif not encloses_checks:
                     review_checks = []
                     review_checks_ancestors = frozenset()
@@ -1495,7 +1495,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         else record_ids
                     )
                     review_candidate_ancestors = ancestors
-                    review_candidate_history = history_ancestors
+                    review_candidate_history = history_ancestors | (report_of & review_candidate_history)
                 elif not encloses_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()

@@ -1336,6 +1336,7 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
 @pytest.mark.parametrize("layout", [
     "root", "wrapped", "expanded", "ids-only", "sibling", "retrieval-events", "retrieval-steps", "selection-steps",
     "retrieval-checks-events", "retrieval-checks-steps", "selection-result-events", "selection-result-steps",
+    "completion-reports-events", "completion-reports-steps",
 ])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
@@ -1394,6 +1395,14 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
              "result": {"citations": [*quotes, other_quote]}},
             {"stage": "retrieval_completion"},
         ]}
+    elif layout.startswith("completion-reports-"):
+        history_field = layout.removeprefix("completion-reports-")
+        trace = {"events": [{
+            "stage": "retrieval_completion",
+            history_field: [{"stage": "prepare_query"}, {"stage": "assessment", **response}],
+            "assessment": {"checks": response["checks"]},
+            "response": summary,
+        }]}
     else:
         trace = {"events": [{"stage": "assessment", **response}, {"stage": "retrieval_completion", **summary}]}
 
@@ -1478,19 +1487,31 @@ def test_d09_review_wrappers_preserve_nested_candidate_ids(
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("wrapper_stage", ["retrieval", "candidate_selection"])
-@pytest.mark.parametrize("has_citation", [True, False], ids=["narrowed", "empty"])
+@pytest.mark.parametrize(("has_citation", "repeated_report"), [
+    pytest.param(True, False, id="narrowed"),
+    pytest.param(False, False, id="empty"),
+    pytest.param(False, True, id="empty-after-repeated-report"),
+])
 def test_d09_history_summary_can_narrow_review_citations(
-    assessed_retrieval, response_format, history_field, wrapper_stage, has_citation,
+    assessed_retrieval, response_format, history_field, wrapper_stage, has_citation, repeated_report,
 ):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
     quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
               for item in (first, second)]
     ids = [span["candidate_id"] for span in quotes]
-    history = [{"stage": "prepare_query"}, {"stage": "assessment", "candidate_ids": ids, "citations": quotes}]
+    history_quotes = quotes[:1] if repeated_report else quotes
+    assessment = {"stage": "assessment", "citations": history_quotes}
+    if not repeated_report:
+        assessment["candidate_ids"] = ids
+    history = [{"stage": "prepare_query"}, assessment]
     summary = {"citations": quotes[:1] if has_citation else []}
     wrapper = {"stage": wrapper_stage, history_field: history}
-    if wrapper_stage == "retrieval":
+    if repeated_report:
+        wrapper.update(result={"citations": history_quotes}, output=summary)
+        if wrapper_stage == "candidate_selection":
+            wrapper["candidate_ids"] = ids
+    elif wrapper_stage == "retrieval":
         wrapper.update(summary)
     else:
         wrapper.update(candidate_ids=ids, result=summary)
@@ -1504,6 +1525,29 @@ def test_d09_history_summary_can_narrow_review_citations(
     else:
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(first, companion=second, include_good=True, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(assessed_retrieval, response_format, history_field):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
+              for item in (first, second)]
+    ids = [span["candidate_id"] for span in quotes]
+    trace = {"events": [{
+        "stage": "retrieval",
+        history_field: [
+            {"stage": "prepare_query"},
+            {"stage": "assessment", "candidate_ids": ids, "citations": quotes},
+        ],
+        "result": {"candidate_ids": ids[:1]},
+        "output": {"candidate_ids": ids},
+    }]}
+    assert assess(first, companion=second, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, include_good=True, trace_overrides=trace, response_format=response_format)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
