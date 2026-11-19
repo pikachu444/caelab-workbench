@@ -1342,6 +1342,9 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
     "altered-output-replay-events", "altered-output-replay-steps",
     "altered-output-wrapper-events", "altered-output-wrapper-steps",
     "altered-output-wrapper-history-events", "altered-output-wrapper-history-steps",
+    "quoted-output-wrapper-events", "quoted-output-wrapper-steps",
+    "quoted-output-wrapper-history-events", "quoted-output-wrapper-history-steps",
+    "replayed-search-round-events", "replayed-search-round-steps",
 ])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
@@ -1425,31 +1428,46 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             wrapper["result"] = {history_field: wrapper[history_field]}
         else:
             wrapper["output"] = summary
-    elif layout.startswith(("altered-output-replay-", "altered-output-wrapper-")):
+    elif layout.startswith(("altered-output-replay-", "altered-output-wrapper-", "quoted-output-wrapper-")):
         history_field = layout.rsplit("-", 1)[1]
+        quoted_round = layout.startswith("quoted-output-wrapper-")
         earlier_history = [{"stage": "prepare_query", "event_id": "prepare-1"}]
-        if layout.startswith("altered-output-wrapper-history-"):
+        if "-wrapper-history-" in layout:
             earlier_history.append({
                 "stage": "retrieval_completion", "event_id": "rc-1",
                 history_field: [{"stage": "assessment", **response}],
             })
-        elif layout.startswith("altered-output-wrapper-"):
+        elif "-wrapper-" in layout:
             earlier_history.append({"stage": "retrieval_completion", "event_id": "rc-1", "response": response})
         else:
             earlier_history.extend([
                 {"stage": "assessment", "event_id": "review-1", **response},
                 {"stage": "retrieval_completion", "event_id": "completion-1"},
             ])
+        selection = {"stage": "candidate_selection", "candidate_ids": response["candidate_ids"]}
+        if quoted_round:
+            selection.update(response)
         wrapper = {
             "stage": "retrieval_completion",
             history_field: earlier_history,
             "result": {history_field: [
                 {"stage": "search", "event_id": "search-2"},
-                {"stage": "candidate_selection", "candidate_ids": response["candidate_ids"]},
+                selection,
                 {"stage": "retrieval_completion", "event_id": "completion-2"},
             ]},
-            "output": {history_field: earlier_history},
         }
+        if not quoted_round:
+            wrapper["output"] = {history_field: earlier_history}
+        trace = {"events": [wrapper]}
+    elif layout.startswith("replayed-search-round-"):
+        history_field = layout.rsplit("-", 1)[1]
+        prepare = {"stage": "prepare_query"}
+        search = {"stage": "search", "event_id": "s1"}
+        selection = {"stage": "candidate_selection", "event_id": "sel1",
+                     "candidate_ids": response["candidate_ids"]}
+        review = {"stage": "assessment", **response}
+        complete = {"stage": "retrieval_completion", "event_id": "done1"}
+        wrapper = {"stage": "retrieval_completion", history_field: [prepare, search, selection, review, complete]}
         trace = {"events": [wrapper]}
     else:
         trace = {"events": [{"stage": "assessment", **response}, {"stage": "retrieval_completion", **summary}]}
@@ -1487,22 +1505,36 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             wrapper["output"][history_field] = replay
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess_assignments(reversed(quotes))
-    if layout.startswith("altered-output-wrapper-"):
-        wrapper["output"][history_field] = [earlier_history[-1]]
+    if layout.startswith(("altered-output-wrapper-", "quoted-output-wrapper-")):
+        wrapper["output"] = {history_field: [earlier_history[-1]]}
         assert assess_assignments(quotes).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_assignments(reversed(quotes))
         changed_review = dict(response, checks=checks(reversed(quotes)))
-        if layout.startswith("altered-output-wrapper-history-"):
+        if "-wrapper-history-" in layout:
             swapped = {**earlier_history[-1], history_field: [{"stage": "assessment", **changed_review}]}
         else:
             swapped = dict(earlier_history[-1], response=changed_review)
         wrapper["output"][history_field] = [swapped]
         with pytest.raises(ValueError, match="trace selection or review"):
             assess_assignments(reversed(quotes))
+        if layout.startswith("quoted-output-wrapper-"):
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_assignments(quotes)
         if layout.startswith("altered-output-wrapper-history-"):
             del wrapper["output"]
             trace["events"].append(swapped)
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess_assignments(reversed(quotes))
+    if layout.startswith("replayed-search-round-"):
+        swapped = dict(review, checks=checks(reversed(quotes)))
+        wrapper["result"] = {history_field: [prepare, review, complete, {
+            "stage": "retrieval_completion", "event_id": "round-2",
+            history_field: [prepare, search, selection, swapped,
+                            {"stage": "retrieval_completion", "event_id": "done2"}],
+        }]}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_assignments(reversed(quotes))
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
@@ -1868,6 +1900,40 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("change", ["incomplete-events", "incomplete-stage-events", "blocking-status", "invalid-stage"])
+def test_d09_replayed_search_validates_raw_trace(assessed_retrieval, response_format, history_field, change):
+    assess, candidate = assessed_retrieval
+    prepare = {"stage": "prepare_query"}
+    search = {"stage": "search"}
+    done = {"stage": "retrieval_completion"}
+    recorded_search = {"stage": "search", "event_id": "s1"}
+    if change == "incomplete-events":
+        recorded_search["events"] = [prepare, search, done]
+        changed = dict(recorded_search, events=[search])
+    elif change == "incomplete-stage-events":
+        recorded_search["stage_events"] = ["prepare_query", "retrieval_completion"]
+        changed = dict(recorded_search, stage_events=["prepare_query"])
+    elif change == "blocking-status":
+        changed = dict(recorded_search, status={"decision": "insufficient"})
+    else:
+        changed = dict(recorded_search, status={"stage": None})
+
+    quote = {"candidate_id": candidate["citation"], "start": 0, "end": len(candidate["text"])}
+    wrapper = {"stage": "retrieval_completion", history_field: [
+        prepare, recorded_search, {"stage": "assessment", "citations": [quote]}, done,
+    ]}
+    trace = {"events": [wrapper]}
+    assert assess(candidate, trace_overrides=trace, response_format=response_format).status == "supported"
+    wrapper["result"] = {history_field: [prepare, changed, done]}
+    if change == "blocking-status":
+        assert assess(candidate, trace_overrides=trace, response_format=response_format).status == "insufficient"
+    else:
+        with pytest.raises(ValueError, match="trace events|terminal stage"):
+            assess(candidate, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize(("layout", "completion_stage"), [
     *(pytest.param(layout, None, id=layout) for layout in (
         "short-replay", "closed-short-replay", "subsequence", "continuation", "extension", "continued-review",
@@ -1877,6 +1943,7 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
         "shortened-identified-search", "shortened-round-prefix",
         "shortened-search-status", "anonymous-query-change",
         "wrapped-round-prefix-retrieval", "wrapped-round-prefix-retrieval_completion",
+        "search-replay-field-aliases", "wrapped-reports-round-retrieval", "wrapped-reports-round-retrieval_completion",
         "changed-quote", "boolean-offset", "changed-check",
     )),
     *(pytest.param("subsequence-omitting-first-search", stage, id=f"subsequence-omitting-first-search-{stage}")
@@ -1961,7 +2028,7 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
     else:
         selection = {"stage": "candidate_selection", "candidate_ids": ids}
         ids_only = (
-            layout.startswith(("ids-only-", "wrapped-round-prefix-"))
+            layout.startswith(("ids-only-", "wrapped-round-prefix-", "wrapped-reports-round-"))
             or layout in {"shortened-round-prefix", "anonymous-query-change"}
         )
         if not ids_only:
@@ -1992,6 +2059,21 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
             wrapper["result"] = {history_field: replay}
             assert_only(first, second)
             return
+        if layout == "search-replay-field-aliases":
+            selection_history = [prepare, selection, done]
+            first_search = {"stage": "search", "event_id": "s1", history_field: selection_history}
+            wrapper[history_field] = [prepare, first_search, review_a, done]
+            assert_only(first, second)
+            alternate_field = "steps" if history_field == "events" else "events"
+            for replayed_search in (
+                {"stage": "search", "event_id": "s1", alternate_field: selection_history},
+                dict(first_search, kind="search"),
+                {"kind": "search", "event_id": "s1", history_field: selection_history},
+                dict(first_search, query="same search with a label"),
+            ):
+                wrapper["result"] = {history_field: [prepare, replayed_search, done]}
+                assert_only(first, second)
+            return
         if layout == "anonymous-query-change":
             first_search = {"stage": "search", "query": "first query",
                             history_field: [prepare, selection, dict(review_a, event_id="review-1"), done]}
@@ -2005,6 +2087,23 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
             for report_history in (continuation, history + continuation):
                 wrapper["result"] = {history_field: report_history}
                 assert_only(second, first)
+            return
+        if layout.startswith("wrapped-reports-round-"):
+            history = [prepare, dict(search, event_id="s1"), review_a, done]
+            wrapper[history_field] = history
+            continuation = [
+                dict(search, event_id="s2"), dict(selection, event_id="selection-2"),
+                dict(review_b, event_id="review-2"), dict(done, event_id="completion-2"),
+            ]
+            for field in ("result", "response"):
+                round_wrapper = {"stage": layout.removeprefix("wrapped-reports-round-"), "event_id": "round-2"}
+                wrapper["result"] = {history_field: [prepare, review_a, done, round_wrapper]}
+                round_wrapper[field] = {history_field: continuation}
+                assert_only(second, first)
+                for replayed_start in (dict(search, event_id="s1"), dict(prepare, event_id="prepare-2")):
+                    round_wrapper[field][history_field] = [replayed_start, *continuation[1:]]
+                    with pytest.raises(ValueError, match="trace selection or review"):
+                        assess(second, companion=first, **options)
             return
         if layout == "shortened-round-prefix" or layout.startswith("wrapped-round-prefix-"):
             wrapper["event_id"] = "round-report"
