@@ -1219,20 +1219,23 @@ def _novel_history_items(items, prior_histories):
             return ()
         if prefix_size == len(prior):
             return items[prefix_size:]
-        if (prefix_size > 0 and stage(items[prefix_size]) in _FINAL_REVIEW_STAGES
-                and items[prefix_size] not in _BARE_COMPLETIONS):
-            return items[prefix_size:]
-        if stage(items[0]) not in _INITIAL_STAGES:
-            continue
-        remaining = iter(prior_keys)
-        for index, item_key in enumerate(item_keys):
-            if item_key not in remaining:
-                break
-        else:
-            return ()
-        # An event replay may append a bare completion to close a partial history.
-        if 0 < index == len(items) - 1 and items[index] in _BARE_COMPLETIONS:
-            return items[index:]
+        if stage(items[0]) in _INITIAL_STAGES:
+            remaining = iter(prior_keys)
+            for index, item_key in enumerate(item_keys):
+                if item_key not in remaining:
+                    break
+            else:
+                return ()
+            # An event replay may append a bare completion to close a partial history.
+            if 0 < index == len(items) - 1 and items[index] in _BARE_COMPLETIONS:
+                return items[index:]
+        if prefix_size and items[prefix_size] not in _BARE_COMPLETIONS:
+            changed_stage = stage(items[prefix_size])
+            if changed_stage in _FINAL_REVIEW_STAGES or (
+                changed_stage == stage(prior[prefix_size])
+                and changed_stage not in (_SEARCH_STAGES | _SELECTION_STAGES)
+            ):
+                return items[prefix_size:]
     return items
 
 
@@ -1541,7 +1544,12 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             saw_search_after_review = True
         elif effective_phase == "selection" and saw_search_after_review:
             new_round_selection_after_review = True
-        fresh_review = effective_phase == "review" and has_review_update and new_round_selection_after_review
+        fresh_review = (
+            effective_phase == "review"
+            and has_review_update
+            and new_round_selection_after_review
+            and not encloses_review
+        )
         quoted_selection = (effective_phase == "selection" and (record_quotes or record_checks)
                             and (review_superseded_quotes or has_active_review))
         if fresh_review or quoted_selection:

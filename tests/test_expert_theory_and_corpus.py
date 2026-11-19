@@ -1336,7 +1336,8 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
 @pytest.mark.parametrize("layout", [
     "root", "wrapped", "expanded", "ids-only", "sibling", "retrieval-events", "retrieval-steps", "selection-steps",
     "retrieval-checks-events", "retrieval-checks-steps", "selection-result-events", "selection-result-steps",
-    "completion-reports-events", "completion-reports-steps",
+    "completion-reports-events", "completion-reports-steps", "root-summary-events", "root-summary-steps",
+    "output-summary-events", "output-summary-steps",
 ])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
@@ -1403,6 +1404,18 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             "assessment": {"checks": response["checks"]},
             "response": summary,
         }]}
+    elif layout.startswith(("root-summary-", "output-summary-")):
+        history_field = layout.rsplit("-", 1)[1]
+        wrapper = {"stage": "retrieval_completion", history_field: [
+            {"stage": "prepare_query"}, {"stage": "assessment", **response},
+            {"stage": "search"}, {"stage": "candidate_selection", "candidate_ids": response["candidate_ids"]},
+            {"stage": "retrieval_completion"},
+        ]}
+        trace = {"events": [wrapper]}
+        if layout.startswith("root-summary-"):
+            trace.update(summary)
+        else:
+            wrapper["output"] = summary
     else:
         trace = {"events": [{"stage": "assessment", **response}, {"stage": "retrieval_completion", **summary}]}
 
@@ -1628,7 +1641,9 @@ def test_d09_short_selection_replay_preserves_review_checks(
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("quoted_selection", [False, True], ids=["unquoted-selection", "quoted-selection"])
-@pytest.mark.parametrize("altered_stage", ["assessment", "retrieval_completion", "assessment-before-ids"])
+@pytest.mark.parametrize("altered_stage", [
+    "assessment", "retrieval_completion", "assessment-before-ids", "retrieval-response",
+])
 def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     assessed_retrieval, response_format, history_field, quoted_selection, altered_stage,
 ):
@@ -1649,7 +1664,11 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     selection = {"stage": "candidate_selection", "candidate_ids": ids}
     if quoted_selection:
         selection["citations"] = quotes
-    review = {"stage": "assessment", "candidate_ids": ids, "citations": quotes, "checks": checks(quotes)}
+    recorded = {"candidate_ids": ids, "citations": quotes, "checks": checks(quotes)}
+    if altered_stage == "retrieval-response":
+        review = {"stage": "retrieval", "response": recorded}
+    else:
+        review = {"stage": "assessment", **recorded}
     history = [{"stage": "prepare_query"}, selection, review, {"stage": "retrieval_completion"}]
     wrapper = {"stage": "retrieval_completion", history_field: history, "result": {history_field: history}}
     trace = {"events": [wrapper]}
@@ -1665,13 +1684,16 @@ def test_d09_altered_review_replay_cannot_reverse_requirement_checks(
     with pytest.raises(ValueError, match="trace selection or review"):
         assess_assignment(reversed(quotes))
 
-    altered = dict(review, checks=checks(reversed(quotes)))
+    swapped_checks = checks(reversed(quotes))
+    altered = dict(review, checks=swapped_checks)
     tail = [history[-1]]
     if altered_stage == "retrieval_completion":
         altered["stage"] = altered_stage
         tail = []
     elif altered_stage == "assessment-before-ids":
         tail.insert(0, {"stage": "candidate_selection", "candidate_ids": ids})
+    elif altered_stage == "retrieval-response":
+        altered = dict(review, response=dict(recorded, checks=swapped_checks))
     wrapper["result"][history_field] = [*history[:2], altered, *tail]
     for spans in (reversed(quotes), quotes):
         with pytest.raises(ValueError, match="trace selection or review"):
@@ -1710,7 +1732,8 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("layout", [
-    "short-replay", "closed-short-replay", "subsequence", "continuation", "extension", "continued-review",
+    "short-replay", "closed-short-replay", "subsequence", "subsequence-omitting-first-search", "continuation",
+    "extension", "continued-review",
     "repeated-content", "unclosed-repeated-content", "ids-only-continuation", "changed-quote", "boolean-offset",
     "changed-check",
 ])
@@ -1745,20 +1768,27 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(rejected, companion=supported, **options)
 
-    if layout in {"short-replay", "closed-short-replay", "subsequence", "changed-quote", "boolean-offset",
-                  "changed-check"}:
-        selected = second if layout == "closed-short-replay" else first
+    if layout in {"short-replay", "closed-short-replay", "subsequence", "subsequence-omitting-first-search",
+                  "changed-quote", "boolean-offset", "changed-check"}:
+        selected = second if layout in {"closed-short-replay", "subsequence-omitting-first-search"} else first
         selection = {"stage": "candidate_selection", "candidate_ids": ids, **evidence(selected)}
         history = [prepare, review_b, search, selection, review_a]
         if layout == "closed-short-replay":
             history.append(done)
+        elif layout == "subsequence-omitting-first-search":
+            history.insert(1, search)
         wrapper.update({history_field: history, "output": {"citations": quotes}})
         assert_only(first, second)
         wrapper["result"] = {history_field: history}
-        if layout in {"short-replay", "closed-short-replay", "subsequence"}:
+        if layout in {"short-replay", "closed-short-replay", "subsequence", "subsequence-omitting-first-search"}:
             assert_only(first, second)
-            replay = [prepare, review_b, selection] if layout == "subsequence" else history[:4]
-            if history_field == "events" or layout == "closed-short-replay":
+            if layout == "subsequence-omitting-first-search":
+                replay = [prepare, review_b, search, selection]
+            elif layout == "subsequence":
+                replay = [prepare, review_b, selection]
+            else:
+                replay = history[:4]
+            if history_field == "events" or layout in {"closed-short-replay", "subsequence-omitting-first-search"}:
                 replay.append(done)
             wrapper["result"][history_field] = replay
             assert_only(first, second)
