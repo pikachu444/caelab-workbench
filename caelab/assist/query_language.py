@@ -1196,6 +1196,7 @@ _TRACE_HISTORY_FIELDS = ("stage_events", "events", "steps")
 _TRACE_RESPONSE_FIELDS = ("result", "output", "assessment", "decision", "response")
 _NON_BARE_FIELDS = frozenset((
     *_EVIDENCE_FIELDS,
+    "candidate_id",
     "candidate_ids",
     "selected_chunk_ids",
     *_TRACE_HISTORY_FIELDS,
@@ -1306,17 +1307,24 @@ def _starts_new_history_round(item, prior):
         return False
     if stage in _EXECUTION_SEARCH_STAGES:
         return True
-    events = tuple(_history_events(item, prior=prior, prior_keys=tuple(map(canonical_json_bytes, prior))))
-    if any(_event_ids(event) & prior_ids for event in events):
+    prior_keys = tuple(map(canonical_json_bytes, prior))
+    if any(_event_ids(event) & prior_ids
+           for event in _history_events(item, prior=prior, prior_keys=prior_keys)):
         return False
-    for event in events:
-        event_stage = _history_stage(event)
-        if event_stage in _EXECUTION_SEARCH_STAGES:
-            return True
-        if (_EVIDENCE_FIELDS & event.keys() and event_stage in _REVIEW_STAGES
-                and not any(key in event for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS))):
-            return False
-    return False
+
+    def first_novel_step(value):
+        if isinstance(value, Mapping):
+            for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS):
+                step = first_novel_step(value.get(key))
+                if step is not None:
+                    return step
+        elif isinstance(value, (list, tuple)):
+            keys = tuple(map(canonical_json_bytes, value))
+            prefix_end = _unchanged_history_prefix(value, prior, keys, prior_keys)
+            return next((step for step in value[prefix_end:] if not _is_bare_completion(step)), None)
+        return None
+
+    return _history_stage(first_novel_step(item)) in _EXECUTION_SEARCH_STAGES
 
 
 def _novel_history_items(items, prior_histories, *, only_altered=False, identified_owner=False):
@@ -1383,12 +1391,13 @@ def _collect_nested_histories(value, *, direct=False):
 
 def _trace_records(
     value, phase=None, ancestors=frozenset(), history_ancestors=frozenset(), report_of=frozenset(),
-    report_histories=(), altered_replay=False, wrapper_event_ids=frozenset(), *, root=False, deduplicate=True,
+    report_histories=(), altered_replay=False, wrapper_event_ids=frozenset(), phase_event_ids=frozenset(),
+    *, root=False, deduplicate=True,
 ):
     if isinstance(value, (list, tuple)):
         for item in value:
             yield from _trace_records(item, phase, ancestors, history_ancestors, report_of, report_histories,
-                                      altered_replay, wrapper_event_ids, deduplicate=deduplicate)
+                                      altered_replay, wrapper_event_ids, phase_event_ids, deduplicate=deduplicate)
     elif isinstance(value, Mapping):
         if not root and phase not in {"search", "detail", "selection"}:
             stage = _retrieval_stage(value)
@@ -1411,8 +1420,12 @@ def _trace_records(
         child_ancestors = ancestors | {value_id}
         own_event_ids = frozenset((event_id, value_id) for event_id in _event_ids(value)) if not root else frozenset()
         event_ids = wrapper_event_ids | own_event_ids
+        round_event_ids = frozenset()
+        if phase in {"search", "selection"}:
+            inherited_ids = {event_id for event_id, _ in phase_event_ids}
+            round_event_ids = phase_event_ids | {pair for pair in own_event_ids if pair[0] not in inherited_ids}
         record = (value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories,
-                  altered_replay, event_ids)
+                  altered_replay, event_ids, round_event_ids)
         # A search starts before the selection events recorded in its history.
         search_starts_history = phase == "search" and bool(history_fields)
         if search_starts_history:
@@ -1449,9 +1462,12 @@ def _trace_records(
             if history_fields and key in _TRACE_RESPONSE_FIELDS:
                 child_report_of = report_of | {value_id}
                 child_report_histories = report_histories + histories
+            child_phase_event_ids = (
+                round_event_ids if child_phase == phase and key not in _TRACE_HISTORY_FIELDS else frozenset()
+            )
             yield from _trace_records(
                 child_value, child_phase, child_ancestors, child_history, child_report_of, child_report_histories,
-                child_altered_replay, child_wrapper_event_ids, deduplicate=deduplicate,
+                child_altered_replay, child_wrapper_event_ids, child_phase_event_ids, deduplicate=deduplicate,
             )
         if not search_starts_history:
             yield record
@@ -1472,6 +1488,22 @@ def _validate_trace_sequence(events, has_stage_events, *, continues_history=Fals
         or not _RESULT_STAGES.intersection(stages[work_steps[-1] + 1:])
     ):
         raise ValueError("Retrieval assessment trace events must start before search and record a terminal result")
+
+
+def _advance_review_replay(sequence, snapshot, cursor):
+    if cursor is None:
+        final = next((step for step in reversed(sequence) if not step[0]), sequence[-1])
+        # A non-history summary may replay just the final evidence. Until another step
+        # arrives, it could also be the start of a full replay.
+        matches_sequence = snapshot == sequence[0]
+        final_summary = not snapshot[0] and snapshot[1:] == final[1:]
+        if matches_sequence or final_summary:
+            return 1, matches_sequence, final_summary
+    else:
+        index, matches_sequence, _ = cursor
+        if matches_sequence and index < len(sequence) and snapshot == sequence[index]:
+            return index + 1, True, False
+    raise ValueError("Retrieval assessment contradicts trace selection or review")
 
 
 def _strict_assessment(payload, ref, root, identity, requirements, texts, provenance, question):
@@ -1605,7 +1637,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     # Validate the original records before deciding which events apply to review state.
     trace_blocks_support = False
     evidence_by_record = {}
-    for record, phase, _, _, _, report_histories, _, _ in _trace_records(trace, root=True, deduplicate=False):
+    for record, phase, _, _, _, report_histories, _, _, _ in _trace_records(trace, root=True, deduplicate=False):
         if any(record[key] != identity[key] for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
@@ -1659,8 +1691,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     raise ValueError("Retrieval assessment trace must link every citation")
                 record_checks.extend(recorded_checks.items())
                 record_quotes.update(recorded_spans)
+        check_evidence = frozenset(
+            (rid, check["relation"], frozenset(check["candidate_ids"]), frozenset(quotes))
+            for rid, (check, quotes) in record_checks
+        )
+        if len(check_evidence) != len({check[0] for check in check_evidence}):
+            raise ValueError("Retrieval assessment contradicts trace selection or review")
         has_quotes = bool(recorded_citations or record_checks)
-        evidence_by_record[id(record)] = record_ids, selected, record_quotes, record_checks, has_quotes
+        evidence_by_record[id(record)] = record_ids, selected, record_quotes, record_checks, check_evidence, has_quotes
 
     cited_ids = {cid for cid, _, _ in checked_citations}
     trace_quotes = set()
@@ -1680,13 +1718,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     new_round_selection_after_review = False
     new_round_selection_history = frozenset()
     new_round_selection_ancestors = frozenset()
-    seen_search_event_ids: dict[bytes, set[int]] = {}
-    seen_selection_event_ids: dict[bytes, set[int]] = {}
+    seen_search_event_ids: dict[bytes, int] = {}
+    seen_selection_event_ids: dict[bytes, int] = {}
     reviewed_event_evidence = {}
+    replay_cursors = {}
     for (record, phase, ancestors, history_ancestors, report_of, _,
-         altered_replay, record_event_ids) in _trace_records(trace, root=True):
+         altered_replay, record_event_ids, round_event_ids) in _trace_records(trace, root=True):
         record_id = id(record)
-        record_ids, selected, record_quotes, record_checks, has_quotes = evidence_by_record[record_id]
+        record_ids, selected, record_quotes, record_checks, check_evidence, has_quotes = evidence_by_record[record_id]
         if ((phase == "selection" and record_ids and not cited_ids <= record_ids)
                 or (selected and not cited_ids <= selected)):
             raise ValueError("Retrieval assessment contradicts trace selection or review")
@@ -1712,32 +1751,32 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             record_ids = None
         has_review_update = has_quotes or record_ids is not None
         if effective_phase == "review" and has_review_update:
-            check_evidence = {
-                rid: (check["relation"], frozenset(check["candidate_ids"]), frozenset(quotes))
-                for rid, (check, quotes) in record_checks
-            }
-            reused_evidence = [
-                reviewed_event_evidence[event_id]
-                for event_id, owner_id in record_event_ids
-                if event_id in reviewed_event_evidence and owner_id not in reviewed_event_evidence[event_id]["owners"]
-            ]
-            if reused_evidence:
-                for prior in reused_evidence:
-                    if ((check_evidence and prior["checks"] and check_evidence != prior["checks"])
-                            or (has_quotes and prior["quotes"] is not None and record_quotes != prior["quotes"])
-                            or (record_ids is not None and prior["candidate_ids"] is not None
-                                and not record_ids <= prior["candidate_ids"])):
-                        raise ValueError("Retrieval assessment contradicts trace selection or review")
+            is_replay = False
+            for event_id, owner_id in record_event_ids:
+                snapshot = (
+                    owner_id in history_ancestors,
+                    frozenset(record_quotes) if has_quotes else None,
+                    check_evidence,
+                    frozenset(record_ids) if record_ids is not None else None,
+                )
+                prior = reviewed_event_evidence.get(event_id)
+                if prior is not None and owner_id not in prior["owners"]:
+                    key = event_id, owner_id
+                    replay_cursors[key] = _advance_review_replay(prior["sequence"], snapshot, replay_cursors.get(key))
+                    is_replay = True
+                else:
+                    recorded = reviewed_event_evidence.setdefault(event_id, {"owners": set(), "sequence": []})
+                    recorded["owners"].add(owner_id)
+                    recorded["sequence"].append(snapshot)
+            if is_replay:
                 # An unchanged historical review contributes no evidence to the active round.
                 continue
 
         reuses_round_event_id = False
         if effective_phase in {"search", "selection"}:
             seen_ids = seen_search_event_ids if effective_phase == "search" else seen_selection_event_ids
-            for event_id in _event_ids(record):
-                owners = seen_ids.setdefault(event_id, set())
-                reuses_round_event_id |= bool(owners) and record_id not in owners
-                owners.add(record_id)
+            for event_id, owner_id in round_event_ids:
+                reuses_round_event_id |= seen_ids.setdefault(event_id, owner_id) != owner_id
         novel_round_event = not altered_replay and not reuses_round_event_id
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
         if effective_phase == "search" and has_active_review and novel_round_event:
@@ -1836,22 +1875,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 elif not constrains_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
-                for event_id, owner_id in record_event_ids:
-                    recorded = reviewed_event_evidence.setdefault(event_id, {
-                        "owners": set(), "quotes": None, "checks": {}, "candidate_ids": None,
-                    })
-                    recorded["owners"].add(owner_id)
-                    if has_quotes or fresh_review:
-                        recorded["quotes"] = frozenset(record_quotes) if has_quotes else None
-                    if record_checks or fresh_review:
-                        recorded["checks"] = check_evidence
-                    if record_ids is not None or fresh_review:
-                        recorded["candidate_ids"] = frozenset(record_ids) if record_ids is not None else None
         elif has_quotes and effective_phase not in {"search", "detail"}:
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
 
+    for (event_id, _), (index, matches_sequence, final_summary) in replay_cursors.items():
+        if not final_summary and (not matches_sequence or index != len(reviewed_event_evidence[event_id]["sequence"])):
+            raise ValueError("Retrieval assessment contradicts trace selection or review")
     if review_candidate_ids is not None and not cited_ids <= review_candidate_ids:
         raise ValueError("Retrieval assessment contradicts trace selection or review")
     if has_review_quotes:
