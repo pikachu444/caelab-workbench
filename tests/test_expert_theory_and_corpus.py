@@ -1538,6 +1538,77 @@ def test_d09_selection_evidence_stays_superseded_after_review(
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize(("empty_field", "ids_only_completion"), [
+    ("citations", True), ("quoted_spans", True), ("citations", False),
+])
+def test_d09_empty_review_does_not_supersede_selection_evidence(
+    assessed_retrieval, response_format, empty_field, ids_only_completion,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    first_quote = {"candidate_id": first["citation"], "start": 0, "end": len(first["text"])}
+    events = [
+        {"stage": "prepare_query"},
+        {"stage": "candidate_selection", "candidate_ids": [first["citation"], second["citation"]],
+         "citations": [first_quote]},
+        {"stage": "assessment", empty_field: []},
+    ]
+    if ids_only_completion:
+        events.append({"stage": "retrieval_completion", "candidate_ids": [second["citation"]]})
+
+    for candidate, companion in ((first, second), (second, first)):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(candidate, companion=companion, include_good=True, trace_overrides={"events": events},
+                   response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize(("initial_selection_quotes", "review_late_selection"), [
+    (False, False), (True, False), (True, True),
+], ids=["empty-selection", "quoted-selection", "quoted-review-after-selection"])
+def test_d09_later_selection_evidence_applies_after_earlier_review(
+    assessed_retrieval, response_format, initial_selection_quotes, review_late_selection,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    first_id, second_id = first["citation"], second["citation"]
+    first_quote, second_quote = (
+        {"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (first, second)
+    )
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+
+    def evidence(quote):
+        return {
+            "citations": [quote],
+            "checks": [{"requirement_id": topic.requirement_id, "candidate_ids": [quote["candidate_id"]],
+                        "relation": "satisfied", "quoted_spans": [quote], "reason": "recorded evidence"}],
+        }
+
+    selection = {"stage": "candidate_selection", "candidate_ids": [first_id, second_id]}
+    initial = {**selection, "citations": [first_quote]} if initial_selection_quotes else selection
+    events = [{"stage": "prepare_query"}, initial, {"stage": "assessment", **evidence(first_quote)}]
+    if initial_selection_quotes:
+        events.append({"stage": "search"})
+    events.append({**selection, **evidence(first_quote)})
+    if review_late_selection:
+        events.append({"stage": "assessment", **evidence(second_quote)})
+    events.append({"stage": "retrieval_completion", "candidate_ids": [second_id]})
+
+    def assess_candidate(candidate, companion):
+        return assess(candidate, companion=companion, include_good=True, question_plan=plan,
+                      trace_overrides={"events": events}, response_format=response_format)
+
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess_candidate(first, second)
+    if review_late_selection:
+        assert assess_candidate(second, first).status == "supported"
+    else:
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_candidate(second, first)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize(("container", "id_field", "inner_stage"), [
     ("result", "candidate_ids", {}), ("output", "candidate_id", {}), ("response", "candidate_ids", {}),
     ("result", "candidate_ids", {"kind": "response"}),

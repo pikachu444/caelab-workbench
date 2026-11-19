@@ -1449,7 +1449,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             if has_quotes or record_ids is not None:
                 if has_quotes:
                     has_review_quotes = True
-                    review_superseded_quotes = True
+                    if record_quotes or record_checks:
+                        review_superseded_quotes = True
                     review_quotes = record_quotes
                     review_quotes_ancestors = ancestors
                 elif id(record) not in review_quotes_ancestors:
@@ -1473,6 +1474,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
         elif has_quotes and phase not in {"search", "detail"}:
+            if review_superseded_quotes:
+                trace_quotes.clear()
+                trace_checks.clear()
+                review_superseded_quotes = False
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
