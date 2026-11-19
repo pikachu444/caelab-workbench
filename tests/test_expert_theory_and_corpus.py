@@ -1531,6 +1531,42 @@ def test_d09_nested_final_response_is_independent_of_dict_order(assessed_retriev
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", [None, "events", "steps"], ids=["no-history", "events", "steps"])
+@pytest.mark.parametrize("interim_evidence", ["checks-and-ids", "ids-only", "checks-only"])
+def test_d09_completion_sibling_response_supersedes_interim_assessment(
+    assessed_retrieval, response_format, history_field, interim_evidence,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+    first_quote, second_quote = (
+        {"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (first, second)
+    )
+    interim = {}
+    if interim_evidence != "checks-only":
+        interim["candidate_ids"] = [second["citation"]]
+    if interim_evidence != "ids-only":
+        interim["checks"] = [
+            {"requirement_id": topic.requirement_id, "candidate_ids": [second["citation"]], "relation": "satisfied",
+             "quoted_spans": [second_quote], "reason": "interim review"},
+        ]
+    completion = {
+        "stage": "retrieval_completion",
+        "assessment": interim,
+        "response": {"candidate_ids": [first["citation"]], "citations": [first_quote]},
+    }
+    if history_field is not None:
+        completion[history_field] = [{"stage": "prepare_query"}, {"stage": "retrieval_completion"}]
+    trace = {"events": [completion]}
+
+    assert assess(first, companion=second, include_good=True, question_plan=plan,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, include_good=True, question_plan=plan, trace_overrides=trace, response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("id_field", ["candidate_ids", "candidate_id"])
 def test_d09_final_review_supersedes_interim_candidate_ids(assessed_retrieval, response_format, id_field):
     assess, candidate = assessed_retrieval

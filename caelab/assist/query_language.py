@@ -1195,10 +1195,12 @@ _TRACE_RESPONSE_FIELDS = ("result", "output", "assessment", "decision", "respons
 _RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAGES - {"supported"}
 
 
-def _trace_records(value, phase=None, ancestors=frozenset(), report_of=frozenset(), *, root=False):
-    if isinstance(value, list):
+def _trace_records(
+    value, phase=None, ancestors=frozenset(), history_ancestors=frozenset(), report_of=frozenset(), *, root=False,
+):
+    if isinstance(value, (list, tuple)):
         for item in value:
-            yield from _trace_records(item, phase, ancestors, report_of)
+            yield from _trace_records(item, phase, ancestors, history_ancestors, report_of)
     elif isinstance(value, Mapping):
         if not root and phase not in {"search", "detail", "selection"}:
             stage = _retrieval_stage(value)
@@ -1216,13 +1218,15 @@ def _trace_records(value, phase=None, ancestors=frozenset(), report_of=frozenset
             *(key for key in _TRACE_RESPONSE_FIELDS if key in value),
         )
         has_history = any(key in value for key in _TRACE_HISTORY_FIELDS)
-        scope_ids = report_of | {id(value)}
-        child_ancestors = ancestors | {id(value)}
+        value_id = id(value)
+        child_ancestors = ancestors | {value_id}
         for key in fields:
             child_phase = phase
-            child_report_of = scope_ids if has_history and key in _TRACE_RESPONSE_FIELDS else report_of
+            child_history = history_ancestors
+            child_report_of = report_of
             if key in _TRACE_HISTORY_FIELDS:
                 child_phase = None
+                child_history = history_ancestors | {value_id}
                 child_report_of = frozenset()
             elif key in _EVIDENCE_FIELDS:
                 child_phase = "detail"
@@ -1230,8 +1234,10 @@ def _trace_records(value, phase=None, ancestors=frozenset(), report_of=frozenset
                 child_phase = "search"
             elif phase is None and key in _FINAL_REVIEW_STAGES:
                 child_phase = "review"
-            yield from _trace_records(value[key], child_phase, child_ancestors, child_report_of)
-        yield value, "review" if root else phase, ancestors, scope_ids
+            if has_history and key in _TRACE_RESPONSE_FIELDS:
+                child_report_of = report_of | {value_id}
+            yield from _trace_records(value[key], child_phase, child_ancestors, child_history, child_report_of)
+        yield value, "review" if root else phase, ancestors, history_ancestors, report_of
 
 
 def _validate_trace_sequence(events, has_stage_events):
@@ -1293,10 +1299,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     if trace_identity != identity:
         raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
     trace_records = list(_trace_records(trace, root=True))
-    if any(record[key] != identity[key] for record, _, _, _ in trace_records
+    if any(record[key] != identity[key] for record, _, _, _, _ in trace_records
            for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256") if key in record):
         raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
-    trace_blocks_support = any(_trace_blocks_support(record) for record, _, _, _ in trace_records)
+    trace_blocks_support = any(_trace_blocks_support(record) for record, _, _, _, _ in trace_records)
     if not isinstance(payload, Mapping):
         raise ValueError("Retrieval assessment fields are missing or unexpected")
     raw_keys = {"type", "checks", "out_of_scope", "limitations"}
@@ -1391,10 +1397,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_checks = []
     review_checks = []
     review_checks_ancestors = frozenset()
+    review_checks_history = frozenset()
     review_quotes_ancestors = frozenset()
+    review_quotes_history = frozenset()
     review_candidate_ids = None
     review_candidate_ancestors = frozenset()
-    for record, phase, ancestors, scope_ids in trace_records:
+    review_candidate_history = frozenset()
+    for record, phase, ancestors, history_ancestors, report_of in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
             _validate_trace_sequence(nested, "stage_events" in record)
@@ -1447,9 +1456,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 record_checks.extend(recorded_checks.items())
                 record_quotes.update(recorded_spans)
         has_quotes = bool(recorded_citations or record_checks)
-        encloses_quotes = bool(scope_ids & review_quotes_ancestors)
-        encloses_checks = bool(scope_ids & review_checks_ancestors)
-        encloses_candidates = bool(scope_ids & review_candidate_ancestors)
+        record_id = id(record)
+        encloses_quotes = record_id in review_quotes_ancestors or bool(report_of & review_quotes_history)
+        encloses_checks = record_id in review_checks_ancestors or bool(report_of & review_checks_history)
+        encloses_candidates = record_id in review_candidate_ancestors or bool(report_of & review_candidate_history)
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
@@ -1464,16 +1474,20 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_superseded_quotes = True
                     review_quotes = record_quotes
                     review_quotes_ancestors = ancestors
+                    review_quotes_history = history_ancestors
                 elif not encloses_quotes:
                     has_review_quotes = False
                     review_quotes = set()
                     review_quotes_ancestors = frozenset()
+                    review_quotes_history = frozenset()
                 if record_checks:
                     review_checks = record_checks
                     review_checks_ancestors = ancestors
+                    review_checks_history = history_ancestors
                 elif not encloses_checks:
                     review_checks = []
                     review_checks_ancestors = frozenset()
+                    review_checks_history = frozenset()
                 if record_ids is not None:
                     review_candidate_ids = (
                         review_candidate_ids & record_ids
@@ -1481,9 +1495,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         else record_ids
                     )
                     review_candidate_ancestors = ancestors
+                    review_candidate_history = history_ancestors
                 elif not encloses_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
+                    review_candidate_history = frozenset()
         elif has_quotes and effective_phase not in {"search", "detail"}:
             if (effective_phase == "selection" and (record_quotes or record_checks)
                     and (review_superseded_quotes or has_review_quotes or review_candidate_ids is not None)):
@@ -1493,10 +1509,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 review_superseded_quotes = False
                 review_quotes = set()
                 review_quotes_ancestors = frozenset()
+                review_quotes_history = frozenset()
                 review_checks = []
                 review_checks_ancestors = frozenset()
+                review_checks_history = frozenset()
                 review_candidate_ids = None
                 review_candidate_ancestors = frozenset()
+                review_candidate_history = frozenset()
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
