@@ -195,10 +195,13 @@ def _selection_payload(directory, descriptor, check):
     relative = descriptor.get("path")
     path = artifact_path(directory, relative)
     fmt = descriptor.get("format_id")
-    fmt = fmt.lower() if isinstance(fmt, str) else None
+    if "format_id" in descriptor:
+        if not isinstance(fmt, str) or not fmt.strip():
+            raise ResultError("SCHEMA_MISMATCH", "invalid selection payload format_id")
+        fmt = fmt.lower()
     suffix = path.suffix.lower()
     json_formats = {"json", "caelab.selection.v1"}
-    npy_formats = {"npy", "numpy.npy.v2"}
+    npy_formats = {"npy", "npy-v2", "numpy.npy.v2"}
     if fmt is not None and fmt not in json_formats | npy_formats:
         raise ResultError("SCHEMA_MISMATCH", "selection payload must be JSON or NPY")
     if (suffix == ".json" and (fmt is None or fmt in json_formats)) or (not suffix and fmt in json_formats):
@@ -492,7 +495,7 @@ def read_result(store: RunStore, ref: ResultRefV1, *, check_cancelled=None, live
              "requested_quantity_ref_sha256": requested_hash, "base_ref_sha256": base_hash,
              "requested_ref_sha256": requested_hash}
     if original_reader:
-        audit.update(reader_code_sha256=active_reader, recorded_reader_code_sha256=expected_reader or active_reader)
+        audit.update(reader_code_sha256=active_reader, recorded_reader_code_sha256=expected_reader)
     eroded = ()
     if dataset.dataset_kind == "history":
         if profile != "OC-TH4-1" or op != "curve_extract" or ref.selection:

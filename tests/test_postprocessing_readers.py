@@ -1070,7 +1070,8 @@ def test_shell_deck_rejects_negative_nip_other_than_global_integration_switch(tm
         plan_conversion(store, ROOT_ID, "OC-ANIM-1", sys.executable, ["A001"], {"allow_custom_executable": True})
 
 
-def test_history_snapshot_excludes_inactive_includes_in_new_and_retained_archives(tmp_path):
+@pytest.mark.parametrize("engine_end", [b"/END", b"/END/ENGINE"])
+def test_history_snapshot_excludes_inactive_includes_in_new_and_retained_archives(tmp_path, engine_end):
     from caelab.native.input_snapshot import snapshot_radioss_input
 
     store, source = _run(tmp_path, {"caseT01": b"fixture", "caseT01_TITLES": TITLES})
@@ -1078,17 +1079,19 @@ def test_history_snapshot_excludes_inactive_includes_in_new_and_retained_archive
     inputs.mkdir()
     starter = inputs / "case_0000.rad"
     mesh, history = _th_deck("BRIC", ("SX",), "hex").split(b"/TH/", 1)
-    starter.write_bytes(b"#include active.inc\n" + mesh + b" /eNd   $ finished\n#include stale-root.inc\n")
-    (inputs / "case_0001.rad").write_bytes(b"/RUN/case/1\n/END\n")
-    (inputs / "active.inc").write_bytes(b"/TH/" + history.removesuffix(b"/END\n")
-                                       + b"#enddata\n#include stale-nested.inc\n")
+    starter.write_bytes(b"#include ./subs/./active.inc\n" + mesh + b" /eNd   $ finished\n#include stale-root.inc\n")
+    (inputs / "case_0001.rad").write_bytes(
+        b"/RUN/case/1\n" + engine_end + b"\n/ALE/MAT/1\n#include stale-engine.inc\n")
+    (inputs / "subs").mkdir()
+    (inputs / "subs/active.inc").write_bytes(b"/TH/" + history.removesuffix(b"/END\n")
+                                            + b"#enddata\n#include stale-nested.inc\n")
     snapshot = snapshot_radioss_input(starter, source)
-    assert {item["execution_path"] for item in snapshot["files"]} == {"case_0000.rad", "case_0001.rad", "active.inc"}
+    assert {item["execution_path"] for item in snapshot["files"]} == {"case_0000.rad", "case_0001.rad", "subs/active.inc"}
     sidecar = source / "input/snapshot.json"
     opts = {"allow_custom_executable": True}
     for retained in (False, True):
         if retained:
-            for name in ("stale-root.inc", "stale-nested.inc"):
+            for name in ("stale-root.inc", "stale-nested.inc", "stale-engine.inc"):
                 raw = b"/EULER/MAT/1\n"
                 (source / name).write_bytes(raw)
                 sha = hashlib.sha256(raw).hexdigest()
@@ -1097,6 +1100,16 @@ def test_history_snapshot_excludes_inactive_includes_in_new_and_retained_archive
         atomic_json(sidecar, snapshot)
         plan = plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options=opts)
         assert plan["options"]["solid_formulation"] == {"101": "hex8_1pt"}
+
+
+@pytest.mark.parametrize("include", ["../outside.inc", "subs/../active.inc", "/active.inc",
+                                     "C:/active.inc", r"subs\active.inc"])
+def test_archived_rad_include_rejects_unsafe_path_before_lookup(tmp_path, include):
+    store, source = _run(tmp_path, {"caseT01": b"fixture", "caseT01_TITLES": TITLES})
+    deck = f"#include {include}\n".encode() + _th_deck("BRIC", ("SX",), "hex")
+    _snapshot_sidecar(source, deck, tmp_path / "working.rad")
+    with pytest.raises(ResultError, match="PATH_ESCAPE"):
+        plan_conversion(store, ROOT_ID, "OC-TH4-1", sys.executable, options={"allow_custom_executable": True})
 
 
 @pytest.mark.parametrize(("requested", "plastic"), [(5, 5), (0, 3)])
@@ -1363,6 +1376,24 @@ def test_save_as_rejects_orphaned_and_incomplete_terminal_operations(tmp_path, s
         assert (folder / "dataset.json.orphaned").is_file()
 
 
+@pytest.mark.parametrize("extra_startup_files", [(), ("operation.lock", "operation.json.part")])
+def test_save_as_recovers_interrupted_creation_of_initial_receipt(tmp_path, manager, extra_startup_files):
+    store, _ = _run(tmp_path, {})
+    op_id = "f" * 32
+    folder = operation_dir(store, ROOT_ID, op_id)
+    folder.mkdir(parents=True)
+    leftover = folder / "operation.json.part.a1b2c3.tmp"
+    leftover.write_bytes(b'{"state":')
+    for name in extra_startup_files:
+        (folder / name).touch()
+    assert operation_snapshot(manager, store, ROOT_ID, op_id) is None
+    assert leftover.exists()
+    saved = tmp_path / "saved"
+    store.copy_to(saved)
+    assert not folder.exists()
+    assert not operation_dir(RunStore(saved), ROOT_ID, op_id).exists()
+
+
 def test_completed_receipt_accepts_top_level_or_result_manifest_reference(tmp_path, manager):
     store, _, plan = _fixture_animation(tmp_path)
     receipt = _wait(manager, store, submit_conversion(manager, store, plan))
@@ -1455,8 +1486,9 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
         assert resolve_result_ref(store, quantity_ref)["availability"] == "available"
     numeric = read_result(RunStore(saved), historical_ref)
     assert numeric.values == (3,)
-    expected_reader = converters.reader_code_sha256("OC-ANIM-1") if canonical else legacy_reader
+    expected_reader = None if canonical else legacy_reader
     assert numeric.operator_provenance["recorded_reader_code_sha256"] == expected_reader
+    assert numeric.operator_provenance["reader_code_sha256"] == converters.reader_code_sha256("OC-ANIM-1")
     operation_payload = folder / "selections" / "set1" / "payload.json"
     root_payload = store.root / "selections" / "set1" / "payload.json"
     atomic_json(operation_payload, {"ids": [11]})
@@ -1487,6 +1519,13 @@ def test_legacy_completed_bundle_reopens_and_survives_save_as(tmp_path, manager,
     numpy_sha = write_safe_npy_v2(numpy_path, np.array([11]), root=folder)
     numpy_ref = {"path": numpy_path.relative_to(folder).as_posix(), "sha256": numpy_sha, "format_id": "numpy.npy.v2"}
     assert read_result(store, replace(historical_ref, selection={"artifact_ref": numpy_ref})).values == (3,)
+    numpy_file = numpy_path.with_suffix(".npy")
+    numpy_path.replace(numpy_file)
+    old_numpy_ref = converters.artifact(folder, numpy_file, "selection", "npy-v2", converters.POST_PRODUCER).to_dict()
+    assert read_result(store, replace(historical_ref, selection={"artifact_ref": old_numpy_ref})).values == (3,)
+    for format_id in (None, 123, "", "  "):
+        with pytest.raises(ResultError, match="SCHEMA_MISMATCH.*invalid selection payload format_id"):
+            read_result(store, replace(historical_ref, selection={"artifact_ref": {**full, "format_id": format_id}}))
     for format_id in ("vtu", "numpy.npy.v2"):
         with pytest.raises(ResultError, match="SCHEMA_MISMATCH"):
             read_result(store, replace(historical_ref, selection={"artifact_ref": {**full, "format_id": format_id}}))

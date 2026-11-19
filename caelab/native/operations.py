@@ -35,6 +35,10 @@ _ORIGINAL_HISTORY_READERS = {
 }
 
 
+def _is_startup_temp_file(name: str) -> bool:
+    return name in _OPERATION_STARTUP_FILES or (name.startswith("operation.json.part.") and name.endswith(".tmp"))
+
+
 def _original_reader(receipt):
     adapter = receipt.get("adapter", {})
     if not isinstance(adapter, Mapping):
@@ -280,7 +284,7 @@ def _read_receipt(folder, source_run_id, operation_id):
         data = read_object(artifact_path(folder, "operation.json"))
     except FileNotFoundError:
         try:
-            has_artifacts = any(path.name not in _OPERATION_STARTUP_FILES for path in folder.iterdir())
+            has_artifacts = any(not _is_startup_temp_file(path.name) for path in folder.iterdir())
         except FileNotFoundError:
             return None
         if has_artifacts:
@@ -372,9 +376,11 @@ def _operation_receipts(store, *, strict=False, recover_orphans=False, reject_co
             if receipt is not None:
                 yield folder, receipt
             elif recover_orphans:
-                for name in _OPERATION_STARTUP_FILES:
-                    with suppress(OSError):
-                        artifact_path(folder, name).unlink(missing_ok=True)
+                with suppress(OSError):
+                    for candidate in folder.iterdir():
+                        if _is_startup_temp_file(candidate.name):
+                            with suppress(OSError):
+                                artifact_path(folder, candidate.name).unlink(missing_ok=True)
                 with suppress(OSError):
                     folder.rmdir()
 

@@ -12,12 +12,12 @@ import re
 import shutil
 import zipfile
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..artifact_refs import ArtifactOwner, ArtifactRefV1, DatasetManifestV1, canonical_json_bytes, canonical_sha256
 from ..result_readers import ResultError, no_checkpoint
 from ..result_readers import opencourant_history, vtk_fields
-from .input_snapshot import _rad_includes
+from .input_snapshot import _RadIncludePathError, _rad_includes
 from .operations import (INPUT_SNAPSHOT, POST_PRODUCER, artifact, artifact_path, read_object, sha256_file,
                          snapshot_deck_paths, source_fingerprint, source_record, verify_artifact,
                          verify_original_decks, with_input_snapshot)
@@ -232,8 +232,8 @@ def _history_paths(registered):
 
 
 def _rad_cards(paths, check):
-    for index, path in enumerate(paths):
-        included = index > 0
+    for index, deck in enumerate(paths):
+        path, included = deck if isinstance(deck, tuple) else (deck, index > 0)
         card = None
         rows = []
         with path.open(encoding="utf-8-sig") as stream:
@@ -242,7 +242,7 @@ def _rad_cards(paths, check):
                 text = line.lstrip()
                 if included and re.match(r"#enddata\b", text, re.I):
                     break
-                if not included and re.match(r"/end(?:\s|$)", text, re.I):
+                if not included and re.match(r"/end(?:/engine)?(?:\s|$)", text, re.I):
                     break
                 if text.startswith("//") and text.upper().startswith("//SUBMODEL"):
                     raise ResultError("SOURCE_MISMATCH", "transformed RAD submodels are unsupported")
@@ -275,12 +275,15 @@ def _active_rad_paths(root, snapshot, paths, check):
     engine = snapshot.get("engine_input")
     # Older snapshots can be flat lists with no recorded include graph.
     if not starter and not engine and not re.search(br"(?im)^[ \t]*#include\b", paths[0].read_bytes()):
-        return paths
+        return tuple((path, index > 0) for index, path in enumerate(paths))
 
     active = {}
     archived = set(paths)
+    roots = [artifact_path(root, starter) if starter else paths[0]]
+    if engine:
+        roots.append(artifact_path(root, engine))
 
-    def visit(path, *, included, ancestors=()):
+    def visit(path, *, ancestors=()):
         check()
         if path in ancestors or len(ancestors) > 9:
             raise ValueError(f"invalid RAD include nesting at {path.name}")
@@ -288,14 +291,14 @@ def _active_rad_paths(root, snapshot, paths, check):
             return
         if path not in archived:
             raise ValueError(f"active RAD deck or include is not archived: {path.name}")
-        active[path] = None
+        included = path not in roots
+        active[path] = included
         for name, _ in _rad_includes(path.read_bytes(), path, included=included):
-            visit(artifact_path(root, name), included=True, ancestors=(*ancestors, path))
+            visit(artifact_path(root, PurePosixPath(name).as_posix()), ancestors=(*ancestors, path))
 
-    visit(artifact_path(root, starter) if starter else paths[0], included=False)
-    if engine:
-        visit(artifact_path(root, engine), included=False)
-    return tuple(active)
+    for path in roots:
+        visit(path)
+    return tuple(active.items())
 
 
 def _rad_snapshot_metadata(root, receipt, check, *, animation):
@@ -420,6 +423,8 @@ def _rad_snapshot_metadata(root, receipt, check, *, animation):
             mesh = {"node_coordinates": nodes, "elements": elements, "shell_ids": sorted(map(int, shells)),
                     "solid_ids": sorted(map(int, solids)), "shell_nip_by_id": shell_nip_by_id}
         return mesh, history, formulations
+    except _RadIncludePathError as exc:
+        raise ResultError("PATH_ESCAPE", str(exc)) from exc
     except (OSError, ValueError, IndexError, KeyError) as exc:
         if isinstance(exc, ResultError):
             raise
