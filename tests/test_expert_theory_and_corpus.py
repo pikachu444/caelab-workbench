@@ -1571,7 +1571,65 @@ def test_d09_empty_summary_applies_after_repeated_selection(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-@pytest.mark.parametrize("review_field", ["candidate_ids", "checks", "checks-after-repeated-selection"])
+@pytest.mark.parametrize("wrapper_stage", ["retrieval", "candidate_selection", "retrieval_completion"])
+@pytest.mark.parametrize("result_citations", [False, True], ids=["history-only", "with-citations"])
+@pytest.mark.parametrize("split_review", [False, True], ids=["single-candidate", "split-requirements"])
+def test_d09_short_selection_replay_preserves_review_checks(
+    assessed_retrieval, response_format, history_field, wrapper_stage, result_citations, split_review,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    question = "Explain Drucker-Prager yield"
+    if split_review:
+        question += " in version 2.23"
+    plan = query_language.prepare_query(question)
+    requirements = query_language.extract_query_requirements(plan)
+    assert [req.facet for req in requirements] == (["topic", "edition"] if split_review else ["topic"])
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
+              for item in (first, second)]
+
+    def checks(spans):
+        return [{"requirement_id": req.requirement_id, "candidate_ids": [span["candidate_id"]],
+                 "relation": "satisfied", "quoted_spans": [span], "reason": "recorded review"}
+                for req, span in zip(requirements, spans, strict=True)]
+
+    reviewed = quotes if split_review else quotes[:1]
+    evidence = {"citations": reviewed, "checks": checks(reviewed)}
+    prepare = {"stage": "prepare_query"}
+    selection = {"stage": "candidate_selection", "candidate_ids": [q["candidate_id"] for q in quotes], **evidence}
+    complete = {"stage": "retrieval_completion"}
+    replay = [prepare, selection]
+    if history_field == "events":
+        replay.append(complete)
+    result = {history_field: replay}
+    if result_citations:
+        result["citations"] = reviewed
+    trace = {"events": [prepare, {
+        "stage": wrapper_stage,
+        history_field: [prepare, selection, {"stage": "assessment", **evidence}],
+        "result": result,
+        "output": {"citations": quotes},
+    }, complete]}
+    options = {"include_good": True, "question_plan": plan, "trace_overrides": trace,
+               "response_format": response_format}
+
+    if split_review:
+        overrides = {"citations": quotes} if response_format is None else {}
+        assert assess(first, companion=second, host_overrides={**overrides, "checks": checks(quotes)},
+                      **options).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, host_overrides={**overrides, "checks": checks(reversed(quotes))}, **options)
+    else:
+        assert assess(first, companion=second, **options).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(second, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("review_field", [
+    "candidate_ids", "checks", "checks-after-repeated-selection", "checks-after-short-replay",
+])
 def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
     assessed_retrieval, response_format, history_field, review_field,
 ):
@@ -1595,9 +1653,14 @@ def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
     history = [{"stage": "prepare_query"}, {"stage": "assessment", **history_review}]
     result = {"candidate_ids": ids[:1]}
     stage = "retrieval"
-    if review_field == "checks-after-repeated-selection":
+    if review_field in {"checks-after-repeated-selection", "checks-after-short-replay"}:
         history.insert(1, {"stage": "candidate_selection", "citations": quotes[:1]})
-        result[history_field] = history
+        if review_field == "checks-after-short-replay":
+            result[history_field] = history[:-1]
+            if history_field == "events":
+                result[history_field].append({"stage": "retrieval_completion"})
+        else:
+            result[history_field] = history
         stage = "retrieval_completion"
     trace = {"events": [{
         "stage": stage,
