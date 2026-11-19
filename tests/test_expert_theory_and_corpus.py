@@ -2110,7 +2110,9 @@ def test_d09_replayed_review_validates_ordered_evidence(assessed_retrieval, resp
     "repeated-wrapper-id", "shortened-review-history", "fresh-preparation", "fresh-nested-retrieval",
     "replayed-anonymous-selection", "missing-history-field", "duplicate-history-field", "swapped-history-fields",
     "shortened-nested-review", "altered-preparation-history", "preparation-result", "preparation-retrieval",
-    "nested-retrieval-citations",
+    "nested-retrieval-citations", "selection-only-replay", "selection-result-replay", "changed-selection-replay",
+    "deleted-selection-replay", "relocated-review-replay", "altered-completion-history", "altered-completion-response",
+    "preparation-completion", "direct-result-search", "preparation-with-search", "conflicting-constrained-checks",
 ])
 def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2152,6 +2154,50 @@ def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, 
     search_2 = {"stage": "search", "event_id": "search-2"}
     done_2 = {"stage": "retrieval_completion", "event_id": "done-2"}
     selection = {"stage": "candidate_selection", "event_id": "selection-2", "candidate_ids": ids}
+    if layout == "conflicting-constrained-checks":
+        wrapper[history_field] = [prepare, review_a, done]
+        assert_only(first, second)
+        quotes = review_a["citations"] + review_b["citations"]
+        wrapper["output"] = {"candidate_ids": ids, "citations": quotes, "checks": [
+            dict(review_a["checks"][0], candidate_ids=ids, quoted_spans=quotes),
+        ]}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        return
+
+    if layout in {"selection-only-replay", "selection-result-replay", "changed-selection-replay",
+                  "deleted-selection-replay", "relocated-review-replay"}:
+        rc1 = {"stage": "retrieval_completion", "event_id": "rc1"}
+        if layout == "relocated-review-replay":
+            selection_b = {"stage": "candidate_selection", **review(second), "candidate_ids": ids}
+            rc1.update(events=[review_a], steps=[selection_b, done])
+            changed = dict(rc1, events=[done], steps=[selection_b, review_a])
+        else:
+            selection_a = {"stage": "candidate_selection", **review(first), "candidate_ids": ids}
+            if layout == "selection-result-replay":
+                selection_a = {"stage": "candidate_selection", "result": {**review(first), "candidate_ids": ids}}
+            final = done if layout.startswith("selection-") else review_a
+            rc1[history_field] = [{"stage": "prepare_query"}, {"stage": "search"}, selection_a, final]
+            if layout == "changed-selection-replay":
+                changed_selection = {"stage": "candidate_selection", **review(second), "candidate_ids": ids}
+                changed = {**rc1, history_field: [*rc1[history_field][:2], changed_selection, final]}
+            if layout == "deleted-selection-replay":
+                changed = {**rc1, history_field: [*rc1[history_field][:2], final]}
+        wrapper[history_field] = [prepare, rc1, done]
+        if layout == "relocated-review-replay":
+            assert_only(second, first)
+        else:
+            assert_only(first, second)
+        wrapper["result"] = {history_field: [search_2, selection, review_b, done_2]}
+        assert_only(second, first)
+        wrapper["output"] = {history_field: [rc1]}
+        assert_only(second, first)
+        if layout in {"changed-selection-replay", "deleted-selection-replay", "relocated-review-replay"}:
+            wrapper["output"][history_field][0] = changed
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(second, companion=first, **options)
+        return
+
     if layout == "replayed-anonymous-selection":
         rc1 = {"stage": "retrieval_completion", "event_id": "rc1", history_field: [
             {"stage": "prepare_query"}, {"stage": "search"},
@@ -2207,6 +2253,44 @@ def test_d09_review_replay_and_fresh_round(assessed_retrieval, response_format, 
     wrapper[history_field] = [prepare, search_1, review_a, done]
     prepare_2 = {"stage": "prepare_query", "event_id": "prepare-2"}
     new_history = [search_2, selection, dict(review_b, event_id="review-2"), done_2]
+    if layout in {"altered-completion-history", "altered-completion-response"}:
+        def completion(candidate):
+            recorded = review(candidate)
+            if layout == "altered-completion-response":
+                recorded = {"response": recorded}
+            return {"stage": "retrieval_completion", history_field: [
+                {"stage": "prepare_query"}, {"stage": "search"}, {"stage": "retrieval_completion"},
+            ], **recorded}
+
+        previous = completion(first)
+        anonymous_done = {"stage": "retrieval_completion"}
+        prior = [prepare, {"stage": "search"}, previous, anonymous_done]
+        wrapper[history_field] = prior
+        fresh = {"stage": "retrieval_completion", history_field: [*prior, *new_history]}
+        wrapper["result"] = {history_field: [prepare, previous, anonymous_done, fresh]}
+        assert_only(second, first)
+        fresh[history_field][2] = completion(second)
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(second, companion=first, **options)
+        return
+
+    if layout in {"preparation-completion", "direct-result-search", "preparation-with-search"}:
+        if layout == "preparation-completion":
+            new_history.insert(0, {"stage": "retrieval_completion", history_field: [
+                {"stage": "retrieval_start", "event_id": "start-2"}, {"stage": "retrieval_completion"},
+            ]})
+        if layout == "direct-result-search":
+            new_history[0] = {"stage": "retrieval", "result": search_2}
+        if layout == "preparation-with-search":
+            prepare_2[history_field] = [{"stage": "retrieval_start"}, search_2, {"stage": "retrieval_completion"}]
+            new_history = new_history[1:]
+        fresh = {"stage": "retrieval_completion", history_field: [prepare_2, *new_history]}
+        wrapper["result"] = {history_field: [*wrapper[history_field], fresh]}
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [prepare, review_a, done, fresh]}
+        assert_only(second, first)
+        return
+
     if layout == "altered-preparation-history":
         anonymous_prepare = {"stage": "prepare_query", history_field: [review_a]}
         anonymous_done = {"stage": "retrieval_completion"}
