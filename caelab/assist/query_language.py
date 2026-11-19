@@ -228,7 +228,7 @@ _ENTITY_PREFIX = re.compile(
     r"problems?|examples?|items?|articles?|appendix|appendices|절점|요소|파트|단계|페이지|절|장|항|표|그림|식|예제)"
     r"\s*(?:[.#:]\s*)?$", re.I,
 )
-_ENTITY_CONNECTOR = re.compile(r"\s*(?:(?:,\s*)?(?:and|or|to|through|&|및|와|과)|,|/|-)\s*", re.I)
+_ENTITY_CONNECTOR = re.compile(r"\s*(?:(?:,\s*)?(?:and|or|to|through|vs\.?|versus|&|및|와|과)|,|/|-)\s*", re.I)
 _UNIT_TOKEN = r"(?:MPa|GPa|kPa|Pa|mm|cm|km|mg|m|kg|kN|N|ms|s|Hz|rad/s|degC|K|J/mol|kJ/mol|bar|mbar|psi|ksi|atm|rpm|deg|rad|MN|mJ|kJ|W|kW|C)"
 _EDITION_UNIT = re.compile(r"\s*(?:" + _UNIT_TOKEN + r"|%|°[CF])(?![0-9A-Za-z_])", re.I)
 _VERSION_MARKER = re.compile(rf"{_VERSION_LABEL}\s*[:=]?\s*$", re.I)
@@ -1181,12 +1181,16 @@ def _validate_quote_provenance(value, provenance, span=None, *, require_page=Fal
 _SELECTION_STAGES = {"candidate_selection", "select_candidates", "candidates_selected"}
 _REVIEW_STAGES = {"assessment", "retrieval_assessment", "decision", "retrieval_decision",
                   "response", "retrieval_response", "requirement_checks"}
-_FINAL_REVIEW_STAGES = _REVIEW_STAGES | {"retrieval_completion", "completion", "terminal"}
-_CANDIDATE_SUBSET_STAGES = _SELECTION_STAGES | _REVIEW_STAGES
+_FINAL_REVIEW_STAGES = _REVIEW_STAGES | {
+    "retrieval_completion", "completion", "complete", "completed", "finalize", "terminal",
+}
+_CANDIDATE_SUBSET_STAGES = _SELECTION_STAGES | _FINAL_REVIEW_STAGES
 _PREPARATION_STAGES = {"prepare_query", "query_plan", "retrieval_start"}
 _INITIAL_STAGES = _PREPARATION_STAGES | {"retrieval"}
 _SEARCH_STAGES = _PREPARATION_STAGES | {"search", "embed_query", "rank_candidates", "rerank"}
 _EVIDENCE_FIELDS = {"checks", "requirement_checks", "citations", "quoted_spans"}
+_TRACE_HISTORY_FIELDS = ("stage_events", "events", "steps")
+_TRACE_RESPONSE_FIELDS = ("result", "output", "assessment", "decision", "response")
 _RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAGES - {"supported"}
 
 
@@ -1194,36 +1198,34 @@ def _has_trace_stage(record, stages):
     return any(isinstance(name, str) and name in stages for name in (record.get("stage"), record.get("kind")))
 
 
-def _trace_records(value, phase=None, selects_candidates=False, *, root=False):
+def _trace_records(value, phase=None, *, root=False):
     if isinstance(value, list):
         for item in value:
-            yield from _trace_records(item, phase, selects_candidates)
+            yield from _trace_records(item, phase)
     elif isinstance(value, Mapping):
-        if root:
-            # The root response and citations follow the event history regardless of JSON key order.
-            fields = [key for key in value if key not in {"events", "response"}]
-            fields.extend(key for key in ("events", "response") if key in value)
-        else:
-            fields = value
-            if phase not in {"search", "detail"}:
-                selects_candidates |= _has_trace_stage(value, _CANDIDATE_SUBSET_STAGES)
-                if _has_trace_stage(value, _SEARCH_STAGES):
-                    phase, selects_candidates = "search", False
-                elif _has_trace_stage(value, _FINAL_REVIEW_STAGES):
-                    phase = "review"
-                elif _has_trace_stage(value, _SELECTION_STAGES):
-                    phase = "selection"
+        if not root and phase not in {"search", "detail"}:
+            if _has_trace_stage(value, _SEARCH_STAGES):
+                phase = "search"
+            elif _has_trace_stage(value, _SELECTION_STAGES):
+                phase = "selection"
+            elif _has_trace_stage(value, _FINAL_REVIEW_STAGES):
+                phase = "review"
+        # A mapping's history precedes its reports regardless of JSON key order.
+        fields = (
+            *(key for key in _TRACE_HISTORY_FIELDS if key in value),
+            *sorted(set(value).difference(_TRACE_HISTORY_FIELDS, _TRACE_RESPONSE_FIELDS)),
+            *(key for key in _TRACE_RESPONSE_FIELDS if key in value),
+        )
         for key in fields:
             child_phase = phase
-            child_selects = selects_candidates
             if key in _EVIDENCE_FIELDS:
-                child_phase, child_selects = "detail", False
+                child_phase = "detail"
             elif key in _SEARCH_STAGES:
-                child_phase, child_selects = "search", False
-            elif phase in (None, "selection") and key in _FINAL_REVIEW_STAGES:
+                child_phase = "search"
+            elif phase is None and key in _FINAL_REVIEW_STAGES:
                 child_phase = "review"
-            yield from _trace_records(value[key], child_phase, child_selects)
-        yield value, "review" if root else phase, selects_candidates
+            yield from _trace_records(value[key], child_phase)
+        yield value, "review" if root else phase
 
 
 def _validate_trace_sequence(events, has_stage_events):
@@ -1284,10 +1286,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     if trace_identity != identity:
         raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
     trace_records = list(_trace_records(trace, root=True))
-    if any(record[key] != identity[key] for record, _, _ in trace_records
+    if any(record[key] != identity[key] for record, _ in trace_records
            for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256") if key in record):
         raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
-    trace_blocks_support = any(_trace_blocks_support(record) for record, _, _ in trace_records)
+    trace_blocks_support = any(_trace_blocks_support(record) for record, _ in trace_records)
     if not isinstance(payload, Mapping):
         raise ValueError("Retrieval assessment fields are missing or unexpected")
     raw_keys = {"type", "checks", "out_of_scope", "limitations"}
@@ -1380,7 +1382,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     has_review_quotes = False
     trace_checks = []
     review_checks = []
-    for record, phase, selects_candidates in trace_records:
+    review_candidate_ids = None
+    for record, phase in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
             _validate_trace_sequence(nested, "stage_events" in record)
@@ -1399,12 +1402,20 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 _trace_blocks_support({"stage": event})
                 for event in record["stage_events"] if isinstance(event, str)
             )
-        if "candidate_ids" in record:
-            record_ids = validate_candidate_ids(record["candidate_ids"])
-            if selects_candidates:
-                if record_ids and not cited_ids <= record_ids:
-                    raise ValueError("Retrieval assessment contradicts trace selection or review")
-                trace_blocks_support |= not record_ids
+        record_ids = validate_candidate_ids(record["candidate_ids"]) if "candidate_ids" in record else None
+        if "candidate_id" in record:
+            cid = record["candidate_id"]
+            singular_id = validate_candidate_ids([cid])
+            if record_ids is None:
+                record_ids = singular_id
+            if "start" in record or "end" in record:
+                quote({key: record[key] for key in allowed_quote_fields if key in record})
+            elif _QUOTATION_PROVENANCE.intersection(record):
+                _validate_quote_provenance(record, provenance[cid])
+        if phase == "selection" and record_ids is not None:
+            if record_ids and not cited_ids <= record_ids:
+                raise ValueError("Retrieval assessment contradicts trace selection or review")
+            trace_blocks_support |= not record_ids
         if "selected_chunk_ids" in record:
             selected = validate_candidate_ids(record["selected_chunk_ids"])
             if selected and not cited_ids <= selected:
@@ -1420,24 +1431,25 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     raise ValueError("Retrieval assessment trace must link every citation")
                 record_checks.extend(recorded_checks.items())
                 record_quotes.update(recorded_spans)
-        if (recorded_citations or record_checks) and phase not in {"search", "detail"}:
-            if phase == "review":
+        has_quotes = bool(recorded_citations or record_checks)
+        if phase == "review":
+            if record is trace and record_ids == all_candidate_ids:
+                record_ids = None
+            repeated_summary = (record is trace and has_review_quotes and not record_checks
+                                and record_quotes == review_quotes)
+            if has_quotes and not repeated_summary:
                 has_review_quotes = True
                 review_quotes, review_checks = record_quotes, record_checks
-            else:
-                has_recorded_quotes = True
-                trace_quotes.update(record_quotes)
-                trace_checks.extend(record_checks)
-        if "candidate_id" in record:
-            cid = record["candidate_id"]
-            singular_selection = validate_candidate_ids([cid])
-            if selects_candidates and "candidate_ids" not in record and not cited_ids <= singular_selection:
-                raise ValueError("Retrieval assessment contradicts trace selection or review")
-            if "start" in record or "end" in record:
-                quote({key: record[key] for key in allowed_quote_fields if key in record})
-            elif _QUOTATION_PROVENANCE.intersection(record):
-                _validate_quote_provenance(record, provenance[cid])
+                review_candidate_ids = record_ids
+            elif record_ids is not None:
+                review_candidate_ids = record_ids
+        elif has_quotes and phase not in {"search", "detail"}:
+            has_recorded_quotes = True
+            trace_quotes.update(record_quotes)
+            trace_checks.extend(record_checks)
 
+    if review_candidate_ids is not None and not cited_ids <= review_candidate_ids:
+        raise ValueError("Retrieval assessment contradicts trace selection or review")
     verified_quotes = review_quotes if has_review_quotes else trace_quotes
     if (has_review_quotes or has_recorded_quotes) and not checked_citations <= verified_quotes:
         raise ValueError("Retrieval assessment contradicts trace selection or review")
