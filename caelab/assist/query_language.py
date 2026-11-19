@@ -1397,12 +1397,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_checks = []
     review_checks = []
     review_checks_ancestors = frozenset()
-    review_checks_history = frozenset()
     review_quotes_ancestors = frozenset()
-    review_quotes_history = frozenset()
     review_candidate_ids = None
     review_candidate_ancestors = frozenset()
-    review_candidate_history = frozenset()
+    history_review_containers: set[int] = set()
     for record, phase, ancestors, history_ancestors, report_of in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
@@ -1457,9 +1455,15 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 record_quotes.update(recorded_spans)
         has_quotes = bool(recorded_citations or record_checks)
         record_id = id(record)
-        encloses_quotes = record_id in review_quotes_ancestors or bool(report_of & review_quotes_history)
-        encloses_checks = record_id in review_checks_ancestors or bool(report_of & review_checks_history)
-        encloses_candidates = record_id in review_candidate_ancestors or bool(report_of & review_candidate_history)
+        encloses_quotes = record_id in review_quotes_ancestors or bool(
+            report_of & review_quotes_ancestors & history_review_containers
+        )
+        encloses_checks = record_id in review_checks_ancestors or bool(
+            report_of & review_checks_ancestors & history_review_containers
+        )
+        encloses_candidates = record_id in review_candidate_ancestors or bool(
+            report_of & review_candidate_ancestors & history_review_containers
+        )
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
@@ -1468,26 +1472,23 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             if record is trace and record_ids == all_candidate_ids:
                 record_ids = None
             if has_quotes or record_ids is not None:
+                history_review_containers.update(history_ancestors)
                 if has_quotes:
                     has_review_quotes = True
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
                     review_quotes = record_quotes
                     review_quotes_ancestors = ancestors
-                    review_quotes_history = history_ancestors | (report_of & review_quotes_history)
                 elif not encloses_quotes:
                     has_review_quotes = False
                     review_quotes = set()
                     review_quotes_ancestors = frozenset()
-                    review_quotes_history = frozenset()
                 if record_checks:
                     review_checks = record_checks
                     review_checks_ancestors = ancestors
-                    review_checks_history = history_ancestors | (report_of & review_checks_history)
                 elif not encloses_checks:
                     review_checks = []
                     review_checks_ancestors = frozenset()
-                    review_checks_history = frozenset()
                 if record_ids is not None:
                     review_candidate_ids = (
                         review_candidate_ids & record_ids
@@ -1495,11 +1496,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         else record_ids
                     )
                     review_candidate_ancestors = ancestors
-                    review_candidate_history = history_ancestors | (report_of & review_candidate_history)
                 elif not encloses_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
-                    review_candidate_history = frozenset()
         elif has_quotes and effective_phase not in {"search", "detail"}:
             if (effective_phase == "selection" and (record_quotes or record_checks)
                     and (review_superseded_quotes or has_review_quotes or review_candidate_ids is not None)):
@@ -1509,13 +1508,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 review_superseded_quotes = False
                 review_quotes = set()
                 review_quotes_ancestors = frozenset()
-                review_quotes_history = frozenset()
                 review_checks = []
                 review_checks_ancestors = frozenset()
-                review_checks_history = frozenset()
                 review_candidate_ids = None
                 review_candidate_ancestors = frozenset()
-                review_candidate_history = frozenset()
+                history_review_containers.clear()
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)

@@ -1487,28 +1487,35 @@ def test_d09_review_wrappers_preserve_nested_candidate_ids(
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("wrapper_stage", ["retrieval", "candidate_selection"])
-@pytest.mark.parametrize(("has_citation", "repeated_report"), [
-    pytest.param(True, False, id="narrowed"),
-    pytest.param(False, False, id="empty"),
-    pytest.param(False, True, id="empty-after-repeated-report"),
+@pytest.mark.parametrize(("has_citation", "report_layout"), [
+    pytest.param(True, None, id="narrowed"),
+    pytest.param(False, None, id="empty"),
+    pytest.param(False, "citations", id="empty-after-repeated-report"),
+    pytest.param(False, "nested-history", id="empty-after-nested-history"),
+    pytest.param(False, "nested-history-and-citations", id="empty-after-nested-history-and-citations"),
 ])
 def test_d09_history_summary_can_narrow_review_citations(
-    assessed_retrieval, response_format, history_field, wrapper_stage, has_citation, repeated_report,
+    assessed_retrieval, response_format, history_field, wrapper_stage, has_citation, report_layout,
 ):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
     quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
               for item in (first, second)]
     ids = [span["candidate_id"] for span in quotes]
-    history_quotes = quotes[:1] if repeated_report else quotes
+    history_quotes = quotes[:1] if report_layout else quotes
     assessment = {"stage": "assessment", "citations": history_quotes}
-    if not repeated_report:
+    if not report_layout:
         assessment["candidate_ids"] = ids
     history = [{"stage": "prepare_query"}, assessment]
     summary = {"citations": quotes[:1] if has_citation else []}
     wrapper = {"stage": wrapper_stage, history_field: history}
-    if repeated_report:
-        wrapper.update(result={"citations": history_quotes}, output=summary)
+    if report_layout:
+        result = {}
+        if report_layout != "citations":
+            result[history_field] = history
+        if report_layout != "nested-history":
+            result["citations"] = history_quotes
+        wrapper.update(result=result, output=summary)
         if wrapper_stage == "candidate_selection":
             wrapper["candidate_ids"] = ids
     elif wrapper_stage == "retrieval":
@@ -1529,25 +1536,40 @@ def test_d09_history_summary_can_narrow_review_citations(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
-def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(assessed_retrieval, response_format, history_field):
+@pytest.mark.parametrize("review_field", ["candidate_ids", "checks"])
+def test_d09_sibling_history_reports_preserve_candidate_id_narrowing(
+    assessed_retrieval, response_format, history_field, review_field,
+):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
     quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])}
               for item in (first, second)]
     ids = [span["candidate_id"] for span in quotes]
+    if review_field == "checks":
+        plan = query_language.prepare_query("Explain Drucker-Prager yield")
+        [topic] = query_language.extract_query_requirements(plan)
+        history_review = {"checks": [
+            {"requirement_id": topic.requirement_id, "candidate_ids": ids, "relation": "satisfied",
+             "quoted_spans": quotes, "reason": "recorded review"},
+        ]}
+        output = {"citations": quotes}
+    else:
+        plan = query_language.prepare_query("GEOS v2.23 Drucker-Prager yield")
+        history_review = {"candidate_ids": ids, "citations": quotes}
+        output = {"candidate_ids": ids}
     trace = {"events": [{
         "stage": "retrieval",
         history_field: [
             {"stage": "prepare_query"},
-            {"stage": "assessment", "candidate_ids": ids, "citations": quotes},
+            {"stage": "assessment", **history_review},
         ],
         "result": {"candidate_ids": ids[:1]},
-        "output": {"candidate_ids": ids},
+        "output": output,
     }]}
-    assert assess(first, companion=second, include_good=True,
+    assert assess(first, companion=second, include_good=True, question_plan=plan,
                   trace_overrides=trace, response_format=response_format).status == "supported"
     with pytest.raises(ValueError, match="trace selection or review"):
-        assess(second, include_good=True, trace_overrides=trace, response_format=response_format)
+        assess(second, include_good=True, question_plan=plan, trace_overrides=trace, response_format=response_format)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
@@ -1575,10 +1597,16 @@ def test_d09_nested_final_response_is_independent_of_dict_order(assessed_retriev
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
-@pytest.mark.parametrize("history_field", [None, "events", "steps"], ids=["no-history", "events", "steps"])
+@pytest.mark.parametrize(("history_field", "nested_interim"), [
+    pytest.param(None, False, id="no-history"),
+    pytest.param("events", False, id="events"),
+    pytest.param("steps", False, id="steps"),
+    pytest.param("events", True, id="events-with-interim-history"),
+    pytest.param("steps", True, id="steps-with-interim-history"),
+])
 @pytest.mark.parametrize("interim_evidence", ["checks-and-ids", "ids-only", "checks-only"])
 def test_d09_completion_sibling_response_supersedes_interim_assessment(
-    assessed_retrieval, response_format, history_field, interim_evidence,
+    assessed_retrieval, response_format, history_field, interim_evidence, nested_interim,
 ):
     assess, first = assessed_retrieval
     second = dict(first, citation="geos-manual:chapter-2")
@@ -1595,6 +1623,8 @@ def test_d09_completion_sibling_response_supersedes_interim_assessment(
             {"requirement_id": topic.requirement_id, "candidate_ids": [second["citation"]], "relation": "satisfied",
              "quoted_spans": [second_quote], "reason": "interim review"},
         ]
+    if nested_interim:
+        interim["events"] = [{"stage": "assessment", **interim}]
     completion = {
         "stage": "retrieval_completion",
         "assessment": interim,
