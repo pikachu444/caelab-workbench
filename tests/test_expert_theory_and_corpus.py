@@ -1339,6 +1339,7 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
     "completion-reports-events", "completion-reports-steps", "root-summary-events", "root-summary-steps",
     "output-summary-events", "output-summary-steps", "output-completion-events", "output-completion-steps",
     "altered-round-replay-events", "altered-round-replay-steps",
+    "altered-output-replay-events", "altered-output-replay-steps",
 ])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
@@ -1422,6 +1423,24 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
             wrapper["result"] = {history_field: wrapper[history_field]}
         else:
             wrapper["output"] = summary
+    elif layout.startswith("altered-output-replay-"):
+        history_field = layout.rsplit("-", 1)[1]
+        earlier_history = [
+            {"stage": "prepare_query", "event_id": "prepare-1"},
+            {"stage": "assessment", "event_id": "review-1", **response},
+            {"stage": "retrieval_completion", "event_id": "completion-1"},
+        ]
+        wrapper = {
+            "stage": "retrieval_completion",
+            history_field: earlier_history,
+            "result": {history_field: [
+                {"stage": "search", "event_id": "search-2"},
+                {"stage": "candidate_selection", "candidate_ids": response["candidate_ids"]},
+                {"stage": "retrieval_completion", "event_id": "completion-2"},
+            ]},
+            "output": {history_field: earlier_history},
+        }
+        trace = {"events": [wrapper]}
     else:
         trace = {"events": [{"stage": "assessment", **response}, {"stage": "retrieval_completion", **summary}]}
 
@@ -1447,6 +1466,17 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
         wrapper["result"][history_field] = replay
         with pytest.raises(ValueError, match="trace selection or review"):
             assess_assignments(reversed(quotes))
+    if layout.startswith("altered-output-replay-"):
+        swapped = dict(earlier_history[1], checks=checks(reversed(quotes)))
+        without_id = {key: value for key, value in swapped.items() if key != "event_id"}
+        for replay in (
+            [earlier_history[0], swapped, earlier_history[-1]],
+            [earlier_history[0], without_id, earlier_history[-1]],
+            [swapped, earlier_history[-1]],
+        ):
+            wrapper["output"][history_field] = replay
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_assignments(reversed(quotes))
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
@@ -1802,6 +1832,7 @@ def test_d09_altered_review_replay_cannot_replace_quotations(
         "short-replay", "closed-short-replay", "subsequence", "continuation", "extension", "continued-review",
         "repeated-content", "unclosed-repeated-content", "ids-only-continuation", "ids-only-response",
         "ids-only-sibling-response", "ids-only-search-history", "ids-only-sibling-response-history",
+        "repeated-nested-selection", "ids-only-checked-review-after-limit",
         "changed-quote", "boolean-offset", "changed-check",
     )),
     *(pytest.param("subsequence-omitting-first-search", stage, id=f"subsequence-omitting-first-search-{stage}")
@@ -1891,6 +1922,22 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
         new_round = [search, selection, review_b if layout == "continued-review" else done]
         history = [review_a]
         flat_history = [prepare, review_a]
+        if layout == "ids-only-checked-review-after-limit":
+            review_a = {"stage": "assessment", "candidate_ids": ids[:1], "citations": quotes[:1]}
+        if layout == "repeated-nested-selection":
+            selection_history = [prepare, selection, done] if history_field == "events" else [selection]
+            first_search = {"stage": "search", "event_id": "s1", history_field: selection_history}
+            history = [prepare, first_search, review_a, done]
+            for event_id in ("s2", "s1"):
+                continuation = [dict(first_search, event_id=event_id), done]
+                wrapper[history_field] = history + continuation
+                assert_only(second, first)
+                wrapper[history_field] = history
+                for report_history in (continuation, history + continuation):
+                    wrapper["result"] = {history_field: report_history}
+                    assert_only(second, first)
+                del wrapper["result"]
+            return
         if layout in {"repeated-content", "unclosed-repeated-content"}:
             history = flat_history = [prepare, search, selection, review_a]
             if layout == "repeated-content":
@@ -1923,7 +1970,8 @@ def test_d09_two_round_report_history(assessed_retrieval, response_format, histo
                         assess(second, companion=first, **options)
                     del wrapper["output"]
             return
-        if layout in {"repeated-content", "unclosed-repeated-content", "ids-only-continuation"}:
+        if layout in {"repeated-content", "unclosed-repeated-content", "ids-only-continuation",
+                      "ids-only-checked-review-after-limit"}:
             wrapper["result"] = {history_field: history + new_round}
             assert_only(second, first)
         wrapper["result"] = {history_field: history + new_round if layout == "extension" else new_round}
