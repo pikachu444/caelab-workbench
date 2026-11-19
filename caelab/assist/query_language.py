@@ -1186,7 +1186,6 @@ _COMPLETION_STAGES = {
     "retrieval_completion", "completion", "complete", "completed", "finalize", "terminal",
 }
 _FINAL_REVIEW_STAGES = _REVIEW_STAGES | _COMPLETION_STAGES
-_BARE_COMPLETIONS = ({"stage": "retrieval_completion"}, {"kind": "retrieval_completion"})
 _CANDIDATE_SUBSET_STAGES = _SELECTION_STAGES | _FINAL_REVIEW_STAGES
 _PREPARATION_STAGES = {"prepare_query", "query_plan", "retrieval_start"}
 _INITIAL_STAGES = _PREPARATION_STAGES | {"retrieval"}
@@ -1194,7 +1193,21 @@ _SEARCH_STAGES = _PREPARATION_STAGES | {"search", "embed_query", "rank_candidate
 _EVIDENCE_FIELDS = {"checks", "requirement_checks", "citations", "quoted_spans"}
 _TRACE_HISTORY_FIELDS = ("stage_events", "events", "steps")
 _TRACE_RESPONSE_FIELDS = ("result", "output", "assessment", "decision", "response")
+_NON_BARE_FIELDS = frozenset((
+    *_EVIDENCE_FIELDS,
+    "candidate_ids",
+    "selected_chunk_ids",
+    *_TRACE_HISTORY_FIELDS,
+    *_TRACE_RESPONSE_FIELDS,
+))
 _RESULT_STAGES = (_RETRIEVAL_TERMINAL_STAGES | _REVIEW_STAGES) - _SELECTION_STAGES - {"supported"}
+
+
+def _is_bare_completion(item):
+    if not isinstance(item, Mapping):
+        return False
+    stage = _retrieval_stage(item)
+    return isinstance(stage, str) and stage in _COMPLETION_STAGES and not (_NON_BARE_FIELDS & item.keys())
 
 
 def _novel_history_items(items, prior_histories):
@@ -1226,10 +1239,15 @@ def _novel_history_items(items, prior_histories):
                     break
             else:
                 return ()
-            # An event replay may append a bare completion to close a partial history.
-            if 0 < index == len(items) - 1 and items[index] in _BARE_COMPLETIONS:
-                return items[index:]
-        if prefix_size and items[prefix_size] not in _BARE_COMPLETIONS:
+            if index > 0:
+                first_changed = items[index]
+                if _is_bare_completion(first_changed):
+                    # A replay may append a bare completion to close a partial history.
+                    if index == len(items) - 1:
+                        return items[index:]
+                elif stage(first_changed) not in (_SEARCH_STAGES | _SELECTION_STAGES):
+                    return items[index:]
+        if prefix_size and not _is_bare_completion(items[prefix_size]):
             changed_stage = stage(items[prefix_size])
             if changed_stage in _FINAL_REVIEW_STAGES or (
                 changed_stage == stage(prior[prefix_size])
@@ -1461,6 +1479,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     history_review_containers: set[int] = set()
     saw_search_after_review = False
     new_round_selection_after_review = False
+    new_round_selection_history = frozenset()
     for record, phase, ancestors, history_ancestors, report_of, report_histories in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
@@ -1544,11 +1563,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             saw_search_after_review = True
         elif effective_phase == "selection" and saw_search_after_review:
             new_round_selection_after_review = True
+            new_round_selection_history = history_ancestors
+        supplies_required_evidence = bool(record_checks) if review_checks else has_review_update
+        belongs_to_new_round = not encloses_review or bool(report_of & new_round_selection_history)
         fresh_review = (
             effective_phase == "review"
-            and has_review_update
+            and supplies_required_evidence
             and new_round_selection_after_review
-            and not encloses_review
+            and belongs_to_new_round
         )
         quoted_selection = (effective_phase == "selection" and (record_quotes or record_checks)
                             and (review_superseded_quotes or has_active_review))
@@ -1574,6 +1596,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             constrains_candidates = False
             saw_search_after_review = False
             new_round_selection_after_review = False
+            new_round_selection_history = frozenset()
         if effective_phase == "review":
             if has_review_update:
                 history_review_containers.update(history_ancestors)
