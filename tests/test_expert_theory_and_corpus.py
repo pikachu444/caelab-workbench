@@ -1333,7 +1333,10 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
-def test_d09_repeated_root_citations_preserve_review_requirement_bindings(assessed_retrieval, response_format):
+@pytest.mark.parametrize("layout", ["root", "wrapped", "sibling"])
+def test_d09_repeated_citations_preserve_requirement_bindings_only_for_wrappers(
+    assessed_retrieval, response_format, layout,
+):
     assess, candidate = assessed_retrieval
     other = dict(candidate, citation="geos-manual:chapter-2")
     plan = query_language.prepare_query("Explain Drucker-Prager yield in version 2.23")
@@ -1347,15 +1350,28 @@ def test_d09_repeated_root_citations_preserve_review_requirement_bindings(assess
                  "relation": "satisfied", "quoted_spans": [span], "reason": "recorded review"}
                 for req, span in zip(requirements, spans, strict=True)]
 
-    trace = {"response": {"checks": checks(quotes)}, "citations": list(reversed(quotes))}
+    response = {"checks": checks(quotes)}
+    summary = {"citations": list(reversed(quotes))}
+    if layout == "root":
+        trace = {"response": response, **summary}
+    elif layout == "wrapped":
+        trace = {"events": [{"stage": "retrieval_completion", "response": response, **summary}], **summary}
+    else:
+        trace = {"events": [{"stage": "assessment", **response}, {"stage": "retrieval_completion", **summary}]}
+
     host_citations = {"citations": quotes} if response_format is None else {}
-    assert assess(candidate, companion=other, include_good=True, question_plan=plan,
-                  trace_overrides=trace, response_format=response_format,
-                  host_overrides={**host_citations, "checks": checks(quotes)}).status == "supported"
-    with pytest.raises(ValueError, match="trace selection or review"):
-        assess(candidate, companion=other, include_good=True, question_plan=plan,
-               trace_overrides=trace, response_format=response_format,
-               host_overrides={**host_citations, "checks": checks(reversed(quotes))})
+
+    def assess_assignments(spans):
+        return assess(candidate, companion=other, include_good=True, question_plan=plan,
+                      trace_overrides=trace, response_format=response_format,
+                      host_overrides={**host_citations, "checks": checks(spans)})
+
+    assert assess_assignments(quotes).status == "supported"
+    if layout == "sibling":
+        assert assess_assignments(reversed(quotes)).status == "supported"
+    else:
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_assignments(reversed(quotes))
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
@@ -1404,17 +1420,41 @@ def test_d09_final_review_supersedes_interim_candidate_ids(assessed_retrieval, r
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
-@pytest.mark.parametrize(("container", "id_field"), [
-    ("result", "candidate_ids"), ("output", "candidate_id"), ("response", "candidate_ids"),
+@pytest.mark.parametrize(("container", "id_field", "inner_stage"), [
+    ("result", "candidate_ids", {}), ("output", "candidate_id", {}), ("response", "candidate_ids", {}),
+    ("result", "candidate_ids", {"kind": "response"}),
 ])
-def test_d09_trace_binds_nested_candidate_selection(assessed_retrieval, response_format, container, id_field):
+def test_d09_trace_binds_nested_candidate_selection(assessed_retrieval, response_format, container, id_field, inner_stage):
     assess, candidate = assessed_retrieval
     other = dict(candidate, citation="geos-manual:chapter-2")
     selected = [candidate["citation"]] if id_field == "candidate_ids" else candidate["citation"]
     final_quote = {"candidate_id": other["citation"], "start": 0, "end": len(other["text"])}
     trace = {"events": [
         {"stage": "prepare_query"},
-        {"kind": "candidate_selection", container: {id_field: selected}},
+        {"kind": "candidate_selection", container: {**inner_stage, id_field: selected}},
+        {"stage": "retrieval_completion", "citations": [final_quote]},
+    ]}
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, include_good=True, trace_overrides=trace, response_format=response_format)
+    final_quote["candidate_id"] = candidate["citation"]
+    assert assess(candidate, companion=other, include_good=True,
+                  trace_overrides=trace, response_format=response_format).status == "supported"
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_key", ["stage_events", "events", "steps"])
+def test_d09_search_history_enforces_its_dedicated_candidate_selection(assessed_retrieval, response_format, history_key):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    final_quote = {"candidate_id": other["citation"], "start": 0, "end": len(other["text"])}
+    history = [
+        {"stage": "prepare_query"},
+        {"stage": "candidate_selection", "candidate_id": candidate["citation"]},
+        {"stage": "retrieval_completion"},
+    ]
+    trace = {"events": [
+        {"stage": "prepare_query"},
+        {"stage": "search", history_key: history},
         {"stage": "retrieval_completion", "citations": [final_quote]},
     ]}
     with pytest.raises(ValueError, match="trace selection or review"):

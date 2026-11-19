@@ -1198,12 +1198,12 @@ def _has_trace_stage(record, stages):
     return any(isinstance(name, str) and name in stages for name in (record.get("stage"), record.get("kind")))
 
 
-def _trace_records(value, phase=None, *, root=False):
+def _trace_records(value, phase=None, ancestors=frozenset(), *, root=False):
     if isinstance(value, list):
         for item in value:
-            yield from _trace_records(item, phase)
+            yield from _trace_records(item, phase, ancestors)
     elif isinstance(value, Mapping):
-        if not root and phase not in {"search", "detail"}:
+        if not root and phase not in {"search", "detail", "selection"}:
             if _has_trace_stage(value, _SEARCH_STAGES):
                 phase = "search"
             elif _has_trace_stage(value, _SELECTION_STAGES):
@@ -1216,16 +1216,19 @@ def _trace_records(value, phase=None, *, root=False):
             *sorted(set(value).difference(_TRACE_HISTORY_FIELDS, _TRACE_RESPONSE_FIELDS)),
             *(key for key in _TRACE_RESPONSE_FIELDS if key in value),
         )
+        child_ancestors = ancestors | {id(value)}
         for key in fields:
             child_phase = phase
-            if key in _EVIDENCE_FIELDS:
+            if key in _TRACE_HISTORY_FIELDS:
+                child_phase = None
+            elif key in _EVIDENCE_FIELDS:
                 child_phase = "detail"
             elif key in _SEARCH_STAGES:
                 child_phase = "search"
             elif phase is None and key in _FINAL_REVIEW_STAGES:
                 child_phase = "review"
-            yield from _trace_records(value[key], child_phase)
-        yield value, "review" if root else phase
+            yield from _trace_records(value[key], child_phase, child_ancestors)
+        yield value, "review" if root else phase, ancestors
 
 
 def _validate_trace_sequence(events, has_stage_events):
@@ -1286,10 +1289,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     if trace_identity != identity:
         raise ValueError("Retrieval assessment trace identity or candidate_ids mismatch")
     trace_records = list(_trace_records(trace, root=True))
-    if any(record[key] != identity[key] for record, _ in trace_records
+    if any(record[key] != identity[key] for record, _, _ in trace_records
            for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256") if key in record):
         raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
-    trace_blocks_support = any(_trace_blocks_support(record) for record, _ in trace_records)
+    trace_blocks_support = any(_trace_blocks_support(record) for record, _, _ in trace_records)
     if not isinstance(payload, Mapping):
         raise ValueError("Retrieval assessment fields are missing or unexpected")
     raw_keys = {"type", "checks", "out_of_scope", "limitations"}
@@ -1382,8 +1385,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     has_review_quotes = False
     trace_checks = []
     review_checks = []
+    review_checks_ancestors = frozenset()
     review_candidate_ids = None
-    for record, phase in trace_records:
+    for record, phase, ancestors in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
             _validate_trace_sequence(nested, "stage_events" in record)
@@ -1435,11 +1439,12 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if phase == "review":
             if record is trace and record_ids == all_candidate_ids:
                 record_ids = None
-            repeated_summary = (record is trace and has_review_quotes and not record_checks
-                                and record_quotes == review_quotes)
+            repeated_summary = (has_review_quotes and bool(review_checks) and not record_checks
+                                and record_quotes == review_quotes and id(record) in review_checks_ancestors)
             if has_quotes and not repeated_summary:
                 has_review_quotes = True
                 review_quotes, review_checks = record_quotes, record_checks
+                review_checks_ancestors = ancestors if record_checks else frozenset()
                 review_candidate_ids = record_ids
             elif record_ids is not None:
                 review_candidate_ids = record_ids
