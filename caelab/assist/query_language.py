@@ -1210,7 +1210,7 @@ def _is_bare_completion(item):
     return isinstance(stage, str) and stage in _COMPLETION_STAGES and not (_NON_BARE_FIELDS & item.keys())
 
 
-def _novel_history_items(items, prior_histories, *, only_altered=False):
+def _novel_history_items(items, prior_histories, *, only_altered=False, identified_owner=False):
     if not items or not prior_histories:
         return items, False
 
@@ -1229,10 +1229,15 @@ def _novel_history_items(items, prior_histories, *, only_altered=False):
                 break
             prefix_size += 1
         if prefix_size == len(items):
+            if identified_owner and prefix_size == len(prior):
+                # A new search can repeat a complete selection-only history.
+                stages = {stage(item) for item in items if not _is_bare_completion(item)}
+                if stages & _SELECTION_STAGES and stages <= (_SEARCH_STAGES | _SELECTION_STAGES):
+                    return items, False
             return (items if only_altered else ()), False
         if prefix_size == len(prior):
             return (items if only_altered else items[prefix_size:]), False
-        if stage(items[0]) in _INITIAL_STAGES:
+        if identified_owner or stage(items[0]) in _INITIAL_STAGES:
             remaining = iter(prior_keys)
             for index, item_key in enumerate(item_keys):
                 if item_key not in remaining:
@@ -1245,7 +1250,10 @@ def _novel_history_items(items, prior_histories, *, only_altered=False):
                     # A replay may append a bare completion to close a partial history.
                     if index == len(items) - 1:
                         return (items if only_altered else items[index:]), False
-                elif stage(first_changed) not in (_SEARCH_STAGES | _SELECTION_STAGES):
+                elif stage(first_changed) in _SEARCH_STAGES:
+                    if not only_altered:
+                        return items[index:], False
+                elif stage(first_changed) not in _SELECTION_STAGES:
                     return items[index:], True
         if prefix_size and not _is_bare_completion(items[prefix_size]):
             changed_stage = stage(items[prefix_size])
@@ -1258,10 +1266,8 @@ def _novel_history_items(items, prior_histories, *, only_altered=False):
 
 
 def _history_owner_signature(owner):
-    return canonical_json_bytes({
-        key: child for key, child in owner.items()
-        if key not in _TRACE_HISTORY_FIELDS and key not in _TRACE_RESPONSE_FIELDS
-    })
+    identity = tuple((key, owner[key]) for key in ("event_id", "id") if owner.get(key) is not None)
+    return canonical_json_bytes({"stage": _retrieval_stage(owner), "identity": identity}), bool(identity)
 
 
 def _collect_nested_histories(value, *, direct=False):
@@ -1269,7 +1275,7 @@ def _collect_nested_histories(value, *, direct=False):
         histories = [value[key] for key in _TRACE_HISTORY_FIELDS if isinstance(value.get(key), (list, tuple))
                      and value[key]]
         if histories:
-            signature = None if direct else _history_owner_signature(value)
+            signature = None if direct else _history_owner_signature(value)[0]
             for history in histories:
                 yield signature, history
                 yield from _collect_nested_histories(history)
@@ -1282,12 +1288,12 @@ def _collect_nested_histories(value, *, direct=False):
 
 def _trace_records(
     value, phase=None, ancestors=frozenset(), history_ancestors=frozenset(), report_of=frozenset(),
-    report_histories=(), altered_replay=False, *, root=False,
+    report_histories=(), altered_replay=False, wrapper_event_ids=frozenset(), *, root=False,
 ):
     if isinstance(value, (list, tuple)):
         for item in value:
             yield from _trace_records(item, phase, ancestors, history_ancestors, report_of, report_histories,
-                                      altered_replay)
+                                      altered_replay, wrapper_event_ids)
     elif isinstance(value, Mapping):
         if not root and phase not in {"search", "detail", "selection"}:
             stage = _retrieval_stage(value)
@@ -1308,8 +1314,12 @@ def _trace_records(
         histories = tuple(_collect_nested_histories(history_fields, direct=True))
         value_id = id(value)
         child_ancestors = ancestors | {value_id}
+        own_event_ids = frozenset(
+            canonical_json_bytes(value[key]) for key in ("event_id", "id") if value.get(key) is not None
+        )
+        event_ids = wrapper_event_ids | own_event_ids
         record = (value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories,
-                  altered_replay)
+                  altered_replay, event_ids)
         # A search starts before the selection events recorded in its history.
         search_starts_history = phase == "search" and bool(history_fields)
         if search_starts_history:
@@ -1320,16 +1330,19 @@ def _trace_records(
             child_report_of = report_of
             child_report_histories = report_histories
             child_altered_replay = altered_replay
+            child_wrapper_event_ids = event_ids
             child_value = value[key]
             if key in _TRACE_HISTORY_FIELDS:
                 child_phase = None
                 child_history = history_ancestors | {value_id}
                 child_report_of = frozenset()
+                child_wrapper_event_ids = frozenset()
                 if isinstance(child_value, (list, tuple)) and report_histories:
-                    signature = None if report_of else _history_owner_signature(value)
+                    signature, identified_owner = (None, False) if report_of else _history_owner_signature(value)
                     prior_histories = tuple(items for owner, items in report_histories if owner == signature)
                     child_value, stripped_altered_replay = _novel_history_items(
-                        child_value, prior_histories, only_altered=not report_of,
+                        child_value, prior_histories,
+                        only_altered=not (report_of or identified_owner), identified_owner=identified_owner,
                     )
                     child_altered_replay |= stripped_altered_replay
             elif key in _EVIDENCE_FIELDS:
@@ -1343,7 +1356,7 @@ def _trace_records(
                 child_report_histories = report_histories + histories
             yield from _trace_records(
                 child_value, child_phase, child_ancestors, child_history, child_report_of, child_report_histories,
-                child_altered_replay,
+                child_altered_replay, child_wrapper_event_ids,
             )
         if not search_starts_history:
             yield record
@@ -1518,7 +1531,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     new_round_selection_history = frozenset()
     new_round_selection_ancestors = frozenset()
     reviewed_event_ids: set[bytes] = set()
-    for record, phase, ancestors, history_ancestors, report_of, report_histories, altered_replay in trace_records:
+    for (record, phase, ancestors, history_ancestors, report_of, report_histories,
+         altered_replay, record_event_ids) in trace_records:
         if record is not trace and "events" in record:
             nested = validate_events(record["events"])
             continues_history = any(
@@ -1597,12 +1611,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if record is trace and record_ids == all_candidate_ids:
             record_ids = None
         has_review_update = has_quotes or record_ids is not None
-        record_event_ids = set()
-        if effective_phase == "review" and has_review_update:
-            record_event_ids = {
-                canonical_json_bytes(record[key]) for key in ("event_id", "id") if record.get(key) is not None
-            }
-        reuses_reviewed_event_id = not reviewed_event_ids.isdisjoint(record_event_ids)
+        reuses_reviewed_event_id = bool(record_event_ids & reviewed_event_ids)
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
         if effective_phase == "search" and has_active_review:
             saw_search_after_review = True
