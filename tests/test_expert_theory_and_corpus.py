@@ -1609,6 +1609,66 @@ def test_d09_later_selection_evidence_applies_after_earlier_review(
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize(("earlier_review", "completion_kind", "supported_candidate"), [
+    pytest.param("quoted", "bare", "A", id="bare"),
+    pytest.param("quoted", "events", None, id="enclosing-events"),
+    pytest.param("quoted", "steps", None, id="enclosing-steps"),
+    pytest.param(None, "events", None, id="events-without-earlier-review"),
+    pytest.param(None, "steps", None, id="steps-without-earlier-review"),
+    pytest.param("quoted", "fresh-review", "B", id="fresh-review"),
+    pytest.param("empty", "bare", "A", id="earlier-empty-review"),
+    pytest.param("ids-only", "bare", "A", id="earlier-ids-only-review"),
+])
+def test_d09_new_selection_replaces_stale_review(
+    assessed_retrieval, response_format, earlier_review, completion_kind, supported_candidate,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    first_id, second_id = first["citation"], second["citation"]
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+
+    def evidence(candidate):
+        cid = candidate["citation"]
+        quote = {"candidate_id": cid, "start": 0, "end": len(candidate["text"])}
+        return {
+            "citations": [quote],
+            "checks": [{"requirement_id": topic.requirement_id, "candidate_ids": [cid], "relation": "satisfied",
+                        "quoted_spans": [quote], "reason": "recorded evidence"}],
+        }
+
+    review = {"stage": "assessment", "candidate_ids": [second_id], **evidence(second)}
+    events = [{"stage": "prepare_query"}]
+    if earlier_review == "quoted":
+        events.append(review)
+    elif earlier_review == "empty":
+        events.append({"stage": "assessment", "citations": []})
+    elif earlier_review == "ids-only":
+        events.append({"stage": "assessment", "candidate_ids": [second_id]})
+    events.extend([
+        {"stage": "search"},
+        {"stage": "candidate_selection", "candidate_ids": [first_id, second_id], **evidence(first)},
+    ])
+    if completion_kind == "fresh-review":
+        events.append(review)
+    events.append({"stage": "retrieval_completion"})
+    if completion_kind in {"events", "steps"}:
+        events = [{"stage": "retrieval_completion", "candidate_ids": [second_id], completion_kind: events}]
+    trace = {"events": events}
+
+    def assess_candidate(candidate, companion):
+        return assess(candidate, companion=companion, include_good=True, question_plan=plan,
+                      trace_overrides=trace, response_format=response_format)
+
+    for name, candidate, companion in (("A", first, second), ("B", second, first)):
+        if name == supported_candidate:
+            assert assess_candidate(candidate, companion).status == "supported"
+        else:
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess_candidate(candidate, companion)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize(("container", "id_field", "inner_stage"), [
     ("result", "candidate_ids", {}), ("output", "candidate_id", {}), ("response", "candidate_ids", {}),
     ("result", "candidate_ids", {"kind": "response"}),
