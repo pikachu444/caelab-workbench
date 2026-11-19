@@ -1333,7 +1333,9 @@ def test_d09_final_review_supersedes_interim_citations(assessed_retrieval, respo
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
-@pytest.mark.parametrize("layout", ["root", "wrapped", "expanded", "ids-only", "sibling"])
+@pytest.mark.parametrize("layout", [
+    "root", "wrapped", "expanded", "ids-only", "sibling", "retrieval-events", "retrieval-steps", "selection-steps",
+])
 def test_d09_review_wrappers_preserve_requirement_bindings(
     assessed_retrieval, response_format, layout,
 ):
@@ -1363,6 +1365,15 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
         else:
             wrapper["candidate_ids"] = response["candidate_ids"]
         trace = {"events": [wrapper]}
+    elif layout in {"retrieval-events", "retrieval-steps", "selection-steps"}:
+        wrapper_kind, history_field = layout.split("-")
+        history = [{"stage": "prepare_query"}, {"stage": "assessment", **response}]
+        wrapper = {"stage": "retrieval" if wrapper_kind == "retrieval" else "candidate_selection",
+                   history_field: history, **summary}
+        events = [wrapper] if wrapper_kind == "retrieval" else [
+            {"stage": "prepare_query"}, wrapper, {"stage": "retrieval_completion"},
+        ]
+        trace = {"events": events}
     else:
         trace = {"events": [{"stage": "assessment", **response}, {"stage": "retrieval_completion", **summary}]}
 
@@ -1385,6 +1396,7 @@ def test_d09_review_wrappers_preserve_requirement_bindings(
 @pytest.mark.parametrize(("summary_kind", "with_checks"), [
     ("repeated", False), ("repeated", True), ("expanded", False), ("expanded", True), ("ids-only", False),
     ("wrapper-ids", True),
+    ("retrieval-events", False), ("retrieval-steps", False),
 ])
 def test_d09_review_wrappers_preserve_nested_candidate_ids(
     assessed_retrieval, response_format, summary_kind, with_checks,
@@ -1408,7 +1420,13 @@ def test_d09_review_wrappers_preserve_nested_candidate_ids(
         "events": [{"stage": "retrieval_completion", "response": response, "citations": quotes}],
         "citations": quotes,
     }
-    if summary_kind == "wrapper-ids":
+    if summary_kind in {"retrieval-events", "retrieval-steps"}:
+        history_field = summary_kind.removeprefix("retrieval-")
+        trace = {"events": [{
+            "stage": "retrieval", "citations": [*quotes, {**quotes[0], "end": 8}],
+            history_field: [{"stage": "prepare_query"}, {"stage": "assessment", **response}],
+        }]}
+    elif summary_kind == "wrapper-ids":
         wrapper = trace["events"][0]
         del wrapper["citations"]
         wrapper["candidate_ids"] = [span["candidate_id"] for span in quotes]
@@ -1560,6 +1578,40 @@ def test_d09_empty_review_does_not_supersede_selection_evidence(
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(candidate, companion=companion, include_good=True, trace_overrides={"events": events},
                    response_format=response_format)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("late_field", ["citations", "quoted_spans"])
+@pytest.mark.parametrize("has_late_quote", [False, True], ids=["empty", "quoted"])
+def test_d09_only_substantive_selection_evidence_replaces_empty_review(
+    assessed_retrieval, response_format, late_field, has_late_quote,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    first_quote, second_quote = (
+        {"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (first, second)
+    )
+    selection = {"stage": "candidate_selection", "candidate_ids": [first["citation"], second["citation"]]}
+    trace = {"events": [
+        {"stage": "prepare_query"},
+        {**selection, "citations": [first_quote]},
+        {"stage": "assessment", "citations": []},
+        {"stage": "search"},
+        {**selection, late_field: [second_quote] if has_late_quote else []},
+        {"stage": "retrieval_completion"},
+    ]}
+
+    def assess_candidate(candidate, companion):
+        return assess(candidate, companion=companion, include_good=True, trace_overrides=trace,
+                      response_format=response_format)
+
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess_candidate(first, second)
+    if has_late_quote:
+        assert assess_candidate(second, first).status == "supported"
+    else:
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess_candidate(second, first)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
