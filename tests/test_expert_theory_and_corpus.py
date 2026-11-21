@@ -2173,6 +2173,8 @@ def test_d09_summary_can_narrow_completed_checks(
     "relocated-sibling-output", "erased-interim-summary", "fresh-identified-after-search", "fresh-identified-deeper",
     "fresh-anonymous-query-owner", "typed-summary-result", "typed-summary-output", "replaced-result-search-id",
     "string-stage-events", "copied-step_kind", "copied-step_type", "copied-event_kind", "copied-type",
+    "copied-note", "copied-extra-wrapper", "erased-nested-interim", "replaced-search-wrapper-id",
+    "owner-stage-events", "mixed-stage-events", "shared-final-response-id",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2301,6 +2303,71 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 assess(second, companion=first, **options)
         return
 
+    if layout in {"replaced-search-wrapper-id", "owner-stage-events", "mixed-stage-events",
+                  "shared-final-response-id", "erased-nested-interim"}:
+        completion = {**done, "event_id": "rc1", "response": evidence(second)}
+        final = dict(evidence(second), candidate_ids=ids[1:])
+        if layout == "shared-final-response-id":
+            completion.update(assessment=evidence(first), response={**final, "event_id": "rc1"})
+        if layout == "erased-nested-interim":
+            completion["response"] = {"assessment": evidence(first), "response": final}
+        if layout == "replaced-search-wrapper-id":
+            search_wrapper = {"stage": "retrieval", "id": "sa", history_field: [prepare, search, done]}
+            completion["result"] = {history_field: [search_wrapper, selection, done]}
+        if layout == "owner-stage-events":
+            completion["stage_events"] = ["prepare_query", "search", "retrieval_completion"]
+        if layout == "mixed-stage-events":
+            recorded_search = dict(search, event_id="sfirst")
+            completion["result"] = {"stage_events": ["prepare_query", recorded_search, "retrieval_completion"]}
+
+        wrapper[history_field] = [prepare, completion, done]
+        active, other = (first, second) if layout in {"shared-final-response-id", "erased-nested-interim"} else (second, first)
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, {"stage": "assessment", **evidence(active)}, done]}
+        replay_history = [completion]
+        wrapper["output"] = {history_field: replay_history}
+        assert_only(active, other)
+
+        if layout == "shared-final-response-id":
+            replay_history[0] = {**done, "event_id": "rc1", **final}
+            assert_only(active, other)
+            completion["response"]["event_id"] = "resp1"
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(active, companion=other, **options)
+            replay_history[0] = {**done, "event_id": "rc1", "response": completion["response"]}
+            assert_only(active, other)
+            return
+        if layout == "erased-nested-interim":
+            replay_history[0] = {**done, "event_id": "rc1", "response": final}
+            assert_only(active, other)
+            altered = ({**completion, "response": {"assessment": [], "response": final}},
+                       {**completion, "response": {"response": final}})
+        elif layout == "replaced-search-wrapper-id":
+            altered = ({**completion, "result": {history_field: [dict(search_wrapper, id="sb"), selection, done]}},)
+        elif layout == "owner-stage-events":
+            replay_history[0] = {**done, "event_id": "rc1", "response": evidence(second)}
+            assert_only(active, other)
+            altered = (
+                {**completion, "stage_events": ["prepare_query", "retrieval_completion"]},
+                {**completion, "stage_events": ["prepare_query", "rerank", "retrieval_completion"]},
+            )
+        else:
+            replay_history[0] = {**completion, "result": {"stage_events": [
+                "prepare_query", dict(recorded_search, kind="search"), "retrieval_completion",
+            ]}}
+            assert_only(active, other)
+            altered = (
+                {**completion, "result": {"stage_events": ["prepare_query", "retrieval_completion"]}},
+                {**completion, "result": {"stage_events": [
+                    "prepare_query", dict(recorded_search, event_id="sreplacement"), "retrieval_completion",
+                ]}},
+            )
+        for changed in altered:
+            replay_history[0] = changed
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(active, companion=other, **options)
+        return
+
     if layout in {"typed-summary-result", "typed-summary-output"}:
         field = layout.removeprefix("typed-summary-")
         response = {field: {"stage": "assessment", **evidence(second)}}
@@ -2391,7 +2458,7 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
 
     if layout.startswith("copied-"):
         nested = [prepare, search, selection, done]
-        if layout == "copied-selection-nested":
+        if layout in {"copied-selection-nested", "copied-extra-wrapper"}:
             nested = [prepare, {"stage": "retrieval", history_field: nested}, done]
         previous = {**done, history_field: nested, **evidence(first)}
         prior = [prepare, dict(search, event_id="original-outer-search"), previous, done]
@@ -2402,6 +2469,11 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         followup[2] = {**previous, **evidence(second)}
         if layout == "copied-stage-alias":
             followup[2]["kind"] = "retrieval_completion"
+        elif layout == "copied-note":
+            followup[2]["note"] = "saved"
+        elif layout == "copied-extra-wrapper":
+            inner = nested[1]
+            followup[2][history_field] = [prepare, {**inner, history_field: [inner]}, done]
         elif not layout.startswith("copied-selection-"):
             alias = layout.removeprefix("copied-")
             followup[2][alias] = "retrieval_completion"
@@ -2521,6 +2593,20 @@ def test_d09_citation_report_preserves_selection_requirements(
     completion[report_field]["citations"] = quotes[:1]
     with pytest.raises(ValueError, match="trace selection or review"):
         evaluate(original)
+
+    if report_field == "output":
+        completion["result"] = {"citations": quotes}
+        completion["output"] = {"citations": quotes}
+        assert evaluate(original).status == "supported"
+        with pytest.raises(ValueError, match="trace selection or review"):
+            evaluate(swapped)
+        history = completion.pop(history_field)
+        for history_report, summary_report in (("result", "output"), ("output", "result")):
+            completion[history_report] = {history_field: history}
+            completion[summary_report] = {"citations": quotes}
+            assert evaluate(original).status == "supported"
+            with pytest.raises(ValueError, match="trace selection or review"):
+                evaluate(swapped)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
