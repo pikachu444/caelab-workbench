@@ -2177,6 +2177,10 @@ def test_d09_summary_can_narrow_completed_checks(
     "owner-stage-events", "mixed-stage-events", "shared-final-response-id",
     "copied-blank-query", "copied-blank-event_id", "copied-blank-id", "all-mapping-stage-events",
     "nested-final-response-only", "repeated-review-history", "citation-only-interim",
+    "citation-only-output", "typed-interim-output", "repeated-complete-review-history",
+    "erased-inner-result", "erased-inner-output", "copied-false-event-id", "copied-list-event-id",
+    "copied-mapping-id", "copied-nested-query", "shared-final-response-two-ids",
+    "all-mapping-result-stage-events",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2209,6 +2213,17 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
     review_a = {"stage": "assessment", **evidence(first)}
     review_b = {"stage": "assessment", **evidence(second)}
     selection = {"stage": "candidate_selection", "candidate_ids": ids}
+    if layout in {"citation-only-output", "typed-interim-output"}:
+        interim = {"citations": review_b["citations"]}
+        if layout == "typed-interim-output":
+            interim["stage"] = "assessment"
+        wrapper[history_field] = [{
+            **done, "output": interim,
+            "response": {history_field: [prepare, selection, done], **evidence(first)},
+        }]
+        assert_only(first, second)
+        return
+
     if layout == "citation-only-interim":
         completion = {
             **done,
@@ -2219,13 +2234,30 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         assert_only(first, second)
         return
 
-    if layout in {"nested-final-response-only", "repeated-review-history"}:
+    if layout in {"erased-inner-result", "erased-inner-output"}:
+        interim_key = layout.removeprefix("erased-inner-")
+        response = {interim_key: review_a, "response": review_b}
+        completion = {**done, "event_id": "rc1", "response": response}
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        replays = [completion]
+        wrapper["output"] = {history_field: replays}
+        assert_only(first, second)
+        for altered in ({**response, interim_key: []}, {"response": review_b}):
+            replays[0] = {**completion, "response": altered}
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(first, companion=second, **options)
+        return
+
+    if layout in {"nested-final-response-only", "repeated-review-history", "repeated-complete-review-history"}:
         completion = {**done, "event_id": "rc1"}
         if layout == "nested-final-response-only":
             completion.update(assessment=evidence(first), response={"response": evidence(second)})
             replay = {key: value for key, value in completion.items() if key != "assessment"}
         else:
-            completion.update({history_field: [review_b], "result": {history_field: [dict(review_b)]},
+            history = [review_b] if layout == "repeated-review-history" else [prepare, review_b, done]
+            completion.update({history_field: history, "result": {history_field: list(history)},
                                **evidence(second)})
             replay = dict(completion)
         wrapper[history_field] = [prepare, completion, done]
@@ -2236,9 +2268,16 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         if layout == "nested-final-response-only":
             replay["response"] = {**replay["response"], "assessment": []}
         else:
-            replay["result"] = {history_field: [review_a]}
+            replay["result"] = {history_field: [review_a] if len(history) == 1 else [prepare, review_a, done]}
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(first, companion=second, **options)
+        if layout == "repeated-review-history":
+            del replay["result"]
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(first, companion=second, **options)
+            replay["output"] = completion["result"]
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(first, companion=second, **options)
         return
 
     if layout in {"fresh-identified-search", "fresh-identified-after-search", "fresh-identified-deeper",
@@ -2338,11 +2377,15 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         return
 
     if layout in {"replaced-search-wrapper-id", "owner-stage-events", "mixed-stage-events",
-                  "shared-final-response-id", "erased-nested-interim", "all-mapping-stage-events"}:
+                  "shared-final-response-id", "erased-nested-interim", "all-mapping-stage-events",
+                  "all-mapping-result-stage-events", "shared-final-response-two-ids"}:
         completion = {**done, "event_id": "rc1", "response": evidence(second)}
         final = dict(evidence(second), candidate_ids=ids[1:])
         if layout == "shared-final-response-id":
             completion.update(assessment=evidence(first), response={**final, "event_id": "rc1"})
+        if layout == "shared-final-response-two-ids":
+            shared = {"event_id": "rc1", "id": "alternate"}
+            completion.update(**shared, assessment=evidence(first), response={**final, **shared})
         if layout == "erased-nested-interim":
             completion["response"] = {"assessment": evidence(first), "response": final}
         if layout == "replaced-search-wrapper-id":
@@ -2356,9 +2399,14 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         if layout == "all-mapping-stage-events":
             stage_events = [prepare, dict(search, event_id="sfirst"), {"stage": "candidate_selection"}, done]
             completion["stage_events"] = stage_events
+        if layout == "all-mapping-result-stage-events":
+            recorded_search = dict(search, event_id="sfirst", query="A contact")
+            completion["result"] = {"stage_events": [prepare, recorded_search, done]}
 
         wrapper[history_field] = [prepare, completion, done]
-        active, other = (first, second) if layout in {"shared-final-response-id", "erased-nested-interim"} else (second, first)
+        active, other = ((first, second)
+                         if layout.startswith("shared-final-response-") or layout == "erased-nested-interim"
+                         else (second, first))
         assert_only(second, first)
         wrapper["result"] = {history_field: [search_2, select_2, {"stage": "assessment", **evidence(active)}, done]}
         replay_history = [completion]
@@ -2378,7 +2426,15 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             replay_history[0] = {**done, "event_id": "rc1", "response": completion["response"]}
             assert_only(active, other)
             return
-        if layout == "erased-nested-interim":
+        if layout == "shared-final-response-two-ids":
+            flattened = {**done, **shared, **final}
+            replay_history[0] = flattened
+            assert_only(active, other)
+            altered = (
+                {key: value for key, value in flattened.items() if key != "id"},
+                {**done, **shared, "response": {**final, **shared, "event_id": "other"}},
+            )
+        elif layout == "erased-nested-interim":
             replay_history[0] = {**done, "event_id": "rc1", "response": final}
             assert_only(active, other)
             altered = ({**completion, "response": {"assessment": [], "response": final}},
@@ -2402,17 +2458,21 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 {**completion, "stage_events": [prepare, stage_events[1], {"stage": "search"}, done]},
             )
         else:
-            replay_history[0] = {**completion, "result": {"stage_events": [
-                "prepare_query", dict(recorded_search, kind="search"), "retrieval_completion",
-            ]}}
-            assert_only(active, other)
+            start, _, end = completion["result"]["stage_events"]
+            for equivalent in (
+                dict(recorded_search, kind="search"),
+                dict(recorded_search, id="sfirst"),
+                {**search, "id": "sfirst", "query": "A contact"},
+            ):
+                replay_history[0] = {**completion, "result": {"stage_events": [start, equivalent, end]}}
+                assert_only(active, other)
             altered = (
-                {**completion, "result": {"stage_events": ["prepare_query", "retrieval_completion"]}},
+                {**completion, "result": {"stage_events": [start, end]}},
                 {**completion, "result": {"stage_events": [
-                    "prepare_query", dict(recorded_search, event_id="sreplacement"), "retrieval_completion",
+                    start, dict(recorded_search, event_id="sreplacement"), end,
                 ]}},
                 {**completion, "result": {"stage_events": [
-                    "prepare_query", dict(recorded_search, query="B thermal"), "retrieval_completion",
+                    start, dict(recorded_search, query="B thermal"), end,
                 ]}},
             )
         for changed in altered:
@@ -2511,6 +2571,8 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
 
     if layout.startswith("copied-"):
         nested = [prepare, search, selection, done]
+        if layout == "copied-nested-query":
+            nested[1] = dict(search, query="A contact")
         if layout in {"copied-selection-nested", "copied-extra-wrapper"}:
             nested = [prepare, {"stage": "retrieval", history_field: nested}, done]
         previous = {**done, history_field: nested, **evidence(first)}
@@ -2534,6 +2596,14 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 with pytest.raises(ValueError, match="trace selection or review"):
                     assess(second, companion=first, **options)
             return
+        elif layout == "copied-false-event-id":
+            followup[2]["event_id"] = False
+        elif layout == "copied-list-event-id":
+            followup[2]["event_id"] = []
+        elif layout == "copied-mapping-id":
+            followup[2]["id"] = {}
+        elif layout == "copied-nested-query":
+            followup[2]["query"] = "A contact"
         elif not layout.startswith("copied-selection-"):
             alias = layout.removeprefix("copied-")
             followup[2][alias] = "retrieval_completion"
@@ -2676,6 +2746,21 @@ def test_d09_citation_report_preserves_selection_requirements(
             else:
                 with pytest.raises(ValueError, match="trace selection or review"):
                     evaluate(original)
+        for nested_history, list_summary in (
+            (history, True),
+            ([history[0], history[1], {"stage": "retrieval", "result": history[2]}, history[3]], False),
+        ):
+            completion["output"] = {history_field: nested_history}
+            for citations in ([], quotes[:1], quotes):
+                summary = {"citations": citations}
+                completion["result"] = {"response": [summary] if list_summary else summary}
+                if citations == quotes:
+                    assert evaluate(original).status == "supported"
+                else:
+                    with pytest.raises(ValueError, match="trace selection or review"):
+                        evaluate(original)
+                with pytest.raises(ValueError, match="trace selection or review"):
+                    evaluate(swapped)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
