@@ -99,6 +99,7 @@ class RunStore:
     def __init__(self, root: str | Path, *, expected: bool = False):
         self.root = Path(root).resolve()
         self.expected = expected
+        self.live_stale = None
         self._cache = {}
         self._known_selections = set()
 
@@ -275,6 +276,9 @@ class RunStore:
         return data["run_id"]
 
     def recover_unlocked(self):
+        from .operations import recover_derived_operations
+
+        recover_derived_operations(self)
         for run in self._records():
             if run.state in ACTIVE_STATES:
                 run.state = "interrupted"
@@ -299,6 +303,8 @@ class RunStore:
             lease.release()
 
     def copy_to(self, destination: Path) -> None:
+        from .operations import verify_derived_datasets
+
         destination = Path(destination).resolve()
         if destination == self.root or self.root in destination.parents:
             raise ValueError('실행 저장소 안으로 자기 복사를 할 수 없습니다.')
@@ -309,6 +315,7 @@ class RunStore:
             issues = self.integrity_issues()
             if issues:
                 raise ValueError('; '.join(issues))
+            verify_derived_datasets(self)
             documents = self._discussion_paths()
             studies = self._study_paths()
             with ExitStack() as locks:
@@ -344,6 +351,7 @@ class RunStore:
                             raise ValueError('대화 근거 자산이 온전하지 않습니다: ' + '; '.join(problems))
                 for run in copied.runs():
                     copied.write(run)  # workdir/log paths belong to the new store
+                verify_derived_datasets(copied)
         except Exception:
             if created:
                 shutil.rmtree(destination)
