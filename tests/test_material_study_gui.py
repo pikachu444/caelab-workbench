@@ -13,13 +13,14 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import matplotlib
 import numpy as np
 import pytest
 
 PySide6 = pytest.importorskip("PySide6")
 from matplotlib.backend_bases import MouseEvent
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QStyleFactory,
     QTableWidget,
     QTreeWidget,
 )
@@ -49,6 +51,25 @@ from apps.workbench_qt.material_study import (
     load_korean_font,
     main,
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_global_qt_and_matplotlib_state():
+    """Preserve global QApplication style/font and matplotlib rcParams across modules."""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(["pytest", "-platform", "offscreen"])
+    prev_style = app.style().objectName() if app.style() is not None else ""
+    prev_font = QFont(app.font())
+    mpl_keys = ("font.family", "mathtext.fontset", "axes.unicode_minus")
+    prev_rc = {k: list(matplotlib.rcParams[k]) if isinstance(matplotlib.rcParams[k], list) else matplotlib.rcParams[k] for k in mpl_keys}
+    yield
+    app = QApplication.instance()
+    if app is not None:
+        if prev_style and (restored := QStyleFactory.create(prev_style)) is not None:
+            app.setStyle(restored)
+        app.setFont(prev_font)
+    matplotlib.rcParams.update(prev_rc)
 
 
 def _get_app() -> QApplication:

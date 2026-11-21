@@ -13,6 +13,7 @@ import threading
 import time
 import zipfile
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -346,7 +347,7 @@ def test_job_conversion_and_saveas_keep_the_same_result_ref(tmp_path, monkeypatc
     assert (folder / "inputs/inA001").exists() and (folder / "inputs/inA001.gz").exists()
     ((argv, kwargs),) = launched
     command = json.loads(argv[-4]) if os.name == "nt" else argv
-    assert command == [sys.executable, "inA001"]
+    assert command == [str(Path(sys.executable).resolve()), "inA001"]
     assert kwargs["shell"] is False and kwargs["stdin"] == subprocess.DEVNULL
     assert not {"PYTHONPATH", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH"} & kwargs["env"].keys()
     assert kwargs["cwd"] == folder / "inputs"
