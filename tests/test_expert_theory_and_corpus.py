@@ -2171,6 +2171,8 @@ def test_d09_summary_can_narrow_completed_checks(
     "final-quoted-selection", "selection-then-final-review", "selection-candidate-limit", "relocated-nested-candidate-limit",
     "fresh-identified-search", "copied-stage-alias", "selection-citation-summary", "deleted-result-search",
     "relocated-sibling-output", "erased-interim-summary", "fresh-identified-after-search", "fresh-identified-deeper",
+    "fresh-anonymous-query-owner", "typed-summary-result", "typed-summary-output", "replaced-result-search-id",
+    "string-stage-events", "copied-step_kind", "copied-step_type", "copied-event_kind", "copied-type",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2203,12 +2205,16 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
     review_a = {"stage": "assessment", **evidence(first)}
     review_b = {"stage": "assessment", **evidence(second)}
     selection = {"stage": "candidate_selection", "candidate_ids": ids}
-    if layout in {"fresh-identified-search", "fresh-identified-after-search", "fresh-identified-deeper"}:
+    if layout in {"fresh-identified-search", "fresh-identified-after-search", "fresh-identified-deeper",
+                  "fresh-anonymous-query-owner"}:
         anonymous_history = [prepare, search, done]
-        if layout == "fresh-identified-deeper":
+        if layout in {"fresh-identified-deeper", "fresh-anonymous-query-owner"}:
             anonymous_history = [{"stage": "retrieval", history_field: anonymous_history}]
         old_search = {"stage": "retrieval", "event_id": "in1", history_field: anonymous_history}
         new_search = dict(old_search, event_id="in2")
+        if layout == "fresh-anonymous-query-owner":
+            old_search = {"stage": "retrieval", "query": "first query", history_field: anonymous_history}
+            new_search = dict(old_search, query="second query")
         initial = prepare if layout == "fresh-identified-after-search" else dict(prepare, event_id="prepare-1")
         earlier_searches = [search, old_search] if layout == "fresh-identified-after-search" else [old_search]
         prior = [initial, *earlier_searches, review_a, done]
@@ -2216,6 +2222,10 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         wrapper[history_field] = prior
         for prefix in (prior, [initial, review_a, done]):
             wrapper["result"] = {history_field: [*prefix, fresh]}
+            assert_only(second, first)
+        if layout == "fresh-anonymous-query-owner":
+            wrapper[history_field] = [prepare, search, old_search, review_a, done]
+            wrapper["result"] = {history_field: [prepare, review_a, done, fresh]}
             assert_only(second, first)
         fresh[history_field][0] = old_search
         with pytest.raises(ValueError, match="trace selection or review"):
@@ -2236,20 +2246,30 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 assess(candidate, companion=companion, **options)
         return
 
-    if layout in {"deleted-result-search", "relocated-sibling-output", "erased-interim-summary"}:
+    if layout in {"deleted-result-search", "replaced-result-search-id", "relocated-sibling-output",
+                  "erased-interim-summary", "string-stage-events"}:
         completion = dict(done, event_id="rc1")
-        if layout == "deleted-result-search":
+        if layout in {"deleted-result-search", "replaced-result-search-id"}:
+            recorded_search = dict(search, event_id="sfirst") if layout == "replaced-result-search-id" else search
             completion.update({history_field: [prepare, review_a, done],
-                               "result": {history_field: [search, selection, done]}, "response": evidence(second)})
-            changed = {**completion, "result": {history_field: [selection, done]}}
+                               "result": {history_field: [recorded_search, selection, done]},
+                               "response": evidence(second)})
+            replay_steps = [selection, done]
+            if layout == "replaced-result-search-id":
+                replay_steps.insert(0, dict(search, event_id="sreplacement"))
+            changed = {**completion, "result": {history_field: replay_steps}}
         elif layout == "relocated-sibling-output":
             earlier = {**done, history_field: [dict(review_a, candidate_ids=ids[:1])]}
             limit = {"candidate_ids": ids[1:]}
             completion[history_field] = [earlier, {**done, "output": limit}]
             changed = {**completion, history_field: [{**earlier, "output": limit}, done]}
-        else:
+        elif layout == "erased-interim-summary":
             completion.update(assessment=evidence(first), response=evidence(second))
             changed = {**completion, "assessment": {"stage": "assessment", "status": "completed"}}
+        else:
+            completion.update(result={"stage_events": ["prepare_query", "search", "retrieval_completion"]},
+                              response=evidence(second))
+            changed = {**completion, "result": {"stage_events": ["prepare_query", "retrieval_completion"]}}
         wrapper[history_field] = [prepare, completion, done]
         assert_only(second, first)
         wrapper["result"] = {history_field: [search_2, select_2, review_b, done]}
@@ -2260,9 +2280,14 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 **completion, "result": {history_field: [{"kind": "search"}, selection, done]},
             }
             assert_only(second, first)
-        if layout == "erased-interim-summary":
+        if layout in {"erased-interim-summary", "string-stage-events"}:
             wrapper["output"][history_field][1] = {**done, "event_id": "rc1", "response": evidence(second)}
             assert_only(second, first)
+        if layout == "erased-interim-summary":
+            for erased in ([], None, [{"stage": "assessment", "status": "completed"}]):
+                wrapper["output"][history_field][1] = {**completion, "assessment": erased}
+                with pytest.raises(ValueError, match="trace selection or review"):
+                    assess(second, companion=first, **options)
         wrapper["output"][history_field][1] = changed
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(second, companion=first, **options)
@@ -2270,6 +2295,25 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             changed["result"][history_field] = [selection, search, done]
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess(second, companion=first, **options)
+        if layout == "string-stage-events":
+            changed["result"]["stage_events"].insert(1, "rerank")
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(second, companion=first, **options)
+        return
+
+    if layout in {"typed-summary-result", "typed-summary-output"}:
+        field = layout.removeprefix("typed-summary-")
+        response = {field: {"stage": "assessment", **evidence(second)}}
+        completion = {**done, "event_id": "rc1", "assessment": evidence(first), "response": response}
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        replay = {**done, "event_id": "rc1", "response": response}
+        wrapper["output"] = {history_field: [replay]}
+        assert_only(first, second)
+        replay["response"] = {field: review_a}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
         return
 
     if layout == "final-summary-with-deleted-history":
@@ -2345,7 +2389,7 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             assess(second, companion=first, **options)
         return
 
-    if layout.startswith("copied-selection-") or layout == "copied-stage-alias":
+    if layout.startswith("copied-"):
         nested = [prepare, search, selection, done]
         if layout == "copied-selection-nested":
             nested = [prepare, {"stage": "retrieval", history_field: nested}, done]
@@ -2358,6 +2402,15 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         followup[2] = {**previous, **evidence(second)}
         if layout == "copied-stage-alias":
             followup[2]["kind"] = "retrieval_completion"
+        elif not layout.startswith("copied-selection-"):
+            alias = layout.removeprefix("copied-")
+            followup[2][alias] = "retrieval_completion"
+            prior_owner = query_language._history_owner_signature(previous, ignore_evidence=True)
+            matching_owner = query_language._history_owner_signature(followup[2], ignore_evidence=True)
+            conflicting = {**followup[2], alias: "assessment"}
+            conflicting_owner = query_language._history_owner_signature(conflicting, ignore_evidence=True)
+            assert query_language._same_history_owner(prior_owner, matching_owner)
+            assert not query_language._same_history_owner(prior_owner, conflicting_owner)
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(second, companion=first, **options)
         return
@@ -2422,6 +2475,52 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             replay.update(evidence(first))
     with pytest.raises(ValueError, match="trace selection or review"):
         assess(active, companion=other, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("report_field", ["output", "result", "response"])
+def test_d09_citation_report_preserves_selection_requirements(
+    assessed_retrieval, response_format, history_field, report_field,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield in version 2.23")
+    requirements = query_language.extract_query_requirements(plan)
+    quotes = [{"candidate_id": candidate["citation"], "start": 0, "end": len(candidate["text"])}
+              for candidate in (first, second)]
+
+    def checks(assignment):
+        return [{"requirement_id": requirement.requirement_id, "candidate_ids": [quote["candidate_id"]],
+                 "relation": "satisfied", "quoted_spans": [quote], "reason": "selected evidence"}
+                for requirement, quote in zip(requirements, assignment, strict=True)]
+
+    original, swapped = checks(quotes), checks(reversed(quotes))
+    completion = {"stage": "retrieval_completion", history_field: [
+        {"stage": "prepare_query"}, {"stage": "search"},
+        {"stage": "candidate_selection", "candidate_ids": [quote["candidate_id"] for quote in quotes],
+         "citations": quotes, "checks": original},
+        {"stage": "retrieval_completion"},
+    ]}
+    overrides = {"citations": quotes} if response_format is None else {}
+
+    def evaluate(binding):
+        return assess(first, companion=second, include_good=True, question_plan=plan,
+                      trace_overrides={"events": [completion]}, response_format=response_format,
+                      host_overrides={**overrides, "checks": binding})
+
+    completion["citations"] = quotes
+    assert evaluate(original).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        evaluate(swapped)
+    del completion["citations"]
+    completion[report_field] = {"citations": quotes}
+    assert evaluate(original).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        evaluate(swapped)
+    completion[report_field]["citations"] = quotes[:1]
+    with pytest.raises(ValueError, match="trace selection or review"):
+        evaluate(original)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
