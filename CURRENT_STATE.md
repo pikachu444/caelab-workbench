@@ -2,7 +2,22 @@
 
 ## 실행할 전체 개발 순서 — 2026-11-12 재개정
 
-[전체 개발 계획](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)과 [실행 작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)에 기존 미완료와 신규 연구를 함께 배치했습니다. 초기 착수 3건인 전문가 창의 프레임·검증 상태 수정(D01), 시험·결과·단위의 공통 기반(D02), Prep 표시 갱신(D03) 구현과 독립 QA 통합을 마쳤으며, 다음 첫 연구 납품은 실제 CSV로 Prony 계수를 찾고 곡선을 비교해 저장·재열기까지 연결하는 D04/D05/D06/D07입니다. 문서 수정이나 오프스크린 검사만으로 N분류·물리 Windows 인수를 완료 처리하지 않으며, 실제 미확인 범위는 그대로 분리 유지합니다.
+[전체 개발 계획](docs/review/2026-10-23-codex-improvement-plan.md#execution-order)과 [실행 작업표](docs/specs/cae-research/IMPLEMENTATION_TASKS_ko.md#whole-backlog)에 기존 미완료와 신규 연구를 함께 배치했습니다. 초기 착수 3건(`D01`, `D02`, `D03`)에 이어, 1단계 완료 트랙인 재료 연구(`D04`·`D05`·`D06`·`D07`), 후처리·변환 소유권(`D10`·`D11`), 팀 운영 프리셋(`Orchestrator Neon + Hydrogen/Neon`)을 통합했습니다. 문서 수정이나 오프스크린 검사만으로 N분류·물리 Windows 인수를 완료 처리하지 않으며, 실제 미확인 범위와 후속 트랙(`D08`/`D09`/`D32`, `caelab-prep` `D23`/`D25`/`D19`)은 그대로 분리 유지합니다.
+
+## 1단계 통합 현황 (D04–D07 · D10–D11 · 팀 프리셋) — 2026-11-21 통합
+
+1. **`D04`–`D07` (`caelab-workbench`) — 재료 동정 서비스(`CORE02`), `B-VIS-TRS-1`, 영속 저장(`STORE01`), 독립 연구 창(`MaterialStudyWindow`)**
+   - **구현**: `caelab/materials/experiments.py`, `registry.py`, `residuals.py`, `evaluator.py`, `service.py`(`CalibrationStudyService`), `caelab/materials/adapters/prony_trs.py`(`pyvisco==2.1.3` 기반 2-term Prony + WLF), `apps/workbench_qt/material_study.py`(`MaterialStudyWindow`), `pyproject.toml`(`pyvisco==2.1.3` 선택 의존성)을 구현했습니다.
+   - **검증 및 미확인 경계**: `pytest`(`tests/test_material_contracts.py`, `test_material_prony_trs.py`, `test_material_service.py`, `test_material_study_gui.py`) 및 `QT_QPA_PLATFORM=offscreen` 통합 회귀와 독립 QA를 통과했습니다. 물리 Windows 데스크톱 실화면 확인과 `D32` 전체 E2E 연동은 후속 범위로 남깁니다.
+
+2. **`D10`–`D11` (`caelab-workbench`) — `JobManager` 변환 소유권 및 `OC-ANIM-1`/`OC-TH4-1`/VTU 수치 판독**
+   - **구현**: `caelab/jobs.py`, `caelab/workbench.py`, `caelab/native/converters.py`, `operations.py`, `result_adapters.py`, `run_store.py`, `input_snapshot.py`, `windows_gate.py` 및 `caelab/result_readers/opencourant_history.py`(`OC-TH4-1`), `vtk_fields.py`(`OC-ANIM-1`/VTU)를 구현했습니다.
+   - **검증 및 미확인 경계**: `tests/test_postprocessing_readers.py` 및 통합 회귀와 독립 QA를 통과했습니다. 실제 Windows 데스크톱 RP 실화면·모두 통합 후 전체 회귀 검증은 후속 단계로 남깁니다.
+
+3. **팀 프리셋 문서 동기화** (`.agents/skills/caelab-team-hybrid-codex/SKILL.md`, `.agents/skills/caelab-team-native/SKILL.md`, `docs/GEMINI_LEAD_METHODOLOGY.md`)
+   - Orchestrator Neon + Gemini 4 Hydrogen / Neon + Codex CLI(`gpt-6.2-sol` / `gpt-6.2-astra`) 운영 기준으로 갱신했습니다.
+
+- **Workbench 1단계 통합 브랜치 검증 (`QT_QPA_PLATFORM=offscreen`)**: `test_material_contracts.py`, `test_material_prony_trs.py`, `test_material_service.py`, `test_material_study_gui.py`, `test_postprocessing_readers.py`, `test_program_boundaries.py` 실행 결과 **`282 passed` (383.39s)**, `check_handoff.py` exit `0`, `scripts/check_doc_sync.py --mode pre-push` 통과.
 
 ## 초기 착수 3건 통합 현황 (D01 · D02 · D03) — 2026-11-18 구현·독립 QA·통합
 

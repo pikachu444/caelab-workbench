@@ -120,10 +120,16 @@ def snapshot_input(input_path: str | Path, run_dir: Path, check_cancelled=lambda
             "files": manifest, "includes": calls, "execution_input": "model.inp"}
 
 
+class _RadIncludePathError(ValueError):
+    pass
+
+
 def _rad_includes(data: bytes, path: Path, *, included=False):
     """Radioss INCLUDE names are relative to the solver cwd, never the parent deck."""
     lines = data.splitlines()
     for index, line in enumerate(lines):
+        if not included and re.match(br"\s*/end(?:/engine)?(?:\s|$)", line, re.I):
+            break
         if included and re.match(br"\s*#enddata\b", line, re.I):
             break
         match = re.match(br"\s*#include\b(.*)$", line, re.I)
@@ -138,14 +144,15 @@ def _rad_includes(data: bytes, path: Path, *, included=False):
                 cursor += 1
             token = lines[cursor].strip() if cursor < len(lines) else b""
         if len(line) > 500 or not token or any(c in token for c in (b" ", b"\t", b"'", b'"', b"\\", b"\x00")):
-            raise ValueError(f"{path}:{index + 1}: 공백/따옴표/역슬래시 없는 상대 INCLUDE 경로가 필요합니다.")
+            error = _RadIncludePathError if b"\\" in token else ValueError
+            raise error(f"{path}:{index + 1}: 공백/따옴표/역슬래시 없는 상대 INCLUDE 경로가 필요합니다.")
         try:
             name = token.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError(f"{path}:{index + 1}: INCLUDE 경로가 UTF-8이 아닙니다.") from exc
         relative = PurePosixPath(name)
         if not relative.parts or relative.is_absolute() or ".." in relative.parts or ":" in name:
-            raise ValueError(f"{path}:{index + 1}: 실행 폴더 안의 상대 INCLUDE만 지원합니다: {name}")
+            raise _RadIncludePathError(f"{path}:{index + 1}: 실행 폴더 안의 상대 INCLUDE만 지원합니다: {name}")
         if relative.parts[0].casefold() in {".source", "results", "job.json", "job.log", "starter.log", "engine.log", ".start-solver"}:
             raise ValueError(f"{path}:{index + 1}: 실행 기록과 충돌하는 INCLUDE입니다: {name}")
         yield name, index + 1
