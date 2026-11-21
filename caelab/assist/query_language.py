@@ -1341,6 +1341,10 @@ def _starts_new_history_round(item, prior):
     if stage in _EXECUTION_SEARCH_STAGES:
         return True
     prior_keys = tuple(map(canonical_json_bytes, prior))
+    all_prior_histories = [
+        (prior, prior_keys),
+        *((history, tuple(map(canonical_json_bytes, history))) for _, history in _collect_nested_histories(prior)),
+    ]
     if any(_event_ids(event) & prior_ids
            for event in _history_events(item, prior=prior, prior_keys=prior_keys)):
         return False
@@ -1366,7 +1370,10 @@ def _starts_new_history_round(item, prior):
                     return step
         elif isinstance(value, (list, tuple)):
             keys = tuple(map(canonical_json_bytes, value))
-            prefix_end = _unchanged_history_prefix(value, prior, keys, prior_keys)
+            prefix_end = max(
+                _unchanged_history_prefix(value, history, keys, history_keys)
+                for history, history_keys in all_prior_histories
+            )
             return next((step for step in value[prefix_end:] if not is_skippable_setup(step)), None)
         return None
 
@@ -1375,11 +1382,6 @@ def _starts_new_history_round(item, prior):
         if stage in _EXECUTION_SEARCH_STAGES:
             return True
         if not isinstance(step, Mapping) or stage not in search_wrappers:
-            return False
-        carries_evidence = any(isinstance(node, Mapping) and node.keys() & _REVIEW_EVIDENCE_FIELDS
-                               for node in (step, step.get("response"), step.get("output")))
-        if carries_evidence and not any(_history_stage(event) in _SELECTION_STAGES
-                                        for event in _history_events(step)):
             return False
         return starts_with_search(first_novel_step(step))
 
@@ -1557,14 +1559,15 @@ def _validate_trace_sequence(events, has_stage_events, *, continues_history=Fals
 
 
 def _advance_review_replay(sequence, snapshot, cursor):
-    if cursor is None:
+    if sequence and cursor is None:
         # A non-history summary may replay just the final evidence. Until another step
         # arrives, it could also be the start of a full replay.
+        final = next((step for step in reversed(sequence) if not step[0] and step[2] == "review"), sequence[-1])
         matches_sequence = snapshot == sequence[0]
-        final_summary = not snapshot[0] and snapshot[2] == "review" and snapshot == sequence[-1]
+        final_summary = not snapshot[0] and snapshot[2] == final[2] == "review" and snapshot[2:] == final[2:]
         if matches_sequence or final_summary:
             return 1, matches_sequence, final_summary
-    else:
+    elif cursor is not None:
         index, matches_sequence, _ = cursor
         if matches_sequence and index < len(sequence) and snapshot == sequence[index]:
             return index + 1, True, False
@@ -1712,11 +1715,15 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     # Validate the original records before deciding which events apply to review state.
     trace_blocks_support = False
     evidence_by_record = {}
-    completion_response_owners = {}
+    interim_reviews_by_response = {}
     for record, phase, _, _, _, report_histories, _, _, _ in _trace_records(trace, root=True, deduplicate=False):
         response = record.get("response")
         if isinstance(response, Mapping) and _history_stage(record) in _COMPLETION_STAGES:
-            completion_response_owners[id(response)] = id(record)
+            interim_reviews_by_response[id(response)] = {
+                id(step) for history in _history_lists(record) for step in history
+                if isinstance(step, Mapping) and _history_stage(step) in {"assessment", "retrieval_assessment"}
+                and not _event_ids(step)
+            }
         if any(record[key] != identity[key] for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
@@ -1783,6 +1790,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     review_superseded_quotes = False
     trace_checks = []
     review_checks = []
+    review_check_sources = set()
     review_checks_ancestors = frozenset()
     review_quotes_ancestors = frozenset()
     review_candidate_ids = None
@@ -1824,11 +1832,20 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if record is trace and record_ids == all_candidate_ids:
             record_ids = None
         has_review_update = has_quotes or record_ids is not None
+        if (_history_stage(record) in _COMPLETION_STAGES and (constrains_checks or constrains_candidates)
+                and _NON_BARE_FIELDS & record.keys() <= {"citations", "quoted_spans"} and has_quotes):
+            # A bare completion marker can be annotated with citations that summarize the
+            # enclosing review. Any independently recorded evidence is still replay-checked.
+            record_event_ids = frozenset(
+                (event_id, owner_id, field) for event_id, owner_id, field in record_event_ids
+                if owner_id != record_id or not reviewed_event_evidence.get(event_id, {}).get("bare")
+            )
         in_replayed_review = any(
             event_id in reviewed_event_evidence and owner_id not in reviewed_event_evidence[event_id]["owners"]
             for event_id, owner_id, _ in record_event_ids
         )
-        if effective_phase in {"review", "selection"} and has_review_update:
+        has_snapshot = effective_phase in {"review", "selection"} and (has_review_update or selected is not None)
+        if has_snapshot:
             for event_id, owner_id, owner_history_field in record_event_ids:
                 snapshot = (
                     owner_id in history_ancestors,
@@ -1837,6 +1854,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     frozenset(record_quotes) if has_quotes else None,
                     check_evidence,
                     frozenset(record_ids) if record_ids is not None else None,
+                    frozenset(selected) if selected is not None else None,
                 )
                 prior = reviewed_event_evidence.get(event_id)
                 if prior is not None and owner_id not in prior["owners"]:
@@ -1849,6 +1867,16 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             if in_replayed_review:
                 # An unchanged historical selection or review contributes no evidence to this round.
                 continue
+        elif effective_phase == "review":
+            for event_id, owner_id, _ in record_event_ids:
+                if owner_id != record_id:
+                    continue
+                prior = reviewed_event_evidence.setdefault(event_id, {
+                    "owners": {owner_id}, "sequence": [], "bare": _is_bare_completion(record),
+                })
+                if (owner_id not in prior["owners"] and prior["sequence"]
+                        and (event_id, owner_id) not in replay_cursors):
+                    raise ValueError("Retrieval assessment contradicts trace selection or review")
 
         reuses_round_event_id = False
         if effective_phase in {"search", "selection"}:
@@ -1896,6 +1924,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             review_quotes_constrained_by_replay = False
             review_quotes_ancestors = frozenset()
             review_checks = []
+            review_check_sources.clear()
             review_checks_ancestors = frozenset()
             review_candidate_ids = None
             review_candidate_ancestors = frozenset()
@@ -1934,22 +1963,29 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_quotes_constrained_by_replay = False
                     review_quotes_ancestors = frozenset()
                 if record_checks:
-                    response_owner = completion_response_owners.get(record_id)
-                    finishes_own_review = (
-                        not altered_replay and response_owner in review_checks_ancestors
-                        and any(owner_id == response_owner and owner_history_field is None
-                                for _, owner_id, owner_history_field in record_event_ids)
+                    replaces_interim_checks = (
+                        not altered_replay and bool(review_check_sources)
+                        and review_check_sources <= interim_reviews_by_response.get(record_id, frozenset())
                     )
-                    # A completion's original final response can supersede its interim checks.
-                    if constrains_checks and not finishes_own_review:
+                    if constrains_checks and not replaces_interim_checks:
+                        checks_by_requirement = {rid: (relation, ids, quotes)
+                                                 for rid, relation, ids, quotes in check_evidence}
+                        for rid, (previous, previous_quotes) in review_checks:
+                            if rid in checks_by_requirement:
+                                relation, ids, quotes = checks_by_requirement[rid]
+                                if (relation != previous["relation"] or not ids <= set(previous["candidate_ids"])
+                                        or not quotes <= previous_quotes):
+                                    raise ValueError("Retrieval assessment contradicts trace selection or review")
                         review_checks.extend(record_checks)
-                        _validated_check_evidence(review_checks)
+                        review_check_sources.add(record_id)
                         review_checks_ancestors |= ancestors
                     else:
                         review_checks = record_checks
+                        review_check_sources = {record_id}
                         review_checks_ancestors = ancestors
                 elif not constrains_checks:
                     review_checks = []
+                    review_check_sources.clear()
                     review_checks_ancestors = frozenset()
                 if record_ids is not None:
                     if review_candidate_ids is not None and constrains_candidates:
