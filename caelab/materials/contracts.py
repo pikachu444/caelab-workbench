@@ -1256,6 +1256,9 @@ class PredictionBundleV1:
     run_ids: tuple[str, ...] = ()
     diagnostics: tuple[Mapping[str, Any] | str, ...] = ()
     schema_version: int = 1
+    study_id: str | None = None
+    model_id: str | None = None
+    parameter_set_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _require_schema_version_v1(self.schema_version)
@@ -1263,6 +1266,12 @@ class PredictionBundleV1:
         _require_nonempty_str(self.request_id, "PredictionBundleV1.request_id")
         _require_nonempty_str(self.study_revision, "PredictionBundleV1.study_revision")
         _require_nonempty_str(self.model_revision, "PredictionBundleV1.model_revision")
+        if self.study_id is not None:
+            _require_nonempty_str(self.study_id, "PredictionBundleV1.study_id")
+        if self.model_id is not None:
+            _require_nonempty_str(self.model_id, "PredictionBundleV1.model_id")
+        if self.parameter_set_sha256 is not None:
+            _require_sha256(self.parameter_set_sha256, "PredictionBundleV1.parameter_set_sha256")
         if not isinstance(self.adapter, AdapterIdentity):
             raise ValueError("PredictionBundleV1.adapter must be an AdapterIdentity")
 
@@ -1325,6 +1334,8 @@ class PredictionBundleV1:
             "artifact_owners": {aid: owner.to_dict() for aid, owner in self.artifact_owners.items()},
             "run_ids": list(self.run_ids),
             "diagnostics": _to_plain_json(self.diagnostics),
+            **{name: getattr(self, name) for name in ("study_id", "model_id", "parameter_set_sha256")
+               if getattr(self, name) is not None},
         }
 
     @classmethod
@@ -1343,13 +1354,18 @@ class PredictionBundleV1:
             "run_ids",
             "diagnostics",
         }
-        m = _require_exact_keys(data, required, context="PredictionBundleV1")
+        m = _require_exact_keys(
+            data, required, optional={"study_id", "model_id", "parameter_set_sha256"}, context="PredictionBundleV1",
+        )
         _require_schema_version_v1(m["schema_version"])
         for seq_key in ("experiments", "artifacts"):
             if isinstance(m[seq_key], (str, bytes, Mapping)) or not isinstance(m[seq_key], Sequence):
                 raise ValueError(f"PredictionBundleV1.{seq_key} must be a list")
         return cls(
             schema_version=1,
+            study_id=m.get("study_id"),
+            model_id=m.get("model_id"),
+            parameter_set_sha256=m.get("parameter_set_sha256"),
             evaluation_id=m["evaluation_id"],
             request_id=m["request_id"],
             study_revision=m["study_revision"],
