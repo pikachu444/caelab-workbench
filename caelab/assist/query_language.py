@@ -1224,11 +1224,13 @@ def _event_ids(item):
 
 
 def _history_owner_signature(owner, *, ignore_evidence=False):
+    stage = _retrieval_stage(owner)
     content = {key: value for key, value in owner.items()
                if key not in _TRACE_HISTORY_FIELDS and key not in _TRACE_RESPONSE_FIELDS
+               and key != "stage" and (key != "kind" or value != stage)
                and (not ignore_evidence or key not in _REVIEW_EVIDENCE_FIELDS)
                and (key != "status" or not isinstance(value, str))}
-    return _retrieval_stage(owner), _event_ids(owner), canonical_json_bytes(content)
+    return stage, _event_ids(owner), canonical_json_bytes(content)
 
 
 def _same_history_owner(owner, prior_owner):
@@ -1250,7 +1252,9 @@ def _same_history_step(item, prior_item, item_key, prior_key, *, require_complet
     identified = bool(_event_ids(item) & _event_ids(prior_item))
 
     def replay_content(value):
-        ignored = set(_TRACE_HISTORY_FIELDS)
+        ignored = {*_TRACE_HISTORY_FIELDS, "stage"}
+        if value.get("kind") == _retrieval_stage(value):
+            ignored.add("kind")
         if isinstance(value.get("status"), str):
             ignored.add("status")
         if identified:
@@ -1343,8 +1347,8 @@ def _starts_new_history_round(item, prior):
         return True
     prior_keys = tuple(map(canonical_json_bytes, prior))
     nested_prior_histories = [
-        (owner, history, tuple(map(canonical_json_bytes, history)))
-        for owner, history in _collect_nested_histories(prior, ignore_evidence=True)
+        (owners, history, tuple(map(canonical_json_bytes, history)))
+        for owners, history in _collect_nested_histories(prior, ignore_evidence=True)
     ]
     if any(_event_ids(event) & prior_ids
            for event in _history_events(item, prior=prior, prior_keys=prior_keys)):
@@ -1361,33 +1365,45 @@ def _starts_new_history_round(item, prior):
             return False
         return not any(_history_stage(event) in _EXECUTION_SEARCH_STAGES for event in _history_events(step))
 
-    def first_novel_step(value, owner=None):
+    def same_owner_scope(owners, previous):
+        if not owners or not previous or not _same_history_owner(owners[-1], previous[-1]):
+            return False
+        identified = [owner for owner in owners[:-1] if owner[1]]
+        previous_identified = [owner for owner in previous[:-1] if owner[1]]
+        return len(identified) == len(previous_identified) and all(
+            _same_history_owner(owner, other) for owner, other in zip(identified, previous_identified)
+        )
+
+    def first_novel_step(value, owners):
         if isinstance(value, Mapping):
             if _history_stage(value) in _EXECUTION_SEARCH_STAGES and not (_event_ids(value) & prior_ids):
-                return value
-            owner = _history_owner_signature(value, ignore_evidence=True)
+                return value, owners
+            owners = (*owners, _history_owner_signature(value, ignore_evidence=True))
             for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS):
-                step = first_novel_step(value.get(key), owner)
+                step = first_novel_step(value.get(key), owners)
                 if step is not None:
                     return step
         elif isinstance(value, (list, tuple)):
             keys = tuple(map(canonical_json_bytes, value))
+            outer_prefix = (0 if any(owner[1] and owner[1].isdisjoint(prior_ids) for owner in owners)
+                            else _unchanged_history_prefix(value, prior, keys, prior_keys))
             prefix_end = max(
-                _unchanged_history_prefix(value, prior, keys, prior_keys),
+                outer_prefix,
                 max((_unchanged_history_prefix(value, history, keys, history_keys)
-                     for prior_owner, history, history_keys in nested_prior_histories
-                     if _same_history_owner(owner, prior_owner)), default=0),
+                     for previous, history, history_keys in nested_prior_histories
+                     if same_owner_scope(owners, previous)), default=0),
             )
-            return next((step for step in value[prefix_end:] if not is_skippable_setup(step)), None)
+            return next(((step, owners) for step in value[prefix_end:] if not is_skippable_setup(step)), None)
         return None
 
-    def starts_with_search(step):
+    def starts_with_search(step, owners=()):
         stage = _history_stage(step)
         if stage in _EXECUTION_SEARCH_STAGES:
             return True
         if not isinstance(step, Mapping) or stage not in search_wrappers:
             return False
-        return starts_with_search(first_novel_step(step))
+        nested = first_novel_step(step, owners)
+        return nested is not None and starts_with_search(*nested)
 
     return starts_with_search(item)
 
@@ -1439,30 +1455,34 @@ def _novel_history_items(items, prior_histories, *, only_altered=False, identifi
     return items, False
 
 
-def _collect_nested_histories(value, *, direct=False, ignore_evidence=False):
+def _collect_nested_histories(value, *, direct=False, ignore_evidence=False, owners=()):
     if isinstance(value, Mapping):
         histories = tuple(_history_lists(value))
-        if histories:
-            signature = None if direct else _history_owner_signature(value, ignore_evidence=ignore_evidence)
-            for history in histories:
-                yield signature, history
-                yield from _collect_nested_histories(history, ignore_evidence=ignore_evidence)
+        if not direct and (histories or _event_ids(value)):
+            owners = (*owners, _history_owner_signature(value, ignore_evidence=ignore_evidence))
+        for history in histories:
+            yield owners, history
+            yield from _collect_nested_histories(history, ignore_evidence=ignore_evidence, owners=owners)
         for key in sorted(set(value).difference(_TRACE_HISTORY_FIELDS)):
-            yield from _collect_nested_histories(value[key], ignore_evidence=ignore_evidence)
+            yield from _collect_nested_histories(value[key], ignore_evidence=ignore_evidence, owners=owners)
     elif isinstance(value, (list, tuple)):
         for item in value:
-            yield from _collect_nested_histories(item, ignore_evidence=ignore_evidence)
+            yield from _collect_nested_histories(item, ignore_evidence=ignore_evidence, owners=owners)
 
 
 def _trace_records(
     value, phase=None, ancestors=frozenset(), history_ancestors=frozenset(), report_of=frozenset(),
     report_histories=(), altered_replay=False, wrapper_event_ids=frozenset(), phase_event_ids=frozenset(),
-    *, root=False, deduplicate=True,
+    *, root=False, deduplicate=True, index_offset=0,
 ):
     if isinstance(value, (list, tuple)):
-        for item in value:
+        for index, item in enumerate(value, index_offset):
+            indexed_event_ids = frozenset(
+                (event_id, owner_id, (*field_path, index))
+                for event_id, owner_id, field_path in wrapper_event_ids
+            )
             yield from _trace_records(item, phase, ancestors, history_ancestors, report_of, report_histories,
-                                      altered_replay, wrapper_event_ids, phase_event_ids, deduplicate=deduplicate)
+                                      altered_replay, indexed_event_ids, phase_event_ids, deduplicate=deduplicate)
     elif isinstance(value, Mapping):
         if not root and phase not in {"search", "detail", "selection"}:
             stage = _retrieval_stage(value)
@@ -1480,7 +1500,8 @@ def _trace_records(
             *(key for key in _TRACE_RESPONSE_FIELDS if key in value),
         )
         history_fields = {key: value[key] for key in _TRACE_HISTORY_FIELDS if key in value}
-        histories = tuple(_collect_nested_histories(history_fields, direct=True))
+        histories = tuple((owners[-1] if owners else None, history)
+                          for owners, history in _collect_nested_histories(history_fields, direct=True))
         value_id = id(value)
         child_ancestors = ancestors | {value_id}
         own_event_ids = frozenset((event_id, value_id) for event_id in _event_ids(value)) if not root else frozenset()
@@ -1506,6 +1527,7 @@ def _trace_records(
             child_altered_replay = altered_replay
             child_wrapper_event_ids = event_ids
             child_value = value[key]
+            child_index_offset = 0
             if key in _TRACE_HISTORY_FIELDS:
                 child_phase = None
                 child_history = history_ancestors | {value_id}
@@ -1523,6 +1545,7 @@ def _trace_records(
                             child_value, prior_histories,
                             only_altered=not (report_of or identified_owner), identified_owner=identified_owner,
                         )
+                        child_index_offset = len(value[key]) - len(child_value)
                         child_altered_replay |= stripped_altered_replay
             elif key in _EVIDENCE_FIELDS:
                 child_phase = "detail"
@@ -1543,6 +1566,7 @@ def _trace_records(
             yield from _trace_records(
                 child_value, child_phase, child_ancestors, child_history, child_report_of, child_report_histories,
                 child_altered_replay, child_wrapper_event_ids, child_phase_event_ids, deduplicate=deduplicate,
+                index_offset=child_index_offset,
             )
         if not search_starts_history:
             yield record
@@ -1565,13 +1589,14 @@ def _validate_trace_sequence(events, has_stage_events, *, continues_history=Fals
         raise ValueError("Retrieval assessment trace events must start before search and record a terminal result")
 
 
-def _advance_review_replay(sequence, snapshot, cursor, *, has_child_history):
+def _advance_review_replay(sequence, snapshot, cursor, *, has_structure):
     if sequence and cursor is None:
         # A non-history summary may replay just the final evidence. Until another step
         # arrives, it could also be the start of a full replay.
         matches_sequence = snapshot == sequence[0]
-        final_summary = (not has_child_history and not snapshot[0] and snapshot[2] == "review"
-                         and snapshot[3:] == sequence[-1][3:])
+        final = next((step for step in reversed(sequence) if step[2] in {"review", "selection"}), None)
+        final_summary = (not has_structure and not snapshot[0] and snapshot[2] == "review"
+                         and final is not None and snapshot[3:] == final[3:])
         if matches_sequence or final_summary:
             return 1, matches_sequence, final_summary
     elif cursor is not None:
@@ -1736,19 +1761,30 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_blocks_support = False
     evidence_by_record = {}
     interim_reviews_by_response = {}
-    owners_with_history = set()
+    owners_with_structure = set()
+    review_owners = set()
     for record, phase, _, _, _, report_histories, _, event_ids, _ in _trace_records(
         trace, root=True, deduplicate=False,
     ):
-        if any(_history_lists(record)):
-            owners_with_history.update(owner_id for _, owner_id, _ in event_ids)
+        if phase == "review" and any(owner_id == id(record) for _, owner_id, _ in event_ids):
+            review_owners.add(id(record))
+        reports = [(key, child) for key, child in record.items() if key != "response" and isinstance(child, Mapping)]
+        if any(_history_lists(record)) or any(key == "assessment" or _is_retrieval_event(child)
+                                                for key, child in reports):
+            owners_with_structure.update(owner_id for _, owner_id, _ in event_ids)
+        elif any(key in _TRACE_RESPONSE_FIELDS for key, _ in reports):
+            owners_with_structure.update(
+                owner_id for _, owner_id, path in event_ids if not path or path[0] != "response"
+            )
         response = record.get("response")
         if isinstance(response, Mapping) and _history_stage(record) in _COMPLETION_STAGES:
-            interim_reviews_by_response[id(response)] = {
+            interim_ids = {
                 record_id for history in _history_lists(record) for step in history
                 if isinstance(step, Mapping) and _history_stage(step) in {"assessment", "retrieval_assessment"}
                 for record_id in _interim_review_record_ids(step)
             }
+            for response_id in _interim_review_record_ids(response):
+                interim_reviews_by_response[response_id] = interim_ids
         if any(record[key] != identity[key] for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
@@ -1810,10 +1846,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_quotes = set()
     has_recorded_quotes = False
     review_quotes = set()
-    review_quotes_constrained_by_replay = False
+    review_quotes_constrained = False
     has_review_quotes = False
     review_superseded_quotes = False
     trace_checks = []
+    selection_evidence = []
     review_checks = []
     review_check_sources = set()
     review_checks_ancestors = frozenset()
@@ -1869,9 +1906,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             event_id in reviewed_event_evidence and owner_id not in reviewed_event_evidence[event_id]["owners"]
             for event_id, owner_id, _ in record_event_ids
         )
-        has_snapshot = effective_phase in {"review", "selection"} and (has_review_update or selected is not None)
+        search_stage = _history_stage(record) if effective_phase == "search" else None
+        has_snapshot = (search_stage in _SEARCH_STAGES
+                        or (effective_phase in {"review", "selection"} and (has_review_update or selected is not None)))
         if has_snapshot:
             for event_id, owner_id, field_path in record_event_ids:
+                if search_stage and owner_id not in review_owners:
+                    continue
                 snapshot = (
                     owner_id in history_ancestors,
                     field_path,
@@ -1880,13 +1921,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     check_evidence,
                     frozenset(record_ids) if record_ids is not None else None,
                     frozenset(selected) if selected is not None else None,
+                    search_stage,
                 )
                 prior = reviewed_event_evidence.get(event_id)
                 if prior is not None and owner_id not in prior["owners"]:
                     key = event_id, owner_id
                     replay_cursors[key] = _advance_review_replay(
                         prior["sequence"], snapshot, replay_cursors.get(key),
-                        has_child_history=owner_id in owners_with_history,
+                        has_structure=owner_id in owners_with_structure,
                     )
                 else:
                     recorded = reviewed_event_evidence.setdefault(event_id, {"owners": set(), "sequence": []})
@@ -1921,7 +1963,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_ancestors = ancestors
         supplies_required_evidence = (
             bool(record_checks)
-            if (review_checks or encloses_review or review_quotes_constrained_by_replay)
+            if (review_checks or encloses_review or review_quotes_constrained)
             else (review_candidate_ids is None or record_ids is not None or bool(record_checks)) and has_review_update
         )
         not_replaying_selection_container = not (non_history_ancestors & new_round_selection_history)
@@ -1946,10 +1988,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if fresh_review or quoted_selection:
             trace_quotes.clear()
             trace_checks.clear()
+            selection_evidence.clear()
             has_review_quotes = False
             review_superseded_quotes = False
             review_quotes = set()
-            review_quotes_constrained_by_replay = False
+            review_quotes_constrained = False
             review_quotes_ancestors = frozenset()
             review_checks = []
             review_check_sources.clear()
@@ -1971,12 +2014,19 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if effective_phase == "review":
             if has_review_update:
                 history_review_containers.update(history_ancestors)
+                enclosed_selection = [
+                    entry for entry in selection_evidence if record_id in entry[1]
+                ] if has_quotes and not record_checks and not review_superseded_quotes else []
                 if has_quotes:
-                    if has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
+                    if enclosed_selection:
+                        review_quotes = record_quotes & set().union(*(quotes for _, _, quotes, _ in enclosed_selection))
+                        review_quotes_ancestors = ancestors
+                        review_quotes_constrained = True
+                    elif has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
-                        review_quotes_constrained_by_replay = True
-                    elif has_review_quotes and encloses_quotes and review_quotes_constrained_by_replay:
+                        review_quotes_constrained = True
+                    elif has_review_quotes and encloses_quotes and review_quotes_constrained:
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
                     else:
@@ -1988,7 +2038,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
-                    review_quotes_constrained_by_replay = False
+                    review_quotes_constrained = False
                     review_quotes_ancestors = frozenset()
                 if record_checks:
                     replaces_interim_checks = (
@@ -2011,6 +2061,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_checks = record_checks
                         review_check_sources = {record_id}
                         review_checks_ancestors = ancestors
+                elif enclosed_selection:
+                    review_checks = [check for _, _, _, checks in enclosed_selection for check in checks]
+                    review_check_sources = {source_id for source_id, _, _, _ in enclosed_selection}
+                    review_checks_ancestors = ancestors
                 elif not constrains_checks:
                     review_checks = []
                     review_check_sources.clear()
@@ -2029,6 +2083,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
+            if effective_phase == "selection":
+                selection_evidence.append((record_id, ancestors, record_quotes, record_checks))
 
     for (event_id, _), (index, matches_sequence, final_summary) in replay_cursors.items():
         if not final_summary and (not matches_sequence or index != len(reviewed_event_evidence[event_id]["sequence"])):
