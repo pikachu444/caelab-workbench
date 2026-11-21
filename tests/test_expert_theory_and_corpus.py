@@ -2184,6 +2184,8 @@ def test_d09_summary_can_narrow_completed_checks(
     "short-selection-history", "copied-auxiliary-query", "fresh-review-query",
     "erased-inner-decision", "erased-inner-retrieval_decision",
     "changed-search-payload", "nested-search-alias", "nested-stage-search-alias",
+    "checked-review-in-response-history", "copied-auxiliary-search-query", "changed-search-report",
+    "changed-stage-search-report",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2235,6 +2237,15 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             "response": {history_field: [prepare, selection, done], **evidence(first)},
         }]
         assert_only(first, second)
+        return
+
+    if layout == "checked-review-in-response-history":
+        for citations in (review_b["citations"], review_a["citations"] + review_b["citations"]):
+            wrapper[history_field] = [{
+                **done, "output": {"citations": citations},
+                "response": {history_field: [prepare, selection, review_a, done]},
+            }]
+            assert_only(first, second)
         return
 
     if layout == "citation-only-interim":
@@ -2353,6 +2364,25 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         for changed in (dict(recorded, query="B thermal"), dict(recorded, event_id="sother"),
                         dict(recorded, payload={"limit": 4})):
             replay[0] = completion_with_search(changed)
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(second, companion=first, **options)
+        return
+
+    if layout in {"changed-search-report", "changed-stage-search-report"}:
+        history_key = "stage_events" if layout == "changed-stage-search-report" else history_field
+        for report_key in ("result", "output", "response"):
+            completion = {
+                **done, "event_id": "rc1", "response": evidence(second),
+                "result": {history_key: [prepare, {**search, report_key: {"query": "A contact"}}, done]},
+            }
+            wrapper[history_field] = [prepare, completion, done]
+            wrapper["result"] = {history_field: [search_2, select_2, review_b, done]}
+            replay = [completion]
+            wrapper["output"] = {history_field: replay}
+            assert_only(second, first)
+            replay[0] = {**completion, "result": {
+                history_key: [prepare, {**search, report_key: {"query": "B thermal"}}, done],
+            }}
             with pytest.raises(ValueError, match="trace selection or review"):
                 assess(second, companion=first, **options)
         return
@@ -2480,11 +2510,16 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             flattened = {**done, **shared, **final}
             replay_history[0] = flattened
             assert_only(active, other)
+            wrapped = {**done, **shared, "response": completion["response"]}
+            replay_history[0] = wrapped
+            assert_only(active, other)
             altered = (
                 {key: value for key, value in flattened.items() if key != "id"},
                 {**done, **shared, "response": {**final, **shared, "event_id": "other"}},
                 {**completion, "id": "third"},
                 {key: value for key, value in completion.items() if key != "id"},
+                {**wrapped, "id": "third"},
+                {key: value for key, value in wrapped.items() if key != "id"},
             )
         elif layout == "erased-nested-interim":
             replay_history[0] = {**done, "event_id": "rc1", "response": final}
@@ -2623,21 +2658,23 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
 
     if layout.startswith("copied-"):
         nested = [prepare, search, selection, done]
-        if layout in {"copied-nested-query", "copied-auxiliary-query"}:
+        auxiliary_query = layout in {"copied-auxiliary-query", "copied-auxiliary-search-query"}
+        if layout == "copied-nested-query" or auxiliary_query:
             nested[1] = dict(search, query="A contact")
         if layout in {"copied-selection-nested", "copied-extra-wrapper"}:
             nested = [prepare, {"stage": "retrieval", history_field: nested}, done]
         previous = {**done, history_field: nested, **evidence(first)}
         prior = [prepare, dict(search, event_id="original-outer-search"), previous, done]
-        if layout == "copied-auxiliary-query":
-            auxiliary = {"stage": "retrieval", "query": "A contact", history_field: [prepare, done]}
+        if auxiliary_query:
+            setup = [] if layout == "copied-auxiliary-query" else [search]
+            auxiliary = {"stage": "retrieval", "query": "A contact", history_field: [prepare, *setup, done]}
             prior.insert(2, auxiliary)
         followup = [*prior, search_2, select_2, review_b, done]
         wrapper[history_field] = prior
         shortened = [prepare, *prior[2:]]
         wrapper["result"] = {history_field: [*shortened, {**done, history_field: followup}]}
         assert_only(second, first)
-        if layout == "copied-auxiliary-query":
+        if auxiliary_query:
             followup[3] = {**previous, **evidence(second), "query": "A contact"}
             for prefix in (shortened, [prepare, previous, done]):
                 wrapper["result"] = {history_field: [*prefix, {**done, history_field: followup}]}
