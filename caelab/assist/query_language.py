@@ -1562,7 +1562,7 @@ def _report_has_review_evidence(value):
     if isinstance(value, Mapping):
         if _history_stage(value) in (_SEARCH_STAGES | _SELECTION_STAGES):
             return False
-        return bool(value.keys() & _EVIDENCE_FIELDS) or any(
+        return bool(value.keys() & _REVIEW_EVIDENCE_FIELDS) or any(
             _report_has_review_evidence(value[key])
             for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS) if key in value
         )
@@ -2212,18 +2212,19 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 for interim in _review_report_records(step, stop_at_review_boundary=True)
             }
             response_records = tuple(_review_report_records(response))
+            # Enclosing completions add scope without erasing the nested completion's scope.
             for response_record in response_records:
-                interim_reviews_by_response[id(response_record)] = interim_ids
+                interim_reviews_by_response.setdefault(id(response_record), set()).update(interim_ids)
             # An independently identified report may supply final citations, but
             # replacing checked bindings still requires the same review scope.
             for response_record in _review_report_records(response, stop_at_review_boundary=True):
-                interim_checks_by_response[id(response_record)] = interim_ids
+                interim_checks_by_response.setdefault(id(response_record), set()).update(interim_ids)
             # Legacy traces can end at an interim assessment and record final citations at the root.
             if (record is trace
                     and not (record.keys() & {"checks", "requirement_checks"})
                     and any(item.get("citations") or item.get("quoted_spans") for item in response_records)
                     and all(_history_stage(history[-1]) in interim_stages for history in _history_lists(record))):
-                interim_reviews_by_response[id(record)] = {id(item) for item in response_records}
+                interim_reviews_by_response.setdefault(id(record), set()).update(map(id, response_records))
         if any(record[key] != identity[key] for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
@@ -2368,9 +2369,12 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     & snapshot_review_containers.get(owner_id, set()))
             for owner_id in snapshot_owners
         )
-        snapshot_phase = (
-            "review" if phase not in {"search", "detail"} and encloses_snapshot_review else effective_phase
-        )
+        # A selection keeps its bound even if its nested history includes a review.
+        snapshot_phase = effective_phase
+        if phase == "selection":
+            snapshot_phase = phase
+        elif phase not in {"search", "detail"} and encloses_snapshot_review:
+            snapshot_phase = "review"
         if snapshot_phase == "review" and has_review_update:
             # Retain structural review context even when replay leaves the live round untouched.
             for owner_id in snapshot_owners:
