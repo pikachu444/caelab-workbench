@@ -1873,6 +1873,86 @@ def test_d09_inner_final_citations_replace_only_interim_sources(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("layout", [
+    "wrapped-decision", "checked-response-to-decision", "outer-selection", "wrapped-selection",
+    "outer-checked-assessment", "outer-decision",
+])
+def test_d09_final_response_replaces_only_superseded_interim_evidence(
+    assessed_retrieval, response_format, history_field, layout,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+    prepare = {"stage": "prepare_query"}
+    done = {"stage": "retrieval_completion"}
+    checked = layout in {"checked-response-to-decision", "outer-checked-assessment"}
+
+    def evidence(candidate, *, use_checks=False):
+        cid = candidate["citation"]
+        quote = {"candidate_id": cid, "start": 0, "end": len(candidate["text"])}
+        report = {"citations": [quote]}
+        if use_checks:
+            report["checks"] = [{
+                "requirement_id": topic.requirement_id, "candidate_ids": [cid], "relation": "satisfied",
+                "quoted_spans": [quote], "reason": "recorded review",
+            }]
+        return report
+
+    assessment = {"stage": "assessment", **evidence(first)}
+    decision = {"stage": "decision", **evidence(first)}
+    selection = {"stage": "candidate_selection", "candidate_ids": [first["citation"], second["citation"]],
+                 **evidence(first)}
+    outer_review = {
+        "wrapped-decision": {**assessment, "result": decision},
+        "checked-response-to-decision": decision,
+        "outer-selection": selection,
+        "wrapped-selection": {**assessment, "result": {**selection, history_field: [prepare, assessment, done]}},
+        "outer-checked-assessment": {**assessment, **evidence(first, use_checks=True)},
+        "outer-decision": decision,
+    }[layout]
+    final = evidence(first, use_checks=checked)
+    response = final
+    if layout in {"outer-selection", "outer-checked-assessment", "outer-decision"}:
+        interim = {"stage": "assessment", **evidence(second, use_checks=checked)}
+        response = {**done, history_field: [prepare, interim, done], "response": final}
+    outer = {**done, history_field: [prepare, outer_review, done], "response": response}
+    options = {"include_good": True, "question_plan": plan, "trace_overrides": {"events": [outer]},
+               "response_format": response_format}
+
+    assert assess(first, companion=second, **options).status == "supported"
+    final.update(evidence(second, use_checks=checked))
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, companion=first, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("with_response", [False, True], ids=["output-only", "output-and-response"])
+def test_d09_citation_siblings_preserve_root_candidate_intersection(
+    assessed_retrieval, response_format, history_field, with_response,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (first, second)]
+    result = {"candidate_id": first["citation"], "candidate_ids": [second["citation"]]}
+    trace = {history_field: [{"stage": "prepare_query"}, {"stage": "search"}, {"stage": "retrieval_completion"}],
+             "result": result, "output": {"citations": quotes}}
+    if with_response:
+        trace["response"] = {"citations": quotes}
+    options = {"include_good": True, "trace_overrides": trace, "response_format": response_format}
+
+    for candidate, companion in ((first, second), (second, first)):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(candidate, companion=companion, **options)
+    result["candidate_ids"] = [first["citation"]]
+    assert assess(first, companion=second, **options).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, companion=first, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("report_field", ["result", "output"])
 @pytest.mark.parametrize("stage", [None, "assessment", "candidate_selection"])
 def test_d09_candidate_id_agrees_with_candidate_ids(

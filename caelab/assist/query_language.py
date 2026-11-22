@@ -1181,6 +1181,7 @@ def _validate_quote_provenance(value, provenance, span=None, *, require_page=Fal
 
 
 _SELECTION_STAGES = {"candidate_selection", "select_candidates", "candidates_selected"}
+_DECISION_STAGES = {"decision", "retrieval_decision"}
 _REVIEW_STAGES = {"assessment", "retrieval_assessment", "decision", "retrieval_decision",
                   "response", "retrieval_response", "requirement_checks"}
 _COMPLETION_STAGES = {
@@ -2022,17 +2023,22 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
     raise ValueError("Retrieval assessment contradicts trace selection or review")
 
 
-def _review_report_records(value, *, stop_at_review_boundary=False):
+def _review_report_records(value, *, stop_at_review_boundary=False, stop_at_non_interim=False):
     if isinstance(value, Mapping):
         if stop_at_review_boundary and (_event_ids(value) or _history_stage(value) in _COMPLETION_STAGES):
             return
+        if stop_at_non_interim and _history_stage(value) in (_DECISION_STAGES | _SELECTION_STAGES):
+            return
         yield value
-        for key in (*_TRACE_RESPONSE_FIELDS, *_TRACE_HISTORY_FIELDS):
-            if key in value:
-                yield from _review_report_records(value[key], stop_at_review_boundary=stop_at_review_boundary)
+        children = (value[key] for key in (*_TRACE_RESPONSE_FIELDS, *_TRACE_HISTORY_FIELDS) if key in value)
     elif isinstance(value, (list, tuple)):
-        for child in value:
-            yield from _review_report_records(child, stop_at_review_boundary=stop_at_review_boundary)
+        children = value
+    else:
+        return
+    for child in children:
+        yield from _review_report_records(
+            child, stop_at_review_boundary=stop_at_review_boundary, stop_at_non_interim=stop_at_non_interim,
+        )
 
 
 def _validated_check_evidence(checks):
@@ -2178,6 +2184,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     evidence_by_record = {}
     interim_reviews_by_response = {}
     interim_checks_by_response = {}
+    interim_candidates_by_response = {}
+    interim_response_scopes = []
     owners_with_structure = set()
     owner_identities = {}
     for record, phase, _, _, _, report_histories, _, event_ids, _, _, execution_search_scope in _trace_records(
@@ -2211,16 +2219,26 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             interim_ids = {
                 id(interim) for history in _history_lists(record) for step in history
                 if isinstance(step, Mapping) and _history_stage(step) in interim_stages
-                for interim in _review_report_records(step, stop_at_review_boundary=True)
+                for interim in _review_report_records(step, stop_at_review_boundary=True, stop_at_non_interim=True)
             }
             response_records = tuple(_review_report_records(response))
+            response_check_records = tuple(_review_report_records(response, stop_at_review_boundary=True))
+            sibling_assessment_ids = {
+                id(interim) for interim in _review_report_records(
+                    record.get("assessment"), stop_at_review_boundary=True, stop_at_non_interim=True,
+                )
+            }
             # Enclosing completions add scope without erasing the nested completion's scope.
             for response_record in response_records:
                 interim_reviews_by_response.setdefault(id(response_record), set()).update(interim_ids)
             # An independently identified report may supply final citations, but
             # replacing checked bindings still requires the same review scope.
-            for response_record in _review_report_records(response, stop_at_review_boundary=True):
+            for response_record in response_check_records:
                 interim_checks_by_response.setdefault(id(response_record), set()).update(interim_ids)
+                if sibling_assessment_ids:
+                    interim_candidates_by_response.setdefault(id(response_record), set()).update(sibling_assessment_ids)
+            if interim_ids:
+                interim_response_scopes.append((interim_ids, response_records, response_check_records))
             # Legacy traces can end at an interim assessment and record final citations at the root.
             if (record is trace
                     and not (record.keys() & {"checks", "requirement_checks"})
@@ -2288,6 +2306,21 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         has_quotes = bool(recorded_citations or record_checks)
         evidence_by_record[id(record)] = record_ids, selected, record_quotes, record_checks, check_evidence, has_quotes
 
+    review_records = list(_trace_records(trace, root=True))
+    live_review_ids = {
+        id(record) for record, phase, _, _, _, _, altered_replay, _, _, duplicate_history, _ in review_records
+        if phase == "review" and not altered_replay and not duplicate_history
+    }
+    # A nested interim history may resemble a changed copy of its enclosing history.
+    # Supersession depends on the final response being live, not on that resemblance.
+    superseded_interim_quotes: set[int] = set()
+    superseded_interim_checks: set[int] = set()
+    for interim_ids, response_records, response_check_records in interim_response_scopes:
+        if any(id(item) in live_review_ids and evidence_by_record[id(item)][5] for item in response_records):
+            superseded_interim_quotes.update(interim_ids)
+        if any(id(item) in live_review_ids and evidence_by_record[id(item)][3] for item in response_check_records):
+            superseded_interim_checks.update(interim_ids)
+
     cited_ids = {cid for cid, _, _ in checked_citations}
     trace_quotes = set()
     has_recorded_quotes = False
@@ -2303,6 +2336,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     review_checks_ancestors = frozenset()
     review_quotes_ancestors = frozenset()
     review_candidate_ids = None
+    review_candidate_sources: set[int] = set()
     review_candidate_ancestors = frozenset()
     history_review_containers: set[int] = set()
     saw_search_after_review = False
@@ -2316,9 +2350,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     snapshot_review_ancestors: dict[int, set[int]] = {}
     snapshot_review_containers: dict[int, set[int]] = {}
     for (record, phase, ancestors, history_ancestors, report_of, _,
-         altered_replay, record_event_ids, round_event_ids, duplicate_history, _) in _trace_records(trace, root=True):
+         altered_replay, record_event_ids, round_event_ids, duplicate_history, _) in review_records:
         record_id = id(record)
         record_ids, selected, record_quotes, record_checks, check_evidence, has_quotes = evidence_by_record[record_id]
+        live_has_quotes = has_quotes and record_id not in superseded_interim_quotes
+        live_checks = record_checks if record_id not in superseded_interim_checks else []
         if ((phase == "selection" and record_ids and not cited_ids <= record_ids)
                 or (selected and not cited_ids <= selected)):
             raise ValueError("Retrieval assessment contradicts trace selection or review")
@@ -2343,11 +2379,18 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             and review_quote_sources.isdisjoint(source_id for source_id, _, _, _ in selection_evidence)
         )
         constrains_quotes = has_review_quotes and not replaces_interim_quotes and (
-            (review_quotes_constrained or not record_checks)
+            (review_quotes_constrained or not live_checks)
             if encloses_quotes else nests_reviewed_quotes
         )
         constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
-        constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
+        # The completion's own response can replace its provisional sibling assessment.
+        replaces_interim_candidates = (
+            not altered_replay and bool(review_candidate_sources)
+            and review_candidate_sources <= interim_candidates_by_response.get(record_id, frozenset())
+        )
+        constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors) or (
+            not replaces_interim_candidates and bool(non_history_ancestors & review_candidate_ancestors)
+        )
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
             "review" if phase == "review" or (phase not in {"search", "detail"} and encloses_review) else phase
@@ -2482,6 +2525,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
 
         if duplicate_history:
             continue
+        live_has_review_update = live_has_quotes or record_ids is not None or bool(live_checks)
         reuses_round_event_id = False
         if effective_phase in {"search", "selection"}:
             seen_ids = seen_search_event_ids if effective_phase == "search" else seen_selection_event_ids
@@ -2496,9 +2540,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_history = history_ancestors
             new_round_selection_ancestors = ancestors
         supplies_required_evidence = (
-            bool(record_checks)
+            bool(live_checks)
             if (review_checks or encloses_review or review_quotes_constrained)
-            else (review_candidate_ids is None or record_ids is not None or bool(record_checks)) and has_review_update
+            else (review_candidate_ids is None or record_ids is not None or bool(live_checks)) and live_has_review_update
         )
         not_replaying_selection_container = not (non_history_ancestors & new_round_selection_history)
         belongs_to_new_round = bool(report_of & new_round_selection_ancestors) or (
@@ -2534,6 +2578,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             review_check_sources.clear()
             review_checks_ancestors = frozenset()
             review_candidate_ids = None
+            review_candidate_sources.clear()
             review_candidate_ancestors = frozenset()
             if non_history_ancestors & history_review_containers:
                 history_review_containers.intersection_update(ancestors)
@@ -2550,28 +2595,34 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_ancestors = frozenset()
         replaces_quotes = replaces_checks = replaces_candidates = False
         if effective_phase == "review":
-            if has_review_update:
+            selection_scope = {record_id} | report_of | non_history_ancestors
+            if live_has_quotes and not live_checks:
+                candidate_enclosed = [entry for entry in selection_evidence if selection_scope & entry[1]]
+            elif has_quotes and not live_has_quotes and not record_checks:
+                # The interim report can be superseded while its own selection still binds.
+                candidate_enclosed = [entry for entry in selection_evidence if record_id in entry[1]]
+            else:
+                candidate_enclosed = []
+            selection_sources = {source_id for source_id, _, _, _ in candidate_enclosed}
+            enclosed_selection = candidate_enclosed if (
+                not review_superseded_quotes or (review_check_sources and review_check_sources <= selection_sources)
+            ) else []
+            if live_has_review_update or enclosed_selection:
                 history_review_containers.update(history_ancestors)
-                selection_scope = {record_id} | report_of
-                candidate_enclosed = [
-                    entry for entry in selection_evidence if selection_scope & entry[1]
-                ] if has_quotes and not record_checks else []
-                selection_sources = {source_id for source_id, _, _, _ in candidate_enclosed}
-                enclosed_selection = candidate_enclosed if (
-                    not review_superseded_quotes or (review_check_sources and review_check_sources <= selection_sources)
-                ) else []
-                if has_quotes:
+                if live_has_quotes or enclosed_selection:
                     if enclosed_selection:
-                        selection_quotes = record_quotes & set().union(
-                            *(quotes for _, _, quotes, _ in enclosed_selection)
-                        )
+                        selection_quotes = set().union(*(quotes for _, _, quotes, _ in enclosed_selection))
+                        quote_sources = selection_sources.copy()
+                        if live_has_quotes:
+                            selection_quotes &= record_quotes
+                            quote_sources.add(record_id)
                         if has_review_quotes and review_superseded_quotes:
                             review_quotes &= selection_quotes
-                            review_quote_sources |= selection_sources | {record_id}
+                            review_quote_sources |= quote_sources
                             review_quotes_ancestors |= ancestors
                         else:
                             review_quotes = selection_quotes
-                            review_quote_sources = selection_sources | {record_id}
+                            review_quote_sources = quote_sources
                             review_quotes_ancestors = ancestors
                         review_quotes_constrained = True
                     elif constrains_quotes:
@@ -2585,8 +2636,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_quotes_ancestors = ancestors
                         replaces_quotes = True
                     has_review_quotes = True
-                    if record_quotes or record_checks:
-                        review_superseded_quotes = True
+                    if stage in _DECISION_STAGES:
+                        review_quotes_constrained = True
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
@@ -2594,7 +2645,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_quotes_constrained = False
                     review_quotes_ancestors = frozenset()
                     replaces_quotes = True
-                if record_checks:
+                if (live_has_quotes and record_quotes) or live_checks:
+                    review_superseded_quotes = True
+                if live_checks:
                     replaces_interim_checks = (
                         not altered_replay and bool(review_check_sources)
                         and review_check_sources <= interim_checks_by_response.get(record_id, frozenset())
@@ -2608,11 +2661,11 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                                 if (relation != previous["relation"] or not ids <= set(previous["candidate_ids"])
                                         or not quotes <= previous_quotes):
                                     raise ValueError("Retrieval assessment contradicts trace selection or review")
-                        review_checks.extend(record_checks)
+                        review_checks.extend(live_checks)
                         review_check_sources.add(record_id)
                         review_checks_ancestors |= ancestors
                     else:
-                        review_checks = record_checks
+                        review_checks = live_checks
                         review_check_sources = {record_id}
                         review_checks_ancestors = ancestors
                         replaces_checks = True
@@ -2632,21 +2685,25 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 if record_ids is not None:
                     if review_candidate_ids is not None and constrains_candidates:
                         review_candidate_ids &= record_ids
+                        review_candidate_sources.add(record_id)
                         review_candidate_ancestors |= ancestors
                     else:
                         review_candidate_ids = record_ids
+                        review_candidate_sources = {record_id}
                         review_candidate_ancestors = ancestors
                         replaces_candidates = True
                 elif not constrains_candidates:
                     review_candidate_ids = None
+                    review_candidate_sources.clear()
                     review_candidate_ancestors = frozenset()
                     replaces_candidates = True
-        elif has_quotes and effective_phase not in {"search", "detail"} and not in_replayed_review:
-            has_recorded_quotes = True
-            trace_quotes.update(record_quotes)
-            trace_checks.extend(record_checks)
-            if effective_phase == "selection":
-                selection_evidence.append((record_id, ancestors, record_quotes, record_checks))
+        elif (live_has_quotes or live_checks) and effective_phase not in {"search", "detail"} and not in_replayed_review:
+            if live_has_quotes:
+                has_recorded_quotes = True
+                trace_quotes.update(record_quotes)
+            trace_checks.extend(live_checks)
+            if effective_phase == "selection" and live_has_quotes:
+                selection_evidence.append((record_id, ancestors, record_quotes, live_checks))
         for snapshot in new_snapshots:
             snapshot.resets_prior = resets_prior
             snapshot.replaces_quotes = replaces_quotes
