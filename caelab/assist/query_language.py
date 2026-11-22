@@ -1254,6 +1254,9 @@ def _same_history_step(item, prior_item, item_key, prior_key, *, require_complet
         return False
 
     identified = bool(_event_ids(item) & _event_ids(prior_item))
+    if identified and _history_stage(item) == "retrieval":
+        # An identified retrieval owns its child search history as well as its query.
+        return _stage_snapshot_entry(item) == _stage_snapshot_entry(prior_item)
 
     def replay_content(value):
         stage = _retrieval_stage(value)
@@ -1265,9 +1268,6 @@ def _same_history_step(item, prior_item, item_key, prior_key, *, require_complet
             ignored.update(("event_id", "id"))
             ignored.update(key for key in ("query", "query_text", "label", "note", "title", "description")
                            if isinstance(value.get(key), str))
-            if stage == "retrieval":
-                # Preserve query changes for replay validation on the retrieval owner.
-                ignored.discard("query")
         return canonical_json_bytes({key: child for key, child in value.items() if key not in ignored})
 
     # Check evidence and responses as well as owner metadata before skipping a replay.
@@ -1359,16 +1359,18 @@ def _starts_new_history_round(item, prior):
         query = record.get("query")
         return query.strip() if isinstance(query, str) else ""
 
-    def event_queries(value):
+    def event_queries(value, *, nested=False):
         if isinstance(value, Mapping):
-            if query := search_query(value):
-                yield query
+            stage = _history_stage(value)
+            if not nested or stage is None or stage in (_EXECUTION_SEARCH_STAGES | {"retrieval"}):
+                if query := search_query(value):
+                    yield query
             for key in _TRACE_RESPONSE_FIELDS:
                 if key in value:
-                    yield from event_queries(value[key])
+                    yield from event_queries(value[key], nested=True)
         elif isinstance(value, (list, tuple)):
             for child in value:
-                yield from event_queries(child)
+                yield from event_queries(child, nested=nested)
 
     def search_owner(record):
         identity = _history_owner_signature(record, ignore_evidence=True)
@@ -1560,29 +1562,35 @@ def _contains_stage(value, stages):
 def _report_has_checks(value):
     def selection_has_evidence(report):
         if isinstance(report, Mapping):
-            return bool(_EVIDENCE_FIELDS & report.keys()) or any(
+            values = (report[key] for key in _EVIDENCE_FIELDS if key in report)
+            return any(value.strip() if isinstance(value, str) else value for value in values) or any(
                 selection_has_evidence(report[key]) for key in _TRACE_RESPONSE_FIELDS if key in report
             )
         if isinstance(report, (list, tuple)):
             return any(selection_has_evidence(step) for step in report)
         return False
 
-    def scan(report, has_review):
+    def scan(report, has_review, *, in_selection_report=False):
         stage = _history_stage(report)
         is_selection = stage in _SELECTION_STAGES
-        if stage in _EXECUTION_SEARCH_STAGES or (is_selection and selection_has_evidence(report)):
+        if not in_selection_report and (
+            stage in _EXECUTION_SEARCH_STAGES or (is_selection and selection_has_evidence(report))
+        ):
             has_review = False
         if isinstance(report, Mapping):
             # Selection reports carry selection evidence. Their histories can contain reviews.
-            fields = _TRACE_HISTORY_FIELDS if is_selection else (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS)
-            for key in fields:
+            for key in _TRACE_HISTORY_FIELDS:
                 if key in report:
                     has_review = scan(report[key], has_review)
-            if not is_selection and {"checks", "requirement_checks"} & report.keys():
+            selection_report = is_selection or in_selection_report
+            for key in _TRACE_RESPONSE_FIELDS:
+                if key in report:
+                    has_review = scan(report[key], has_review, in_selection_report=selection_report)
+            if not selection_report and {"checks", "requirement_checks"} & report.keys():
                 has_review = True
         elif isinstance(report, (list, tuple)):
             for step in report:
-                has_review = scan(step, has_review)
+                has_review = scan(step, has_review, in_selection_report=in_selection_report)
         return has_review
 
     return scan(value, False)
@@ -1675,13 +1683,13 @@ def _trace_records(
                 child_phase = None
                 child_history = history_ancestors | {value_id}
                 child_report_of = frozenset()
-                if phase != "review":
+                if phase != "review" and _history_stage(value) != "retrieval":
                     child_wrapper_event_ids = wrapper_event_ids
                 if (deduplicate and not duplicate_history and isinstance(child_value, (list, tuple))
                         and report_histories):
                     signature = None if report_of else _history_owner_signature(value)
                     identified_owner = signature is not None and bool(signature[1])
-                    if not (identified_owner and _history_stage(value) in _FINAL_REVIEW_STAGES):
+                    if not (identified_owner and _history_stage(value) in (_FINAL_REVIEW_STAGES | {"retrieval"})):
                         prior_histories = tuple(items for owner, items in report_histories
                                                 if _same_history_owner(signature, owner))
                         child_value, stripped_altered_replay = _novel_history_items(
@@ -1803,8 +1811,13 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
                         and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
                     # A wrapped replay must also match its recorded parent summary.
                     return len(sequence) - 1, True, True
+                parent_quotes, parent_checks, parent_candidates, parent_selected = sequence[-1].evidence
+                citations_only = (not parent_checks and parent_candidates is None and parent_selected is None
+                                  and parent_quotes is not None and child.evidence[0] is not None
+                                  and parent_quotes <= child.evidence[0])
                 if (not snapshot.field_path and snapshot.owner_ids == prior_owner_ids
-                        and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)):
+                        and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)
+                        and citations_only):
                     return 1, False, True
         final_summary = (
             may_summarize and final is not None and snapshot.evidence == final.evidence
@@ -2100,6 +2113,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     seen_selection_event_ids: dict[bytes, int] = {}
     reviewed_event_evidence = {}
     replay_cursors = {}
+    snapshot_review_ancestors: dict[int, set[int]] = {}
+    snapshot_review_containers: dict[int, set[int]] = {}
     for (record, phase, ancestors, history_ancestors, report_of, _,
          altered_replay, record_event_ids, round_event_ids, duplicate_history) in _trace_records(trace, root=True):
         record_id = id(record)
@@ -2140,6 +2155,21 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             event_id in reviewed_event_evidence and owner_id not in reviewed_event_evidence[event_id]["owners"]
             for event_id, owner_id, _ in record_event_ids
         )
+        snapshot_owners = {owner_id for _, owner_id, _ in record_event_ids}
+        encloses_snapshot_review = encloses_review or any(
+            record_id in snapshot_review_ancestors.get(owner_id, ())
+            or bool(report_of & snapshot_review_ancestors.get(owner_id, set())
+                    & snapshot_review_containers.get(owner_id, set()))
+            for owner_id in snapshot_owners
+        )
+        snapshot_phase = (
+            "review" if phase not in {"search", "detail"} and encloses_snapshot_review else effective_phase
+        )
+        if snapshot_phase == "review" and has_review_update:
+            # Retain structural review context even when replay leaves the live round untouched.
+            for owner_id in snapshot_owners:
+                snapshot_review_ancestors.setdefault(owner_id, set()).update(ancestors)
+                snapshot_review_containers.setdefault(owner_id, set()).update(history_ancestors)
         stage = _history_stage(record)
         search_stage = stage if effective_phase == "search" else None
         search_entry = None
@@ -2149,7 +2179,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             search_entry = _stage_snapshot_entry({
                 key: value for key, value in record.items() if key not in _TRACE_HISTORY_FIELDS
             })
-        has_evidence = effective_phase in {"review", "selection"} and (has_review_update or selected is not None)
+        has_evidence = snapshot_phase in {"review", "selection"} and (has_review_update or selected is not None)
         stage_events = record.get("stage_events", ())
         stage_snapshot = tuple(map(_stage_snapshot_entry, stage_events)) if isinstance(stage_events, (list, tuple)) else ()
         snapshot_recorded = False
@@ -2176,7 +2206,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 snapshot = _ReviewSnapshot(
                     owner_id in history_ancestors,
                     field_path,
-                    effective_phase,
+                    snapshot_phase,
                     evidence,
                     search_stage,
                     search_entry if owner_id in owner_identities else None,
