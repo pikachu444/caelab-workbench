@@ -1359,7 +1359,7 @@ def _starts_new_history_round(item, prior):
         query = record.get("query")
         return query.strip() if isinstance(query, str) else ""
 
-    def event_queries(value, *, nested=False):
+    def event_queries(value, *, nested=False, in_response=False):
         if isinstance(value, Mapping):
             stage = _history_stage(value)
             if nested and (
@@ -1368,17 +1368,17 @@ def _starts_new_history_round(item, prior):
                 or (stage == "retrieval" and not _contains_stage(value, _EXECUTION_SEARCH_STAGES))
             ):
                 return
-            if query := search_query(value):
+            if (not in_response or stage is not None) and (query := search_query(value)):
                 yield query
             for key in _TRACE_RESPONSE_FIELDS:
                 if key not in value or key in {"assessment", "retrieval_assessment", "decision", "retrieval_decision"}:
                     continue
                 if key == "response" and not _contains_stage(value[key], _EXECUTION_SEARCH_STAGES):
                     continue
-                yield from event_queries(value[key], nested=True)
+                yield from event_queries(value[key], nested=True, in_response=key == "response")
         elif isinstance(value, (list, tuple)):
             for child in value:
-                yield from event_queries(child, nested=nested)
+                yield from event_queries(child, nested=nested, in_response=in_response)
 
     def search_owner(record):
         identity = _history_owner_signature(record, ignore_evidence=True)
@@ -1578,19 +1578,20 @@ def _report_has_checks(value):
             return any(selection_has_evidence(step) for step in report)
         return False
 
-    def scan(report, state, *, in_selection_report=False, review_field=False):
+    def scan(report, state, *, in_selection_report=False, review_field=False, in_search=False):
         has_review, saw_search = state
         stage = _history_stage(report)
         is_selection = stage in _SELECTION_STAGES
+        search_report = in_search or stage in _SEARCH_STAGES
         if not in_selection_report:
             if stage in _EXECUTION_SEARCH_STAGES:
                 saw_search = True
-            if is_selection and selection_has_evidence(report):
+            if not search_report and is_selection and selection_has_evidence(report):
                 has_review, saw_search = False, False
         if isinstance(report, Mapping):
             has_checks = bool({"checks", "requirement_checks"} & report.keys())
             is_review_node = stage in _FINAL_REVIEW_STAGES or (review_field and stage is None)
-            if (not in_selection_report and saw_search and is_review_node and not has_checks
+            if (not in_selection_report and not search_report and saw_search and is_review_node and not has_checks
                     and any(report.get(key) for key in _REVIEW_EVIDENCE_FIELDS)):
                 has_review = False
             # Selection reports carry selection evidence. Their histories can contain reviews.
@@ -1602,7 +1603,8 @@ def _report_has_checks(value):
                 if key in report:
                     has_review, saw_search = scan(report[key], (has_review, saw_search),
                                                   in_selection_report=selection_report,
-                                                  review_field=not selection_report and (
+                                                  in_search=search_report,
+                                                  review_field=not (selection_report or search_report) and (
                                                       review_field or stage in _FINAL_REVIEW_STAGES
                                                       or key in _FINAL_REVIEW_STAGES
                                                   ))
@@ -1611,7 +1613,8 @@ def _report_has_checks(value):
         elif isinstance(report, (list, tuple)):
             for step in report:
                 has_review, saw_search = scan(step, (has_review, saw_search),
-                                              in_selection_report=in_selection_report, review_field=review_field)
+                                              in_selection_report=in_selection_report, review_field=review_field,
+                                              in_search=in_search)
         return has_review, saw_search
 
     return scan(value, (False, False))[0]
@@ -1806,9 +1809,9 @@ def _stage_snapshot_entry(step):
                     pair[0]["requirement_id"], canonical_json_bytes(pair[1]),
                 ))
                 items = [item for _, item in ordered]
-            elif in_check and field in {
-                "quoted_spans", "citations", "candidate_ids", "selected", "selected_candidate_ids", "selected_ids",
-            }:
+            elif field in {"quoted_spans", "citations"} or (
+                in_check and field in {"candidate_ids", "selected", "selected_candidate_ids", "selected_ids"}
+            ):
                 items.sort(key=canonical_json_bytes)
             return "list", items
         return value
@@ -1828,17 +1831,22 @@ def _last_evidence_child(sequence, parent_index):
 def _flat_review_preserves_children(sequence, parent_index, evidence):
     quotes, checks, candidates, selected = evidence
     parent_path = sequence[parent_index].field_path
+    parent_has_checks = bool(sequence[parent_index].evidence[1])
     saw_checked_review = False
+    saw_substantive_selection = False
     for index in range(parent_index - 1, -1, -1):
         child = sequence[index]
-        if (child.evidence is None or len(child.field_path) <= len(parent_path)
-                or child.field_path[:len(parent_path)] != parent_path):
+        if len(child.field_path) <= len(parent_path) or child.field_path[:len(parent_path)] != parent_path:
             continue
-        if child.phase == "review" and saw_checked_review:
-            continue
-        if child.phase == "selection" and (checks or saw_checked_review):
+        if child.search_stage is not None and (saw_checked_review or saw_substantive_selection):
+            break
+        if child.evidence is None:
             continue
         child_quotes, child_checks, child_candidates, child_selected = child.evidence
+        if child.phase == "review" and child_checks and saw_checked_review:
+            continue
+        if child.phase == "selection" and (parent_has_checks or saw_checked_review):
+            continue
         if any(
             restriction is not None and (proposed is None or not proposed <= restriction)
             for proposed, restriction in (
@@ -1856,6 +1864,8 @@ def _flat_review_preserves_children(sequence, parent_index, evidence):
             return False
         if child.phase == "review" and child_checks:
             saw_checked_review = True
+        if child.phase == "selection" and (child_quotes or child_checks or child_selected):
+            saw_substantive_selection = True
     return True
 
 

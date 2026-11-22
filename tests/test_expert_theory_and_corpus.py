@@ -2203,6 +2203,9 @@ def test_d09_summary_can_narrow_completed_checks(
     "nested-post-search-response", "flattened-check-before-selection",
     "flattened-check-before-result", "flattened-check-before-output",
     "fresh-checked-search-response-query", "fresh-unexecuted-search-response-query",
+    "search-owns-nested-candidates", "fresh-query-after-search-response-with-history",
+    "flattened-after-quoted-reselection", "flattened-after-checked-reselection",
+    "flattened-without-unchecked-limit-response", "flattened-without-unchecked-limit-output",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2350,6 +2353,15 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 assess(second, companion=first, **options)
         return
 
+    if layout == "search-owns-nested-candidates":
+        reported_search = {**search, "response": {"result": {"candidate_ids": ids}}}
+        wrapper[history_field] = [{
+            **done, "output": {"citations": review_b["citations"]},
+            "response": {history_field: [prepare, review_a, reported_search, selection, done]},
+        }]
+        assert_only(first, second)
+        return
+
     if layout == "citation-only-interim":
         completion = {
             **done,
@@ -2410,7 +2422,10 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 assess(first, companion=second, **options)
         return
 
-    search_response_layouts = {"fresh-checked-search-response-query", "fresh-unexecuted-search-response-query"}
+    search_response_layouts = {
+        "fresh-checked-search-response-query", "fresh-unexecuted-search-response-query",
+        "fresh-query-after-search-response-with-history",
+    }
     if layout in ({"fresh-identified-search", "fresh-identified-after-search", "fresh-identified-deeper",
                   "fresh-anonymous-query-owner", "fresh-review-query", "fresh-suggested-query",
                   "fresh-assessment-query", "fresh-nested-assessment-query", "fresh-unexecuted-retrieval-query",
@@ -2453,6 +2468,9 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             report = {"query": "second query"}
             if layout == "fresh-checked-search-response-query":
                 report.update(evidence(first))
+            elif layout == "fresh-query-after-search-response-with-history":
+                report.update({history_field: [prepare, {**search, "query": "first query"}, done],
+                               "result": evidence(first)})
             earlier_searches.insert(0, {**search, "result": {"response": report}})
         prior = [initial, *earlier_searches, review_a, done]
         fresh = {**done, history_field: [new_search, select_2, review_b, done]}
@@ -2804,6 +2822,47 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             completion = {**done, **shared, **summary, history_field: history}
             if later != "selection":
                 completion[later] = summary
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(first, second)
+        wrapper["result"] = {history_field: [search_2, select_2, review_b, done]}
+        replay = [completion]
+        wrapper["output"] = {history_field: replay}
+        assert_only(second, first)
+        replay[0] = {**done, **shared, **summary}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(second, companion=first, **options)
+        return
+
+    if layout in {"flattened-after-quoted-reselection", "flattened-after-checked-reselection"}:
+        shared = {"event_id": "rc1", "id": "alternate"}
+        selection_report = {**selection, "citations": review_b["citations"]}
+        if layout == "flattened-after-checked-reselection":
+            selection_report["checks"] = review_b["checks"]
+        completion = {
+            **done, **shared, "citations": review_b["citations"],
+            history_field: [prepare, review_a, search, selection_report, done],
+        }
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        replay = [completion]
+        wrapper["output"] = {history_field: replay}
+        assert_only(first, second)
+        replay[0] = {**done, **shared, **{key: value for key, value in selection_report.items() if key != "stage"}}
+        assert_only(first, second)
+        return
+
+    if layout in {"flattened-without-unchecked-limit-response", "flattened-without-unchecked-limit-output"}:
+        shared = {"event_id": "rc1", "id": "alternate"}
+        quotes = review_a["citations"] + review_b["citations"]
+        checks = [{**review_a["checks"][0], "candidate_ids": ids, "quoted_spans": quotes}]
+        summary = {"citations": quotes, "checks": checks}
+        field = layout.removeprefix("flattened-without-unchecked-limit-")
+        completion = {
+            **done, **shared, **summary,
+            history_field: [prepare, {"stage": "assessment", "candidate_ids": ids[:1]}, done],
+            field: summary,
+        }
         wrapper[history_field] = [prepare, completion, done]
         assert_only(first, second)
         wrapper["result"] = {history_field: [search_2, select_2, review_b, done]}
@@ -3256,7 +3315,7 @@ def test_d09_replay_preserves_keyed_check_assignments(assessed_retrieval, respon
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("checks_field", ["checks", "requirement_checks"])
-@pytest.mark.parametrize("reordered_field", ["quoted_spans", "candidate_ids"])
+@pytest.mark.parametrize("reordered_field", ["quoted_spans", "candidate_ids", "citations"])
 def test_d09_replay_accepts_reordered_check_evidence(
     assessed_retrieval, response_format, history_field, checks_field, reordered_field,
 ):
@@ -3282,8 +3341,11 @@ def test_d09_replay_accepts_reordered_check_evidence(
                       trace_overrides={"events": [wrapper]}, response_format=response_format)
 
     assert evaluate().status == "supported"
-    reordered = {**check, reordered_field: list(reversed(check[reordered_field]))}
-    replay_selection = {**selection, checks_field: [reordered]}
+    if reordered_field == "citations":
+        replay_selection = {**selection, "citations": list(reversed(quotes))}
+    else:
+        reordered = {**check, reordered_field: list(reversed(check[reordered_field]))}
+        replay_selection = {**selection, checks_field: [reordered]}
     replay[0] = {**owner, history_field: [prepare, search, replay_selection, done]}
     assert evaluate().status == "supported"
 
