@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from collections import Counter
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
 import re
 import unicodedata
-from typing import Any, NamedTuple
+from typing import Any
 import uuid
 
 from ..artifact_refs import ArtifactRefV1, canonical_json_bytes, canonical_sha256, validate_relative_artifact_path
@@ -1375,7 +1376,10 @@ def _starts_new_history_round(item, prior):
                     continue
                 if key == "response" and not _contains_stage(value[key], _EXECUTION_SEARCH_STAGES):
                     continue
-                yield from event_queries(value[key], nested=True, in_response=key == "response")
+                yield from event_queries(
+                    value[key], nested=True,
+                    in_response=key == "response" or (in_response and stage not in _EXECUTION_SEARCH_STAGES),
+                )
         elif isinstance(value, (list, tuple)):
             for child in value:
                 yield from event_queries(child, nested=nested, in_response=in_response)
@@ -1608,7 +1612,7 @@ def _report_has_checks(value):
                                                       review_field or stage in _FINAL_REVIEW_STAGES
                                                       or key in _FINAL_REVIEW_STAGES
                                                   ))
-            if not selection_report and has_checks:
+            if not (selection_report or search_report) and has_checks:
                 has_review, saw_search = True, False
         elif isinstance(report, (list, tuple)):
             for step in report:
@@ -1756,14 +1760,19 @@ def _trace_records(
             yield record
 
 
-def _validate_trace_sequence(events, has_stage_events, *, continues_history=False):
+def _validate_trace_sequence(events, has_stage_events, *, continues_history=False, selection_fragment=False):
     stages = [_retrieval_stage(event) for event in events]
-    if stages[-1] not in (_RESULT_STAGES | {"retrieval"}):
+    # Nested steps can record just the selection portion of an enclosing trace.
+    open_selection = (
+        selection_fragment and stages[-1] in _SELECTION_STAGES
+        and not (_RETRIEVAL_TERMINAL_STAGES - _SELECTION_STAGES).intersection(stages)
+    )
+    if not open_selection and stages[-1] not in (_RESULT_STAGES | {"retrieval"}):
         raise ValueError("Retrieval assessment trace events must end with a result")
     first_result = next((i for i, stage in enumerate(stages) if stage in _RESULT_STAGES), len(stages))
     if _PREPARATION_STAGES.intersection(stages[first_result + 1:]):
         raise ValueError("Retrieval assessment trace events must finish preparation before the first result")
-    if has_stage_events:
+    if has_stage_events or open_selection:
         return
     work_steps = [i for i, stage in enumerate(stages) if stage == "search" or stage in _SELECTION_STAGES]
     if work_steps and (
@@ -1773,7 +1782,8 @@ def _validate_trace_sequence(events, has_stage_events, *, continues_history=Fals
         raise ValueError("Retrieval assessment trace events must start before search and record a terminal result")
 
 
-class _ReviewSnapshot(NamedTuple):
+@dataclass(frozen=True)
+class _ReviewSnapshot:
     in_history: bool
     field_path: tuple[str | int, ...]
     phase: str | None
@@ -1783,6 +1793,8 @@ class _ReviewSnapshot(NamedTuple):
     child_event_ids: frozenset[bytes]
     owner_ids: frozenset[bytes]
     stage_events: tuple[bytes, ...]
+    # Flattening consults the original review's quotation scope.
+    constrains_prior_quotes: bool = field(compare=False)
 
 
 def _stage_snapshot_entry(step):
@@ -1833,20 +1845,29 @@ def _flat_review_preserves_children(sequence, parent_index, evidence):
     parent_path = sequence[parent_index].field_path
     parent_has_checks = bool(sequence[parent_index].evidence[1])
     saw_checked_review = False
-    saw_substantive_selection = False
+    saw_selection = False
+    replaced_quotes = False
     for index in range(parent_index - 1, -1, -1):
         child = sequence[index]
         if len(child.field_path) <= len(parent_path) or child.field_path[:len(parent_path)] != parent_path:
             continue
-        if child.search_stage is not None and (saw_checked_review or saw_substantive_selection):
+        if child.search_stage in _EXECUTION_SEARCH_STAGES and saw_selection and (parent_has_checks or saw_checked_review):
             break
+        saw_selection |= child.phase == "selection"
         if child.evidence is None:
             continue
         child_quotes, child_checks, child_candidates, child_selected = child.evidence
-        if child.phase == "review" and child_checks and saw_checked_review:
-            continue
-        if child.phase == "selection" and (parent_has_checks or saw_checked_review):
-            continue
+        if child.phase == "review" and saw_checked_review:
+            if not child.in_history:
+                continue
+            child_checks = ()
+            if replaced_quotes:
+                child_quotes = None
+        if child.phase == "selection":
+            if parent_has_checks or saw_checked_review:
+                if child_quotes or child_checks:
+                    break
+                continue
         if any(
             restriction is not None and (proposed is None or not proposed <= restriction)
             for proposed, restriction in (
@@ -1862,10 +1883,12 @@ def _flat_review_preserves_children(sequence, parent_index, evidence):
             for child_rid, child_relation, child_ids, child_spans in child_checks
         ):
             return False
-        if child.phase == "review" and child_checks:
+        if child.phase == "review" and child.evidence[1]:
             saw_checked_review = True
-        if child.phase == "selection" and (child_quotes or child_checks or child_selected):
-            saw_substantive_selection = True
+            if child.evidence[0] is not None and not child.constrains_prior_quotes:
+                replaced_quotes = True
+        if child.phase == "selection" and (child_quotes or child_checks):
+            break
     return True
 
 
@@ -2139,15 +2162,20 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
         trace_blocks_support |= _trace_blocks_support(record)
-        if record is not trace and "events" in record:
-            nested = validate_events(record["events"])
+        for history_field in ("events", "steps"):
+            if history_field not in record or (record is trace and history_field == "events"):
+                continue
+            nested = validate_events(record[history_field])
             continues_history = any(
                 _is_retrieval_event(event) and _retrieval_stage(event) in (_INITIAL_STAGES | _RESULT_STAGES)
                 for _, history in report_histories for event in history
             )
-            _validate_trace_sequence(nested, "stage_events" in record, continues_history=continues_history)
-        if "steps" in record:
-            validate_events(record["steps"])
+            if history_field == "steps" and record is not trace:
+                continues_history |= _history_stage(record) in _EXECUTION_SEARCH_STAGES or bool(record.get("events"))
+            _validate_trace_sequence(
+                nested, "stage_events" in record, continues_history=continues_history,
+                selection_fragment=history_field == "steps" and record is not trace,
+            )
         if "stage" in record and (not isinstance(record["stage"], str) or record["stage"] not in _RETRIEVAL_STAGES):
             raise ValueError("Invalid retrieval assessment trace events")
         if "embedding_provider" in record:
@@ -2237,6 +2265,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             report_of & review_candidate_ancestors & history_review_containers
         )
         nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
+        constrains_quotes = has_review_quotes and (
+            review_quotes_constrained if encloses_quotes else nests_reviewed_quotes
+        )
         constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
         constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
@@ -2319,6 +2350,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     child_event_ids,
                     owner_ids,
                     stage_snapshot if records_stages else (),
+                    constrains_prior_quotes=constrains_quotes,
                 )
                 if prior is not None and owner_id not in prior["owners"]:
                     key = event_id, owner_id
@@ -2408,6 +2440,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 history_review_containers.clear()
             encloses_quotes = False
             nests_reviewed_quotes = False
+            constrains_quotes = False
             constrains_checks = False
             constrains_candidates = False
             saw_search_after_review = False
@@ -2437,13 +2470,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                             review_quotes = selection_quotes
                             review_quotes_ancestors = ancestors
                         review_quotes_constrained = True
-                    elif has_review_quotes and nests_reviewed_quotes and not encloses_quotes:
+                    elif constrains_quotes:
                         review_quotes &= record_quotes
                         review_quotes_ancestors |= ancestors
                         review_quotes_constrained = True
-                    elif has_review_quotes and encloses_quotes and review_quotes_constrained:
-                        review_quotes &= record_quotes
-                        review_quotes_ancestors |= ancestors
                     else:
                         review_quotes = record_quotes
                         review_quotes_ancestors = ancestors
