@@ -1760,6 +1760,60 @@ def test_d09_enclosing_summary_preserves_citation_exclusions(
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("scope", ["completion", "root"])
+@pytest.mark.parametrize("wrapped_interim", [False, True], ids=["direct-interim", "wrapped-interim"])
+@pytest.mark.parametrize("response_wrapper", ["list", "result"])
+def test_d09_wrapped_final_response_supersedes_interim_citations(
+    assessed_retrieval, response_format, history_field, scope, wrapped_interim, response_wrapper,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    quote_a, quote_b = (
+        {"candidate_id": chunk["citation"], "start": 0, "end": len(chunk["text"])} for chunk in (first, second)
+    )
+    interim = {"citations": [quote_b]}
+    if wrapped_interim:
+        interim = {"result": interim}
+    summary = {"citations": [quote_a]}
+    response = [summary] if response_wrapper == "list" else {"result": summary}
+    done = {"stage": "retrieval_completion"}
+    history = [{"stage": "prepare_query"}, {"stage": "assessment", **interim}, done]
+    report = {history_field: history, "response": response}
+    trace = {"events": [{**done, **report}]} if scope == "completion" else report
+    options = {"include_good": True, "trace_overrides": trace, "response_format": response_format}
+
+    assert assess(first, companion=second, **options).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, companion=first, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("report_field", ["response", "output"])
+@pytest.mark.parametrize("inner_cites_a", [False, True], ids=["empty", "subset"])
+def test_d09_root_citations_preserve_closed_report_exclusions(
+    assessed_retrieval, response_format, history_field, report_field, inner_cites_a,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    quote_a, quote_b = (
+        {"candidate_id": chunk["citation"], "start": 0, "end": len(chunk["text"])} for chunk in (first, second)
+    )
+    done = {"stage": "retrieval_completion"}
+    history = [{"stage": "prepare_query"}, {"stage": "search"}, done]
+    trace = {history_field: history, report_field: {"citations": [quote_a] if inner_cites_a else []}}
+    options = {"include_good": True, "trace_overrides": trace, "response_format": response_format}
+
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(second, companion=first, **options)
+    trace["citations"] = [quote_b]
+    for candidate, companion in ((first, second), (second, first)):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(candidate, companion=companion, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("wrapper_stage", ["retrieval", "candidate_selection"])
 @pytest.mark.parametrize("repeat", ["full", "full-with-citations", "selection-only"])
 def test_d09_empty_summary_applies_after_repeated_selection(
@@ -2264,6 +2318,9 @@ def test_d09_summary_can_narrow_completed_checks(
     "flattened-with-repeated-citations-result-only", "flattened-with-repeated-citations-output-only",
     "flattened-with-repeated-citations-result-prefix", "flattened-with-repeated-citations-output-prefix",
     "flattened-with-repeated-citations-result-full", "flattened-with-repeated-citations-output-full",
+    "flattened-with-repeated-citations-result-no-parent", "flattened-with-repeated-citations-output-no-parent",
+    "flattened-without-selection-candidate-bound", "flattened-without-selection-selected-bound",
+    "flattened-without-independent-review-id",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2857,9 +2914,11 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         history = [prepare, {"stage": "assessment", **final}, done]
         field, repeat = layout.removeprefix("flattened-with-repeated-citations-").split("-", 1)
         report = {"citations": final["citations"]}
-        if repeat != "only":
+        if repeat in {"prefix", "full"}:
             report[history_field] = history if repeat == "full" else [prepare, done]
         completion = {**done, **shared, history_field: history, "citations": final["citations"], field: report}
+        if repeat == "no-parent":
+            del completion["citations"]
         wrapper[history_field] = [prepare, completion, done]
         assert_only(second, first)
         wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
@@ -2873,6 +2932,48 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             assess(first, companion=second, **options)
         history[1]["event_id"] = "independent-review"
         replay[0] = completion
+        assert_only(first, second)
+        replay[0] = {**done, **shared, **final}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        if repeat == "no-parent":
+            del history[1]["event_id"]
+            report["event_id"] = "independent-summary"
+            replay[0] = completion
+            assert_only(first, second)
+            replay[0] = {**done, **shared, **final}
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(first, companion=second, **options)
+        return
+
+    if layout.startswith("flattened-without-selection-"):
+        shared = {"event_id": "rc1", "id": "alternate"}
+        bound_field = "selected_chunk_ids" if layout.endswith("-selected-bound") else "candidate_ids"
+        limited_selection = {"stage": "candidate_selection", bound_field: ids[:1]}
+        quotes = review_a["citations"] + review_b["citations"]
+        broad = {"citations": quotes, "checks": [{**review_a["checks"][0], "candidate_ids": ids, "quoted_spans": quotes}]}
+        completion = {**done, **shared, history_field: [prepare, limited_selection, done], "response": broad}
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(first, second)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        replay = [completion]
+        wrapper["output"] = {history_field: replay}
+        assert_only(first, second)
+        replay[0] = {**done, **shared, **broad}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        return
+
+    if layout == "flattened-without-independent-review-id":
+        shared = {"event_id": "rc1", "id": "alternate"}
+        final = dict(evidence(second), candidate_ids=ids[1:])
+        history = [prepare, {"stage": "assessment", "event_id": "independent-review", **final}, done]
+        completion = {**done, **shared, **final, history_field: history, "result": {"citations": final["citations"]}}
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        replay = [completion]
+        wrapper["output"] = {history_field: replay}
         assert_only(first, second)
         replay[0] = {**done, **shared, **final}
         with pytest.raises(ValueError, match="trace selection or review"):

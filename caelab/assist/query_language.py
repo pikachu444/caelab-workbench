@@ -1733,7 +1733,8 @@ def _trace_records(
                 child_phase = "detail"
             elif key in _SEARCH_STAGES:
                 child_phase = "search"
-            elif phase is None and key in _FINAL_REVIEW_STAGES:
+            elif phase is None and (key in _FINAL_REVIEW_STAGES
+                                    or (root and key == "output" and _is_citation_only_report(child_value))):
                 child_phase = "review"
             if key in histories_by_report:
                 if history_fields or any(other != key and history for other, history in histories_by_report.items()):
@@ -1851,7 +1852,7 @@ def _last_evidence_child(sequence, parent_index):
     ), None)
 
 
-def _flat_review_children(sequence, final_index, *, target_path):
+def _flat_review_children(sequence, final_index, *, target_path, all_candidate_ids):
     final = sequence[final_index]
     final_at_target = final.field_path == target_path
     if final_at_target and final.resets_prior:
@@ -1868,11 +1869,14 @@ def _flat_review_children(sequence, final_index, *, target_path):
                 or child.field_path[:len(target_path)] != target_path):
             continue
         superseded_selection = child.phase == "selection" and (parent_has_checks or saw_checked_review)
-        if child.evidence is not None and not superseded_selection:
+        if child.evidence is not None:
             quotes, checks, candidates, selected = child.evidence
+            # A superseded selection that admits every candidate adds no candidate limit.
+            if superseded_selection and candidates == all_candidate_ids:
+                candidates = None
             yield child, (
-                None if replaced_quotes else quotes,
-                () if replaced_checks else checks,
+                None if replaced_quotes or superseded_selection else quotes,
+                () if replaced_checks or superseded_selection else checks,
                 None if replaced_candidates and child.phase != "selection" else candidates,
                 selected,
             )
@@ -1885,11 +1889,9 @@ def _flat_review_children(sequence, final_index, *, target_path):
             saw_checked_review |= bool(child.evidence and child.evidence[1])
 
 
-def _flat_review_preserves_children(sequence, final_index, evidence, *, target_path):
+def _flat_review_preserves_children(children, evidence):
     quotes, checks, candidates, selected = evidence
-    for _, (child_quotes, child_checks, child_candidates, child_selected) in _flat_review_children(
-        sequence, final_index, target_path=target_path,
-    ):
+    for _, (child_quotes, child_checks, child_candidates, child_selected) in children:
         if any(
             restriction is not None and (proposed is None or not proposed <= restriction)
             for proposed, restriction in ((quotes, child_quotes), (candidates, child_candidates), (selected, child_selected))
@@ -1906,8 +1908,8 @@ def _flat_review_preserves_children(sequence, final_index, evidence, *, target_p
     return True
 
 
-def _merge_flat_review_evidence(sequence, final_index, snapshot):
-    quotes, checks, candidates, selected = sequence[final_index].evidence
+def _merge_flat_review_evidence(final, children):
+    quotes, checks, candidates, selected = final.evidence
     checks_by_id = {rid: (relation, ids, spans) for rid, relation, ids, spans in checks}
 
     def intersect(current, restriction):
@@ -1915,13 +1917,7 @@ def _merge_flat_review_evidence(sequence, final_index, snapshot):
             return restriction
         return current if restriction is None else current & restriction
 
-    for child, (child_quotes, child_checks, child_candidates, child_selected) in _flat_review_children(
-        sequence, final_index, target_path=snapshot.field_path,
-    ):
-        contributes = (child_quotes is not None or child_checks
-                       or child_candidates is not None or child_selected is not None)
-        if contributes and child.child_event_ids and child.child_event_ids != snapshot.owner_ids:
-            return None
+    for _, (child_quotes, child_checks, child_candidates, child_selected) in children:
         quotes = intersect(quotes, child_quotes)
         candidates = intersect(candidates, child_candidates)
         selected = intersect(selected, child_selected)
@@ -1937,7 +1933,7 @@ def _merge_flat_review_evidence(sequence, final_index, snapshot):
     return quotes, frozenset((rid, *check) for rid, check in checks_by_id.items()), candidates, selected
 
 
-def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_owner_ids):
+def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_owner_ids, all_candidate_ids):
     if sequence and cursor is None:
         # A non-history summary may replay just the final evidence. Until another step
         # arrives, it could also be the start of a full replay.
@@ -1962,12 +1958,21 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         may_summarize = (
             not has_structure and not omitted_inner_assessment and not snapshot.in_history and snapshot.phase == "review"
         )
-        drops_child_restriction = (
-            may_summarize and not snapshot.field_path and final_index is not None and snapshot.evidence is not None
-            and not _flat_review_preserves_children(
-                sequence, final_index, snapshot.evidence, target_path=snapshot.field_path,
+        drops_child_restriction = drops_child_id = False
+        if may_summarize and not snapshot.field_path and final_index is not None and snapshot.evidence is not None:
+            children = tuple(_flat_review_children(
+                sequence, final_index, target_path=snapshot.field_path, all_candidate_ids=all_candidate_ids,
+            ))
+            drops_child_restriction = not _flat_review_preserves_children(children, snapshot.evidence)
+            drops_child_id = any(
+                child.child_event_ids and child.child_event_ids != snapshot.owner_ids
+                and (quotes is not None or checks or candidates is not None or selected is not None)
+                for child, (quotes, checks, candidates, selected) in children
             )
-        )
+            if (children and not drops_child_restriction and not drops_child_id
+                    and snapshot.owner_ids == prior_owner_ids
+                    and snapshot.evidence == _merge_flat_review_evidence(final, children)):
+                return 1, False, True
         has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
         if may_summarize and has_parent_summary:
             child_entry = _last_evidence_child(sequence, final_index)
@@ -1977,13 +1982,9 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
                         and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
                     # A wrapped replay must match the remaining steps and its parent summary.
                     return child_idx + 1, True, True
-            if (child_entry is not None and snapshot.evidence is not None
-                    and not snapshot.field_path and not drops_child_restriction
-                    and snapshot.owner_ids == prior_owner_ids
-                    and snapshot.evidence == _merge_flat_review_evidence(sequence, final_index, snapshot)):
-                return 1, False, True
         final_summary = (
-            may_summarize and final is not None and not drops_child_restriction and snapshot.evidence == final.evidence
+            may_summarize and final is not None and not drops_child_restriction and not drops_child_id
+            and snapshot.evidence == final.evidence
             and (snapshot.field_path or not prior_owner_ids or snapshot.owner_ids == prior_owner_ids)
             and (
                 not final.child_event_ids
@@ -2187,14 +2188,22 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 if interim_fields and not (path and path[0] == "response" and wrapped_final_evidence)
             )
         response = record.get("response")
-        if isinstance(response, Mapping) and _history_stage(record) in _COMPLETION_STAGES:
+        if (isinstance(response, (Mapping, list, tuple))
+                and (record is trace or _history_stage(record) in _COMPLETION_STAGES)):
+            interim_stages = {"assessment", "retrieval_assessment"}
             interim_ids = {
                 record_id for history in _history_lists(record) for step in history
-                if isinstance(step, Mapping) and _history_stage(step) in {"assessment", "retrieval_assessment"}
+                if isinstance(step, Mapping) and _history_stage(step) in interim_stages
                 for record_id in _interim_review_record_ids(step)
             }
             for response_id in _interim_review_record_ids(response):
                 interim_reviews_by_response[response_id] = interim_ids
+            # Legacy traces can end at an interim assessment and record final citations at the root.
+            if (record is trace and isinstance(response, Mapping)
+                    and not (record.keys() & {"checks", "requirement_checks"})
+                    and (response.get("citations") or response.get("quoted_spans"))
+                    and all(_history_stage(history[-1]) in interim_stages for history in _history_lists(record))):
+                interim_reviews_by_response[id(record)] = {id(response)}
         if any(record[key] != identity[key] for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
@@ -2284,10 +2293,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     replay_cursors = {}
     snapshot_review_ancestors: dict[int, set[int]] = {}
     snapshot_review_containers: dict[int, set[int]] = {}
-    root_response = trace.get("response")
-    root_interim_review_ids = {
-        id(event) for event in events if _history_stage(event) in {"assessment", "retrieval_assessment"}
-    }
     for (record, phase, ancestors, history_ancestors, report_of, _,
          altered_replay, record_event_ids, round_event_ids, duplicate_history, _) in _trace_records(trace, root=True):
         record_id = id(record)
@@ -2308,10 +2313,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         )
         nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
         # Recorded final responses can replace quotations from their own interim reviews.
-        replaces_interim_quotes = not altered_replay and (
-            review_quote_source in interim_reviews_by_response.get(record_id, ())
-            or (record is root_response and review_quote_source in root_interim_review_ids)
-            or (record is trace and review_quote_source == id(root_response))
+        replaces_interim_quotes = not altered_replay and review_quote_source in interim_reviews_by_response.get(
+            record_id, (),
         )
         constrains_quotes = has_review_quotes and (
             (review_quotes_constrained or not (record_checks or replaces_interim_quotes))
@@ -2408,6 +2411,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         prior["sequence"], snapshot, replay_cursors.get(key),
                         has_structure=owner_id in owners_with_structure,
                         prior_owner_ids=prior_owner_ids,
+                        all_candidate_ids=all_candidate_ids,
                     )
                 else:
                     recorded = reviewed_event_evidence.setdefault(event_id, {
