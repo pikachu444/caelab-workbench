@@ -2216,6 +2216,9 @@ def test_d09_summary_can_narrow_completed_checks(
     "flat-final-after-successive-reviews", "flat-final-after-nested-fresh-review",
     "search-result-check-is-not-a-review", "search-response-check-is-not-a-review",
     "fresh-query-after-nested-response-result", "fresh-query-after-nested-response-output",
+    "flat-final-after-replayed-selection-copy", "flat-final-after-replayed-selection-reference",
+    "flat-final-after-replayed-review-copy", "flat-final-after-replayed-review-reference",
+    "flat-final-after-parent-replaces-sibling-quotation", "flat-final-after-parent-replaces-history-quotation",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2859,6 +2862,39 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
         replay[0] = {**done, **shared, **summary}
         with pytest.raises(ValueError, match="trace selection or review"):
             assess(second, companion=first, **options)
+        return
+
+    if layout.startswith(("flat-final-after-replayed-", "flat-final-after-parent-replaces-")):
+        shared = {"event_id": "rc1", "id": "alternate"}
+        final = evidence(second)
+        completion = {**done, **shared, "citations": final["citations"]}
+        if layout.startswith("flat-final-after-replayed-"):
+            if "-selection-" in layout:
+                earlier = {**selection, "citations": review_a["citations"]}
+            else:
+                earlier = dict(review_a)
+            earlier["event_id"] = "repeated-evidence"
+            repeated = dict(earlier) if layout.endswith("-copy") else earlier
+            completion[history_field] = [prepare, search, earlier, review_b, repeated, done]
+        else:
+            completion.update(final)
+            interim = {"citations": review_a["citations"]}
+            if layout.endswith("-history-quotation"):
+                completion[history_field] = [prepare, {"stage": "assessment", **interim}, done]
+            else:
+                completion["assessment"] = interim
+
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        replay = [completion]
+        wrapper["output"] = {history_field: replay}
+        assert_only(first, second)
+        replay[0] = {**done, **shared, **final}
+        assert_only(first, second)
+        replay[0] = {**done, **shared, **evidence(first)}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
         return
 
     if layout in {"flat-final-after-sibling-candidate-limit", "flat-final-after-sibling-quotation",
@@ -4635,6 +4671,43 @@ def test_d09_search_report_steps_continue_execution_search(assessed_retrieval, r
     history[1]["stage"] = "search"
     steps.append(prepare)
     with pytest.raises(ValueError, match="trace events must end with a result"):
+        assess(candidate, companion=other, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("report_field", ["result", "output"])
+@pytest.mark.parametrize("report_stage", ["assessment", "prepare_query", "retrieval_completion"])
+def test_d09_explicit_nonsearch_report_ends_execution_scope(
+    assessed_retrieval, response_format, report_field, report_stage,
+):
+    assess, candidate = assessed_retrieval
+    done = {"stage": "retrieval_completion"}
+    selection = {"stage": "candidate_selection", "candidate_ids": [candidate["citation"]]}
+    report = {"steps": [selection, done]}
+    trace = {"events": [{"stage": "prepare_query"}, {"stage": "search", report_field: report}, done]}
+    options = {"trace_overrides": trace, "response_format": response_format}
+
+    assert assess(candidate, **options).status == "supported"
+    report["stage"] = report_stage
+    with pytest.raises(ValueError, match="must start before search and record a terminal result"):
+        assess(candidate, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+def test_d09_explicit_search_in_selection_report_starts_execution_scope(assessed_retrieval, response_format):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    done = {"stage": "retrieval_completion"}
+    selection = {"stage": "candidate_selection", "candidate_ids": [candidate["citation"]]}
+    report = {"stage": "search", "steps": [selection, done]}
+    trace = {"events": [{"stage": "prepare_query"}, {"stage": "candidate_selection", "result": report}, done]}
+    options = {"include_good": True, "trace_overrides": trace, "response_format": response_format}
+
+    assert assess(candidate, companion=other, **options).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, companion=candidate, **options)
+    del report["stage"]
+    with pytest.raises(ValueError, match="must start before search and record a terminal result"):
         assess(candidate, companion=other, **options)
 
 

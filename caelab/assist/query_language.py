@@ -1692,9 +1692,11 @@ def _trace_records(
         if phase in {"search", "selection"}:
             inherited_ids = {event_id for event_id, _ in phase_event_ids}
             round_event_ids = phase_event_ids | {pair for pair in own_event_ids if pair[0] not in inherited_ids}
-        execution_search_scope = phase == "search" and (
-            execution_search_scope or _history_stage(value) in _EXECUTION_SEARCH_STAGES
-        )
+        node_stage = _history_stage(value)
+        if node_stage is not None:
+            execution_search_scope = node_stage in _EXECUTION_SEARCH_STAGES
+        elif phase != "search":
+            execution_search_scope = False
         record = (value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories,
                   altered_replay, event_ids, round_event_ids, duplicate_history, execution_search_scope)
         # A search starts before the selection events recorded in its history.
@@ -1804,6 +1806,7 @@ class _ReviewSnapshot:
     replaces_quotes: bool = field(default=False, compare=False)
     replaces_checks: bool = field(default=False, compare=False)
     replaces_candidates: bool = field(default=False, compare=False)
+    replayed_child: bool = field(default=False, compare=False)
 
 
 def _stage_snapshot_entry(step):
@@ -1844,22 +1847,26 @@ def _last_evidence_child(sequence, parent_index):
     path = sequence[parent_index].field_path
     return next((
         (index, step) for index in range(parent_index - 1, -1, -1)
-        if (step := sequence[index]).evidence is not None
+        if (step := sequence[index]).evidence is not None and not step.replayed_child
         and len(step.field_path) > len(path) and step.field_path[:len(path)] == path
     ), None)
 
 
 def _flat_review_preserves_children(sequence, parent_index, evidence):
+    parent = sequence[parent_index]
+    if parent.resets_prior:
+        return True
     quotes, checks, candidates, selected = evidence
-    parent_path = sequence[parent_index].field_path
-    parent_has_checks = bool(sequence[parent_index].evidence[1])
+    parent_path = parent.field_path
+    parent_has_checks = bool(parent.evidence[1])
     saw_checked_review = False
-    replaced_quotes = False
-    replaced_checks = False
-    replaced_candidates = False
+    replaced_quotes = parent.replaces_quotes
+    replaced_checks = parent.replaces_checks
+    replaced_candidates = parent.replaces_candidates
     for index in range(parent_index - 1, -1, -1):
         child = sequence[index]
-        if len(child.field_path) <= len(parent_path) or child.field_path[:len(parent_path)] != parent_path:
+        if (child.replayed_child or len(child.field_path) <= len(parent_path)
+                or child.field_path[:len(parent_path)] != parent_path):
             continue
         superseded_selection = child.phase == "selection" and (parent_has_checks or saw_checked_review)
         if child.evidence is not None and not superseded_selection:
@@ -2350,6 +2357,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     child_event_ids,
                     owner_ids,
                     stage_snapshot if records_stages else (),
+                    replayed_child=in_replayed_review,
                 )
                 if prior is not None and owner_id not in prior["owners"]:
                     key = event_id, owner_id
