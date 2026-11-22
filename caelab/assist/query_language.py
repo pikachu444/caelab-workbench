@@ -1370,7 +1370,7 @@ def _starts_new_history_round(item, prior):
             if query := search_query(value):
                 yield query
             for key in _TRACE_RESPONSE_FIELDS:
-                if key in value:
+                if key in value and key not in {"assessment", "retrieval_assessment", "decision", "retrieval_decision"}:
                     yield from event_queries(value[key], nested=True)
         elif isinstance(value, (list, tuple)):
             for child in value:
@@ -1574,7 +1574,7 @@ def _report_has_checks(value):
             return any(selection_has_evidence(step) for step in report)
         return False
 
-    def scan(report, state, *, in_selection_report=False):
+    def scan(report, state, *, in_selection_report=False, review_field=False):
         has_review, saw_search = state
         stage = _history_stage(report)
         is_selection = stage in _SELECTION_STAGES
@@ -1585,8 +1585,9 @@ def _report_has_checks(value):
                 has_review, saw_search = False, False
         if isinstance(report, Mapping):
             has_checks = bool({"checks", "requirement_checks"} & report.keys())
-            if (not in_selection_report and saw_search and stage in _FINAL_REVIEW_STAGES
-                    and not has_checks and not _is_bare_completion(report)):
+            is_review_node = stage in _FINAL_REVIEW_STAGES or (review_field and stage is None)
+            if (not in_selection_report and saw_search and is_review_node and not has_checks
+                    and any(report.get(key) for key in _REVIEW_EVIDENCE_FIELDS)):
                 has_review = False
             # Selection reports carry selection evidence. Their histories can contain reviews.
             for key in _TRACE_HISTORY_FIELDS:
@@ -1596,13 +1597,14 @@ def _report_has_checks(value):
             for key in _TRACE_RESPONSE_FIELDS:
                 if key in report:
                     has_review, saw_search = scan(report[key], (has_review, saw_search),
-                                                  in_selection_report=selection_report)
+                                                  in_selection_report=selection_report,
+                                                  review_field=key in _FINAL_REVIEW_STAGES)
             if not selection_report and has_checks:
                 has_review, saw_search = True, False
         elif isinstance(report, (list, tuple)):
             for step in report:
                 has_review, saw_search = scan(step, (has_review, saw_search),
-                                              in_selection_report=in_selection_report)
+                                              in_selection_report=in_selection_report, review_field=review_field)
         return has_review, saw_search
 
     return scan(value, (False, False))[0]
@@ -1774,13 +1776,13 @@ class _ReviewSnapshot(NamedTuple):
 
 
 def _stage_snapshot_entry(step):
-    def normalize(value):
+    def normalize(value, *, field=None):
         if isinstance(value, Mapping):
             stage = _retrieval_stage(value)
             ids = tuple(sorted(event_id.decode("utf-8") for event_id in _event_ids(value)))
             ignored_meta = {"label", "note", "title", "description"} if ids else ()
             normalized = {
-                key: normalize(child) for key, child in value.items()
+                key: normalize(child, field=key) for key, child in value.items()
                 if (key not in _TRACE_STAGE_ALIASES or child != stage)
                 and key not in ("event_id", "id")
                 and (key != "status" or not isinstance(child, str))
@@ -1788,10 +1790,54 @@ def _stage_snapshot_entry(step):
             }
             return "map", stage, ids, normalized
         if isinstance(value, (list, tuple)):
+            if field in {"checks", "requirement_checks"} and all(
+                isinstance(child, Mapping) and isinstance(child.get("requirement_id"), str) for child in value
+            ):
+                if len({child["requirement_id"] for child in value}) == len(value):
+                    value = sorted(value, key=lambda child: child["requirement_id"])
             return "list", [normalize(child) for child in value]
         return value
 
     return canonical_json_bytes(("str", step) if isinstance(step, str) else normalize(step))
+
+
+def _last_evidence_child(sequence, parent_index):
+    path = sequence[parent_index].field_path
+    return next((
+        (index, step) for index in range(parent_index - 1, -1, -1)
+        if (step := sequence[index]).evidence is not None
+        and len(step.field_path) > len(path) and step.field_path[:len(path)] == path
+    ), None)
+
+
+def _flat_review_preserves_children(sequence, parent_index, evidence):
+    quotes, checks, candidates, selected = evidence
+    # Follow the final report's descendants. Earlier sibling assessments may be superseded.
+    child_entry = _last_evidence_child(sequence, parent_index)
+    while child_entry is not None:
+        index, child = child_entry
+        if child.phase == "selection" and sequence[parent_index].evidence[1]:
+            # A checked final review supplies its own evidence after candidate selection.
+            return True
+        child_quotes, child_checks, child_candidates, child_selected = child.evidence
+        if any(
+            restriction is not None and (proposed is None or not proposed <= restriction)
+            for proposed, restriction in (
+                (quotes, child_quotes), (candidates, child_candidates), (selected, child_selected),
+            )
+        ):
+            return False
+        if any(
+            not any(
+                rid == child_rid and relation == child_relation and ids <= child_ids and spans <= child_spans
+                for rid, relation, ids, spans in checks
+            )
+            for child_rid, child_relation, child_ids, child_spans in child_checks
+        ):
+            return False
+        parent_index = index
+        child_entry = _last_evidence_child(sequence, index)
+    return True
 
 
 def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_owner_ids):
@@ -1799,7 +1845,9 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         # A non-history summary may replay just the final evidence. Until another step
         # arrives, it could also be the start of a full replay.
         matches_sequence = snapshot == sequence[0]
-        final = next((step for step in reversed(sequence) if step.evidence is not None), None)
+        final_index = next((index for index in range(len(sequence) - 1, -1, -1)
+                            if sequence[index].evidence is not None), None)
+        final = sequence[final_index] if final_index is not None else None
         # Keeping an inner response wrapper also keeps its interim assessment in scope.
         omitted_inner_assessment = any(
             step.field_path[:depth] == snapshot.field_path[:depth]
@@ -1815,19 +1863,20 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         may_summarize = (
             not has_structure and not omitted_inner_assessment and not snapshot.in_history and snapshot.phase == "review"
         )
+        drops_child_restriction = (
+            may_summarize and not snapshot.field_path and final_index is not None and snapshot.evidence is not None
+            and not _flat_review_preserves_children(sequence, final_index, snapshot.evidence)
+        )
         has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
         if may_summarize and has_parent_summary:
-            child_entry = next((
-                (idx, step) for idx in range(len(sequence) - 2, -1, -1)
-                if (step := sequence[idx]).field_path and step.evidence is not None
-            ), None)
+            child_entry = _last_evidence_child(sequence, final_index)
             if child_entry is not None:
                 child_idx, child = child_entry
                 if (snapshot.field_path == child.field_path and snapshot.evidence == child.evidence
                         and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
                     # A wrapped replay must match the remaining steps and its parent summary.
                     return child_idx + 1, True, True
-                if (not snapshot.field_path and snapshot.owner_ids == prior_owner_ids
+                if (not snapshot.field_path and not drops_child_restriction and snapshot.owner_ids == prior_owner_ids
                         and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)):
                     parent_quotes, parent_checks, parent_candidates, parent_selected = final.evidence
                     child_quotes, child_checks, child_candidates, child_selected = child.evidence
@@ -1844,12 +1893,8 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
                         )
                         if snapshot.evidence == merged_evidence:
                             return 1, False, True
-        drops_child_checks = (
-            has_parent_summary and not snapshot.field_path and not final.evidence[1]
-            and any(step.field_path and step.evidence is not None and step.evidence[1] for step in sequence[:-1])
-        )
         final_summary = (
-            may_summarize and final is not None and not drops_child_checks and snapshot.evidence == final.evidence
+            may_summarize and final is not None and not drops_child_restriction and snapshot.evidence == final.evidence
             and (snapshot.field_path or not prior_owner_ids or snapshot.owner_ids == prior_owner_ids)
             and (
                 not final.child_event_ids
@@ -2207,8 +2252,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         stage_entry_owners = snapshot_owners & owner_identities.keys()
         if stage not in (_SEARCH_STAGES | {"retrieval"}):
             # Match historical stages even when their evidence is equivalent.
-            stage_entry_owners = (stage_entry_owners & history_ancestors
-                                  if stage is not None and not stage_snapshot else set())
+            stage_entry_owners = stage_entry_owners & history_ancestors if stage is not None else set()
         search_entry = None
         if stage_entry_owners:
             search_entry = _stage_snapshot_entry({
