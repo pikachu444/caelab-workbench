@@ -1851,42 +1851,31 @@ def _last_evidence_child(sequence, parent_index):
     ), None)
 
 
-def _flat_review_preserves_children(sequence, parent_index, evidence):
-    parent = sequence[parent_index]
-    if parent.resets_prior:
-        return True
-    quotes, checks, candidates, selected = evidence
-    parent_path = parent.field_path
-    parent_has_checks = bool(parent.evidence[1])
+def _flat_review_children(sequence, final_index, *, target_path):
+    final = sequence[final_index]
+    final_at_target = final.field_path == target_path
+    if final_at_target and final.resets_prior:
+        return
+    parent_has_checks = final_at_target and bool(final.evidence[1])
     saw_checked_review = False
-    replaced_quotes = parent.replaces_quotes
-    replaced_checks = parent.replaces_checks
-    replaced_candidates = parent.replaces_candidates
-    for index in range(parent_index - 1, -1, -1):
+    replaced_quotes = final_at_target and final.replaces_quotes
+    replaced_checks = final_at_target and final.replaces_checks
+    replaced_candidates = final_at_target and final.replaces_candidates
+    first_index = final_index - 1 if final_at_target else final_index
+    for index in range(first_index, -1, -1):
         child = sequence[index]
-        if (child.replayed_child or len(child.field_path) <= len(parent_path)
-                or child.field_path[:len(parent_path)] != parent_path):
+        if (child.replayed_child or len(child.field_path) <= len(target_path)
+                or child.field_path[:len(target_path)] != target_path):
             continue
         superseded_selection = child.phase == "selection" and (parent_has_checks or saw_checked_review)
         if child.evidence is not None and not superseded_selection:
-            child_quotes, child_checks, child_candidates, child_selected = child.evidence
-            if any(
-                restriction is not None and (proposed is None or not proposed <= restriction)
-                for proposed, restriction in (
-                    (quotes, None if replaced_quotes else child_quotes),
-                    (candidates, None if replaced_candidates else child_candidates),
-                    (selected, child_selected),
-                )
-            ):
-                return False
-            if not replaced_checks and any(
-                not any(
-                    rid == child_rid and relation == child_relation and ids <= child_ids and spans <= child_spans
-                    for rid, relation, ids, spans in checks
-                )
-                for child_rid, child_relation, child_ids, child_spans in child_checks
-            ):
-                return False
+            quotes, checks, candidates, selected = child.evidence
+            yield child, (
+                None if replaced_quotes else quotes,
+                () if replaced_checks else checks,
+                None if replaced_candidates and child.phase != "selection" else candidates,
+                selected,
+            )
         if child.resets_prior:
             break
         if child.phase == "review":
@@ -1894,7 +1883,58 @@ def _flat_review_preserves_children(sequence, parent_index, evidence):
             replaced_checks |= child.replaces_checks
             replaced_candidates |= child.replaces_candidates
             saw_checked_review |= bool(child.evidence and child.evidence[1])
+
+
+def _flat_review_preserves_children(sequence, final_index, evidence, *, target_path):
+    quotes, checks, candidates, selected = evidence
+    for _, (child_quotes, child_checks, child_candidates, child_selected) in _flat_review_children(
+        sequence, final_index, target_path=target_path,
+    ):
+        if any(
+            restriction is not None and (proposed is None or not proposed <= restriction)
+            for proposed, restriction in ((quotes, child_quotes), (candidates, child_candidates), (selected, child_selected))
+        ):
+            return False
+        if any(
+            not any(
+                rid == child_rid and relation == child_relation and ids <= child_ids and spans <= child_spans
+                for rid, relation, ids, spans in checks
+            )
+            for child_rid, child_relation, child_ids, child_spans in child_checks
+        ):
+            return False
     return True
+
+
+def _merge_flat_review_evidence(sequence, final_index, snapshot):
+    quotes, checks, candidates, selected = sequence[final_index].evidence
+    checks_by_id = {rid: (relation, ids, spans) for rid, relation, ids, spans in checks}
+
+    def intersect(current, restriction):
+        if current is None:
+            return restriction
+        return current if restriction is None else current & restriction
+
+    for child, (child_quotes, child_checks, child_candidates, child_selected) in _flat_review_children(
+        sequence, final_index, target_path=snapshot.field_path,
+    ):
+        contributes = (child_quotes is not None or child_checks
+                       or child_candidates is not None or child_selected is not None)
+        if contributes and child.child_event_ids and child.child_event_ids != snapshot.owner_ids:
+            return None
+        quotes = intersect(quotes, child_quotes)
+        candidates = intersect(candidates, child_candidates)
+        selected = intersect(selected, child_selected)
+        for rid, relation, ids, spans in child_checks:
+            previous = checks_by_id.get(rid)
+            if previous is not None:
+                previous_relation, previous_ids, previous_spans = previous
+                if relation != previous_relation:
+                    return None
+                ids &= previous_ids
+                spans &= previous_spans
+            checks_by_id[rid] = relation, ids, spans
+    return quotes, frozenset((rid, *check) for rid, check in checks_by_id.items()), candidates, selected
 
 
 def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_owner_ids):
@@ -1924,7 +1964,9 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         )
         drops_child_restriction = (
             may_summarize and not snapshot.field_path and final_index is not None and snapshot.evidence is not None
-            and not _flat_review_preserves_children(sequence, final_index, snapshot.evidence)
+            and not _flat_review_preserves_children(
+                sequence, final_index, snapshot.evidence, target_path=snapshot.field_path,
+            )
         )
         has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
         if may_summarize and has_parent_summary:
@@ -1935,23 +1977,11 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
                         and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
                     # A wrapped replay must match the remaining steps and its parent summary.
                     return child_idx + 1, True, True
-                if (not snapshot.field_path and not drops_child_restriction and snapshot.owner_ids == prior_owner_ids
-                        and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)):
-                    parent_quotes, parent_checks, parent_candidates, parent_selected = final.evidence
-                    child_quotes, child_checks, child_candidates, child_selected = child.evidence
-                    if ((parent_quotes is None or parent_quotes == child_quotes)
-                            and (not parent_checks or parent_checks == child_checks)
-                            and (parent_candidates is None or child_candidates is None
-                                 or parent_candidates <= child_candidates)
-                            and (parent_selected is None or child_selected is None or parent_selected <= child_selected)):
-                        merged_evidence = (
-                            parent_quotes if parent_quotes is not None else child_quotes,
-                            parent_checks or child_checks,
-                            parent_candidates if parent_candidates is not None else child_candidates,
-                            parent_selected if parent_selected is not None else child_selected,
-                        )
-                        if snapshot.evidence == merged_evidence:
-                            return 1, False, True
+            if (child_entry is not None and snapshot.evidence is not None
+                    and not snapshot.field_path and not drops_child_restriction
+                    and snapshot.owner_ids == prior_owner_ids
+                    and snapshot.evidence == _merge_flat_review_evidence(sequence, final_index, snapshot)):
+                return 1, False, True
         final_summary = (
             may_summarize and final is not None and not drops_child_restriction and snapshot.evidence == final.evidence
             and (snapshot.field_path or not prior_owner_ids or snapshot.owner_ids == prior_owner_ids)
@@ -2231,6 +2261,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_quotes = set()
     has_recorded_quotes = False
     review_quotes = set()
+    review_quote_source = None
     review_quotes_constrained = False
     has_review_quotes = False
     review_superseded_quotes = False
@@ -2253,6 +2284,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     replay_cursors = {}
     snapshot_review_ancestors: dict[int, set[int]] = {}
     snapshot_review_containers: dict[int, set[int]] = {}
+    root_response = trace.get("response")
+    root_interim_review_ids = {
+        id(event) for event in events if _history_stage(event) in {"assessment", "retrieval_assessment"}
+    }
     for (record, phase, ancestors, history_ancestors, report_of, _,
          altered_replay, record_event_ids, round_event_ids, duplicate_history, _) in _trace_records(trace, root=True):
         record_id = id(record)
@@ -2272,8 +2307,15 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             report_of & review_candidate_ancestors & history_review_containers
         )
         nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
+        # Recorded final responses can replace quotations from their own interim reviews.
+        replaces_interim_quotes = not altered_replay and (
+            review_quote_source in interim_reviews_by_response.get(record_id, ())
+            or (record is root_response and review_quote_source in root_interim_review_ids)
+            or (record is trace and review_quote_source == id(root_response))
+        )
         constrains_quotes = has_review_quotes and (
-            review_quotes_constrained if encloses_quotes else nests_reviewed_quotes
+            (review_quotes_constrained or not (record_checks or replaces_interim_quotes))
+            if encloses_quotes else nests_reviewed_quotes
         )
         constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
         constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
@@ -2437,6 +2479,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             has_review_quotes = False
             review_superseded_quotes = False
             review_quotes = set()
+            review_quote_source = None
             review_quotes_constrained = False
             review_quotes_ancestors = frozenset()
             review_checks = []
@@ -2490,11 +2533,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_quotes_ancestors = ancestors
                         replaces_quotes = True
                     has_review_quotes = True
+                    review_quote_source = record_id
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
+                    review_quote_source = None
                     review_quotes_constrained = False
                     review_quotes_ancestors = frozenset()
                     replaces_quotes = True
