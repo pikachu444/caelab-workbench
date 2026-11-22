@@ -1558,6 +1558,17 @@ def _is_citation_only_report(value):
     return has_citations
 
 
+def _report_has_review_evidence(value):
+    if isinstance(value, Mapping):
+        if _history_stage(value) in (_SEARCH_STAGES | _SELECTION_STAGES):
+            return False
+        return bool(value.keys() & _EVIDENCE_FIELDS) or any(
+            _report_has_review_evidence(value[key])
+            for key in (*_TRACE_HISTORY_FIELDS, *_TRACE_RESPONSE_FIELDS) if key in value
+        )
+    return isinstance(value, (list, tuple)) and any(_report_has_review_evidence(item) for item in value)
+
+
 def _contains_stage(value, stages):
     if _history_stage(value) in stages:
         return True
@@ -1734,7 +1745,8 @@ def _trace_records(
             elif key in _SEARCH_STAGES:
                 child_phase = "search"
             elif phase is None and (key in _FINAL_REVIEW_STAGES
-                                    or (root and key == "output" and _is_citation_only_report(child_value))):
+                                    or (root and key in {"result", "output"}
+                                        and _report_has_review_evidence(child_value))):
                 child_phase = "review"
             if key in histories_by_report:
                 if history_fields or any(other != key and history for other, history in histories_by_report.items()):
@@ -1855,8 +1867,7 @@ def _last_evidence_child(sequence, parent_index):
 def _flat_review_children(sequence, final_index, *, target_path, all_candidate_ids):
     final = sequence[final_index]
     final_at_target = final.field_path == target_path
-    if final_at_target and final.resets_prior:
-        return
+    prior_reset = final_at_target and final.resets_prior
     parent_has_checks = final_at_target and bool(final.evidence[1])
     saw_checked_review = False
     replaced_quotes = final_at_target and final.replaces_quotes
@@ -1868,7 +1879,10 @@ def _flat_review_children(sequence, final_index, *, target_path, all_candidate_i
         if (child.replayed_child or len(child.field_path) <= len(target_path)
                 or child.field_path[:len(target_path)] != target_path):
             continue
-        superseded_selection = child.phase == "selection" and (parent_has_checks or saw_checked_review)
+        is_selection = child.phase == "selection"
+        if prior_reset and not is_selection:
+            continue
+        superseded_selection = is_selection and (parent_has_checks or saw_checked_review or prior_reset)
         if child.evidence is not None:
             quotes, checks, candidates, selected = child.evidence
             # A superseded selection that admits every candidate adds no candidate limit.
@@ -1877,11 +1891,11 @@ def _flat_review_children(sequence, final_index, *, target_path, all_candidate_i
             yield child, (
                 None if replaced_quotes or superseded_selection else quotes,
                 () if replaced_checks or superseded_selection else checks,
-                None if replaced_candidates and child.phase != "selection" else candidates,
+                None if replaced_candidates and not is_selection else candidates,
                 selected,
             )
-        if child.resets_prior:
-            break
+        # A new review resets evidence, but selection bounds still apply to the trace.
+        prior_reset |= child.resets_prior
         if child.phase == "review":
             replaced_quotes |= child.replaces_quotes
             replaced_checks |= child.replaces_checks
@@ -1965,7 +1979,7 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
             ))
             drops_child_restriction = not _flat_review_preserves_children(children, snapshot.evidence)
             drops_child_id = any(
-                child.child_event_ids and child.child_event_ids != snapshot.owner_ids
+                child.phase == "review" and child.child_event_ids and child.child_event_ids != snapshot.owner_ids
                 and (quotes is not None or checks or candidates is not None or selected is not None)
                 for child, (quotes, checks, candidates, selected) in children
             )
@@ -2006,17 +2020,17 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
     raise ValueError("Retrieval assessment contradicts trace selection or review")
 
 
-def _interim_review_record_ids(value):
+def _review_report_records(value, *, stop_at_review_boundary=False):
     if isinstance(value, Mapping):
-        if _event_ids(value) or _history_stage(value) in _COMPLETION_STAGES:
+        if stop_at_review_boundary and (_event_ids(value) or _history_stage(value) in _COMPLETION_STAGES):
             return
-        yield id(value)
+        yield value
         for key in (*_TRACE_RESPONSE_FIELDS, *_TRACE_HISTORY_FIELDS):
             if key in value:
-                yield from _interim_review_record_ids(value[key])
+                yield from _review_report_records(value[key], stop_at_review_boundary=stop_at_review_boundary)
     elif isinstance(value, (list, tuple)):
         for child in value:
-            yield from _interim_review_record_ids(child)
+            yield from _review_report_records(child, stop_at_review_boundary=stop_at_review_boundary)
 
 
 def _validated_check_evidence(checks):
@@ -2161,6 +2175,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_blocks_support = False
     evidence_by_record = {}
     interim_reviews_by_response = {}
+    interim_checks_by_response = {}
     owners_with_structure = set()
     owner_identities = {}
     for record, phase, _, _, _, report_histories, _, event_ids, _, _, execution_search_scope in _trace_records(
@@ -2192,18 +2207,23 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 and (record is trace or _history_stage(record) in _COMPLETION_STAGES)):
             interim_stages = {"assessment", "retrieval_assessment"}
             interim_ids = {
-                record_id for history in _history_lists(record) for step in history
+                id(interim) for history in _history_lists(record) for step in history
                 if isinstance(step, Mapping) and _history_stage(step) in interim_stages
-                for record_id in _interim_review_record_ids(step)
+                for interim in _review_report_records(step, stop_at_review_boundary=True)
             }
-            for response_id in _interim_review_record_ids(response):
-                interim_reviews_by_response[response_id] = interim_ids
+            response_records = tuple(_review_report_records(response))
+            for response_record in response_records:
+                interim_reviews_by_response[id(response_record)] = interim_ids
+            # An independently identified report may supply final citations, but
+            # replacing checked bindings still requires the same review scope.
+            for response_record in _review_report_records(response, stop_at_review_boundary=True):
+                interim_checks_by_response[id(response_record)] = interim_ids
             # Legacy traces can end at an interim assessment and record final citations at the root.
-            if (record is trace and isinstance(response, Mapping)
+            if (record is trace
                     and not (record.keys() & {"checks", "requirement_checks"})
-                    and (response.get("citations") or response.get("quoted_spans"))
+                    and any(item.get("citations") or item.get("quoted_spans") for item in response_records)
                     and all(_history_stage(history[-1]) in interim_stages for history in _history_lists(record))):
-                interim_reviews_by_response[id(record)] = {id(response)}
+                interim_reviews_by_response[id(record)] = {id(item) for item in response_records}
         if any(record[key] != identity[key] for key in ("assessment_id", "query_plan_sha256", "candidate_set_sha256")
                if key in record):
             raise ValueError("Retrieval assessment trace identity mismatch in recorded response")
@@ -2383,7 +2403,15 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             for event_id, owner_id, field_path in record_event_ids:
                 prior = reviewed_event_evidence.get(event_id)
                 prior_owner_ids = prior["owner_ids"] if prior is not None else frozenset()
-                child_event_ids = record_event_identity if record_id != owner_id else frozenset()
+                # Each path runs from its identified owner to this record. A closer
+                # owner therefore has a shorter suffix of the current owner's path.
+                child_event_ids = (
+                    record_event_identity | {
+                        other_event_id for other_event_id, _, other_path in record_event_ids
+                        if len(other_path) < len(field_path) and field_path[len(field_path) - len(other_path):] == other_path
+                    }
+                    if record_id != owner_id else frozenset()
+                )
                 owner_ids = record_event_identity if record_id == owner_id else frozenset()
                 records_stages = owner_id in owner_identities and bool(stage_snapshot)
                 records_owner_ids = record_id == owner_id and (len(owner_ids) > 1 or len(prior_owner_ids) > 1)
@@ -2550,7 +2578,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 if record_checks:
                     replaces_interim_checks = (
                         not altered_replay and bool(review_check_sources)
-                        and review_check_sources <= interim_reviews_by_response.get(record_id, frozenset())
+                        and review_check_sources <= interim_checks_by_response.get(record_id, frozenset())
                     )
                     if constrains_checks and not replaces_interim_checks:
                         checks_by_requirement = {rid: (relation, ids, quotes)
