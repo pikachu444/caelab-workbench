@@ -1362,9 +1362,10 @@ def _starts_new_history_round(item, prior):
     def event_queries(value, *, nested=False):
         if isinstance(value, Mapping):
             stage = _history_stage(value)
-            if not nested or stage is None or stage in (_EXECUTION_SEARCH_STAGES | {"retrieval"}):
-                if query := search_query(value):
-                    yield query
+            if nested and stage is not None and stage not in (_EXECUTION_SEARCH_STAGES | {"retrieval"}):
+                return
+            if query := search_query(value):
+                yield query
             for key in _TRACE_RESPONSE_FIELDS:
                 if key in value:
                     yield from event_queries(value[key], nested=True)
@@ -1571,11 +1572,8 @@ def _report_has_checks(value):
         return False
 
     def scan(report, has_review, *, in_selection_report=False):
-        stage = _history_stage(report)
-        is_selection = stage in _SELECTION_STAGES
-        if not in_selection_report and (
-            stage in _EXECUTION_SEARCH_STAGES or (is_selection and selection_has_evidence(report))
-        ):
+        is_selection = _history_stage(report) in _SELECTION_STAGES
+        if not in_selection_report and is_selection and selection_has_evidence(report):
             has_review = False
         if isinstance(report, Mapping):
             # Selection reports carry selection evidence. Their histories can contain reviews.
@@ -1806,19 +1804,28 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         if (may_summarize and len(sequence) > 1 and not sequence[-1].field_path
                 and sequence[-1].phase == "review" and sequence[-1].evidence is not None):
             child = sequence[-2]
-            if child.field_path and child.evidence is not None and snapshot.evidence == child.evidence:
-                if (snapshot.field_path == child.field_path
+            if child.field_path and child.evidence is not None:
+                if (snapshot.field_path == child.field_path and snapshot.evidence == child.evidence
                         and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
                     # A wrapped replay must also match its recorded parent summary.
                     return len(sequence) - 1, True, True
-                parent_quotes, parent_checks, parent_candidates, parent_selected = sequence[-1].evidence
-                citations_only = (not parent_checks and parent_candidates is None and parent_selected is None
-                                  and parent_quotes is not None and child.evidence[0] is not None
-                                  and parent_quotes <= child.evidence[0])
                 if (not snapshot.field_path and snapshot.owner_ids == prior_owner_ids
-                        and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)
-                        and citations_only):
-                    return 1, False, True
+                        and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)):
+                    parent_quotes, parent_checks, parent_candidates, parent_selected = sequence[-1].evidence
+                    child_quotes, child_checks, child_candidates, child_selected = child.evidence
+                    if ((parent_quotes is None or parent_quotes == child_quotes)
+                            and (not parent_checks or parent_checks == child_checks)
+                            and (parent_candidates is None or child_candidates is None
+                                 or parent_candidates == child_candidates)
+                            and (parent_selected is None or child_selected is None or parent_selected == child_selected)):
+                        merged_evidence = (
+                            parent_quotes if parent_quotes is not None else child_quotes,
+                            parent_checks or child_checks,
+                            parent_candidates if parent_candidates is not None else child_candidates,
+                            parent_selected if parent_selected is not None else child_selected,
+                        )
+                        if snapshot.evidence == merged_evidence:
+                            return 1, False, True
         final_summary = (
             may_summarize and final is not None and snapshot.evidence == final.evidence
             and (snapshot.field_path or not prior_owner_ids or snapshot.owner_ids == prior_owner_ids)
@@ -2172,16 +2179,19 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 snapshot_review_containers.setdefault(owner_id, set()).update(history_ancestors)
         stage = _history_stage(record)
         search_stage = stage if effective_phase == "search" else None
-        search_entry = None
-        if stage in (_SEARCH_STAGES | {"retrieval"}) and any(
-            owner_id in owner_identities for _, owner_id, _ in record_event_ids
-        ):
-            search_entry = _stage_snapshot_entry({
-                key: value for key, value in record.items() if key not in _TRACE_HISTORY_FIELDS
-            })
         has_evidence = snapshot_phase in {"review", "selection"} and (has_review_update or selected is not None)
         stage_events = record.get("stage_events", ())
         stage_snapshot = tuple(map(_stage_snapshot_entry, stage_events)) if isinstance(stage_events, (list, tuple)) else ()
+        stage_entry_owners = snapshot_owners & owner_identities.keys()
+        if stage not in (_SEARCH_STAGES | {"retrieval"}):
+            # Bare steps in an identified history participate in replay even without evidence.
+            stage_entry_owners = (stage_entry_owners & history_ancestors
+                                  if stage is not None and not has_evidence and not stage_snapshot else set())
+        search_entry = None
+        if stage_entry_owners:
+            search_entry = _stage_snapshot_entry({
+                key: value for key, value in record.items() if key not in _TRACE_HISTORY_FIELDS
+            })
         snapshot_recorded = False
         record_event_identity = _event_ids(record) if record_event_ids else frozenset()
         if has_evidence or search_entry is not None or stage_snapshot or record_event_identity:
@@ -2198,9 +2208,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 owner_ids = record_event_identity if record_id == owner_id else frozenset()
                 records_stages = owner_id in owner_identities and bool(stage_snapshot)
                 records_owner_ids = record_id == owner_id and (len(owner_ids) > 1 or len(prior_owner_ids) > 1)
+                recorded_stage_entry = search_entry if owner_id in stage_entry_owners else None
                 if not (has_evidence or records_stages
                         or (owner_id in owner_identities
-                            and (search_entry is not None or child_event_ids - {event_id} or records_owner_ids))):
+                            and (recorded_stage_entry is not None or child_event_ids - {event_id} or records_owner_ids))):
                     continue
                 snapshot_recorded = True
                 snapshot = _ReviewSnapshot(
@@ -2209,7 +2220,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     snapshot_phase,
                     evidence,
                     search_stage,
-                    search_entry if owner_id in owner_identities else None,
+                    recorded_stage_entry,
                     child_event_ids,
                     owner_ids,
                     stage_snapshot if records_stages else (),
