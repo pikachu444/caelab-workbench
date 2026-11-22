@@ -1627,7 +1627,7 @@ def _report_has_checks(value):
 def _trace_records(
     value, phase=None, ancestors=frozenset(), history_ancestors=frozenset(), report_of=frozenset(),
     report_histories=(), altered_replay=False, wrapper_event_ids=frozenset(), phase_event_ids=frozenset(),
-    *, root=False, deduplicate=True, index_offset=0, duplicate_history=False,
+    *, root=False, deduplicate=True, index_offset=0, duplicate_history=False, execution_search_scope=False,
 ):
     if isinstance(value, (list, tuple)):
         for index, item in enumerate(value, index_offset):
@@ -1637,7 +1637,7 @@ def _trace_records(
             )
             yield from _trace_records(item, phase, ancestors, history_ancestors, report_of, report_histories,
                                       altered_replay, indexed_event_ids, phase_event_ids, deduplicate=deduplicate,
-                                      duplicate_history=duplicate_history)
+                                      duplicate_history=duplicate_history, execution_search_scope=execution_search_scope)
     elif isinstance(value, Mapping):
         if not root and phase not in {"search", "detail", "selection"}:
             stage = _retrieval_stage(value)
@@ -1692,8 +1692,11 @@ def _trace_records(
         if phase in {"search", "selection"}:
             inherited_ids = {event_id for event_id, _ in phase_event_ids}
             round_event_ids = phase_event_ids | {pair for pair in own_event_ids if pair[0] not in inherited_ids}
+        execution_search_scope = phase == "search" and (
+            execution_search_scope or _history_stage(value) in _EXECUTION_SEARCH_STAGES
+        )
         record = (value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories,
-                  altered_replay, event_ids, round_event_ids, duplicate_history)
+                  altered_replay, event_ids, round_event_ids, duplicate_history, execution_search_scope)
         # A search starts before the selection events recorded in its history.
         search_starts_history = phase == "search" and bool(history_fields)
         if search_starts_history:
@@ -1740,6 +1743,7 @@ def _trace_records(
             child_phase_event_ids = (
                 round_event_ids if child_phase == phase and key not in _TRACE_HISTORY_FIELDS else frozenset()
             )
+            child_search_scope = execution_search_scope and child_phase == "search"
             child_wrapper_event_ids = frozenset(
                 (event_id, owner_id, (*field_path, key))
                 for event_id, owner_id, field_path in child_wrapper_event_ids
@@ -1750,11 +1754,13 @@ def _trace_records(
                     value[key][:child_index_offset], child_phase, child_ancestors, child_history, child_report_of,
                     child_report_histories, altered_replay, child_wrapper_event_ids, child_phase_event_ids,
                     deduplicate=deduplicate, duplicate_history=True,
+                    execution_search_scope=child_search_scope,
                 )
             yield from _trace_records(
                 child_value, child_phase, child_ancestors, child_history, child_report_of, child_report_histories,
                 child_altered_replay, child_wrapper_event_ids, child_phase_event_ids, deduplicate=deduplicate,
                 index_offset=child_index_offset, duplicate_history=duplicate_history,
+                execution_search_scope=child_search_scope,
             )
         if not search_starts_history:
             yield record
@@ -1782,7 +1788,7 @@ def _validate_trace_sequence(events, has_stage_events, *, continues_history=Fals
         raise ValueError("Retrieval assessment trace events must start before search and record a terminal result")
 
 
-@dataclass(frozen=True)
+@dataclass
 class _ReviewSnapshot:
     in_history: bool
     field_path: tuple[str | int, ...]
@@ -1793,8 +1799,11 @@ class _ReviewSnapshot:
     child_event_ids: frozenset[bytes]
     owner_ids: frozenset[bytes]
     stage_events: tuple[bytes, ...]
-    # Flattening consults the original review's quotation scope.
-    constrains_prior_quotes: bool = field(compare=False)
+    # A flattened replay uses the original live review's transitions.
+    resets_prior: bool = field(default=False, compare=False)
+    replaces_quotes: bool = field(default=False, compare=False)
+    replaces_checks: bool = field(default=False, compare=False)
+    replaces_candidates: bool = field(default=False, compare=False)
 
 
 def _stage_snapshot_entry(step):
@@ -1845,50 +1854,40 @@ def _flat_review_preserves_children(sequence, parent_index, evidence):
     parent_path = sequence[parent_index].field_path
     parent_has_checks = bool(sequence[parent_index].evidence[1])
     saw_checked_review = False
-    saw_selection = False
     replaced_quotes = False
+    replaced_checks = False
+    replaced_candidates = False
     for index in range(parent_index - 1, -1, -1):
         child = sequence[index]
         if len(child.field_path) <= len(parent_path) or child.field_path[:len(parent_path)] != parent_path:
             continue
-        if child.search_stage in _EXECUTION_SEARCH_STAGES and saw_selection and (parent_has_checks or saw_checked_review):
+        superseded_selection = child.phase == "selection" and (parent_has_checks or saw_checked_review)
+        if child.evidence is not None and not superseded_selection:
+            child_quotes, child_checks, child_candidates, child_selected = child.evidence
+            if any(
+                restriction is not None and (proposed is None or not proposed <= restriction)
+                for proposed, restriction in (
+                    (quotes, None if replaced_quotes else child_quotes),
+                    (candidates, None if replaced_candidates else child_candidates),
+                    (selected, child_selected),
+                )
+            ):
+                return False
+            if not replaced_checks and any(
+                not any(
+                    rid == child_rid and relation == child_relation and ids <= child_ids and spans <= child_spans
+                    for rid, relation, ids, spans in checks
+                )
+                for child_rid, child_relation, child_ids, child_spans in child_checks
+            ):
+                return False
+        if child.resets_prior:
             break
-        saw_selection |= child.phase == "selection"
-        if child.evidence is None:
-            continue
-        child_quotes, child_checks, child_candidates, child_selected = child.evidence
-        if child.phase == "review" and saw_checked_review:
-            if not child.in_history:
-                continue
-            child_checks = ()
-            if replaced_quotes:
-                child_quotes = None
-        if child.phase == "selection":
-            if parent_has_checks or saw_checked_review:
-                if child_quotes or child_checks:
-                    break
-                continue
-        if any(
-            restriction is not None and (proposed is None or not proposed <= restriction)
-            for proposed, restriction in (
-                (quotes, child_quotes), (candidates, child_candidates), (selected, child_selected),
-            )
-        ):
-            return False
-        if any(
-            not any(
-                rid == child_rid and relation == child_relation and ids <= child_ids and spans <= child_spans
-                for rid, relation, ids, spans in checks
-            )
-            for child_rid, child_relation, child_ids, child_spans in child_checks
-        ):
-            return False
-        if child.phase == "review" and child.evidence[1]:
-            saw_checked_review = True
-            if child.evidence[0] is not None and not child.constrains_prior_quotes:
-                replaced_quotes = True
-        if child.phase == "selection" and (child_quotes or child_checks):
-            break
+        if child.phase == "review":
+            replaced_quotes |= child.replaces_quotes
+            replaced_checks |= child.replaces_checks
+            replaced_candidates |= child.replaces_candidates
+            saw_checked_review |= bool(child.evidence and child.evidence[1])
     return True
 
 
@@ -2125,7 +2124,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     interim_reviews_by_response = {}
     owners_with_structure = set()
     owner_identities = {}
-    for record, phase, _, _, _, report_histories, _, event_ids, _, _ in _trace_records(
+    for record, phase, _, _, _, report_histories, _, event_ids, _, _, execution_search_scope in _trace_records(
         trace, root=True, deduplicate=False,
     ):
         if (phase == "review" or _history_stage(record) == "retrieval") and any(
@@ -2171,7 +2170,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 for _, history in report_histories for event in history
             )
             if history_field == "steps" and record is not trace:
-                continues_history |= _history_stage(record) in _EXECUTION_SEARCH_STAGES or bool(record.get("events"))
+                continues_history |= execution_search_scope or bool(record.get("events"))
             _validate_trace_sequence(
                 nested, "stage_events" in record, continues_history=continues_history,
                 selection_fragment=history_field == "steps" and record is not trace,
@@ -2247,7 +2246,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     snapshot_review_ancestors: dict[int, set[int]] = {}
     snapshot_review_containers: dict[int, set[int]] = {}
     for (record, phase, ancestors, history_ancestors, report_of, _,
-         altered_replay, record_event_ids, round_event_ids, duplicate_history) in _trace_records(trace, root=True):
+         altered_replay, record_event_ids, round_event_ids, duplicate_history, _) in _trace_records(trace, root=True):
         record_id = id(record)
         record_ids, selected, record_quotes, record_checks, check_evidence, has_quotes = evidence_by_record[record_id]
         if ((phase == "selection" and record_ids and not cited_ids <= record_ids)
@@ -2319,6 +2318,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 key: value for key, value in record.items() if key not in _TRACE_HISTORY_FIELDS
             })
         snapshot_recorded = False
+        new_snapshots = []
         record_event_identity = _event_ids(record) if record_event_ids else frozenset()
         if has_evidence or search_entry is not None or stage_snapshot or record_event_identity:
             evidence = (
@@ -2350,7 +2350,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     child_event_ids,
                     owner_ids,
                     stage_snapshot if records_stages else (),
-                    constrains_prior_quotes=constrains_quotes,
                 )
                 if prior is not None and owner_id not in prior["owners"]:
                     key = event_id, owner_id
@@ -2365,6 +2364,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     })
                     recorded["owners"].add(owner_id)
                     recorded["sequence"].append(snapshot)
+                    new_snapshots.append(snapshot)
             if snapshot_recorded and in_replayed_review:
                 # An unchanged historical selection or review contributes no evidence to this round.
                 continue
@@ -2420,7 +2420,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         )
         quoted_selection = (effective_phase == "selection" and (record_quotes or record_checks)
                             and (review_superseded_quotes or has_active_review) and novel_round_event)
-        if fresh_review or quoted_selection:
+        resets_prior = bool(fresh_review or quoted_selection)
+        if resets_prior:
             trace_quotes.clear()
             trace_checks.clear()
             selection_evidence.clear()
@@ -2447,6 +2448,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_after_review = False
             new_round_selection_history = frozenset()
             new_round_selection_ancestors = frozenset()
+        replaces_quotes = replaces_checks = replaces_candidates = False
         if effective_phase == "review":
             if has_review_update:
                 history_review_containers.update(history_ancestors)
@@ -2477,6 +2479,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     else:
                         review_quotes = record_quotes
                         review_quotes_ancestors = ancestors
+                        replaces_quotes = True
                     has_review_quotes = True
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
@@ -2485,6 +2488,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_quotes = set()
                     review_quotes_constrained = False
                     review_quotes_ancestors = frozenset()
+                    replaces_quotes = True
                 if record_checks:
                     replaces_interim_checks = (
                         not altered_replay and bool(review_check_sources)
@@ -2506,6 +2510,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_checks = record_checks
                         review_check_sources = {record_id}
                         review_checks_ancestors = ancestors
+                        replaces_checks = True
                 elif enclosed_selection:
                     review_checks = [check for _, _, _, checks in enclosed_selection for check in checks]
                     review_check_sources = selection_sources
@@ -2518,6 +2523,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_checks = []
                     review_check_sources.clear()
                     review_checks_ancestors = frozenset()
+                    replaces_checks = True
                 if record_ids is not None:
                     if review_candidate_ids is not None and constrains_candidates:
                         review_candidate_ids &= record_ids
@@ -2525,15 +2531,22 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     else:
                         review_candidate_ids = record_ids
                         review_candidate_ancestors = ancestors
+                        replaces_candidates = True
                 elif not constrains_candidates:
                     review_candidate_ids = None
                     review_candidate_ancestors = frozenset()
+                    replaces_candidates = True
         elif has_quotes and effective_phase not in {"search", "detail"} and not in_replayed_review:
             has_recorded_quotes = True
             trace_quotes.update(record_quotes)
             trace_checks.extend(record_checks)
             if effective_phase == "selection":
                 selection_evidence.append((record_id, ancestors, record_quotes, record_checks))
+        for snapshot in new_snapshots:
+            snapshot.resets_prior = resets_prior
+            snapshot.replaces_quotes = replaces_quotes
+            snapshot.replaces_checks = replaces_checks
+            snapshot.replaces_candidates = replaces_candidates
 
     for (event_id, _), (index, matches_sequence, final_summary) in replay_cursors.items():
         sequence = reviewed_event_evidence[event_id]["sequence"]
