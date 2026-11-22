@@ -1362,16 +1362,20 @@ def _starts_new_history_round(item, prior):
     def event_queries(value, *, nested=False):
         if isinstance(value, Mapping):
             stage = _history_stage(value)
-            if nested and stage is not None and (
-                stage not in (_EXECUTION_SEARCH_STAGES | {"retrieval"})
+            if nested and (
+                (stage is None and value.keys() & _EVIDENCE_FIELDS)
+                or (stage is not None and stage not in (_EXECUTION_SEARCH_STAGES | {"retrieval"}))
                 or (stage == "retrieval" and not _contains_stage(value, _EXECUTION_SEARCH_STAGES))
             ):
                 return
             if query := search_query(value):
                 yield query
             for key in _TRACE_RESPONSE_FIELDS:
-                if key in value and key not in {"assessment", "retrieval_assessment", "decision", "retrieval_decision"}:
-                    yield from event_queries(value[key], nested=True)
+                if key not in value or key in {"assessment", "retrieval_assessment", "decision", "retrieval_decision"}:
+                    continue
+                if key == "response" and not _contains_stage(value[key], _EXECUTION_SEARCH_STAGES):
+                    continue
+                yield from event_queries(value[key], nested=True)
         elif isinstance(value, (list, tuple)):
             for child in value:
                 yield from event_queries(child, nested=nested)
@@ -1598,7 +1602,10 @@ def _report_has_checks(value):
                 if key in report:
                     has_review, saw_search = scan(report[key], (has_review, saw_search),
                                                   in_selection_report=selection_report,
-                                                  review_field=key in _FINAL_REVIEW_STAGES)
+                                                  review_field=not selection_report and (
+                                                      review_field or stage in _FINAL_REVIEW_STAGES
+                                                      or key in _FINAL_REVIEW_STAGES
+                                                  ))
             if not selection_report and has_checks:
                 has_review, saw_search = True, False
         elif isinstance(report, (list, tuple)):
@@ -1776,13 +1783,13 @@ class _ReviewSnapshot(NamedTuple):
 
 
 def _stage_snapshot_entry(step):
-    def normalize(value, *, field=None):
+    def normalize(value, *, field=None, in_check=False):
         if isinstance(value, Mapping):
             stage = _retrieval_stage(value)
             ids = tuple(sorted(event_id.decode("utf-8") for event_id in _event_ids(value)))
             ignored_meta = {"label", "note", "title", "description"} if ids else ()
             normalized = {
-                key: normalize(child, field=key) for key, child in value.items()
+                key: normalize(child, field=key, in_check=in_check) for key, child in value.items()
                 if (key not in _TRACE_STAGE_ALIASES or child != stage)
                 and key not in ("event_id", "id")
                 and (key != "status" or not isinstance(child, str))
@@ -1790,12 +1797,20 @@ def _stage_snapshot_entry(step):
             }
             return "map", stage, ids, normalized
         if isinstance(value, (list, tuple)):
-            if field in {"checks", "requirement_checks"} and all(
+            is_check_list = field in {"checks", "requirement_checks"}
+            items = [normalize(child, in_check=in_check or is_check_list) for child in value]
+            if is_check_list and all(
                 isinstance(child, Mapping) and isinstance(child.get("requirement_id"), str) for child in value
             ):
-                if len({child["requirement_id"] for child in value}) == len(value):
-                    value = sorted(value, key=lambda child: child["requirement_id"])
-            return "list", [normalize(child) for child in value]
+                ordered = sorted(zip(value, items), key=lambda pair: (
+                    pair[0]["requirement_id"], canonical_json_bytes(pair[1]),
+                ))
+                items = [item for _, item in ordered]
+            elif in_check and field in {
+                "quoted_spans", "citations", "candidate_ids", "selected", "selected_candidate_ids", "selected_ids",
+            }:
+                items.sort(key=canonical_json_bytes)
+            return "list", items
         return value
 
     return canonical_json_bytes(("str", step) if isinstance(step, str) else normalize(step))
@@ -1812,13 +1827,17 @@ def _last_evidence_child(sequence, parent_index):
 
 def _flat_review_preserves_children(sequence, parent_index, evidence):
     quotes, checks, candidates, selected = evidence
-    # Follow the final report's descendants. Earlier sibling assessments may be superseded.
-    child_entry = _last_evidence_child(sequence, parent_index)
-    while child_entry is not None:
-        index, child = child_entry
-        if child.phase == "selection" and sequence[parent_index].evidence[1]:
-            # A checked final review supplies its own evidence after candidate selection.
-            return True
+    parent_path = sequence[parent_index].field_path
+    saw_checked_review = False
+    for index in range(parent_index - 1, -1, -1):
+        child = sequence[index]
+        if (child.evidence is None or len(child.field_path) <= len(parent_path)
+                or child.field_path[:len(parent_path)] != parent_path):
+            continue
+        if child.phase == "review" and saw_checked_review:
+            continue
+        if child.phase == "selection" and (checks or saw_checked_review):
+            continue
         child_quotes, child_checks, child_candidates, child_selected = child.evidence
         if any(
             restriction is not None and (proposed is None or not proposed <= restriction)
@@ -1835,8 +1854,8 @@ def _flat_review_preserves_children(sequence, parent_index, evidence):
             for child_rid, child_relation, child_ids, child_spans in child_checks
         ):
             return False
-        parent_index = index
-        child_entry = _last_evidence_child(sequence, index)
+        if child.phase == "review" and child_checks:
+            saw_checked_review = True
     return True
 
 
