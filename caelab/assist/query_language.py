@@ -1881,6 +1881,8 @@ def _flat_review_children(sequence, final_index, *, target_path, all_candidate_i
             continue
         is_selection = child.phase == "selection"
         if prior_reset and not is_selection:
+            if child.evidence is not None and child.evidence[3] is not None:
+                yield child, (None, (), None, child.evidence[3])
             continue
         superseded_selection = is_selection and (parent_has_checks or saw_checked_review or prior_reset)
         if child.evidence is not None:
@@ -2264,8 +2266,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if "candidate_id" in record:
             cid = record["candidate_id"]
             singular_id = validate_candidate_ids([cid])
-            if record_ids is None:
-                record_ids = singular_id
+            record_ids = singular_id if record_ids is None else record_ids & singular_id
             if "start" in record or "end" in record:
                 quote({key: record[key] for key in allowed_quote_fields if key in record})
             elif _QUOTATION_PROVENANCE.intersection(record):
@@ -2291,7 +2292,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     trace_quotes = set()
     has_recorded_quotes = False
     review_quotes = set()
-    review_quote_source = None
+    review_quote_sources: set[int] = set()
     review_quotes_constrained = False
     has_review_quotes = False
     review_superseded_quotes = False
@@ -2334,11 +2335,15 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         )
         nests_reviewed_quotes = bool(summarized_containers & review_quotes_ancestors)
         # Recorded final responses can replace quotations from their own interim reviews.
-        replaces_interim_quotes = not altered_replay and review_quote_source in interim_reviews_by_response.get(
-            record_id, (),
+        replaces_interim_quotes = (
+            not altered_replay
+            and bool(review_quote_sources)
+            and review_quote_sources <= interim_reviews_by_response.get(record_id, frozenset())
+            # A selection may be nested inside an interim assessment and still bind the response.
+            and review_quote_sources.isdisjoint(source_id for source_id, _, _, _ in selection_evidence)
         )
-        constrains_quotes = has_review_quotes and (
-            (review_quotes_constrained or not (record_checks or replaces_interim_quotes))
+        constrains_quotes = has_review_quotes and not replaces_interim_quotes and (
+            (review_quotes_constrained or not record_checks)
             if encloses_quotes else nests_reviewed_quotes
         )
         constrains_checks = encloses_checks or bool(summarized_containers & review_checks_ancestors)
@@ -2382,7 +2387,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 snapshot_review_containers.setdefault(owner_id, set()).update(history_ancestors)
         stage = _history_stage(record)
         search_stage = stage if effective_phase == "search" else None
-        has_evidence = snapshot_phase in {"review", "selection"} and (has_review_update or selected is not None)
+        records_review_evidence = snapshot_phase in {"review", "selection"}
+        has_evidence = selected is not None or (records_review_evidence and has_review_update)
         stage_events = record.get("stage_events", ())
         stage_snapshot = tuple(map(_stage_snapshot_entry, stage_events)) if isinstance(stage_events, (list, tuple)) else ()
         stage_entry_owners = snapshot_owners & owner_identities.keys()
@@ -2398,12 +2404,18 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         new_snapshots = []
         record_event_identity = _event_ids(record) if record_event_ids else frozenset()
         if has_evidence or search_entry is not None or stage_snapshot or record_event_identity:
-            evidence = (
-                frozenset(record_quotes) if has_quotes else None,
-                check_evidence,
-                frozenset(record_ids) if record_ids is not None else None,
-                frozenset(selected) if selected is not None else None,
-            ) if has_evidence else None
+            evidence = None
+            if has_evidence:
+                selected_ids = frozenset(selected) if selected is not None else None
+                if records_review_evidence:
+                    evidence = (
+                        frozenset(record_quotes) if has_quotes else None,
+                        check_evidence,
+                        frozenset(record_ids) if record_ids is not None else None,
+                        selected_ids,
+                    )
+                else:
+                    evidence = (None, (), None, selected_ids)
             for event_id, owner_id, field_path in record_event_ids:
                 prior = reviewed_event_evidence.get(event_id)
                 prior_owner_ids = prior["owner_ids"] if prior is not None else frozenset()
@@ -2515,7 +2527,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             has_review_quotes = False
             review_superseded_quotes = False
             review_quotes = set()
-            review_quote_source = None
+            review_quote_sources.clear()
             review_quotes_constrained = False
             review_quotes_ancestors = frozenset()
             review_checks = []
@@ -2555,27 +2567,30 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         )
                         if has_review_quotes and review_superseded_quotes:
                             review_quotes &= selection_quotes
+                            review_quote_sources |= selection_sources | {record_id}
                             review_quotes_ancestors |= ancestors
                         else:
                             review_quotes = selection_quotes
+                            review_quote_sources = selection_sources | {record_id}
                             review_quotes_ancestors = ancestors
                         review_quotes_constrained = True
                     elif constrains_quotes:
                         review_quotes &= record_quotes
+                        review_quote_sources.add(record_id)
                         review_quotes_ancestors |= ancestors
                         review_quotes_constrained = True
                     else:
                         review_quotes = record_quotes
+                        review_quote_sources = {record_id}
                         review_quotes_ancestors = ancestors
                         replaces_quotes = True
                     has_review_quotes = True
-                    review_quote_source = record_id
                     if record_quotes or record_checks:
                         review_superseded_quotes = True
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
-                    review_quote_source = None
+                    review_quote_sources.clear()
                     review_quotes_constrained = False
                     review_quotes_ancestors = frozenset()
                     replaces_quotes = True
