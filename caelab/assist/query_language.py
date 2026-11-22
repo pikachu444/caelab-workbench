@@ -1362,7 +1362,10 @@ def _starts_new_history_round(item, prior):
     def event_queries(value, *, nested=False):
         if isinstance(value, Mapping):
             stage = _history_stage(value)
-            if nested and stage is not None and stage not in (_EXECUTION_SEARCH_STAGES | {"retrieval"}):
+            if nested and stage is not None and (
+                stage not in (_EXECUTION_SEARCH_STAGES | {"retrieval"})
+                or (stage == "retrieval" and not _contains_stage(value, _EXECUTION_SEARCH_STAGES))
+            ):
                 return
             if query := search_query(value):
                 yield query
@@ -1571,27 +1574,38 @@ def _report_has_checks(value):
             return any(selection_has_evidence(step) for step in report)
         return False
 
-    def scan(report, has_review, *, in_selection_report=False):
-        is_selection = _history_stage(report) in _SELECTION_STAGES
-        if not in_selection_report and is_selection and selection_has_evidence(report):
-            has_review = False
+    def scan(report, state, *, in_selection_report=False):
+        has_review, saw_search = state
+        stage = _history_stage(report)
+        is_selection = stage in _SELECTION_STAGES
+        if not in_selection_report:
+            if stage in _EXECUTION_SEARCH_STAGES:
+                saw_search = True
+            if is_selection and selection_has_evidence(report):
+                has_review, saw_search = False, False
         if isinstance(report, Mapping):
+            has_checks = bool({"checks", "requirement_checks"} & report.keys())
+            if (not in_selection_report and saw_search and stage in _FINAL_REVIEW_STAGES
+                    and not has_checks and not _is_bare_completion(report)):
+                has_review = False
             # Selection reports carry selection evidence. Their histories can contain reviews.
             for key in _TRACE_HISTORY_FIELDS:
                 if key in report:
-                    has_review = scan(report[key], has_review)
+                    has_review, saw_search = scan(report[key], (has_review, saw_search))
             selection_report = is_selection or in_selection_report
             for key in _TRACE_RESPONSE_FIELDS:
                 if key in report:
-                    has_review = scan(report[key], has_review, in_selection_report=selection_report)
-            if not selection_report and {"checks", "requirement_checks"} & report.keys():
-                has_review = True
+                    has_review, saw_search = scan(report[key], (has_review, saw_search),
+                                                  in_selection_report=selection_report)
+            if not selection_report and has_checks:
+                has_review, saw_search = True, False
         elif isinstance(report, (list, tuple)):
             for step in report:
-                has_review = scan(step, has_review, in_selection_report=in_selection_report)
-        return has_review
+                has_review, saw_search = scan(step, (has_review, saw_search),
+                                              in_selection_report=in_selection_report)
+        return has_review, saw_search
 
-    return scan(value, False)
+    return scan(value, (False, False))[0]
 
 
 def _trace_records(
@@ -1801,23 +1815,27 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         may_summarize = (
             not has_structure and not omitted_inner_assessment and not snapshot.in_history and snapshot.phase == "review"
         )
-        if (may_summarize and len(sequence) > 1 and not sequence[-1].field_path
-                and sequence[-1].phase == "review" and sequence[-1].evidence is not None):
-            child = sequence[-2]
-            if child.field_path and child.evidence is not None:
+        has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
+        if may_summarize and has_parent_summary:
+            child_entry = next((
+                (idx, step) for idx in range(len(sequence) - 2, -1, -1)
+                if (step := sequence[idx]).field_path and step.evidence is not None
+            ), None)
+            if child_entry is not None:
+                child_idx, child = child_entry
                 if (snapshot.field_path == child.field_path and snapshot.evidence == child.evidence
                         and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
-                    # A wrapped replay must also match its recorded parent summary.
-                    return len(sequence) - 1, True, True
+                    # A wrapped replay must match the remaining steps and its parent summary.
+                    return child_idx + 1, True, True
                 if (not snapshot.field_path and snapshot.owner_ids == prior_owner_ids
                         and (not child.child_event_ids or child.child_event_ids == snapshot.owner_ids)):
-                    parent_quotes, parent_checks, parent_candidates, parent_selected = sequence[-1].evidence
+                    parent_quotes, parent_checks, parent_candidates, parent_selected = final.evidence
                     child_quotes, child_checks, child_candidates, child_selected = child.evidence
                     if ((parent_quotes is None or parent_quotes == child_quotes)
                             and (not parent_checks or parent_checks == child_checks)
                             and (parent_candidates is None or child_candidates is None
-                                 or parent_candidates == child_candidates)
-                            and (parent_selected is None or child_selected is None or parent_selected == child_selected)):
+                                 or parent_candidates <= child_candidates)
+                            and (parent_selected is None or child_selected is None or parent_selected <= child_selected)):
                         merged_evidence = (
                             parent_quotes if parent_quotes is not None else child_quotes,
                             parent_checks or child_checks,
@@ -1826,8 +1844,12 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
                         )
                         if snapshot.evidence == merged_evidence:
                             return 1, False, True
+        drops_child_checks = (
+            has_parent_summary and not snapshot.field_path and not final.evidence[1]
+            and any(step.field_path and step.evidence is not None and step.evidence[1] for step in sequence[:-1])
+        )
         final_summary = (
-            may_summarize and final is not None and snapshot.evidence == final.evidence
+            may_summarize and final is not None and not drops_child_checks and snapshot.evidence == final.evidence
             and (snapshot.field_path or not prior_owner_ids or snapshot.owner_ids == prior_owner_ids)
             and (
                 not final.child_event_ids
@@ -2184,9 +2206,9 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         stage_snapshot = tuple(map(_stage_snapshot_entry, stage_events)) if isinstance(stage_events, (list, tuple)) else ()
         stage_entry_owners = snapshot_owners & owner_identities.keys()
         if stage not in (_SEARCH_STAGES | {"retrieval"}):
-            # Bare steps in an identified history participate in replay even without evidence.
+            # Match historical stages even when their evidence is equivalent.
             stage_entry_owners = (stage_entry_owners & history_ancestors
-                                  if stage is not None and not has_evidence and not stage_snapshot else set())
+                                  if stage is not None and not stage_snapshot else set())
         search_entry = None
         if stage_entry_owners:
             search_entry = _stage_snapshot_entry({
@@ -2412,7 +2434,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
 
     for (event_id, _), (index, matches_sequence, final_summary) in replay_cursors.items():
         sequence = reviewed_event_evidence[event_id]["sequence"]
-        pending_parent_summary = (matches_sequence and index == len(sequence) - 1
+        pending_parent_summary = (matches_sequence and index < len(sequence)
                                   and not sequence[-1].field_path and sequence[-1].evidence is not None)
         if (not final_summary or pending_parent_summary) and (not matches_sequence or index != len(sequence)):
             raise ValueError("Retrieval assessment contradicts trace selection or review")
