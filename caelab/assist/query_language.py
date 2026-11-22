@@ -1695,8 +1695,6 @@ def _trace_records(
         node_stage = _history_stage(value)
         if node_stage is not None:
             execution_search_scope = node_stage in _EXECUTION_SEARCH_STAGES
-        elif phase != "search":
-            execution_search_scope = False
         record = (value, "review" if root else phase, ancestors, history_ancestors, report_of, report_histories,
                   altered_replay, event_ids, round_event_ids, duplicate_history, execution_search_scope)
         # A search starts before the selection events recorded in its history.
@@ -1745,7 +1743,8 @@ def _trace_records(
             child_phase_event_ids = (
                 round_event_ids if child_phase == phase and key not in _TRACE_HISTORY_FIELDS else frozenset()
             )
-            child_search_scope = execution_search_scope and child_phase == "search"
+            # These report fields can wrap a search. A declared stage sets its own scope.
+            child_search_scope = execution_search_scope and key in {"result", "output", "response"}
             child_wrapper_event_ids = frozenset(
                 (event_id, owner_id, (*field_path, key))
                 for event_id, owner_id, field_path in child_wrapper_event_ids
@@ -1903,8 +1902,10 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         # A non-history summary may replay just the final evidence. Until another step
         # arrives, it could also be the start of a full replay.
         matches_sequence = snapshot == sequence[0]
-        final_index = next((index for index in range(len(sequence) - 1, -1, -1)
-                            if sequence[index].evidence is not None), None)
+        final_index = next((
+            index for index in range(len(sequence) - 1, -1, -1)
+            if sequence[index].evidence is not None and not sequence[index].replayed_child
+        ), None)
         final = sequence[final_index] if final_index is not None else None
         # Keeping an inner response wrapper also keeps its interim assessment in scope.
         omitted_inner_assessment = any(
@@ -2357,7 +2358,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     child_event_ids,
                     owner_ids,
                     stage_snapshot if records_stages else (),
-                    replayed_child=in_replayed_review,
+                    replayed_child=in_replayed_review or duplicate_history,
                 )
                 if prior is not None and owner_id not in prior["owners"]:
                     key = event_id, owner_id

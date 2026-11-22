@@ -2219,6 +2219,10 @@ def test_d09_summary_can_narrow_completed_checks(
     "flat-final-after-replayed-selection-copy", "flat-final-after-replayed-selection-reference",
     "flat-final-after-replayed-review-copy", "flat-final-after-replayed-review-reference",
     "flat-final-after-parent-replaces-sibling-quotation", "flat-final-after-parent-replaces-history-quotation",
+    "flat-final-after-replayed-selection-without-parent-citations",
+    "flat-final-after-replayed-review-without-parent-citations",
+    "flat-final-after-anonymous-selection-prefix", "flat-final-after-anonymous-selection-full",
+    "flat-final-after-anonymous-review-prefix", "flat-final-after-anonymous-review-full",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2864,7 +2868,7 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             assess(second, companion=first, **options)
         return
 
-    if layout.startswith(("flat-final-after-replayed-", "flat-final-after-parent-replaces-")):
+    if layout.startswith(("flat-final-after-replayed-", "flat-final-after-parent-replaces-", "flat-final-after-anonymous-")):
         shared = {"event_id": "rc1", "id": "alternate"}
         final = evidence(second)
         completion = {**done, **shared, "citations": final["citations"]}
@@ -2876,6 +2880,14 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
             earlier["event_id"] = "repeated-evidence"
             repeated = dict(earlier) if layout.endswith("-copy") else earlier
             completion[history_field] = [prepare, search, earlier, review_b, repeated, done]
+            if layout.endswith("-without-parent-citations"):
+                del completion["citations"]
+        elif layout.startswith("flat-final-after-anonymous-"):
+            earlier = {**selection, "citations": review_a["citations"]} if "-selection-" in layout else review_a
+            history = [prepare, search, earlier, review_b, done]
+            completion[history_field] = history
+            repeated = history if layout.endswith("-full") else [prepare, search, earlier, done]
+            completion["result"] = {history_field: repeated}
         else:
             completion.update(final)
             interim = {"citations": review_a["citations"]}
@@ -4709,6 +4721,57 @@ def test_d09_explicit_search_in_selection_report_starts_execution_scope(assessed
     del report["stage"]
     with pytest.raises(ValueError, match="must start before search and record a terminal result"):
         assess(candidate, companion=other, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("report_field", ["result", "output", "response"])
+def test_d09_untyped_report_continues_explicit_search_in_selection(
+    assessed_retrieval, response_format, history_field, report_field,
+):
+    assess, candidate = assessed_retrieval
+    other = dict(candidate, citation="geos-manual:chapter-2")
+    done = {"stage": "retrieval_completion"}
+    selection = {"stage": "candidate_selection", "candidate_ids": [candidate["citation"]]}
+    report = {"steps": [selection, done]}
+    search = {"stage": "search", report_field: report}
+    select = {"stage": "candidate_selection", "result": search}
+    history = [{"stage": "prepare_query"}, select, done]
+    trace = {"events": [{**done, history_field: history}]}
+    quote = {"candidate_id": candidate["citation"], "start": 0, "end": len(candidate["text"])}
+    options = {
+        "include_good": True, "trace_overrides": trace, "response_format": response_format,
+        "recorded_review": (quote, "satisfied"),
+    }
+
+    assert assess(candidate, companion=other, **options).status == "supported"
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(other, companion=candidate, **options)
+    report["stage"] = "response"
+    with pytest.raises(ValueError, match="must start before search and record a terminal result"):
+        assess(candidate, companion=other, **options)
+    del report["stage"]
+    del search["stage"]
+    with pytest.raises(ValueError, match="must start before search and record a terminal result"):
+        assess(candidate, companion=other, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("boundary", ["assessment", "events"])
+def test_d09_review_and_history_fields_do_not_inherit_search_scope(assessed_retrieval, response_format, boundary):
+    assess, candidate = assessed_retrieval
+    done = {"stage": "retrieval_completion"}
+    selection = {"stage": "candidate_selection", "candidate_ids": [candidate["citation"]]}
+    steps = [selection, done]
+    search = {"stage": "search", "result": {"steps": steps}}
+    trace = {"events": [{"stage": "prepare_query"}, search, done]}
+    options = {"trace_overrides": trace, "response_format": response_format}
+
+    assert assess(candidate, **options).status == "supported"
+    del search["result"]
+    search[boundary] = steps if boundary == "events" else {"steps": steps}
+    with pytest.raises(ValueError, match="must start before search and record a terminal result"):
+        assess(candidate, **options)
 
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
