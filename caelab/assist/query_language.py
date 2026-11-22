@@ -2023,9 +2023,13 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
     raise ValueError("Retrieval assessment contradicts trace selection or review")
 
 
-def _review_report_records(value, *, stop_at_review_boundary=False, stop_at_non_interim=False):
+def _review_report_records(
+    value, *, stop_at_review_boundary=False, stop_at_non_interim=False, allowed_event_ids=frozenset(),
+):
     if isinstance(value, Mapping):
-        if stop_at_review_boundary and (_event_ids(value) or _history_stage(value) in _COMPLETION_STAGES):
+        if stop_at_review_boundary and (
+            (_event_ids(value) - allowed_event_ids) or _history_stage(value) in _COMPLETION_STAGES
+        ):
             return
         if stop_at_non_interim and _history_stage(value) in (_DECISION_STAGES | _SELECTION_STAGES):
             return
@@ -2038,6 +2042,7 @@ def _review_report_records(value, *, stop_at_review_boundary=False, stop_at_non_
     for child in children:
         yield from _review_report_records(
             child, stop_at_review_boundary=stop_at_review_boundary, stop_at_non_interim=stop_at_non_interim,
+            allowed_event_ids=allowed_event_ids,
         )
 
 
@@ -2213,31 +2218,38 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 if interim_fields and not (path and path[0] == "response" and wrapped_final_evidence)
             )
         response = record.get("response")
-        if (isinstance(response, (Mapping, list, tuple))
-                and (record is trace or _history_stage(record) in _COMPLETION_STAGES)):
+        if isinstance(response, (Mapping, list, tuple)):
             interim_stages = {"assessment", "retrieval_assessment"}
+            owner_event_ids = _event_ids(record)
+            interim_scope = {
+                "stop_at_review_boundary": True, "stop_at_non_interim": True, "allowed_event_ids": owner_event_ids,
+            }
+            sibling_assessments = [record.get("assessment"), record.get("retrieval_assessment")]
+            sibling_assessments.extend(
+                item for field in ("result", "output")
+                for item in _review_report_records(record.get(field), **interim_scope)
+                if _history_stage(item) in interim_stages
+            )
+            history_assessments = (
+                step for history in _history_lists(record) for step in history
+                if _history_stage(step) in interim_stages
+            ) if record is trace or _history_stage(record) in _COMPLETION_STAGES else ()
             interim_ids = {
-                id(interim) for history in _history_lists(record) for step in history
-                if isinstance(step, Mapping) and _history_stage(step) in interim_stages
-                for interim in _review_report_records(step, stop_at_review_boundary=True, stop_at_non_interim=True)
+                id(interim) for assessment in (*sibling_assessments, *history_assessments)
+                for interim in _review_report_records(assessment, **interim_scope)
             }
             response_records = tuple(_review_report_records(response))
-            response_check_records = tuple(_review_report_records(response, stop_at_review_boundary=True))
-            sibling_assessment_ids = {
-                id(interim) for interim in _review_report_records(
-                    record.get("assessment"), stop_at_review_boundary=True, stop_at_non_interim=True,
-                )
-            }
-            # Enclosing completions add scope without erasing the nested completion's scope.
-            for response_record in response_records:
-                interim_reviews_by_response.setdefault(id(response_record), set()).update(interim_ids)
-            # An independently identified report may supply final citations, but
-            # replacing checked bindings still requires the same review scope.
-            for response_record in response_check_records:
-                interim_checks_by_response.setdefault(id(response_record), set()).update(interim_ids)
-                if sibling_assessment_ids:
-                    interim_candidates_by_response.setdefault(id(response_record), set()).update(sibling_assessment_ids)
             if interim_ids:
+                response_check_records = tuple(_review_report_records(
+                    response, stop_at_review_boundary=True, allowed_event_ids=owner_event_ids,
+                ))
+                # Enclosing reports add scope without erasing the nested report's scope.
+                for response_record in response_records:
+                    interim_reviews_by_response.setdefault(id(response_record), set()).update(interim_ids)
+                # Checked bindings and candidate limits require the same review scope.
+                for response_record in response_check_records:
+                    interim_checks_by_response.setdefault(id(response_record), set()).update(interim_ids)
+                    interim_candidates_by_response.setdefault(id(response_record), set()).update(interim_ids)
                 interim_response_scopes.append((interim_ids, response_records, response_check_records))
             # Legacy traces can end at an interim assessment and record final citations at the root.
             if (record is trace
@@ -2533,7 +2545,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 reuses_round_event_id |= seen_ids.setdefault(event_id, owner_id) != owner_id
         novel_round_event = not altered_replay and not reuses_round_event_id and not in_replayed_review
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
-        if effective_phase == "search" and has_active_review and novel_round_event:
+        search_after_selection = search_stage in _EXECUTION_SEARCH_STAGES and bool(selection_evidence)
+        if effective_phase == "search" and (has_active_review or search_after_selection) and novel_round_event:
             saw_search_after_review = True
         elif effective_phase == "selection" and saw_search_after_review and novel_round_event:
             new_round_selection_after_review = True
@@ -2596,8 +2609,13 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         replaces_quotes = replaces_checks = replaces_candidates = False
         if effective_phase == "review":
             selection_scope = {record_id} | report_of | non_history_ancestors
-            if live_has_quotes and not live_checks:
-                candidate_enclosed = [entry for entry in selection_evidence if selection_scope & entry[1]]
+            if live_has_quotes:
+                # A checked report can close its own selection history. Selections
+                # from enclosing reports still constrain its quotations.
+                candidate_enclosed = [
+                    entry for entry in selection_evidence
+                    if selection_scope & entry[1] and (not live_checks or record_id not in entry[1])
+                ]
             elif has_quotes and not live_has_quotes and not record_checks:
                 # The interim report can be superseded while its own selection still binds.
                 candidate_enclosed = [entry for entry in selection_evidence if record_id in entry[1]]
@@ -2636,8 +2654,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         review_quotes_ancestors = ancestors
                         replaces_quotes = True
                     has_review_quotes = True
-                    if stage in _DECISION_STAGES:
-                        review_quotes_constrained = True
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
@@ -2697,6 +2713,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     review_candidate_sources.clear()
                     review_candidate_ancestors = frozenset()
                     replaces_candidates = True
+            if stage in _DECISION_STAGES and has_review_quotes and (live_has_quotes or encloses_quotes):
+                review_quotes_constrained = True
         elif (live_has_quotes or live_checks) and effective_phase not in {"search", "detail"} and not in_replayed_review:
             if live_has_quotes:
                 has_recorded_quotes = True

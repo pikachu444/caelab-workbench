@@ -1876,6 +1876,8 @@ def test_d09_inner_final_citations_replace_only_interim_sources(
 @pytest.mark.parametrize("layout", [
     "wrapped-decision", "checked-response-to-decision", "outer-selection", "wrapped-selection",
     "outer-checked-assessment", "outer-decision",
+    "checked-inner-after-decision-result", "checked-inner-after-decision-output",
+    "checked-inner-after-selection", "checked-inner-with-sibling-interim",
 ])
 def test_d09_final_response_replaces_only_superseded_interim_evidence(
     assessed_retrieval, response_format, history_field, layout,
@@ -1886,7 +1888,7 @@ def test_d09_final_response_replaces_only_superseded_interim_evidence(
     [topic] = query_language.extract_query_requirements(plan)
     prepare = {"stage": "prepare_query"}
     done = {"stage": "retrieval_completion"}
-    checked = layout in {"checked-response-to-decision", "outer-checked-assessment"}
+    checked = layout.startswith("checked-") or layout == "outer-checked-assessment"
 
     def evidence(candidate, *, use_checks=False):
         cid = candidate["citation"]
@@ -1910,11 +1912,20 @@ def test_d09_final_response_replaces_only_superseded_interim_evidence(
         "wrapped-selection": {**assessment, "result": {**selection, history_field: [prepare, assessment, done]}},
         "outer-checked-assessment": {**assessment, **evidence(first, use_checks=True)},
         "outer-decision": decision,
+        "checked-inner-after-decision-result": {"stage": "decision", "result": evidence(first)},
+        "checked-inner-after-decision-output": {"stage": "decision", "output": evidence(first)},
+        "checked-inner-after-selection": selection,
+        "checked-inner-with-sibling-interim": {**assessment, **evidence(first, use_checks=True)},
     }[layout]
     final = evidence(first, use_checks=checked)
     response = final
     if layout in {"outer-selection", "outer-checked-assessment", "outer-decision"}:
         interim = {"stage": "assessment", **evidence(second, use_checks=checked)}
+        response = {**done, history_field: [prepare, interim, done], "response": final}
+    elif layout == "checked-inner-with-sibling-interim":
+        response = {**done, "assessment": evidence(second, use_checks=True), "response": final}
+    elif layout.startswith("checked-inner-"):
+        interim = {"stage": "assessment", **evidence(second)}
         response = {**done, history_field: [prepare, interim, done], "response": final}
     outer = {**done, history_field: [prepare, outer_review, done], "response": response}
     options = {"include_good": True, "question_plan": plan, "trace_overrides": {"events": [outer]},
@@ -2589,6 +2600,8 @@ def test_d09_summary_can_narrow_completed_checks(
     "flattened-without-selection-nested-candidate-bound", "flattened-without-selection-nested-selected-bound",
     "flattened-search-bound-omit", "flattened-search-bound-retain",
     "flattened-search-bound-reset-omit", "flattened-search-bound-reset-retain",
+    "completion-owned-final-response", "checked-interim-result", "checked-interim-output",
+    "flattened-response-with-sibling-interim",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2621,6 +2634,31 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
     review_a = {"stage": "assessment", **evidence(first)}
     review_b = {"stage": "assessment", **evidence(second)}
     selection = {"stage": "candidate_selection", "candidate_ids": ids}
+    if layout in {"completion-owned-final-response", "checked-interim-result", "checked-interim-output",
+                  "flattened-response-with-sibling-interim"}:
+        interim = {**evidence(first), "candidate_ids": ids[:1]}
+        final = {**evidence(second), "candidate_ids": ids[1:]}
+        completion = {**done, "event_id": "rc1", history_field: [prepare, done], "response": final}
+        if layout == "completion-owned-final-response":
+            completion["assessment"] = interim
+            final["event_id"] = "rc1"
+        elif layout == "flattened-response-with-sibling-interim":
+            completion["response"] = {"assessment": interim, "response": final}
+        else:
+            field = layout.removeprefix("checked-interim-")
+            completion[field] = {"stage": "assessment", **interim}
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(second, first)
+        if layout == "completion-owned-final-response":
+            final["event_id"] = "independent-review"
+            with pytest.raises(ValueError, match="trace selection or review"):
+                assess(second, companion=first, **options)
+        elif layout == "flattened-response-with-sibling-interim":
+            wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+            wrapper["output"] = {history_field: [{**done, "event_id": "rc1", **final}]}
+            assert_only(first, second)
+        return
+
     if layout == "short-selection-history":
         checked_selection = {**selection, **evidence(second)}
         history = [prepare, search, checked_selection]
