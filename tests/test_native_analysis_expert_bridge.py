@@ -104,6 +104,30 @@ def test_all_entries_open_independent_window_with_selected_run(analysis, tmp_pat
     assert state.closed == []
 
 
+@pytest.mark.parametrize("edit", ["untouched", "edited", "appended", "duplicated", "partial_lines"])
+def test_switch_to_theory_removes_automatic_case_draft(analysis, tmp_path, edit):
+    window, state = analysis
+    display_run(window, state, tmp_path)
+    window.request_expert_debate()
+    expert = window._expert_window
+    framing = expert.question.toPlainText()
+    assert "ERROR: not convergent" in framing
+    if edit == "edited":
+        expert.question.setPlainText(framing.replace("not convergent", "failed to converge"))
+    elif edit == "appended":
+        expert.question.setPlainText(framing + "\nWhat is a weak form?")
+    elif edit == "duplicated":
+        expert.question.setPlainText(framing + "\n" + framing)
+    elif edit == "partial_lines":
+        expert.question.setPlainText("What is a weak form?\n" + framing.splitlines()[-1])
+    expert.scope_combo.setCurrentIndex(expert.scope_combo.findData("theory"))
+    expected = ""
+    assert expert.question.toPlainText() == expected
+    window.request_expert_debate()
+    assert window._expert_window is expert
+    assert expert.question.toPlainText() == expected
+
+
 def test_reuse_preserves_draft_and_separates_run_and_frame_contexts(analysis, tmp_path):
     window, state = analysis
     first = display_run(window, state, tmp_path)

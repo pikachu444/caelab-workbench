@@ -277,15 +277,15 @@ def probe(monkeypatch):
 
 
 def test_queued_submit_does_not_hash_on_caller_and_snapshots_are_detached(tmp_path, probe, monkeypatch):
-    import caelab.jobs as jobs
+    from caelab.native import input_snapshot
     wb, project, node, source = project_with_input(tmp_path)
     entered, release = threading.Event(), threading.Event()
-    original = jobs.snapshot_input
+    original = input_snapshot.snapshot_input
     def blocked(*args):
         entered.set()
         assert release.wait(5)
         return original(*args)
-    monkeypatch.setattr(jobs, "snapshot_input", blocked)
+    monkeypatch.setattr(input_snapshot, "snapshot_input", blocked)
     start = time.monotonic()
     submitted = wb.submit_native(project, node.id)
     assert time.monotonic() - start < 1

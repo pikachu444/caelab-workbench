@@ -31,6 +31,57 @@ from .variables import (VariableSpace, ContinuousVariable, DiscreteVariable,
                         CategoricalVariable, LinkedVariable)
 
 
+_MESH_CARDS = frozenset({"*NODE", "*ELEMENT", "*NGEN", "*NFILL", "*ELGEN", "*ELCOPY", "*NCOPY", "*SYSTEM"})
+
+
+def _deck_lines(root: Path, files):
+    """Expand INCLUDE at its insertion point, retaining the originating file and line."""
+    def expand(path, parents):
+        key = str(path)
+        if key not in files or path in parents:
+            raise ValueError(f"Invalid or cyclic native INCLUDE closure: {path}")
+        content = files[key]
+        includes = {number: name for _, _, name, number in _includes(content, path)}
+        for number, line in enumerate(content.decode("utf-8-sig").splitlines(), 1):
+            if number in includes:
+                child = Path(includes[number])
+                yield from expand((root.parent / child).resolve(), (*parents, path))
+            else:
+                yield key, number, line.strip()
+    card = ""
+    for filename, number, line in expand(root, ()):
+        compact = re.sub(r"[ \t]+", "", line)
+        if not compact or compact.startswith("**"):
+            continue
+        if compact.startswith("*"):
+            card = compact.split(",", 1)[0].upper()
+        yield filename, number, card, line
+
+
+def _mesh_topology(root: Path, files):
+    topology = []
+    for _, _, card, line in _deck_lines(root, files):
+        if card not in _MESH_CARDS:
+            continue
+        if line.startswith("*") or card not in {"*NODE", "*ELEMENT"}:
+            topology.append((card, "".join(line.upper().split())))
+            continue
+        items = line.split(",")
+        if items[-1].strip() == "":
+            items.pop()
+        try:
+            if card == "*NODE":
+                row = (int(items[0]), *(float(item.strip().upper().replace("D", "E")) for item in items[1:]))
+                if not all(math.isfinite(value) for value in row[1:]):
+                    raise ValueError("non-finite node coordinates")
+            else:
+                row = tuple(int(item) for item in items)
+        except (IndexError, ValueError) as error:
+            raise ValueError(f"Cannot validate native mesh topology: {line}") from error
+        topology.append((card, row))
+    return tuple(topology)
+
+
 def _decode_definition(definition):
     classes = {t.__name__:t for t in (ContinuousVariable,DiscreteVariable,CategoricalVariable,LinkedVariable)}
     variables = []
@@ -351,19 +402,11 @@ class MDOStudyService:
     def _refresh_template(self):
         root = TemplateDeck.from_text(self._templates[str(self.input_path)].decode("utf-8"), self.input_path)
         tokens = set(root.token_names)
-        for content in self._templates.values():
-            text = content.decode("utf-8")
-            tokens.update(TemplateDeck.from_text(text).token_names)
-            card = ""
-            prohibited = {"*NODE","*ELEMENT","*NGEN","*NFILL","*ELGEN","*ELCOPY","*NCOPY","*SYSTEM"}
-            for line in text.splitlines():
-                line = line.strip().lstrip("\ufeff")
-                if line.startswith("**"):
-                    continue
-                if line.startswith("*"):
-                    card = line.split(",")[0].upper()
-                if card in prohibited and TemplateDeck.from_text(line).token_names:
-                    raise ValueError("Geometry/topology tokens require a native CAD/mesh regeneration adapter")
+        for _, _, card, line in _deck_lines(self.input_path, self._templates):
+            line_tokens = TemplateDeck.from_text(line).token_names
+            if card in _MESH_CARDS and line_tokens:
+                raise ValueError("Geometry/topology tokens require a native CAD/mesh regeneration adapter")
+            tokens.update(line_tokens)
         if len({t.lower() for t in tokens}) != len(tokens):
             raise ValueError("Case-ambiguous native parameter tokens are not allowed")
         self.template = TemplateDeck(original_text=root.original_text, token_names=tuple(sorted(tokens)), file_path=self.input_path)
@@ -393,8 +436,11 @@ class MDOStudyService:
         templates = dict(self._originals)
         grouped = {}
         allowed = {"*ELASTIC", "*PLASTIC", "*DENSITY", "*CLOAD", "*DLOAD", "*BOUNDARY",
-                   "*BEAM SECTION", "*SHELL SECTION", "*SOLID SECTION", "*SPRING", "*DASHPOT",
-                   "*CONDUCTIVITY", "*SPECIFIC HEAT", "*EXPANSION", "*AMPLITUDE"}
+                   "*BEAMSECTION", "*SHELLSECTION", "*SOLIDSECTION", "*SPRING", "*DASHPOT",
+                   "*CONDUCTIVITY", "*SPECIFICHEAT", "*EXPANSION", "*AMPLITUDE"}
+        cards_by_line = {}
+        for source, number, card, _ in _deck_lines(self.input_path, self._originals):
+            cards_by_line.setdefault((source, number), set()).add(card)
         for binding in combined:
             p = str(Path(binding["source_path"]).resolve())
             if p not in templates:
@@ -406,12 +452,8 @@ class MDOStudyService:
             index = binding["line_number"]-1
             if index < 0 or index >= len(lines) or lines[index].rstrip("\r\n") != binding["expected_line"].rstrip("\r\n"):
                 raise ValueError("Parameterization line differs from the preview")
-            card = ""
-            for line in lines[:index+1]:
-                body = line.strip().lstrip("\ufeff")
-                if body.startswith("*") and not body.startswith("**"):
-                    card = body.split(",")[0].upper()
-            if card not in allowed or lines[index].lstrip().startswith("*"):
+            cards = cards_by_line.get((p, index + 1), set())
+            if not cards or not cards <= allowed or lines[index].lstrip().startswith("*"):
                 raise ValueError("Only scalar material/property/load data can be parameterized; geometry and topology require native regeneration")
             literal = binding["old_literal"]
             matches = scalar_literal_occurrences(lines[index],literal)
@@ -564,6 +606,8 @@ class MDOStudyService:
             if TemplateDeck.from_text(rendered).token_names:
                 raise ValueError("Unresolved native token")
             result[p] = rendered.encode("utf-8")
+        if _mesh_topology(self.input_path, result) != _mesh_topology(self.input_path, self._originals):
+            raise ValueError("Rendered native mesh topology changed; CAD/mesh regeneration is required")
         return result
 
     def _execution_contents(self, values):

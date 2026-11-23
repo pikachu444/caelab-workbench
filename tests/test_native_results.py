@@ -15,15 +15,17 @@ import pytest
 from caelab.native.results import collect_results
 
 
-def _geometry(ids=(40, 10, 90, 25), topology=3, connectivity=(10, 25, 40, 90), indicator=1):
+def _geometry(ids=(40, 10, 90, 25), topology=3, connectivity=(10, 25, 40, 90), indicator=1, *,
+              coordinates=None, element_id=731):
     digits = 10 if indicator else 5
     def header(code, count):
         return f"{code:6s}{'':18}{count:12d}{'':37}{indicator}\n"
     text = "    1C\n" + header("    2C", len(ids))
     for i, identifier in enumerate(ids):
-        text += f" -1{identifier:{digits}d}" + "".join(f"{value:12.5E}" for value in (i, 2 * i, -i)) + "\n"
+        xyz = coordinates[i] if coordinates is not None else (i, 2 * i, -i)
+        text += f" -1{identifier:{digits}d}" + "".join(f"{value:12.5E}" for value in xyz) + "\n"
     text += " -3\n" + header("    3C", 1)
-    text += f" -1{731:{digits}d}{topology:5d}{4:5d}{9:5d}\n"
+    text += f" -1{element_id:{digits}d}{topology:5d}{4:5d}{9:5d}\n"
     for start in range(0, len(connectivity), 8):
         text += " -2" + "".join(f"{node:{digits}d}" for node in connectivity[start:start + 8]) + "\n"
     return text + " -3\n"

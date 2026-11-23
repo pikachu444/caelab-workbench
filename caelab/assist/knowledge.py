@@ -35,12 +35,14 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, replace
+import threading
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
 from . import rag
+from .contracts import CorpusChunkSpec, QueryPlan
 
 SOURCE_ID = "calculix-manual"
 SOURCE_LABEL = "CalculiX CrunchiX User's Manual v2.23 (Dhondt)"
@@ -54,6 +56,15 @@ class KnowledgeEntry:
     text: str
     source_id: str = SOURCE_ID
     solver: str = ""
+    corpus_chunk: CorpusChunkSpec | None = None
+    source_kind: str = "legacy_unknown"
+    review_status: str = "unreviewed"
+
+    @property
+    def solver_scope(self) -> tuple[str, ...]:
+        if self.corpus_chunk is not None:
+            return self.corpus_chunk.coverage_facets.get("solver", ())
+        return (self.solver,) if self.solver else ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +73,10 @@ class KnowledgeSearchResult:
     entries: list[KnowledgeEntry]
     solver: str = ""
     error: str | None = None
+    query_plan: QueryPlan | None = field(default=None, compare=False)
+    corpus_revision: str | None = field(default=None, compare=False)
+    mismatched_candidates: tuple[CorpusChunkSpec, ...] = field(default=(), compare=False)
+    index_digest: str | None = field(default=None, compare=False)
 
 
 # Canonical solver names and the spellings that identify them in
@@ -224,11 +239,30 @@ def configured_sources() -> list[tuple[str, Path, str]]:
 
 
 _index_cache: dict[tuple, rag.HybridIndex] = {}
+_index_cache_lock = threading.Lock()
 
 
-def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
-    """Load a prebuilt index — either `root` itself or every per-
-    solver subfolder under it, merged. Chunks that carry no solver
+def _publish_index(key, index, check_cancelled):
+    with _index_cache_lock:
+        check_cancelled()
+        previous = _index_cache.copy()
+        _index_cache.clear()
+        _index_cache[key] = index
+        try:
+            check_cancelled()
+        except Exception:
+            _index_cache.clear()
+            _index_cache.update(previous)
+            raise
+
+
+def _cached_index(key):
+    with _index_cache_lock:
+        return _index_cache.get(key)
+
+
+def _load_prebuilt(root: Path, embedder_id: str, *, check_cancelled=lambda: None) -> rag.HybridIndex | None:
+    """Load a legacy prebuilt index from `root` or merge its per-solver subfolders. Chunks that carry no solver
     tag yet (older builds) take the solver of their subfolder name.
     None when any folder's embedder differs from the configured one."""
     if (root / "chunks.json").exists():
@@ -242,6 +276,7 @@ def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
         return None
     merged: rag.HybridIndex | None = None
     for folder in folders:
+        check_cancelled()
         loaded = rag.load_index(folder)
         if loaded.embedder_id != embedder_id:
             return None
@@ -260,38 +295,101 @@ def _load_prebuilt(root: Path, embedder_id: str) -> rag.HybridIndex | None:
     return merged
 
 
-def default_index() -> rag.HybridIndex:
+def default_index(*, cancel_event=None, deadline: float | None = None, _publish=None) -> rag.HybridIndex:
     """The shared index: seed notes + configured manual files,
     embedded with the configured embedder. Rebuilt only when the
     source set or embedder changes.
 
-    Prebuilt indexes (CAELAB_RAG_INDEX_DIR, made once — e.g. on the
-    GPU laptop — and copied over) are loaded instead of rebuilt when
-    their embedder matches the configured one: either a single index
-    or a parent folder of per-solver indexes."""
+    Prebuilt indexes (CAELAB_CORPUS_INDEX_DIR or CAELAB_RAG_INDEX_DIR, made once — e.g. on the
+    GPU laptop — and copied over) are loaded instead of rebuilt. A corpus bundle uses
+    its fixed retrieval profile. Legacy indexes use the configured embedder."""
+    def check_cancelled():
+        rag.check_index_budget(cancel_event, deadline)
+
+    def publish(key, index):
+        check_cancelled()
+        if _publish is None:
+            _publish_index(key, index, check_cancelled)
+        else:
+            _publish(key, index)
+        return index
+
+    check_cancelled()
+    corpus_dir = os.environ.get("CAELAB_CORPUS_INDEX_DIR", "")
+    legacy_dir = os.environ.get("CAELAB_RAG_INDEX_DIR", "")
+    if corpus_dir or (legacy_dir and ((Path(legacy_dir) / "current.json").is_file()
+                                     or (Path(legacy_dir) / "manifest.json").is_file())):
+        from .corpus import load_corpus_bundle
+
+        root = Path(corpus_dir or legacy_dir).resolve()
+        # Validate the current bundle even when its immutable index was seen before.
+        loaded, _ = load_corpus_bundle(root, check_cancelled=check_cancelled)
+        key = ("corpus", root, loaded.corpus_revision, loaded.index_digest)
+        cached = _cached_index(key)
+        if cached is not None:
+            check_cancelled()
+            return cached
+        return publish(key, loaded)
+
     embedder = rag.get_embedder()
-    prebuilt = os.environ.get("CAELAB_RAG_INDEX_DIR", "")
+    prebuilt = legacy_dir
     if prebuilt:
         key = ("prebuilt", prebuilt, embedder.id)
-        if key in _index_cache:
-            return _index_cache[key]
-        loaded = _load_prebuilt(Path(prebuilt), embedder.id)
+        cached = _cached_index(key)
+        if cached is not None:
+            check_cancelled()
+            return cached
+        loaded = _load_prebuilt(Path(prebuilt), embedder.id, check_cancelled=check_cancelled)
         if loaded is not None:
-            _index_cache.clear()
-            _index_cache[key] = loaded
-            return loaded
+            return publish(key, loaded)
         raise ValueError(f"Configured RAG index is missing or incompatible: {prebuilt}")
     sources = configured_sources()
-    key = (embedder.id, tuple((sid, str(p), p.stat().st_mtime if p.exists() else 0)
-                               for sid, p, _solver in sources))
-    if key in _index_cache:
-        return _index_cache[key]
-    index = rag.HybridIndex.build(notes_chunks(), embedder)
+    source_keys = []
+    for source_id, path, _solver in sources:
+        check_cancelled()
+        source_keys.append((source_id, str(path), path.stat().st_mtime if path.exists() else 0))
+    key = (embedder.id, tuple(source_keys))
+    cached = _cached_index(key)
+    if cached is not None:
+        check_cancelled()
+        return cached
+    index = rag.HybridIndex.build(notes_chunks(), embedder, cancel_event=cancel_event, deadline=deadline)
     for source_id, path, solver in sources:
-        index.add_chunks(rag.load_source_chunks(path, source_id, solver), embedder)
-    _index_cache.clear()
-    _index_cache[key] = index
-    return index
+        check_cancelled()
+        index.add_chunks(rag.load_source_chunks(path, source_id, solver), embedder,
+                         cancel_event=cancel_event, deadline=deadline)
+    return publish(key, index)
+
+
+@dataclass(frozen=True)
+class PinnedKnowledgeIndex:
+    index: rag.HybridIndex | None
+    error: str | None = None
+
+
+def pin_knowledge_index(*, cancel_event=None, deadline: float | None = None) -> PinnedKnowledgeIndex:
+    try:
+        if cancel_event is None and deadline is None:
+            return PinnedKnowledgeIndex(default_index())
+        pending = None
+
+        def defer_publish(key, index):
+            nonlocal pending
+            pending = (key, index)
+
+        def check_cancelled():
+            rag.check_index_budget(cancel_event, deadline)
+
+        pinned = PinnedKnowledgeIndex(default_index(
+            cancel_event=cancel_event, deadline=deadline, _publish=defer_publish,
+        ))
+        if pending is None:
+            check_cancelled()
+        else:
+            _publish_index(*pending, check_cancelled)
+        return pinned
+    except Exception as error:
+        return PinnedKnowledgeIndex(None, f"{type(error).__name__}: {error}")
 
 
 def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
@@ -302,25 +400,53 @@ def _to_entry(chunk: rag.Chunk) -> KnowledgeEntry:
         text=chunk.text,
         source_id=chunk.source_id,
         solver=chunk.solver,
+        corpus_chunk=chunk.corpus_chunk,
+        source_kind=chunk.source_kind,
+        review_status=chunk.review_status,
     )
 
 
 def search_knowledge_result(query: str, limit: int = 3,
-                            solver: str | None = None) -> KnowledgeSearchResult:
+                            solver: str | None = None, *,
+                            pinned_index: PinnedKnowledgeIndex | None = None,
+                            cancel_event=None, deadline: float | None = None) -> KnowledgeSearchResult:
     """Keep solver scope and distinguish absent material from retrieval failure."""
+    from .corpus import mismatched_corpus_candidates, search_hybrid_with_plan
+    from .query_language import normalize_solver, prepare_query
+
     requested = solver or os.environ.get("CAELAB_KNOWLEDGE_SOLVER", "") or infer_solver(query)
-    resolved = infer_solver(requested) or requested
+    resolved = infer_solver(requested) or normalize_solver(requested) or ""
+    if not (query or "").strip():
+        return KnowledgeSearchResult("no_material", [], resolved)
     try:
-        index = default_index()
-        embedder = rag.get_embedder()
-        reranker = rag.get_reranker()
-        chunks = index.search(query, top_k=limit, embedder=embedder,
-                              reranker=reranker, solver=resolved or None)
+        plan = prepare_query(query, explicit_facets={"solver": resolved} if resolved else None)
+        pinned = pinned_index if pinned_index is not None else pin_knowledge_index(cancel_event=cancel_event, deadline=deadline)
+        index = pinned.index
+        if index is None:
+            return KnowledgeSearchResult("error", [], resolved, pinned.error)
+        if index.corpus_revision is not None:
+            embedder, reranker = rag.HashingEmbedder(), rag.LexicalReranker()
+        else:
+            embedder, reranker = rag.get_embedder(), rag.get_reranker()
+        chunks = search_hybrid_with_plan(
+            index,
+            plan,
+            embedder=embedder,
+            reranker=reranker,
+            limit=limit,
+            solver=resolved or None,
+            cancel_event=cancel_event,
+            deadline=deadline,
+        )
     except Exception as error:
         return KnowledgeSearchResult("error", [], resolved,
                                      f"{type(error).__name__}: {error}")
-    return KnowledgeSearchResult("ok" if chunks else "no_material",
-                                 [_to_entry(c) for c in chunks], resolved)
+    return KnowledgeSearchResult(
+        "ok" if chunks else "no_material", [_to_entry(c) for c in chunks], resolved,
+        query_plan=plan, corpus_revision=index.corpus_revision,
+        mismatched_candidates=tuple(mismatched_corpus_candidates(index, plan, resolved, None)) if not chunks else (),
+        index_digest=index.index_digest,
+    )
 
 
 def search_knowledge(query: str, limit: int = 3, solver: str | None = None) -> list[KnowledgeEntry]:
