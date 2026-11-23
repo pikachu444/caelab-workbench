@@ -1865,16 +1865,16 @@ def _last_evidence_child(sequence, parent_index):
     ), None)
 
 
-def _flat_review_children(sequence, final_index, *, all_candidate_ids):
+def _flat_review_children(sequence, final_index, *, all_candidate_ids, exclude_final=False):
     final = sequence[final_index]
-    final_is_owner = not final.field_path
-    prior_reset = final_is_owner and final.resets_prior
-    parent_has_checks = final_is_owner and bool(final.evidence[1])
+    start_after_final = exclude_final or not final.field_path
+    prior_reset = start_after_final and final.resets_prior
+    parent_has_checks = start_after_final and bool(final.evidence[1])
     saw_checked_review = False
-    replaced_quotes = final_is_owner and final.replaces_quotes
-    replaced_checks = final_is_owner and final.replaces_checks
-    replaced_candidates = final_is_owner and final.replaces_candidates
-    first_index = final_index - 1 if final_is_owner else final_index
+    replaced_quotes = start_after_final and final.replaces_quotes
+    replaced_checks = start_after_final and final.replaces_checks
+    replaced_candidates = start_after_final and final.replaces_candidates
+    first_index = final_index - 1 if start_after_final else final_index
     for index in range(first_index, -1, -1):
         child = sequence[index]
         if child.replayed_child or not child.field_path:
@@ -1922,6 +1922,14 @@ def _flat_review_preserves_children(children, evidence):
         ):
             return False
     return True
+
+
+def _flat_review_drops_child_id(children, retained_ids):
+    return any(
+        child.phase == "review" and not child.child_event_ids <= retained_ids
+        and (quotes is not None or checks or candidates is not None or selected is not None)
+        for child, (quotes, checks, candidates, selected) in children
+    )
 
 
 def _merge_flat_review_evidence(final, children):
@@ -1977,27 +1985,29 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
         drops_child_restriction = drops_child_id = False
         if may_summarize and final_index is not None and snapshot.evidence is not None:
             # A summary can omit evidence under its wrapper and in other branches of its owner.
-            children = tuple(_flat_review_children(sequence, final_index, all_candidate_ids=all_candidate_ids))
+            children = tuple(_flat_review_children(
+                sequence, final_index, all_candidate_ids=all_candidate_ids, exclude_final=bool(snapshot.field_path),
+            ))
             drops_child_restriction = not _flat_review_preserves_children(children, snapshot.evidence)
-            drops_child_id = any(
-                child.phase == "review" and child.child_event_ids and child.child_event_ids != snapshot.owner_ids
-                and child.child_event_ids != snapshot.child_event_ids
-                and (quotes is not None or checks or candidates is not None or selected is not None)
-                for child, (quotes, checks, candidates, selected) in children
-            )
+            drops_child_id = _flat_review_drops_child_id(children, snapshot.owner_ids | snapshot.child_event_ids)
             if (not snapshot.field_path and children and not drops_child_restriction and not drops_child_id
                     and snapshot.owner_ids == prior_owner_ids
                     and snapshot.evidence == _merge_flat_review_evidence(final, children)):
                 return 1, False, True
-        has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
-        if may_summarize and has_parent_summary and not drops_child_restriction and not drops_child_id:
-            child_entry = _last_evidence_child(sequence, final_index)
-            if child_entry is not None:
-                child_idx, child = child_entry
-                if (snapshot.field_path == child.field_path and snapshot.evidence == child.evidence
-                        and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
-                    # A wrapped replay must match the remaining steps and its parent summary.
-                    return child_idx + 1, True, True
+            has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
+            if has_parent_summary:
+                child_entry = _last_evidence_child(sequence, final_index)
+                if child_entry is not None:
+                    child_idx, child = child_entry
+                    if (snapshot.field_path == child.field_path and snapshot.evidence == child.evidence
+                            and (not child.child_event_ids or snapshot.child_event_ids == child.child_event_ids)):
+                        # The recorded parent can carry a limit omitted by its child.
+                        combined = _merge_flat_review_evidence(final, ((snapshot, snapshot.evidence),))
+                        retained_ids = prior_owner_ids | snapshot.child_event_ids
+                        if (combined is not None and _flat_review_preserves_children(children, combined)
+                                and not _flat_review_drops_child_id(children, retained_ids)):
+                            # The rest of the replay must still match the recorded parent.
+                            return child_idx + 1, True, True
         final_summary = (
             may_summarize and final is not None and not drops_child_restriction and not drops_child_id
             and snapshot.evidence == final.evidence
@@ -2020,6 +2030,16 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
                 and snapshot.owner_ids == prior_owner_ids):
             return cursor
     raise ValueError("Retrieval assessment contradicts trace selection or review")
+
+
+def _decision_reports(value):
+    if isinstance(value, Mapping):
+        stage = _history_stage(value)
+        if stage is None or stage in _DECISION_STAGES:
+            yield value
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _decision_reports(item)
 
 
 def _review_report_records(
@@ -2200,10 +2220,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         if _history_stage(record) in _DECISION_STAGES:
             decision_record_ids.add(id(record))
         for field in _DECISION_STAGES:
-            decision_report = record.get(field)
-            if isinstance(decision_report, Mapping) and (
-                _history_stage(decision_report) is None or _history_stage(decision_report) in _DECISION_STAGES
-            ):
+            for decision_report in _decision_reports(record.get(field)):
                 decision_record_ids.add(id(decision_report))
                 decision_report_owners[id(decision_report)] = id(record)
         if (phase == "review" or _history_stage(record) == "retrieval") and any(
@@ -2236,14 +2253,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             }
             sibling_assessments = [record.get("assessment"), record.get("retrieval_assessment")]
             sibling_assessments.extend(
-                item for field in ("result", "output")
+                item for field in ("result", "output", *_DECISION_STAGES)
                 for item in _review_report_records(record.get(field), **interim_scope)
                 if _history_stage(item) in interim_stages
             )
             history_assessments = (
                 step for history in _history_lists(record) for step in history
                 if _history_stage(step) in interim_stages
-            ) if record is trace or _history_stage(record) in _COMPLETION_STAGES else ()
+            ) if record is trace or _history_stage(record) in (_COMPLETION_STAGES | _DECISION_STAGES) else ()
             interim_ids = {
                 id(interim) for assessment in (*sibling_assessments, *history_assessments)
                 for interim in _review_report_records(assessment, **interim_scope)
@@ -2349,6 +2366,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     review_quotes = set()
     review_quote_sources: set[int] = set()
     review_decision_scopes: set[int] = set()
+    review_decision_check_scopes: set[int] = set()
     review_quotes_constrained = False
     has_review_quotes = False
     review_superseded_quotes = False
@@ -2383,14 +2401,17 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             raise ValueError("Retrieval assessment contradicts trace selection or review")
         non_history_ancestors = ancestors - history_ancestors
         decision_scopes = (non_history_ancestors | {record_id}) & decision_record_ids
+        decision_scopes |= {decision_report_owners[scope] for scope in decision_scopes if scope in decision_report_owners}
         summarized_containers = (report_of | non_history_ancestors) & history_review_containers
         encloses_quotes = (
             record_id in review_quotes_ancestors
             or bool(report_of & review_quotes_ancestors & history_review_containers)
             or bool(non_history_ancestors & review_decision_scopes)
         )
-        encloses_checks = record_id in review_checks_ancestors or bool(
-            report_of & review_checks_ancestors & history_review_containers
+        encloses_checks = (
+            record_id in review_checks_ancestors
+            or bool(report_of & review_checks_ancestors & history_review_containers)
+            or bool(non_history_ancestors & review_decision_check_scopes)
         )
         encloses_candidates = record_id in review_candidate_ancestors or bool(
             report_of & review_candidate_ancestors & history_review_containers
@@ -2417,7 +2438,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
         # Candidate IDs that exactly describe a superseded check can be replaced
         # with that check. Independent candidate limits still bind the response.
         replaces_checked_candidates = (
-            replaces_interim_candidates and bool(live_checks) and record_ids is not None
+            replaces_interim_candidates and bool(live_checks)
             and all(
                 evidence_by_record[source][4]
                 and evidence_by_record[source][0] == set().union(*(
@@ -2572,8 +2593,8 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 reuses_round_event_id |= seen_ids.setdefault(event_id, owner_id) != owner_id
         novel_round_event = not altered_replay and not reuses_round_event_id and not in_replayed_review
         has_active_review = has_review_quotes or bool(review_checks) or review_candidate_ids is not None
-        search_after_selection = search_stage in _EXECUTION_SEARCH_STAGES and bool(selection_evidence)
-        if effective_phase == "search" and (has_active_review or search_after_selection) and novel_round_event:
+        if (effective_phase == "search" and search_stage in _EXECUTION_SEARCH_STAGES
+                and (has_active_review or bool(selection_evidence)) and novel_round_event):
             saw_search_after_review = True
         elif effective_phase == "selection" and saw_search_after_review and novel_round_event:
             new_round_selection_after_review = True
@@ -2617,6 +2638,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             review_quotes_ancestors = frozenset()
             review_checks = []
             review_check_sources.clear()
+            review_decision_check_scopes.clear()
             review_checks_ancestors = frozenset()
             review_candidate_ids = None
             review_candidate_sources.clear()
@@ -2687,9 +2709,6 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     if live_has_quotes and decision_scopes:
                         # Child reports bind the decision before the parent is visited.
                         review_decision_scopes.update(decision_scopes)
-                        review_decision_scopes.update(
-                            decision_report_owners[scope] for scope in decision_scopes if scope in decision_report_owners
-                        )
                         review_quotes_constrained = True
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
@@ -2721,11 +2740,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     else:
                         review_checks = live_checks
                         review_check_sources = {record_id}
+                        review_decision_check_scopes.clear()
                         review_checks_ancestors = ancestors
                         replaces_checks = True
+                    review_decision_check_scopes.update(decision_scopes)
                 elif enclosed_selection:
                     review_checks = [check for _, _, _, checks in enclosed_selection for check in checks]
                     review_check_sources = selection_sources
+                    review_decision_check_scopes.clear()
                     review_checks_ancestors = ancestors
                     history_review_containers.update(
                         container for _, selection_ancestors, _, _ in enclosed_selection
@@ -2734,6 +2756,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 elif not constrains_checks:
                     review_checks = []
                     review_check_sources.clear()
+                    review_decision_check_scopes.clear()
                     review_checks_ancestors = frozenset()
                     replaces_checks = True
                 if record_ids is not None:

@@ -2471,6 +2471,35 @@ def test_d09_replayed_review_validates_ordered_evidence(assessed_retrieval, resp
 
 @pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
 @pytest.mark.parametrize("history_field", ["events", "steps"])
+def test_d09_decision_reports_share_check_bindings(assessed_retrieval, response_format, history_field):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield in version 2.23")
+    requirements = query_language.extract_query_requirements(plan)
+    assert [requirement.facet for requirement in requirements] == ["topic", "edition"]
+    quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in (first, second)]
+
+    def checks(binding):
+        return [{"requirement_id": requirement.requirement_id, "candidate_ids": [quote["candidate_id"]],
+                 "relation": "satisfied", "quoted_spans": [quote], "reason": "recorded review"}
+                for requirement, quote in zip(requirements, binding, strict=True)]
+
+    ordered, swapped = checks(quotes), checks(reversed(quotes))
+    decision = {"stage": "decision", "result": {"citations": quotes, "checks": ordered},
+                "response": {"citations": quotes, "checks": ordered}}
+    wrapper = {"stage": "retrieval_completion", history_field: [{"stage": "prepare_query"}, decision]}
+    options = {"include_good": True, "question_plan": plan, "trace_overrides": {"events": [wrapper]},
+               "response_format": response_format}
+    host_citations = {"citations": quotes} if response_format is None else {}
+    assert assess(first, companion=second, host_overrides={**host_citations, "checks": ordered},
+                  **options).status == "supported"
+    decision["response"]["checks"] = swapped
+    with pytest.raises(ValueError, match="trace selection or review"):
+        assess(first, companion=second, host_overrides={**host_citations, "checks": swapped}, **options)
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
 @pytest.mark.parametrize("stage", ["retrieval", "retrieval_assessment", "retrieval_completion"])
 @pytest.mark.parametrize("summary_field", ["result", "output", "assessment", "decision", "response"])
 @pytest.mark.parametrize("identified", [False, True], ids=["anonymous", "identified"])
@@ -2608,6 +2637,13 @@ def test_d09_summary_can_narrow_completed_checks(
     "response-replay-drops-selection", "response-replay-drops-result", "response-replay-drops-output",
     "response-replay-drops-independent-assessment", "response-replay-drops-decision",
     "response-replay-drops-nested-result", "response-replay-drops-nested-decision",
+    "list-wrapped-decision", "decision-preparation-only", "decision-history-interim",
+    "decision-field-interim-flat-replay", "decision-field-interim-wrapped-replay",
+    "decision-field-interim-wrapped-check-ids",
+    "final-check-without-candidate-ids", "response-replay-with-parent-limit-anonymous",
+    "response-replay-with-parent-limit-event-id", "response-replay-with-parent-limit-id",
+    "response-replay-with-parent-limit-two-ids", "response-replay-with-parent-limit-result",
+    "response-replay-with-parent-limit-output", "response-replay-with-parent-limit-list",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2640,6 +2676,80 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
     review_a = {"stage": "assessment", **evidence(first)}
     review_b = {"stage": "assessment", **evidence(second)}
     selection = {"stage": "candidate_selection", "candidate_ids": ids}
+    if layout in {"list-wrapped-decision", "decision-preparation-only"}:
+        restriction = {"result": {"citations": review_a["citations"]}}
+        final = evidence(first)
+        if layout == "list-wrapped-decision":
+            report = {**restriction, "response": final}
+            wrapper[history_field] = [prepare, {"stage": "assessment", "decision": [[report]]}, done]
+        else:
+            decision = {"stage": "decision", **restriction}
+            nested_prepare = {**prepare, "event_id": "nested-preparation"}
+            completion = {**done, history_field: [nested_prepare, selection, done], "response": final}
+            wrapper[history_field] = [prepare, decision, done]
+            wrapper["response"] = completion
+        assert_only(first, second)
+        final.update(evidence(second))
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(second, companion=first, **options)
+        if layout == "decision-preparation-only":
+            completion[history_field].insert(1, search_2)
+            assert_only(second, first)
+        return
+
+    if layout.startswith("response-replay-with-parent-limit-"):
+        variant = layout.removeprefix("response-replay-with-parent-limit-")
+        final = {**evidence(first), "candidate_ids": ids, **{
+            "anonymous": {}, "id": {"id": "child-review"},
+            "two-ids": {"event_id": "child-review", "id": "alternate-child"},
+        }.get(variant, {"event_id": "child-review"})}
+        if variant in {"result", "output"}:
+            final = {variant: final}
+        elif variant == "list":
+            final = [final]
+        replay = {**done, "event_id": "rc1", "candidate_ids": ids[:1], "response": final}
+        completion = {**replay, history_field: [prepare, done], "result": {"candidate_ids": ids[:1]}}
+        wrapper[history_field] = [prepare, completion, done]
+        assert_only(first, second)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        wrapper["output"] = {history_field: [replay]}
+        assert_only(first, second)
+        del replay["candidate_ids"]
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        return
+
+    if layout in {"decision-history-interim", "final-check-without-candidate-ids"}:
+        if layout == "decision-history-interim":
+            decision = {"stage": "decision", history_field: [prepare, review_b, done], "response": evidence(first)}
+            wrapper[history_field] = [prepare, decision, done]
+            assert_only(first, second)
+        else:
+            final = {**evidence(second), "candidate_ids": ids[1:]}
+            completion = {**done, history_field: [prepare, {**review_a, "candidate_ids": ids[:1]}, done],
+                          "response": final}
+            wrapper[history_field] = [prepare, completion, done]
+            assert_only(second, first)
+            del final["candidate_ids"]
+            assert_only(second, first)
+        return
+
+    if layout.startswith("decision-field-interim-"):
+        final = {**evidence(second), "candidate_ids": ids[1:]}
+        if layout.endswith("-check-ids"):
+            del final["candidate_ids"]
+        completion = {**done, "event_id": "rc1", history_field: [prepare, done], "response": {
+            "decision": {**review_a, "candidate_ids": ids[:1]}, "response": final,
+        }}
+        wrapper[history_field] = [prepare, completion, done]
+        if layout.endswith("-flat-replay"):
+            assert_only(second, first)
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        summary = final if layout.endswith("-flat-replay") else {"response": final}
+        wrapper["output"] = {history_field: [{**done, "event_id": "rc1", **summary}]}
+        assert_only(first, second)
+        return
+
     if layout.startswith("decision-own-sibling-"):
         variant = layout.removeprefix("decision-own-sibling-")
         restriction = {"citations": review_a["citations"]}
