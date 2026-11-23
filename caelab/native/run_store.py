@@ -340,13 +340,18 @@ class RunStore:
                 if (before != self._inventory() or before != copied._inventory()
                         or documents != self._discussion_paths() or studies != self._study_paths()):
                     raise ValueError('복사 중 실행/대화/자산 파일이 변경되었습니다. 다시 저장하세요.')
+                from ..assist.discussions import request_artifact_issues
                 from .evidence import verify_evidence
                 for path in documents:
                     document = json.loads(path.read_text(encoding='utf-8'))
                     if not isinstance(document, dict):
                         raise ValueError(f'대화 폴더의 JSON 자료 형식이 잘못되었습니다: {path}')
+                    asset_root = destination / path.parent.relative_to(self.root) / 'assets'
+                    problems = request_artifact_issues(document, asset_root)
+                    if problems:
+                        raise ValueError('대화 요청 자산이 온전하지 않습니다: ' + '; '.join(problems))
                     for evidence in document.get('evidences', {}).values():
-                        problems = verify_evidence(evidence, destination / path.parent.relative_to(self.root) / 'assets')
+                        problems = verify_evidence(evidence, asset_root)
                         if problems:
                             raise ValueError('대화 근거 자산이 온전하지 않습니다: ' + '; '.join(problems))
                 for run in copied.runs():

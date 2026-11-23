@@ -18,6 +18,12 @@ from typing import Mapping
 TOKEN_PATTERN = re.compile(r"(?:<([A-Za-z0-9_]+)>|@@([A-Za-z0-9_]+)@@|\{\{\s*([A-Za-z0-9_]+)\s*\}\})")
 
 
+def _is_comment_line(line: str) -> bool:
+    stripped = line.strip().lstrip("\ufeff")
+    compact = re.sub(r"[ \t]+", "", stripped)
+    return compact.startswith("**") or stripped.startswith(("$", "#"))
+
+
 def scalar_literal_occurrences(line: str, literal: str) -> tuple[tuple[int,int], ...]:
     """Character spans shared by immutable-source preview and scalar binding."""
     if not isinstance(line,str) or not isinstance(literal,str) or not re.fullmatch(
@@ -44,12 +50,10 @@ class TemplateDeck:
     def from_text(cls, text: str, file_path: Path | None = None) -> TemplateDeck:
         tokens: set[str] = set()
         for line in text.splitlines():
-            # Skip comments in typical CAE decks (** for CalculiX/Abaqus, $ for Nastran, # for Python)
-            stripped = line.strip().lstrip("\ufeff")
-            if stripped.startswith("**") or stripped.startswith("$") or stripped.startswith("#"):
+            if _is_comment_line(line):
                 continue
             for match in TOKEN_PATTERN.finditer(line):
-                token = match.group(1) or match.group(2) or match.group(3) or match.group(3)
+                token = match.group(1) or match.group(2) or match.group(3)
                 tokens.add(token)
         return cls(original_text=text, token_names=tuple(sorted(tokens)), file_path=file_path)
 
@@ -103,8 +107,7 @@ class TemplateDeck:
 
         rendered_lines = []
         for line in self.original_text.splitlines(keepends=True):
-            stripped = line.strip().lstrip("\ufeff")
-            if stripped.startswith("**") or stripped.startswith("$") or stripped.startswith("#"):
+            if _is_comment_line(line):
                 rendered_lines.append(line)
             else:
                 rendered_lines.append(TOKEN_PATTERN.sub(replacer, line))

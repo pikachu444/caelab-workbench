@@ -21,11 +21,14 @@ Qwen3-Reranker-0.6B per the 008 recommendation).
 
 from __future__ import annotations
 
+from .contracts import CorpusChunkSpec
+
 import hashlib
 import json
 import math
 import os
 import re
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,7 +52,15 @@ class Chunk:
     source_id: str
     heading_path: tuple[str, ...]  # e.g. ("Theory", "Convergence")
     text: str
-    solver: str = ""  # canonical solver this chunk serves ("" = general)
+    solver: str = ""  # legacy single-solver index tag
+    solver_scope: tuple[str, ...] = ()
+    corpus_chunk: CorpusChunkSpec | None = None
+    source_kind: str = "legacy_unknown"
+    review_status: str = "unreviewed"
+
+    def matches_solver(self, solver: str) -> bool:
+        scope = self.solver_scope or ((self.solver,) if self.solver else ())
+        return solver in scope or (not scope and self.corpus_chunk is None)
 
     @property
     def topic(self) -> str:
@@ -212,7 +223,9 @@ def tokenize(text: str) -> list[str]:
     symbols (*NODE, C3D10); Korean words also yield bigrams so a
     question word matches inside a longer manual phrase."""
     tokens: list[str] = []
-    for raw in _TOKEN.findall((text or "").lower()):
+    text = re.sub(r"(\w+)['’]s\b", r"\1", (text or "").lower())
+    text = text.translate(str.maketrans(dict.fromkeys("‐‑‒–—―−", "-")))
+    for raw in _TOKEN.findall(text):
         tokens.append(raw)
         if re.fullmatch(r"[가-힣]+", raw) and len(raw) > 2:
             tokens.extend(raw[i: i + 2] for i in range(len(raw) - 1))
@@ -252,6 +265,20 @@ class BM25:
 
 
 # ---------------------------------------------------------------- embedders
+def check_index_budget(cancel_event=None, deadline: float | None = None) -> float | None:
+    if cancel_event is not None and (cancel_event() if callable(cancel_event) else cancel_event.is_set()):
+        raise TimeoutError("Knowledge retrieval stopped")
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        raise TimeoutError("Knowledge retrieval stopped")
+    return remaining
+
+
+def _endpoint_timeout(cancel_event, deadline):
+    remaining = check_index_budget(cancel_event, deadline)
+    return 600 if remaining is None else min(600, remaining)
+
+
 class Embedder:
     id = "base"
 
@@ -294,14 +321,15 @@ class EndpointEmbedder(Embedder):
         self.id = f"endpoint:{model}"
         self.query_instruction = os.environ.get("CAELAB_EMBED_QUERY_INSTRUCTION", "")
 
-    def embed_query(self, text: str) -> np.ndarray:
+    def embed_query(self, text: str, *, cancel_event=None, deadline: float | None = None) -> np.ndarray:
         if self.query_instruction:
             text = f"{self.query_instruction}\n{text}"
-        return self.embed([text])[0]
+        return self.embed([text], cancel_event=cancel_event, deadline=deadline)[0]
 
-    def embed(self, texts: list[str]) -> np.ndarray:
+    def embed(self, texts: list[str], *, cancel_event=None, deadline: float | None = None) -> np.ndarray:
         vectors: list[list[float]] = []
         for start in range(0, len(texts), 32):
+            check_index_budget(cancel_event, deadline)
             batch = texts[start: start + 32]
             body = json.dumps({"model": self.model, "input": batch}).encode("utf-8")
             request = urllib.request.Request(
@@ -309,8 +337,10 @@ class EndpointEmbedder(Embedder):
                 headers={"Content-Type": "application/json"}, method="POST")
             if self.api_key:
                 request.add_header("Authorization", f"Bearer {self.api_key}")
-            with urllib.request.urlopen(request, timeout=600) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            with urllib.request.urlopen(request, timeout=_endpoint_timeout(cancel_event, deadline)) as response:
+                raw = response.read()
+                check_index_budget(cancel_event, deadline)
+            data = json.loads(raw.decode("utf-8"))
             vectors.extend(item["embedding"] for item in sorted(data["data"], key=lambda d: d["index"]))
         return _normalize(np.array(vectors, dtype=np.float32))
 
@@ -366,7 +396,7 @@ class EndpointReranker(Reranker):
         self.api_key = api_key
         self.id = f"endpoint:{model}"
 
-    def rerank(self, query: str, chunks: list[Chunk]) -> list[float]:
+    def rerank(self, query: str, chunks: list[Chunk], *, cancel_event=None, deadline: float | None = None) -> list[float]:
         # Heading + lead is what relevance turns on; sending whole
         # chunks for 20 candidates would overflow the model context.
         body = json.dumps({
@@ -378,8 +408,9 @@ class EndpointReranker(Reranker):
             headers={"Content-Type": "application/json"}, method="POST")
         if self.api_key:
             request.add_header("Authorization", f"Bearer {self.api_key}")
-        with urllib.request.urlopen(request, timeout=600) as response:
+        with urllib.request.urlopen(request, timeout=_endpoint_timeout(cancel_event, deadline)) as response:
             data = json.loads(response.read().decode("utf-8"))
+        check_index_budget(cancel_event, deadline)
         scores = [0.0] * len(chunks)
         for item in data["results"]:
             scores[item["index"]] = float(item["relevance_score"])
@@ -401,6 +432,8 @@ class HybridIndex:
     embedder_id: str
     bm25: BM25 = field(init=False)
     vectors: np.ndarray | None = None
+    corpus_revision: str | None = None
+    index_digest: str | None = None
 
     def __post_init__(self) -> None:
         docs = [tokenize(f"{c.topic}\n{c.text}") for c in self.chunks]
@@ -408,16 +441,18 @@ class HybridIndex:
 
     # -- construction ------------------------------------------------------
     @classmethod
-    def build(cls, chunks: list[Chunk], embedder: Embedder) -> "HybridIndex":
-        vectors = embedder.embed([_embed_text(c) for c in chunks]) if chunks else None
+    def build(cls, chunks: list[Chunk], embedder: Embedder, *, cancel_event=None,
+              deadline: float | None = None) -> "HybridIndex":
+        vectors = _embed_chunks(chunks, embedder, cancel_event, deadline) if chunks else None
         return cls(chunks=list(chunks), embedder_id=embedder.id, vectors=vectors)
 
-    def add_chunks(self, chunks: list[Chunk], embedder: Embedder) -> None:
+    def add_chunks(self, chunks: list[Chunk], embedder: Embedder, *, cancel_event=None,
+                   deadline: float | None = None) -> None:
         """Add one source's chunks independently of the others, so a
         new manual re-embeds only its own chunks."""
         if not chunks:
             return
-        new_vectors = embedder.embed([_embed_text(c) for c in chunks])
+        new_vectors = _embed_chunks(chunks, embedder, cancel_event, deadline)
         self.chunks.extend(chunks)
         self.vectors = new_vectors if self.vectors is None else np.vstack([self.vectors, new_vectors])
         self.embedder_id = embedder.id
@@ -483,6 +518,14 @@ class HybridIndex:
                                         allowed=allowed)
 
 
+def _embed_chunks(chunks, embedder, cancel_event, deadline):
+    check_index_budget(cancel_event, deadline)
+    texts = [_embed_text(chunk) for chunk in chunks]
+    if isinstance(embedder, EndpointEmbedder):
+        return embedder.embed(texts, cancel_event=cancel_event, deadline=deadline)
+    return embedder.embed(texts)
+
+
 def _embed_text(chunk: Chunk) -> str:
     return f"{chunk.topic}\n{chunk.text[:EMBED_TEXT_CHARS]}"
 
@@ -508,7 +551,7 @@ def save_index(index: HybridIndex, folder: str | Path) -> Path:
         "chunks": [
             {"chunk_id": c.chunk_id, "source_id": c.source_id,
              "heading_path": list(c.heading_path), "text": c.text,
-             "solver": c.solver}
+             "solver": c.solver, "source_kind": c.source_kind, "review_status": c.review_status}
             for c in index.chunks
         ],
     }
@@ -530,7 +573,8 @@ def load_index(folder: str | Path) -> HybridIndex:
     meta = json.loads((folder / "chunks.json").read_text(encoding="utf-8"))
     chunks = [
         Chunk(c["chunk_id"], c["source_id"], tuple(c["heading_path"]), c["text"],
-              solver=c.get("solver", ""))
+              solver=c.get("solver", ""), source_kind=c.get("source_kind") or "legacy_unknown",
+              review_status=c.get("review_status") or "unreviewed")
         for c in meta["chunks"]
     ]
     vectors_file = folder / "vectors.npy"

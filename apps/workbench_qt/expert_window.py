@@ -5,6 +5,7 @@ import argparse
 import copy
 import html
 import hashlib
+import inspect
 import os
 import queue
 import sys
@@ -63,6 +64,16 @@ def _view_settings(settings=None):
     return QSettings(QSettings.defaultFormat(), QSettings.UserScope, 'CAELAB', 'ExpertChat')
 
 
+_QUESTION_SCOPE_LABELS = (
+    ('결과·사례 분석', 'case_analysis'),
+    ('이론·문헌 자문 (첨부 없이)', 'theory'),
+)
+
+
+def _normalize_question_scope(value) -> str:
+    return 'theory' if str(value or '').strip() == 'theory' else 'case_analysis'
+
+
 class ExpertWindow(QMainWindow):
     def __init__(self, discussion_path=None, *, project_path=None, node_id=None,
                  run_id=None, requested_frame_index: int | None = None,
@@ -79,6 +90,8 @@ class ExpertWindow(QMainWindow):
         self._pending_view = None
         self.path = None
         self.document = {}
+        self._loaded_v1_draft = None
+        self._native_analysis_framing = None
         self.project_path, self.node_id, self.run_id = project_path, node_id, run_id
         self.requested_frame_index = requested_frame_index
         self.frame_context_state = 'none' if requested_frame_index is None else 'requested'
@@ -98,6 +111,7 @@ class ExpertWindow(QMainWindow):
         self._asset_verify_failed = False
         self._asset_warning_tone = 'warning'
         self._handoff_notice_active = False
+        self._last_case_role = 'convergence'
         self.setWindowTitle('전문가 논의')
         self.resize(1100, 850)
         self.setMinimumSize(680, 580)
@@ -174,7 +188,6 @@ class ExpertWindow(QMainWindow):
         self.basis.setObjectName('basis')
         self.basis.setWordWrap(True)
         attachment_line.addWidget(self.basis, 1)
-        controls = QHBoxLayout()
         self.attachments_button = QPushButton('첨부 자료')
         self.attachments_button.clicked.connect(self.show_attachments)
         attachment_line.addWidget(self.attachments_button)
@@ -182,21 +195,35 @@ class ExpertWindow(QMainWindow):
         self.proposals_button.clicked.connect(self.show_proposals)
         attachment_line.addWidget(self.proposals_button)
         composer_layout.addLayout(attachment_line)
-        controls.addWidget(QLabel('다음 역할'))
+        options_line = QHBoxLayout()
+        options_line.addWidget(QLabel('질문 범위'))
+        self.scope_combo = QComboBox()
+        self.scope_combo.setObjectName('scope_combo')
+        self.scope_combo.setAccessibleName('이번 질문의 범위')
+        self.scope_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.scope_combo.setToolTip('결과·사례 분석은 첨부 자료와 함께 질문하고, 이론·문헌 자문은 첨부 없이 일반 이론·문헌을 질문합니다.')
+        for label, value in _QUESTION_SCOPE_LABELS:
+            self.scope_combo.addItem(label, value)
+        self.scope_combo.currentIndexChanged.connect(self._on_scope_changed)
+        options_line.addWidget(self.scope_combo)
+        options_line.addWidget(QLabel('다음 역할'))
         self.role = QComboBox()
         self.role.setAccessibleName('이번 질문의 전문가 역할')
+        self.role.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.role.setToolTip('지금 작성하는 다음 질문에 적용됩니다. 이전 답변의 역할은 바뀌지 않습니다.')
-        self.role.setMaximumWidth(190)
         for template in self.workbench.expert_templates():
             self.role.addItem(template.name, template.id)
-        controls.addWidget(self.role)
+        self.role.currentIndexChanged.connect(self._on_role_changed)
+        options_line.addWidget(self.role)
+        options_line.addStretch(1)
+        composer_layout.addLayout(options_line)
         self.question = QuestionEdit()
         self.question.setObjectName('composer')
         self.question.setPlaceholderText('질문을 적으세요… Enter 보내기 · Shift+Enter 줄바꿈')
         self.question.setToolTip('Enter 또는 Ctrl+Enter로 보내기 · Shift+Enter로 줄바꿈. 한글 조합 중에는 보내지 않습니다.')
         self.question.submitted.connect(self.ask)
         composer_layout.addWidget(self.question)
-        send_line = controls
+        send_line = QHBoxLayout()
         send_line.addStretch(1)
         self.wait_label = QLabel('')
         self.wait_label.setWordWrap(False)
@@ -320,7 +347,8 @@ class ExpertWindow(QMainWindow):
         self._asset_token = token
         self._asset_issues = []
         self._asset_verify_failed = False
-        has_assets = bool(self.document.get('evidences') or self.document.get('proposals'))
+        target_assets = self._asset_state()
+        has_assets = any(target_assets)
         if not has_assets or not self.path:
             self._asset_verifying = False
             self._asset_warning_tone = 'warning'
@@ -337,14 +365,14 @@ class ExpertWindow(QMainWindow):
         self.asset_warning.setStyleSheet(
             status_badge_style('running', getattr(self, '_theme_mode', None))
         )
-        self.asset_warning.setText('첨부 자료와 제안의 원본 무결성을 확인하는 중입니다…')
+        self.asset_warning.setText('첨부 자료와 보존된 요청 기록의 무결성을 확인하는 중입니다…')
         self.asset_warning.setVisible(True)
         self._set_busy(bool(self._operation))
 
         target_path = Path(self.path).resolve()
         target_document = copy.deepcopy(self.document)
         target_revision = target_document.get('revision')
-        target_assets = (copy.deepcopy(self.document.get('evidences')), copy.deepcopy(self.document.get('proposals')))
+        target_assets = copy.deepcopy(target_assets)
         workbench = self.workbench
         asset_mailbox = self._asset_mailbox
 
@@ -356,6 +384,18 @@ class ExpertWindow(QMainWindow):
                 asset_mailbox.put((token, target_path, target_revision, target_assets, False, [f'무결성 검증 실패: {exc}']))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _asset_state(self):
+        keys = ('request_context_ref', 'request_artifact_ref', 'request_artifact_sha256',
+                'tool_trace_ref', 'retrieval_trace_ref')
+        request_refs = [
+            (turn.get('id'), *(turn.get(key) for key in keys))
+            for turn in self.document.get('turns', [])
+            if any(turn.get(key) is not None for key in keys)
+            or (turn.get('status') == 'completed'
+                and (turn.get('question_scope') == 'theory' or turn.get('schema_version') == 2))
+        ]
+        return self.document.get('evidences'), self.document.get('proposals'), request_refs
 
     def wait_for_asset_verification(self, timeout=5.0):
         start = time.monotonic()
@@ -369,13 +409,111 @@ class ExpertWindow(QMainWindow):
             time.sleep(0.01)
         self._poll()
 
+    def _current_scope(self) -> str:
+        combo = getattr(self, 'scope_combo', None)
+        return _normalize_question_scope(combo.currentData() if combo is not None else 'case_analysis')
+
+    def _selected_template(self):
+        role_id = self.role.currentData() if hasattr(self, 'role') else None
+        for template in self.workbench.expert_templates():
+            if template.id == role_id:
+                return template
+        return None
+
+    def _sync_draft_context_in_document(self):
+        if not isinstance(self.document, dict):
+            return
+        scope = self._current_scope()
+        role_id = self.role.currentData() or ('theory' if scope == 'theory' else 'convergence')
+        if self.document.get('schema_version') == 2 or 'question_scope' in self.document or scope == 'theory':
+            self.document['question_scope'] = scope
+            draft_ctx = dict(self.document.get('draft_context') or {})
+            draft_ctx['question_scope'] = scope
+            draft_ctx['template_id'] = role_id
+            self.document['draft_context'] = draft_ctx
+
+    def _sync_scope_and_role_widgets(self, scope: str, template_id: str | None = None):
+        scope = _normalize_question_scope(scope)
+        scope_idx = self.scope_combo.findData(scope)
+        if scope_idx >= 0:
+            self.scope_combo.blockSignals(True)
+            self.scope_combo.setCurrentIndex(scope_idx)
+            self.scope_combo.blockSignals(False)
+        target_role = template_id or ('theory' if scope == 'theory' else None)
+        if target_role:
+            role_idx = self.role.findData(target_role)
+            if role_idx >= 0:
+                self.role.blockSignals(True)
+                self.role.setCurrentIndex(role_idx)
+                self.role.blockSignals(False)
+                if target_role != 'theory':
+                    self._last_case_role = target_role
+
+    def set_native_analysis_draft(self, text):
+        if self._current_scope() != 'case_analysis' or self.question.toPlainText().strip():
+            return
+        self._native_analysis_framing = text
+        self.question.setPlainText(text)
+
+    def _remove_native_analysis_framing(self):
+        draft_context = self.document.get('draft_context') or {}
+        saved_framing = draft_context.pop('native_analysis_framing', None)
+        framing = self._native_analysis_framing or saved_framing
+        self._native_analysis_framing = None
+        if isinstance(framing, str) and framing:
+            self.question.clear()
+            if self.path:
+                self.document['draft_question'] = ''
+            self._notice('계산 결과와 로그가 담긴 자동 초안을 제외했습니다. 이론 질문을 입력하세요.')
+
+    def _on_scope_changed(self, _index=None):
+        scope = self._current_scope()
+        current_role = self.role.currentData()
+        if scope == 'theory':
+            self._remove_native_analysis_framing()
+            if current_role and current_role != 'theory':
+                self._last_case_role = current_role
+            theory_idx = self.role.findData('theory')
+            if theory_idx >= 0 and current_role != 'theory':
+                self.role.blockSignals(True)
+                self.role.setCurrentIndex(theory_idx)
+                self.role.blockSignals(False)
+        elif current_role == 'theory':
+            restore_idx = self.role.findData(getattr(self, '_last_case_role', 'convergence'))
+            if restore_idx < 0:
+                restore_idx = 0
+            self.role.blockSignals(True)
+            self.role.setCurrentIndex(restore_idx)
+            self.role.blockSignals(False)
+        self._sync_draft_context_in_document()
+        if hasattr(self, 'document'):
+            self.render()
+
+    def _on_role_changed(self, _index=None):
+        current_role = self.role.currentData()
+        if current_role and current_role != 'theory':
+            self._last_case_role = current_role
+        self._sync_draft_context_in_document()
+        if hasattr(self, 'document'):
+            self.render()
+
     def _load(self, path, *, create=False):
         self._save_view_state()
         document = self.workbench.open_expert_discussion(path, create=create)
         self.path, self.document = Path(path).resolve(), document
         self._op_token = None
         self._pending_message = None
+        draft_ctx = document.get('draft_context') or {}
+        self._native_analysis_framing = draft_ctx.get('native_analysis_framing')
+        scope = _normalize_question_scope(
+            draft_ctx.get('question_scope')
+            if isinstance(draft_ctx, dict) and 'question_scope' in draft_ctx
+            else document.get('question_scope')
+        )
+        template_id = draft_ctx.get('template_id') if isinstance(draft_ctx, dict) else None
+        self._sync_scope_and_role_widgets(scope, template_id=template_id)
         self.question.setPlainText(document.get('draft_question', ''))
+        self._loaded_v1_draft = self._editable_draft() if document.get('v1_disk_sha256') else None
         self._start_asset_verification()
         self.render()
         self._notice('')
@@ -385,13 +523,21 @@ class ExpertWindow(QMainWindow):
         if self.path:
             return True
         draft = self.question.toPlainText()
+        scope = self._current_scope()
+        role_id = self.role.currentData()
+        framing = self._native_analysis_framing
         self.new_document()
-        if self.path is not None and draft and not self.question.toPlainText():
-            self.question.setPlainText(draft)
+        if self.path is not None:
+            self._native_analysis_framing = framing
+            if draft and not self.question.toPlainText():
+                self.question.setPlainText(draft)
+            self._sync_scope_and_role_widgets(scope, template_id=role_id)
+            self._sync_draft_context_in_document()
+            self.render()
         return self.path is not None
 
     def new_document(self):
-        if not self.save_document():
+        if not self._save_before_leaving():
             return
         name, _ = QFileDialog.getSaveFileName(self, '새 대화 파일', 'discussion.json', '대화 (*.json)')
         if not name:
@@ -406,7 +552,7 @@ class ExpertWindow(QMainWindow):
             self._error(error)
 
     def open_document(self):
-        if not self.save_document():
+        if not self._save_before_leaving():
             return
         name, _ = QFileDialog.getOpenFileName(self, '대화 열기', '', '대화 (*.json)')
         if name:
@@ -426,6 +572,19 @@ class ExpertWindow(QMainWindow):
             except Exception as error:
                 self._error(error)
 
+    def _editable_draft(self):
+        return (
+            self.question.toPlainText(), self.document.get('title'),
+            copy.deepcopy(self.document.get('constraints')), self.document.get('selected_evidence_id'),
+            self.document.get('provider_id'), self._current_scope(), self.role.currentData(),
+        )
+
+    def _save_before_leaving(self):
+        if self._loaded_v1_draft is not None and self._editable_draft() == self._loaded_v1_draft:
+            self._save_view_state()
+            return True
+        return self.save_document()
+
     def save_document(self):
         if not self.path:
             return True
@@ -434,8 +593,20 @@ class ExpertWindow(QMainWindow):
         try:
             candidate = copy.deepcopy(self.document)
             candidate['draft_question'] = self.question.toPlainText()
+            scope = self._current_scope()
+            if candidate.get('schema_version') == 2 or 'question_scope' in candidate or scope == 'theory':
+                candidate['question_scope'] = scope
+                draft_ctx = dict(candidate.get('draft_context') or {})
+                draft_ctx['question_scope'] = scope
+                role_id = self.role.currentData()
+                if role_id:
+                    draft_ctx['template_id'] = role_id
+                if self._native_analysis_framing and scope == 'case_analysis':
+                    draft_ctx['native_analysis_framing'] = self._native_analysis_framing
+                candidate['draft_context'] = draft_ctx
             self.document = self.workbench.save_expert_discussion(
                 self.path, candidate, expected_revision=self.document['revision'])
+            self._loaded_v1_draft = None
             self._save_view_state()
             self.statusBar().showMessage('대화를 저장했습니다.', 3000)
             return True
@@ -475,35 +646,47 @@ class ExpertWindow(QMainWindow):
                 or getattr(self, '_asset_verify_failed', False)):
             self._notice('')
         evidence = self.document.get('evidences', {}).get(selected)
+        scope = self._current_scope()
         basis_lines = []
-        if self.requested_frame_index is not None:
-            draft_line = f'초안 기준: 전달받은 계산 · 프레임 {self.requested_frame_index + 1}'
-            if self.frame_context_state == 'missing':
-                draft_line += ' (기록 없음)'
+        if scope == 'theory':
+            basis_lines.append('이번 질문 범위: 이론·문헌 자문 (결과·모델 첨부 없이 질문)')
+            template = self._selected_template()
+            tools = tuple(getattr(template, 'allowed_tools', ()) or ()) if template is not None else ()
+            if template is not None and 'knowledge' not in tools:
+                basis_lines.append('선택한 역할은 문헌 검색 도구를 사용하지 않습니다. 문헌 근거가 필요하면 일반 CAE 이론·문헌 자문 역할을 선택하세요.')
             if evidence is not None:
-                same_run = self.run_id is None or evidence.get('run_id') == self.run_id
-                same_frame = evidence.get('frame_index') == self.requested_frame_index
+                basis_lines.append('참고: 이론·문헌 자문 범위에서는 선택한 첨부 자료를 모델에 전달하지 않습니다.')
+        else:
+            if self.role.currentData() == 'theory':
+                basis_lines.append('계산 결과 분석에는 실행 근거를 읽는 역할을 선택하세요. 첨부 없이 질문하려면 이론·문헌 자문 범위로 바꾸세요.')
+            if self.requested_frame_index is not None:
+                draft_line = f'초안 기준: 전달받은 계산 · 프레임 {self.requested_frame_index + 1}'
+                if self.frame_context_state == 'missing':
+                    draft_line += ' (기록 없음)'
+                if evidence is not None:
+                    same_run = self.run_id is None or evidence.get('run_id') == self.run_id
+                    same_frame = evidence.get('frame_index') == self.requested_frame_index
+                    is_manual = evidence.get('source_kind') == 'manual'
+                    if not same_run and same_frame:
+                        draft_line += ' · 선택한 첨부는 수동 파일' if is_manual else ' · 선택한 첨부와 다른 실행'
+                    elif same_run and not same_frame:
+                        draft_line += ' · 선택한 첨부와 다른 프레임'
+                    elif not same_run and not same_frame:
+                        draft_line += ' · 선택한 첨부는 수동 파일·다른 프레임' if is_manual else ' · 선택한 첨부와 다른 실행·프레임'
+                basis_lines.append(draft_line)
+            elif self.run_id is not None and evidence is not None and evidence.get('run_id') != self.run_id:
                 is_manual = evidence.get('source_kind') == 'manual'
-                if not same_run and same_frame:
-                    draft_line += ' · 선택한 첨부는 수동 파일' if is_manual else ' · 선택한 첨부와 다른 실행'
-                elif same_run and not same_frame:
-                    draft_line += ' · 선택한 첨부와 다른 프레임'
-                elif not same_run and not same_frame:
-                    draft_line += ' · 선택한 첨부는 수동 파일·다른 프레임' if is_manual else ' · 선택한 첨부와 다른 실행·프레임'
-            basis_lines.append(draft_line)
-        elif self.run_id is not None and evidence is not None and evidence.get('run_id') != self.run_id:
-            is_manual = evidence.get('source_kind') == 'manual'
-            basis_lines.append(
-                '초안 기준: 전달받은 계산 · 선택한 첨부는 수동 파일'
-                if is_manual else
-                '초안 기준: 전달받은 계산 · 선택한 첨부와 다른 실행'
-            )
-        attach_line = '이번 질문의 첨부: ' + (_evidence_name(evidence) if evidence else '선택하지 않음')
-        if evidence and evidence.get('units'):
-            attach_line += _unit_summary_tag(evidence)
-        basis_lines.append(attach_line)
-        if evidence and self._cautions(evidence):
-            basis_lines.append(' · '.join(self._cautions(evidence)))
+                basis_lines.append(
+                    '초안 기준: 전달받은 계산 · 선택한 첨부는 수동 파일'
+                    if is_manual else
+                    '초안 기준: 전달받은 계산 · 선택한 첨부와 다른 실행'
+                )
+            attach_line = '이번 질문의 첨부: ' + (_evidence_name(evidence) if evidence else '선택하지 않음')
+            if evidence and evidence.get('units'):
+                attach_line += _unit_summary_tag(evidence)
+            basis_lines.append(attach_line)
+            if evidence and self._cautions(evidence):
+                basis_lines.append(' · '.join(self._cautions(evidence)))
         self.basis.setText('\n'.join(basis_lines))
         self._sync_composer_layout()
         self.attachments_button.setText(f"첨부 자료 ({self.sources.count()})")
@@ -517,23 +700,30 @@ class ExpertWindow(QMainWindow):
         for turn in turns:
             source = self.document.get('evidences', {}).get(turn.get('evidence_id'), {})
             question = html.escape(human_text(turn.get('question', ''))).replace('\n', '<br>')
-            cautions = self._cautions(source)
-            source_label = _evidence_name(source)
-            turn_frame_index = source.get('frame_index')
-            frame_tag = (
-                f" · 프레임 {turn_frame_index + 1}"
-                if isinstance(turn_frame_index, int)
-                and not isinstance(turn_frame_index, bool)
-                and ' · 프레임 ' not in source_label
-                else ''
-            )
-            units = source.get('units') or {}
-            if not units:
-                cautions = [note for note in cautions if note != '단위 미확인']
-            unit_tag = _unit_summary_tag(source)
-            fragments += [f"<p style='color:{p['text_secondary']}; margin-top:26px'>나 · {html.escape(source_label + frame_tag)}"
-                          f"<span style='color:{p['text_secondary'] if units else p['status_warning_fg']};'>{html.escape(unit_tag)}</span>"
-                          + (f"<span style='color:{p['status_warning_fg']};'> · {html.escape(' · '.join(cautions))}</span>" if cautions else '') + '</p>',
+            turn_scope = _normalize_question_scope(turn.get('question_scope'))
+            if turn_scope == 'theory':
+                source_header = f"<p style='color:{p['text_secondary']}; margin-top:26px'>나 · 이론·문헌 자문 (첨부 없음)</p>"
+            else:
+                cautions = self._cautions(source)
+                source_label = _evidence_name(source)
+                turn_frame_index = source.get('frame_index')
+                frame_tag = (
+                    f" · 프레임 {turn_frame_index + 1}"
+                    if isinstance(turn_frame_index, int)
+                    and not isinstance(turn_frame_index, bool)
+                    and ' · 프레임 ' not in source_label
+                    else ''
+                )
+                units = source.get('units') or {}
+                if not units:
+                    cautions = [note for note in cautions if note != '단위 미확인']
+                unit_tag = _unit_summary_tag(source)
+                source_header = (
+                    f"<p style='color:{p['text_secondary']}; margin-top:26px'>나 · {html.escape(source_label + frame_tag)}"
+                    f"<span style='color:{p['text_secondary'] if units else p['status_warning_fg']};'>{html.escape(unit_tag)}</span>"
+                    + (f"<span style='color:{p['status_warning_fg']};'> · {html.escape(' · '.join(cautions))}</span>" if cautions else '') + '</p>'
+                )
+            fragments += [source_header,
                           f"<table width='100%' cellspacing='0' cellpadding='12' style='background-color:{p['chat_user_bg']}; border:1px solid {p['chat_user_border']}; margin-top:4px;'><tr><td style='color:{p['text_primary']};'>{question}</td></tr></table>",
                           f"<p style='color:{p['text_accent']}; margin-top:18px; margin-bottom:4px;'><b>{html.escape(human_text(turn.get('role') or '전문가'))}</b></p>"]
             proposals = [p for p in self.document.get('proposals', []) if isinstance(p, dict) and
@@ -569,7 +759,12 @@ class ExpertWindow(QMainWindow):
                     fragments.append('</td></tr></table>')
             if malformed:
                 fragments.append(f'<p style="color:{p["status_warning_fg"]}">제안 형식을 읽지 못했습니다. 원문은 보존되어 있습니다. 대상과 내용을 다시 질문해 주세요.</p>')
-        self.transcript.setHtml(''.join(fragments) or f'<h2 style="color:{p["text_primary"]}">어떤 점을 함께 살펴볼까요?</h2><p style="color:{p["text_secondary"]}">입력이나 계산 결과를 첨부하고 질문을 적어 주세요.</p>')
+        empty_prompt = (
+            '첨부 자료 없이 연속체·유한요소 이론, 재료 모델, 접촉·수렴 원리를 질문해 보세요.'
+            if scope == 'theory'
+            else '입력이나 계산 결과를 첨부하고 질문을 적어 주세요.'
+        )
+        self.transcript.setHtml(''.join(fragments) or f'<h2 style="color:{p["text_primary"]}">어떤 점을 함께 살펴볼까요?</h2><p style="color:{p["text_secondary"]}">{empty_prompt}</p>')
         bar.setValue(bar.maximum() if follow else old_position)
         proposal_id = self.proposal_choice.currentData()
         self.proposal_choice.blockSignals(True)
@@ -664,6 +859,8 @@ class ExpertWindow(QMainWindow):
             return
         for widget in (
             getattr(self, 'basis', None),
+            getattr(self, 'scope_combo', None),
+            getattr(self, 'role', None),
             getattr(self, 'wait_label', None),
             getattr(self, 'composer_card', None),
             getattr(self, '_column', None),
@@ -683,26 +880,31 @@ class ExpertWindow(QMainWindow):
         live = bool((self.document.get('pending_request') or {}).get('live'))
         verifying = getattr(self, '_asset_verifying', False)
         verify_failed = getattr(self, '_asset_verify_failed', False)
+        scope = self._current_scope()
         has_evidence = bool(self.document.get('selected_evidence_id'))
+        can_ask_without_evidence = scope == 'theory'
+        invalid_role = not can_ask_without_evidence and self.role.currentData() == 'theory'
         provider_ok = getattr(self, '_provider_available', False)
         for action in self._edit_actions:
             action.setEnabled(not busy)
-        for widget in (self.use_source, self.capture, self.import_button, self.role, self.settings, self.recheck):
+        for widget in (self.use_source, self.capture, self.import_button, self.scope_combo, self.role, self.settings, self.recheck):
             widget.setEnabled(not busy and not live)
         for widget in (self.check_proposal, self.reject_proposal):
             widget.setEnabled(not busy and not live and bool(self.proposal_choice.currentData()))
         self.question.setReadOnly(busy or live)
         self.ask_button.setEnabled(
-            not busy and not live and has_evidence and provider_ok
-            and not verifying and not verify_failed
+            not busy and not live and (has_evidence or can_ask_without_evidence) and provider_ok
+            and not invalid_role and (can_ask_without_evidence or not (verifying or verify_failed))
         )
         if busy or live:
             ask_tip = '진행 중인 작업이 끝난 뒤 다시 질문할 수 있습니다.'
-        elif verifying:
+        elif invalid_role:
+            ask_tip = '계산 결과 분석에는 실행 근거를 읽는 역할을 선택하세요.'
+        elif verifying and not can_ask_without_evidence:
             ask_tip = '첨부 자료와 제안의 무결성을 확인하는 중입니다.'
-        elif verify_failed:
+        elif verify_failed and not can_ask_without_evidence:
             ask_tip = '첨부 자료 무결성 확인에 실패했습니다. [다시 확인] 후 질문하세요.'
-        elif not has_evidence:
+        elif not has_evidence and not can_ask_without_evidence:
             ask_tip = '첨부 자료를 선택한 뒤 질문할 수 있습니다.'
         elif not provider_ok:
             ask_tip = '연결 설정에서 전문가 공급자를 설정한 뒤 질문할 수 있습니다.'
@@ -805,8 +1007,14 @@ class ExpertWindow(QMainWindow):
             if not self.save_document():
                 self.document = previous
 
+    def _allow_attachment(self):
+        if self._current_scope() == 'case_analysis':
+            return True
+        self._notice('질문에 실행 근거를 첨부하려면 질문 범위를 계산 결과 분석으로 바꾸세요.')
+        return False
+
     def import_files(self):
-        if not self._ensure_document() or not self.save_document():
+        if not self._allow_attachment():
             return
         names, _ = QFileDialog.getOpenFileNames(self, '입력, 결과, 로그 선택', '',
                                                '해석 자료 (*.inp *.frd *.dat *.log *.txt);;모든 파일 (*)')
@@ -841,6 +1049,8 @@ class ExpertWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         form.addRow(buttons)
         if dialog.exec() == QDialog.Accepted:
+            if not self._ensure_document() or not self.save_document():
+                return
             solver_id = solver.currentData()
             units = {key: field.text().strip() for key, field in unit_fields.items() if field.text().strip()}
             assets = self.assets
@@ -849,7 +1059,7 @@ class ExpertWindow(QMainWindow):
                 assets, files=files, solver_id=solver_id, units=units))
 
     def capture_run(self, _checked=False):
-        if not self._ensure_document() or not self.save_document():
+        if not self._allow_attachment():
             return
         try:
             project = self.workbench.open_native_project(self.project_path)
@@ -973,6 +1183,8 @@ class ExpertWindow(QMainWindow):
             run, frame_index = runs.currentData(), frames.currentData()
             if run is None or isinstance(frame_index, tuple):
                 return
+            if not self._ensure_document() or not self.save_document():
+                return
             assets = self.assets
             workbench = self.workbench
             self._start('attach', lambda: workbench.capture_expert_run(run, assets, frame_index=frame_index))
@@ -980,16 +1192,18 @@ class ExpertWindow(QMainWindow):
             self._error(error)
 
     def ask(self):
+        scope = self._current_scope()
+        if scope == 'theory':
+            self._remove_native_analysis_framing()
         question = self.question.toPlainText().strip()
-        if (self._operation or not question or not self.document.get('selected_evidence_id')
-                or not getattr(self, '_provider_available', False)
-                or getattr(self, '_asset_verifying', False)
-                or getattr(self, '_asset_verify_failed', False)):
+        if not question or not self.ask_button.isEnabled():
+            return
+        if self.path is None and not self._ensure_document():
             return
         if not self.save_document():
             return
         path, revision = self.path, self.document['revision']
-        evidence_id = self.document['selected_evidence_id']
+        evidence_id = None if scope == 'theory' else self.document.get('selected_evidence_id')
         role, provider = self.role.currentData(), self.document.get('provider_id')
         workbench = self.workbench
         cancel_event = self._cancel
@@ -999,11 +1213,31 @@ class ExpertWindow(QMainWindow):
         stage_token, stage_mailbox = object(), self._stage_mailbox
         def report_stage(stage):
             stage_mailbox.put((stage_token, stage))
-        self._pending_message = dict(question=question, role=self.role.currentText(), evidence_id=evidence_id, status='pending')
-        self._start('ask', lambda: workbench.ask_expert_discussion(
-            path, question, evidence_id=evidence_id, template_id=role, provider_id=provider,
-            expected_revision=revision, check_cancelled=cancelled, on_stage=report_stage),
-            stage_token=stage_token)
+        self._pending_message = dict(
+            question=question,
+            role=self.role.currentText(),
+            evidence_id=evidence_id,
+            question_scope=scope,
+            status='pending',
+        )
+        ask_kwargs = dict(
+            evidence_id=evidence_id,
+            template_id=role,
+            provider_id=provider,
+            expected_revision=revision,
+            check_cancelled=cancelled,
+            on_stage=report_stage,
+        )
+        try:
+            sig = inspect.signature(workbench.ask_expert_discussion)
+            if ('question_scope' in sig.parameters
+                    or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())):
+                ask_kwargs['question_scope'] = scope
+        except (TypeError, ValueError):
+            if scope == 'theory':
+                ask_kwargs['question_scope'] = scope
+        self._start('ask', lambda: workbench.ask_expert_discussion(path, question, **ask_kwargs),
+                    stage_token=stage_token)
 
     def _start(self, operation, function, *, stage_token=None):
         if self._operation:
@@ -1057,11 +1291,17 @@ class ExpertWindow(QMainWindow):
                     and token is self._asset_token
                     and self.path
                     and path == Path(self.path).resolve()):
-                current_assets = (self.document.get('evidences'), self.document.get('proposals'))
+                current_assets = self._asset_state()
                 if rev is None or self.document.get('revision') == rev or current_assets == target_assets:
                     self._asset_verifying = False
                     self._asset_issues = issues
                     problems = self._asset_issues
+                    request_issues = [
+                        issue for issue in problems
+                        if any(key in issue for key in ('request_context_ref', 'request_artifact_ref',
+                                                       'tool_trace_ref', 'retrieval_trace_ref'))
+                    ] if ok else []
+                    self.asset_warning.setToolTip('\n'.join(request_issues))
                     if not ok:
                         self._asset_verify_failed = True
                         self._asset_warning_tone = 'error'
@@ -1079,6 +1319,8 @@ class ExpertWindow(QMainWindow):
                             status_badge_style('warning', getattr(self, '_theme_mode', None))
                         )
                         self.asset_warning.setText(
+                            '보존된 요청 문맥 또는 도구 기록이 누락되었거나 변경되었습니다.'
+                            if request_issues else
                             '보존된 제안의 내용이나 출처를 확인할 수 없습니다. 대화는 읽을 수 있지만 제안은 다시 확인해 주세요.'
                             if any('제안' in problem for problem in problems) else
                             '첨부 자료에 누락·변경 또는 출처 확인 문제가 있습니다. 자료를 다시 확인한 뒤 질문하세요.'
@@ -1118,7 +1360,17 @@ class ExpertWindow(QMainWindow):
                 else:
                     self.document = value
                     self._pending_message = None
+                    draft_ctx = value.get('draft_context') or {}
+                    self._native_analysis_framing = draft_ctx.get('native_analysis_framing')
+                    scope = _normalize_question_scope(
+                        draft_ctx.get('question_scope')
+                        if isinstance(draft_ctx, dict) and 'question_scope' in draft_ctx
+                        else value.get('question_scope')
+                    )
+                    template_id = draft_ctx.get('template_id') if isinstance(draft_ctx, dict) else None
+                    self._sync_scope_and_role_widgets(scope, template_id=template_id)
                     self.question.setPlainText(value.get('draft_question', ''))
+                    self._start_asset_verification()
                 self.render()
             except Exception as error:
                 self._error(error)
@@ -1180,7 +1432,7 @@ class ExpertWindow(QMainWindow):
             event.ignore()
             return
         live_elsewhere = bool((self.document.get('pending_request') or {}).get('live'))
-        if not live_elsewhere and not self.save_document():
+        if not live_elsewhere and not self._save_before_leaving():
             answer = QMessageBox.question(self, '대화를 저장하지 못했습니다',
                 '다른 창의 변경 또는 파일 오류로 저장하지 못했습니다. 이 창의 저장되지 않은 변경을 버리고 닫을까요?',
                 QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Cancel)

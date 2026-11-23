@@ -20,7 +20,7 @@ def expected_static_endpoint(input_path):
                     raise ValueError("Unresolved native INCLUDE at endpoint validation")
                 target = Path(includes[0][2])
                 yield from lines((root.parent/target).resolve() if not target.is_absolute() else target.resolve(),(*stack,path))
-            elif body and not body.startswith("**"):
+            elif body and not body.replace(" ", "").replace("\t", "").startswith("**"):
                 yield body
     step = 0
     in_step = False

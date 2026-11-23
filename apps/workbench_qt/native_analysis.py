@@ -486,7 +486,7 @@ class NativeAnalysisWindow(QMainWindow):
                     lines.extend(f"  * {line}" for line in (diagnostics or log_lines)[-5:])
             else:
                 lines.append("아직 선택한 실행이 없습니다. 해석 입력과 확인할 사항을 논의하고 싶습니다.")
-            window.question.setPlainText("\n".join(lines))
+            window.set_native_analysis_draft("\n".join(lines))
         window.show()
         window.raise_()
         window.activateWindow()
