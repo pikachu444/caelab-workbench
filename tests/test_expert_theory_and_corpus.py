@@ -6277,3 +6277,83 @@ def test_d09_units_scope_edges_and_legacy_labels():
         assert not query_language.classify_non_cae_intent(query_language.prepare_query(question))[0]
     entry = knowledge._to_entry(rag.Chunk("chunk", "file", ("section",), "Some text"))
     assert entry.source_kind == "legacy_unknown"
+
+
+@pytest.mark.parametrize("response_format", ["frozen", None], ids=["live", "persisted"])
+@pytest.mark.parametrize("history_field", ["events", "steps"])
+@pytest.mark.parametrize("case", ["2a", "2b", "2c", "3a", "3c", "4a", "4b"])
+def test_d09_pass_71_decision_boundaries_and_selection_replay(
+    assessed_retrieval, response_format, history_field, case,
+):
+    assess, first = assessed_retrieval
+    second = dict(first, citation="geos-manual:chapter-2")
+    plan = query_language.prepare_query("Explain Drucker-Prager yield")
+    [topic] = query_language.extract_query_requirements(plan)
+    ids = [first["citation"], second["citation"]]
+    prepare = {"stage": "prepare_query"}
+    done = {"stage": "retrieval_completion"}
+    search = {"stage": "search"}
+    selection = {"stage": "candidate_selection", "candidate_ids": ids}
+    completion = dict(done)
+    options = {"include_good": True, "question_plan": plan, "trace_overrides": {"events": [completion]},
+               "response_format": response_format}
+
+    def evidence(*candidates):
+        quotes = [{"candidate_id": item["citation"], "start": 0, "end": len(item["text"])} for item in candidates]
+        return {"citations": quotes, "checks": [
+            {"requirement_id": topic.requirement_id, "candidate_ids": [quote["candidate_id"] for quote in quotes],
+             "relation": "satisfied", "quoted_spans": quotes, "reason": "recorded review"},
+        ]}
+
+    evidence_a = evidence(first)
+    evidence_b = evidence(second)
+    review_a = {"stage": "assessment", **evidence_a}
+    review_b = {"stage": "assessment", **evidence_b}
+
+    def assert_supported(candidate, companion):
+        assert assess(candidate, companion=companion, **options).status == "supported"
+
+    def assert_rejected(candidate, companion):
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(candidate, companion=companion, **options)
+
+    if case in {"2a", "2b"}:
+        binding = {"citations": evidence_a["citations"]} if case == "2a" else {"output": evidence_a}
+        interim = {"stage": "assessment", "decision": binding if case == "2a" else [binding]}
+        completion.update({history_field: [prepare, interim, done], "response": evidence_a})
+        assert_supported(first, second)
+        completion["response"] = evidence_b
+        assert_rejected(second, first)
+    elif case == "2c":
+        decision = {history_field: [prepare, review_b, done], "response": evidence_a}
+        completion.update({history_field: [prepare, done], "decision": decision})
+        assert_supported(first, second)
+        assert_rejected(second, first)
+    elif case in {"3a", "3c"}:
+        decision_a = {"stage": "decision", **evidence_a}
+        boundary = {"stage": "response", **evidence_a} if case == "3a" else {"stage": "decision"}
+        later_selection = dict(selection, event_id="later-selection")
+        completion.update({history_field: [prepare, decision_a, search, boundary, later_selection, done],
+                           "response": evidence_a})
+        assert_supported(first, second)
+        completion["response"] = evidence_b
+        assert_rejected(second, first)
+        completion[history_field].insert(-2, dict(search, event_id="fresh-search"))
+        assert_supported(second, first)
+    else:
+        checked_both = evidence(first, second)
+        selected = {"citations": evidence_a["citations"]}
+        if case == "4b":
+            selected = evidence_a
+        shared = {**done, "event_id": "rc1"}
+        original = {**shared, history_field: [prepare, {**selection, **selected}, done],
+                    "response": checked_both}
+        completion[history_field] = [prepare, original, done]
+        assert_supported(first, second)
+        assert_rejected(second, first)
+        completion["result"] = {history_field: [dict(search, event_id="fresh-search"),
+                                                dict(selection, event_id="fresh-selection"), review_a, done]}
+        completion["output"] = {history_field: [original]}
+        assert_supported(first, second)
+        completion["output"] = {history_field: [{**shared, "response": checked_both}]}
+        assert_rejected(first, second)

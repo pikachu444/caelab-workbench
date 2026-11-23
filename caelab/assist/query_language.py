@@ -1891,8 +1891,8 @@ def _flat_review_children(sequence, final_index, *, all_candidate_ids, exclude_f
             if superseded_selection and candidates == all_candidate_ids:
                 candidates = None
             yield child, (
-                None if replaced_quotes or superseded_selection else quotes,
-                () if replaced_checks or superseded_selection else checks,
+                None if replaced_quotes or (is_selection and prior_reset) else quotes,
+                () if replaced_checks or (is_selection and prior_reset) else checks,
                 None if replaced_candidates and not is_selection else candidates,
                 selected,
             )
@@ -2044,13 +2044,16 @@ def _decision_reports(value):
 
 def _review_report_records(
     value, *, stop_at_review_boundary=False, stop_at_non_interim=False, allowed_event_ids=frozenset(),
+    non_interim_record_ids=frozenset(),
 ):
     if isinstance(value, Mapping):
         if stop_at_review_boundary and (
             (_event_ids(value) - allowed_event_ids) or _history_stage(value) in _COMPLETION_STAGES
         ):
             return
-        if stop_at_non_interim and _history_stage(value) in (_DECISION_STAGES | _SELECTION_STAGES):
+        if stop_at_non_interim and (
+            _history_stage(value) in (_DECISION_STAGES | _SELECTION_STAGES) or id(value) in non_interim_record_ids
+        ):
             return
         yield value
         children = (value[key] for key in (*_TRACE_RESPONSE_FIELDS, *_TRACE_HISTORY_FIELDS) if key in value)
@@ -2061,7 +2064,7 @@ def _review_report_records(
     for child in children:
         yield from _review_report_records(
             child, stop_at_review_boundary=stop_at_review_boundary, stop_at_non_interim=stop_at_non_interim,
-            allowed_event_ids=allowed_event_ids,
+            allowed_event_ids=allowed_event_ids, non_interim_record_ids=non_interim_record_ids,
         )
 
 
@@ -2213,16 +2216,24 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     owners_with_structure = set()
     owner_identities = {}
     decision_record_ids = set()
+    non_interim_decision_ids = set()
+    search_fragment_owners = set()
     decision_report_owners = {}
+    for pre_record, *_ in _trace_records(trace, root=True, deduplicate=False):
+        if _history_stage(pre_record) in (_INITIAL_STAGES | {"retrieval"}):
+            search_fragment_owners.add(id(pre_record))
+        if _history_stage(pre_record) in _DECISION_STAGES:
+            decision_record_ids.add(id(pre_record))
+            non_interim_decision_ids.add(id(pre_record))
+        for field in _DECISION_STAGES:
+            for decision_report in _decision_reports(pre_record.get(field)):
+                decision_record_ids.add(id(decision_report))
+                if _history_stage(decision_report) not in {"assessment", "retrieval_assessment"}:
+                    non_interim_decision_ids.add(id(decision_report))
+                decision_report_owners[id(decision_report)] = id(pre_record)
     for record, phase, _, _, _, report_histories, _, event_ids, _, _, execution_search_scope in _trace_records(
         trace, root=True, deduplicate=False,
     ):
-        if _history_stage(record) in _DECISION_STAGES:
-            decision_record_ids.add(id(record))
-        for field in _DECISION_STAGES:
-            for decision_report in _decision_reports(record.get(field)):
-                decision_record_ids.add(id(decision_report))
-                decision_report_owners[id(decision_report)] = id(record)
         if (phase == "review" or _history_stage(record) == "retrieval") and any(
             owner_id == id(record) for _, owner_id, _ in event_ids
         ):
@@ -2250,6 +2261,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             owner_event_ids = _event_ids(record)
             interim_scope = {
                 "stop_at_review_boundary": True, "stop_at_non_interim": True, "allowed_event_ids": owner_event_ids,
+                "non_interim_record_ids": non_interim_decision_ids - {id(record)},
             }
             sibling_assessments = [record.get("assessment"), record.get("retrieval_assessment")]
             sibling_assessments.extend(
@@ -2260,7 +2272,10 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             history_assessments = (
                 step for history in _history_lists(record) for step in history
                 if _history_stage(step) in interim_stages
-            ) if record is trace or _history_stage(record) in (_COMPLETION_STAGES | _DECISION_STAGES) else ()
+            ) if (
+                record is trace or _history_stage(record) in (_COMPLETION_STAGES | _DECISION_STAGES)
+                or id(record) in decision_record_ids
+            ) else ()
             interim_ids = {
                 id(interim) for assessment in (*sibling_assessments, *history_assessments)
                 for interim in _review_report_records(assessment, **interim_scope)
@@ -2600,6 +2615,14 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             new_round_selection_after_review = True
             new_round_selection_history = history_ancestors
             new_round_selection_ancestors = ancestors
+        elif saw_search_after_review and not in_replayed_review and (
+            (stage in _COMPLETION_STAGES and not (
+                _is_bare_completion(record) and history_ancestors & search_fragment_owners
+            ))
+            or record_id in non_interim_decision_ids
+            or (effective_phase == "review" and live_has_review_update and not new_round_selection_after_review)
+        ):
+            saw_search_after_review = False
         supplies_required_evidence = (
             bool(live_checks)
             if (review_checks or encloses_review or review_quotes_constrained)
