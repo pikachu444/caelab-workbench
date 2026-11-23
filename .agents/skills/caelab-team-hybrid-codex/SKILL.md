@@ -1,53 +1,49 @@
 ---
 name: caelab-team-hybrid-codex
 description: >-
-  Activate when running the token-saving hybrid team preset or taking over as Team Lead in caelab-workbench / caelab-prep:
-  Team Lead authors concrete specs and orchestrates 3-tier verification while parallel local Codex CLI workers execute isolated git worktrees and Gemini Pro subagents perform code and visual UX audits.
+  Activate when running a hybrid team centered on Gemini 4 (Orchestrator Carbon/Neon + Gemini 4 Neon,
+  Gemini 4 Carbon, and Gemini 4 Hydrogen) with optional local Codex CLI restricted to user-requested
+  backend batch tasks (excluding Argon, Gemini 3.8 Flash, and GUI/copy delegation to Codex).
 ---
 
-# CAELAB 개발 총괄 표준 운영 스킬 (Team Lead Playbook × 로컬 Codex CLI 병렬형)
+# CAELAB 개발 총괄 표준 운영 스킬 (Gemini 4 3원 체제 중심 × 선택적 로컬 Codex CLI 하이브리드)
 
-공통 개발·검토·비판 해소 규칙은 루트 [AGENTS.md](../../AGENTS.md)와 [DESIGN.md](../../DESIGN.md)를 그대로 따릅니다. 다른 에이전트가 개발 총괄(Team Lead)을 인계받았을 때도 이 문서의 규칙을 100% 동일하게 수행합니다.
+공통 개발·검토·비판 해소 규칙은 루트 [AGENTS.md](../../../AGENTS.md), [DESIGN.md](../../../DESIGN.md), [GEMINI_LEAD_METHODOLOGY.md](../../../docs/GEMINI_LEAD_METHODOLOGY.md)를 그대로 따릅니다.
 
-## 1. 핵심 설계 및 상용 CAE GUI 6대 철칙 (GUI Design Laws)
+## 1. 핵심 설계 및 상용 CAE GUI 8대 철칙 (GUI Design Laws)
 
 1. **추상화 및 상용 수준 구조화**:
-   - 사용자의 예시(예: HyperMesh 매뉴얼, Abaqus, ANSYS, PrePoMax, BeidPrep)에서 표면적 단어만 보지 말고, 전체 기능 카탈로그(`Module -> Sub-feature -> Supported Contract -> UX Flow -> Verification Gate`)로 구조화합니다.
+   - 사용자의 예시(HyperMesh, Abaqus, ANSYS, PrePoMax, BeidPrep)에서 표면적 단어만 보지 말고, 전체 기능 카탈로그(`Module -> Sub-feature -> Supported Contract -> UX Flow -> Verification Gate`)로 구조화합니다.
 2. **3D 뷰포트 최소 70% 보장**:
-   - `caelab-prep`(`beidprep`) 및 결과 뷰어에서 중앙 3D 뷰포트는 전체 창 폭의 **70% 이상**(`1440px` 기준 `>= 1000px`)을 유지합니다. 좌측 `MODEL`+`FORM` 인접 독은 합계 ~30%(`~430px`)로 상한을 두되, 사용자의 수동 리사이즈(`resizeDocks` 포함)는 보존합니다.
+   - 전처리기 및 결과 뷰어에서 중앙 3D 뷰포트는 전체 창 폭의 **70% 이상**(`1440px` 기준 `>= 1000px`)을 유지합니다.
 3. **관료적 면책 문구(Disclaimer) 영구 금지**:
-   - `"공학 검증 미실시"`, `"수치 검증·공학적 적합성: 미실시"`, `"원 좌표, 변형·파생 응력 계산 안 함"`, `"입력 편집은 전용 프로그램에서 합니다..."`, `"값은 여기서 고치지 않습니다..."` 등 개발자 방어용 정적 문구를 화면에 넣지 않습니다. 필요한 제약 안내는 1줄 요약 라벨의 `setToolTip(...)`으로 넣습니다.
-4. **물리량·단위계 직관 표기 (0.5초 인지 원칙)**:
-   - `'단위 선언됨'` 대신 **`'단위: mm · N (MPa)'`** 처럼 선언된 단위와 유도 응력 단위를 명시합니다.
-   - `'DISP · D1'`, `'DISP [0]'` 대신 **`'변위 (U) · 크기 |U|'`** (`|U| (mm)`), **`'변위 (U) · Ux (D1)'`**, **`'응력 (S) · Von Mises [절점 외삽]'`** (`Von Mises (MPa)`)을 표기합니다.
-   - **VTK MathText 주의**: VTK `vtkScalarBarActor` 제목에 `|U|`를 그대로 넣으면 파이프 2개가 수식 구분자로 오인되어 컬러바가 사라지므로 반드시 `r'$\vert U\vert$'`로 이스케이프합니다.
-5. **클릭 마찰(Friction) 제로화**:
-   - `Preview` / `Review replacement` 성공(`admissible == True`) 시 `reviewed` 체크박스를 자동 체크(`setChecked(True)`)하여 `Apply` 버튼이 즉시 활성화되게 합니다.
-   - 임시 출력 폴더(`Output directory`)는 `default_asset_directory()`로 기본값을 미리 채웁니다.
-6. **콤보박스 잘림 및 유니코드 글리프 깨짐(`□`) 방지**:
-   - 모든 툴바 `QComboBox`에 `AdjustToContents`를 적용하고, Windows 한글 폰트에서 `□`로 깨지는 `▸`(`\u25b8`)나 유니코드 마이너스(`−` `\u2212`) 대신 안전한 ASCII(`>`, `-`, `파일 > 열기(Ctrl+O)`)를 씁니다.
+   - `"공학 검증 미실시"`, `"원 좌표, 변형·파생 응력 계산 안 함"`, `"값은 여기서 고치지 않습니다..."` 등 개발자 방어용 정적 문구를 화면에 넣지 않습니다.
+4. **물리량·단위계 직관 표기 및 파서 용어 차단 (0.5초 인지 원칙)**:
+   - `'단위: mm · N (MPa)'`로 선언 단위와 유도 응력 단위를 함께 표기하고, `판독/메시 절점`, `집합 출력 상태: 일부 판독`, `DAT 마지막 판독 프레임의 집합 원값`, `원 합계 성분` 같은 백엔드 파서 내부 문구를 노출하지 않습니다.
+   - **VTK MathText 주의**: `vtkScalarBarActor` 제목의 `|U|`는 반드시 `r'$\vert U\vert$'`로 이스케이프합니다.
+5. **중복 표시 제거**: 동일 데이터를 상단 카드·중간 표·하단 텍스트 창에 2~3번 반복 출력하지 않으며, 결과 탭과 입력 원문 창을 불필요하게 50:50으로 가리지 않습니다.
+6. **클릭 마찰(Friction) 제로화**: `Preview` 성공 시 `reviewed` 자동 체크로 `Apply`를 즉시 활성화합니다.
+7. **콤보박스 잘림 및 유니코드 글리프 깨짐(`□`) 방지**: `AdjustToContents` 적용 및 `▸`/`−` 대신 ASCII `>`/`-` 사용.
+8. **장난감 픽스처(Toy Fixture) 승인 영구 금지**: 단순 외팔보·4절점 사면체·소수 쉘 요소 몇 개만으로 화면·기능 완료를 보고하지 않고 **다중 파트 연결·체결·접촉·반력 평형·다중 스텝/프레임 어셈블리**로 실증합니다.
 
 ---
 
-## 2. 역할 분담 및 토큰 절약형 지휘 프로토콜
+## 2. 역할 분담 및 Gemini 4 3원 체제 지휘 프로토콜
 
-1. **팀장 (`Orchestrator (Neon)` — 2-Phase Plan-Execute 메인 세션, Argon 제외)**:
-   - Plan/Review 단계(Plan Mode)에서 Neon이 아키텍처·파일·줄번호·불변조건까지 확정한 `Concrete Spec`(`scratch/spec-*.md`)과 게이트 판정을 내리고, 실행(`exit_plan_mode`) 단계에서는 실행 모델이 워커 오케스트레이션·테스트 검증·PR 통합을 수행합니다.
-   - 직접 대량 코드를 작성하거나 수만 줄 로그를 읽지 않습니다.
-2. **서브 리드 / 적대적 검수 (`Gemini 4 Hydrogen (XHigh)` / `Gemini 4 Neon (XHigh)` / `chief-reviewer` · `cae-user-expert`, 또는 로컬 Codex CLI — `gpt-6.2-astra`, `model_reasoning_effort="xhigh"`)**:
-   - 5시간 단기 롤링 쿼터를 활용해 `Concrete Spec` 감사, 수치 수식 검증, Gate 1 코드/계약 감사, Gate 2 `1440×900` 실화면 시각 UX 감수를 수행합니다.
-3. **병렬 개발 워커 A·B (로컬 Codex CLI — `gpt-6.2-sol`, `model_reasoning_effort="high"`, 또는 `Gemini 4 Hydrogen (High)` / `Gemini 4 Neon (High)` 병렬 Swarm/Subagent)**:
-   - 각각 독립된 `git worktree`에서 실행합니다:
-     ```powershell
-     $spec = Get-Content -Raw '<spec-path>.md'
-     $spec | codex exec -C <worktree-path> -s danger-full-access --json -m gpt-6.2-sol -c 'model_reasoning_effort="high"' -c 'mcp_servers={}' - > '<log-path>.jsonl' 2>&1
-     ```
-   - 후속 수정 지시 시 반드시 기존 `thread_id`를 `resume`합니다 (`-C`와 `-s`는 `resume` 앞에 위치):
-     ```powershell
-     $fixSpec | codex exec -C <worktree-path> -s danger-full-access resume <THREAD_ID> --json -m gpt-6.2-sol -c 'model_reasoning_effort="high"' -c 'mcp_servers={}' - > '<resume-log>.jsonl' 2>&1
-     ```
-   - **문서 과잉·토론 루프 방지 철칙 (Anti-Paperwork Drift)**: 워커에게 구현을 맡겼을 때 `caelab/`, `apps/`, `src/` 제품 코드 수정 없이 마크다운 명세·토론 JSONL·영수증·외부 원문 덤프만 Git에 누적하고 끝내는 것을 엄격히 금지합니다. 회의·비판 로그는 `scratch/`에 두고, PR은 동작하는 코드+테스트로만 제출합니다.
-4. **3단계 무신뢰(Zero-Trust) 독립 검수**:
-   - **Gate 1 (코드/계약 검수)**: `chief-reviewer` (`Gemini 4 Hydrogen (XHigh)` / `Gemini 4 Neon (XHigh)` / `"inherit"`)가 대상 커밋 SHA와 `git diff`, `check_doc_sync.py`, 테스트 통과 여부를 대조.
-   - **Gate 2 (실화면 캡처 & 시각 UX 검수)**: 모든 주요 창과 하위 탭(`output_tabs.setCurrentIndex(1)`, `(2)` 등)을 실제로 전환·렌더링하여 PNG로 캡처한 뒤, `cae-user-expert` (`Gemini 4 Neon (High)` / `Gemini 4 Hydrogen (High)` / `"pro"`)가 시각 감수. 비판이 나오면 수정 후 원 비판자에게 재검토받아 명시적 `APPROVED`를 획득.
-   - **Gate 3 (본선 클린 클론 & 패키징 실증)**: PR 병합 직후 임시 폴더에 `origin/main`을 새로 클론(`$env:PYTHONPATH` 명시)하여 검증하고, `setup.exe` 및 포터블 번들을 리빌드하여 Tier 1/2 검사를 수행.
+- **GUI 설계 · 사용자 문구 · UX 동선에는 로컬 Codex CLI를 절대 사용하지 않습니다.** GUI와 문구는 100% Gemini(`Orchestrator (Carbon/Neon)` + `Gemini 4 Carbon` + `Gemini 4 Neon`)가 작성·검수하며, Codex CLI는 사용자가 별도 구독 사용량 활용 또는 대규모 비-GUI 백엔드 작업을 명시적으로 요청한 경우에만 `Concrete Spec` 하에 제한적으로 투입합니다.
+
+| 역할 | 주력 Gemini 4 모델 (`swarm` 핀) | 선택적 CLI 보조 (명시 요청 시 비-GUI 한정) | 핵심 책임 |
+|---|---|---|---|
+| **팀장 (메인)** | **`Orchestrator (Carbon)`** (`gemini-pro-orchestrator`) / **`Orchestrator (Neon)`** (`gemini-pro-orchestrator-neon`) | — | Plan Mode 아키텍처·`Concrete Spec`·UI 문구 확정, 게이트 판정, 통합·PR 관리 (**Argon 제외**) |
+| **수석 코드 QA & UX 설계** | **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`) | `gpt-6.2-astra` (`xhigh`) 보조 가능 | 작성자와 분리된 적대적 코드·계약 감사(Gate 1), 장난감 모델 승인 차단 |
+| **실무 CAE 시각 UX 심사관** | **`Gemini 4 Neon (High)`** (`gemini-4-neon-high`, Vision) | **불가** | `1440×900` 전 화면·전 탭 캡처 PNG 직접 판독(Gate 2), 파서 용어·중복 위젯 감수 |
+| **병렬 GUI·서비스 워커** | **`Gemini 4 Carbon (High / Medium)`** (`gemini-4-carbon-high`/`medium`) | **금지** | 격리 `git worktree` / `swarm share` 내 PySide6 UI, Workbench/Prep 연동 및 테스트 구현 |
+| **수식·솔버·메셔 워커** | **`Gemini 4 Hydrogen (XHigh / High)`** (`gemini-4-hydrogen-xhigh`/`high`) | `codex exec` (`gpt-6.2-sol`, `high`) — 비-GUI 한정 | 재료 구성방정식, 다중 파트 솔버 덱, 메셔·MDO 폐루프 구현 및 수치 검산 |
+| **경량 탐색·로그 보조** | **`Gemini 4 Hydrogen (Low / Medium)`** (`gemini-4-hydrogen-low`/`medium`) | — | 코드베이스 탐색, pytest/CI 로그 요약, 정적 점검 (**`Gemini 3.8 Flash` 대체**) |
+
+- **3단계 무신뢰(Zero-Trust) 독립 검수**:
+  - **Gate 1 (코드·계약·장난감 모델 배제 감사)**: `chief-reviewer` (`Gemini 4 Neon XHigh`)가 `git diff`, `check_doc_sync.py`, 다중 어셈블리 실증 포함 여부를 대조.
+  - **Gate 2 (실화면 캡처 시각 UX 검수)**: 모든 주요 창과 하위 탭 PNG를 `cae-user-expert` (`Gemini 4 Neon High`)가 직접 판독하고 비판 해소 후 명시적 `APPROVED` 회수.
+  - **Gate 3 (본선 클린 클론 & 패키징 실증)**: PR 병합 직후 임시 폴더에 `origin/main`을 새로 클론(`$env:PYTHONPATH` 명시)하여 검증하고 필요 시 포터블 번들/인스톨러 Tier 1/2 검사를 수행.
+- **로컬 Codex CLI 실행 규칙 (백엔드 보조 요청 시)**:
+  - 착수 전 `codex --version` (`v0.169.0+` 권장) 확인 후 JSONL 첫 줄 `thread_id`로만 `codex exec resume <THREAD_ID>` 호출. 제품 코드 변경 없이 문서/JSONL만 Git에 커밋하는 행위 엄격 금지.

@@ -2,9 +2,9 @@
 
 > [!IMPORTANT]
 > **문서 목적 및 적용 대상**
-> 이 문서는 **Gemini (Antigravity / Orchestrator (Neon) × Hydrogen & Neon)** 개발 총괄 에이전트가 사용자의 의도를 해석하고, 상용 엔지니어링 소프트웨어를 설계·구현·시각 검증·배포하는 **전 과정의 사고방식과 팀 오케스트레이션 원리를 정형화한 표준 매뉴얼**입니다.
+> 이 문서는 **Gemini (Antigravity / Orchestrator (Carbon·Neon) × Gemini 4 Neon · Carbon · Hydrogen 3원 체제)** 개발 총괄 에이전트가 사용자의 의도를 해석하고, 상용 엔지니어링 소프트웨어를 설계·구현·시각 검증·배포하는 **전 과정의 사고방식과 팀 오케스트레이션 원리를 정형화한 표준 매뉴얼**입니다.
 >
-> 특정 벤더나 CLI 도구에 종속되지 않도록 **모델 등급(Tier)과 추론 강도(Reasoning Effort)를 조합한 보편적 팀 운영 원리**를 본문에 정의하고, 현재 환경(Gemini + Codex CLI)에서 실행했던 구성은 **구체적 적용 예시(Reference Example)** 로 수록했습니다. 따라서 **Claude 단독 체제(Opus / Sonnet / Haiku)** 로 전환하거나 다른 에이전트 환경을 쓰더라도 이 원리를 1:1로 매핑해 100% 동일한 품질과 감각으로 동작할 수 있습니다.
+> 특정 벤더나 CLI 도구에 종속되지 않도록 **모델 등급(Tier)과 추론 강도(Reasoning Effort)를 조합한 보편적 팀 운영 원리**를 본문에 정의하고, 현재 Antigravity 환경의 **Gemini 4 (`Neon · Carbon · Hydrogen`) 3개 모델군 구성**과 필요 시 선택하는 하이브리드 보조 구성을 **구체적 적용 예시(Reference Example)** 로 수록했습니다. 따라서 실행 모델이 갱신되더라도 본문의 역할 계층과 검증 게이트를 그대로 유지해 동일한 품질로 동작할 수 있습니다.
 
 ---
 
@@ -43,9 +43,9 @@ flowchart LR
 
 ---
 
-## 2. Gemini 총괄의 상용 엔지니어링 GUI 7대 설계 법칙 (GUI Design Laws)
+## 2. Gemini 총괄의 상용 엔지니어링 GUI 8대 설계 법칙 (GUI Design Laws)
 
-과거 에이전트가 단독으로 작업했을 때 가장 크게 망가뜨린 부분이 **"프로그램을 공학 도구가 아니라 면책 조항 게시판으로 만든 것"**이었습니다. 모든 에이전트는 화면을 구성할 때 아래 **7대 법칙**을 기계적으로 준수해야 합니다.
+과거 에이전트가 단독으로 작업했을 때 가장 크게 망가뜨린 부분이 **"프로그램을 공학 도구가 아니라 면책 조항 게시판으로 만든 것"**과 **"장난감 예제 + 파서 개발자 용어/중복 표 노출"**이었습니다. 모든 에이전트는 화면을 구성할 때 아래 **8대 법칙**을 기계적으로 준수해야 합니다.
 
 ### Law 1: '관료적 면책 문구(Disclaimer)' 및 '훈계성 안내문' 영구 금지
 화면의 고정 영역(배너, 상태바, 스칼라 바 제목, 폼 상단/하단)에 개발자 방어용 문구나 사용자를 가르치려 드는 문구를 넣는 것을 **엄격히 금지**합니다.
@@ -89,10 +89,16 @@ flowchart LR
 - 입력 파일이나 단위계가 바뀌어 이전 해석 결과가 오래된(Stale) 경우, 긴 설명문 대신 노드 박스의 **노란 빗금 배지(`이전 입력의 결과`)** 와 상단 1줄 상태 요약으로 즉각 식별되게 합니다.
 
 ### 2.8 `docs/specs/cae-research/` (D01~D39 및 `MaterialStudyWindow` C9) 구현 시 필수 GUI 가드레일
-`docs/specs/cae-research/core-implementation.md` (§C9) 및 `IMPLEMENTATION_TASKS_ko.md` (`D01`, `D06`, `D07`, `D18`)의 새 화면 구현은 반드시 위 **GUI 7대 법칙**을 최우선 가드레일로 적용해야 합니다:
+`docs/specs/cae-research/core-implementation.md` (§C9) 및 `IMPLEMENTATION_TASKS_ko.md` (`D01`, `D06`, `D07`, `D18`)의 새 화면 구현은 반드시 위 **GUI 8대 법칙**을 최우선 가드레일로 적용해야 합니다:
 1. **내부 열거형·해시 UI 노출 금지**: `adequacy_status=not_assessed`, `source_unavailable`, `holdout_exposed`, raw `SHA-256` 해시/UUID를 라벨이나 테이블 셀에 그대로 렌더링하지 않고 간결한 한국어 공학 배지(`실측 대조 전`, `원문 미연결`, `보류 시험 포함`)로 변환하며 해시·진단값은 메타데이터/`setToolTip(...)`에만 둡니다.
 2. **관료적 면책 문구 금지**: `MaterialStudyWindow` 상단·하단 고정 배너에 `"실물 재료 적합성 미검증"`, `"공학 검증 미실시"`, `"값은 여기서 고치지 않습니다"` 같은 정적 방어 문구를 추가하지 않습니다.
-3. **70% 뷰포트 비례·클릭 마찰 제로화·직접 시각 검수**: `1440×900` 기준 중앙 곡선/잔차 플롯 및 비교 테이블 영역을 **70%(`>= 1000px`) 이상** 확보하고, Prep 카드 적용(`C10`)은 `Preview/Prepare 통과 ➔ Apply 즉시 활성화` 흐름을 따르며, 병합 전 반드시 `cae-user-expert`가 모든 도크/탭(Model·Experiments·Parameters·Comparisons·Evaluations·Exports)의 `1440×900` PNG 실렌더링 캡처를 육안 검증합니다.
+3. **70% 뷰포트 비례·클릭 마찰 제로화·직접 시각 검수**: `1440×900` 기준 중앙 곡선/잔차 플롯 및 비교 테이블 영역을 **70%(`>= 1000px`) 이상** 확보하고, Prep 카드 적용(`C10`)은 `Preview/Prepare 통과 ➔ Apply 즉시 활성화` 흐름을 따르며, 병합 전 반드시 `cae-user-expert` (`Gemini 4 Neon`)가 모든 도크/탭(Model·Experiments·Parameters·Comparisons·Evaluations·Exports)의 `1440×900` PNG 실렌더링 캡처를 육안 검증합니다.
+
+### 2.9 Law 8: 장난감 픽스처(Toy Fixture) 검수 금지 & 다중 파트 복잡 어셈블리 공학 검산 UX 법칙
+1. **장난감 모델 완료 승인 영구 금지**: 단순 외팔보(cantilever), 4절점 사면체, 쉘 요소 몇 개짜리 미니 예제만으로 GUI 가독성·해석 결과 요약·전후처리 연결이 완료되었다고 선언하지 않습니다. 반드시 **다중 파트(멀티 바디), 볼트 예압·스폿용접·접합 체결, 마찰 접촉, 다중 경계조건 집합 반력, 다중 스텝/프레임**이 포함된 실제 공학 어셈블리 유즈케이스를 기준으로 화면을 설계하고 실증합니다.
+2. **파서 개발자 용어 및 3중 중복 표시 차단**:
+   - ❌ 금지: `판독/메시 절점`, `집합 출력 상태 (DAT): 일부 판독`, `DAT 마지막 판독 프레임의 집합 원값 (별도 파일)`, `원 합계 성분 (1, 2, 3)` 및 동일한 변위 수치를 상단 KPI 카드 + 중간 필드 표 + 하단 텍스트 박스(`result_text`)에 3번 반복 출력.
+   - ✅ 표준(NAFEMS 공학 검산 위계): 결과 확인 창에서는 입력 원문 절반 분할을 강제하지 않고 상단 탭으로 분리하며, **좌측 3D 변형/응력 뷰포트(1:1 실제 변형 vs 배율 전환)** + **우측 핵심 공학 검산 카드(외력 vs 지지부 반력 평형 $\sum F = 0$, 최대 변위/응력, 동해석 아워글래스/내부 에너지 비)** 로 1회만 간결하게 요약합니다.
 
 ---
 
@@ -100,52 +106,56 @@ flowchart LR
 
 단일 에이전트(Single Session)가 설계, 수천 줄의 코드 탐색, 구현, 수백 개의 테스트 로그 읽기, 시각 검수를 혼자 다 처리하면 **① 최상위 모델 토큰/쿼터가 순식간에 고갈**되고, **② 컨텍스트 창이 로그로 오염되어 판단력이 흐려지며**, **③ 자기가 짠 코드의 결함을 스스로 합리화(Confirmation Bias)** 하게 됩니다.
 
-따라서 어떤 AI 생태계(Claude 단독, Gemini 단독, 또는 하이브리드)를 쓰더라도 반드시 **역할별로 모델 등급(Tier)과 추론 강도(Reasoning Effort / Extended Thinking Budget)를 분리하여 오케스트레이션**해야 합니다.
+따라서 반드시 **역할별로 모델 등급(Tier)과 추론 강도(Reasoning Effort)를 분리하여 오케스트레이션**합니다. **GUI 설계·한국어/영어 사용자 문구·시각 UX는 100% Gemini가 직접 담당**하며 백엔드 구현 워커에게 임의로 위임하지 않습니다.
 
-### 3.1 역할별 모델 등급 & 추론 강도(Reasoning Effort) 배분 매트릭스
+### 3.1 역할별 Gemini 4 3원 모델 (`Neon · Carbon · Hydrogen`) 배분 매트릭스
 
-| 역할 (Role) | 요구 지능 특성 | 추론 강도 (Reasoning / Thinking) | **Claude 단독 운영 시 매핑** | **Gemini 단독 운영 시 매핑** | 핵심 임무 및 토큰 절약 규칙 |
-|---|---|---|---|---|---|
-| **1. 총괄 아키텍트**<br>(`Team Lead`) | 최상위 추상화, 아키텍처·공유 계약 설계, 사용자 소통, 최종 결정 | **High ~ Max**<br>(핵심 설계 시 Extended Thinking 최대, 단순 조율 시 Low) | **Claude Opus 4.x**<br>(또는 메인 **Sonnet 4.x + High Thinking**) | **Orchestrator (Neon)**<br>(`gemini-pro-orchestrator-neon`, `inherit`) | **직접 대량 코딩이나 긴 테스트 로그 읽기를 하지 않음.** `Concrete Spec` 작성 ➔ 서브에이전트 지시 ➔ 검수 보고 수렴 ➔ 최종 통합만 수행하여 메인 쿼터를 아낌. |
-| **2. 격리 구현 워커 A·B**<br>(`Impl Worker`) | 정확한 코드 편집, 단위 테스트 실행, 빠른 반복 수정 | **Medium ~ High**<br>(스펙이 이미 확정되어 있으므로 과도한 철학적 추론 불필요) | **Claude Sonnet 4.x** 서브에이전트<br>(독립 `git worktree` 할당) | **Gemini 4 Hydrogen / Neon (High)** 서브에이전트<br>(독립 `git worktree` 할당) | 총괄이 내려준 `Concrete Spec`의 파일·줄번호·문자열 지시를 그대로 코드로 옮기고 지정된 `pytest`와 `check_doc_sync.py`를 통과시켜 커밋 SHA만 보고함. |
-| **3. 독립 코드·계약 감사관**<br>(`chief-reviewer`) | 깐깐한 규칙 대조, 엣지 케이스·회귀 결함 적발 (작성자와 분리된 컨텍스트) | **High / Extended Thinking**<br>(비판적·적대적 검토를 위해 높은 추론 예산 부여) | **Claude Sonnet 4.x (High Thinking)** 또는 **Opus** (별도 읽기 전용 서브에이전트) | **Gemini 4 Hydrogen / Neon (XHigh)** (`chief-reviewer`, 읽기 전용 맥락) | 구현 워커의 완료 주장을 배제하고, 오직 `git diff <base>..<head>`와 `DESIGN.md`·`AGENTS.md`·`Spec`만 대조하여 위반 사항을 적발함. |
-| **4. 실무 CAE 시각·UX 심사관**<br>(`cae-user-expert`) | 멀티모달(Vision) 픽셀 판독, 상용 CAE 도메인 감각 | **Medium ~ High + Vision 필수** | **Claude Sonnet 4.x (Vision)** 별도 서브에이전트 | **Gemini 4 Neon / Hydrogen (High, Vision)** (`cae-user-expert`) | 실제 실행 후 캡처된 모든 창·모든 하위 탭의 PNG 이미지를 직접 눈으로 열어 콤보박스 잘림, 폰트 깨짐(`□`), 뷰포트 비율(70%), 면책 문구 잔존 여부를 감수함. |
-| **5. 탐색·로그·스크립트 보조**<br>(`Research / Aux`) | 빠른 파일 검색, 대량 로그 요약, 단순 반복 실행 | **Low / Fast**<br>(추론 최소화, 속도·비용 최우선) | **Claude Haiku 4.x** 서브에이전트 | **Gemini Flash / Flash-Lite** 서브에이전트 | 수만 줄의 CI 실패 로그에서 에러 트레이스백만 발췌하거나, 저장소 내 특정 심볼/문자열 위치를 빠르게 전수 조사해 총괄에게 10줄 이내로 요약 보고함. |
+| 역할 (Role) | 요구 지능 특성 | 추론 강도 (Reasoning Effort) | **Gemini 4 배정 모델 (`swarm` PIN / 오케스트레이터)** | 핵심 임무 및 토큰 절약 규칙 |
+|---|---|---|---|---|
+| **1. 총괄 아키텍트**<br>(`Team Lead`) | 최상위 추상화, 아키텍처·공유 계약 설계, UX/문구 확정, 사용자 소통, 최종 결정 | **High ~ Max**<br>(Plan Mode에서 극대화, 실행 조율 시 효율화) | **`Orchestrator (Carbon)`** (`gemini-pro-orchestrator`) 또는 **`Orchestrator (Neon)`** (`gemini-pro-orchestrator-neon`) | **직접 대량 코딩이나 긴 테스트 로그 읽기를 하지 않음.** `Concrete Spec`과 정확한 UI 문구를 확정 ➔ 워커 지시 ➔ 검수 보고 수렴 ➔ 최종 통합만 수행 (**Argon 제외**). |
+| **2. 독립 코드 감사관 & UX 설계**<br>(`chief-reviewer`) | 깐깐한 규칙 대조, 엣지 케이스·회귀 결함 적발, 상용 CAE 설계 깊이 확보 | **XHigh**<br>(비판적·적대적 검토를 위해 최고 추론 예산 부여) | **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`) | 구현 워커의 완료 주장을 배제하고 `git diff <base>..<head>`, `DESIGN.md`, `AGENTS.md`, **장난감 모델 사용 여부**, UI 문구/중복 위젯을 적대적으로 감사함. |
+| **3. 실무 CAE 시각·UX 심사관**<br>(`cae-user-expert` / `domain-ux-reviewer`) | 멀티모달(Vision) 픽셀 판독, 상용 CAE 다중 어셈블리 감각 | **High + Vision 필수** | **`Gemini 4 Neon (High)`** (`gemini-4-neon-high`) | 다중 파트 어셈블리 실제 실행 후 캡처된 모든 창·모든 하위 탭의 `1440×900` PNG를 직접 열어 파서 용어, 중복 표, 뷰포트 비율(70%), 콤보박스 잘림, 글리프 깨짐(`□`)을 감수함. |
+| **4. 격리 구현 워커 A·B**<br>(`Impl Worker`: GUI · Workbench · Prep) | 정확한 코드 편집, UI 구현, 단위 테스트 실행, 빠른 반복 수정 | **Medium ~ High** | **`Gemini 4 Carbon (High / Medium)`** (`gemini-4-carbon-high`, `gemini-4-carbon-medium`) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 총괄이 확정한 `Concrete Spec`의 파일·줄번호·한국어 UI 문자열 지시를 정확히 코드로 옮기고 커밋함. |
+| **5. 수식·솔버·메셔 워커 및 수학 검증**<br>(`Math / Solver / Mesher`) | 구성방정식, 덱 생성·판독기, 메셔 알고리즘, MDO 수치 폐루프 | **High ~ XHigh** | **`Gemini 4 Hydrogen (XHigh / High)`** (`gemini-4-hydrogen-xhigh`, `gemini-4-hydrogen-high`) | 다중 파트 솔버 덱(CalculiX·OpenCourant), 재료 동정 수식(Prony·Ogden·LAW33), 메셔(`D24~D30`) 구현 및 독립 수치 검산을 전담함. |
+| **6. 탐색·로그·실행 보조**<br>(`Research / Aux`) | 빠른 파일 검색, 대량 CI/pytest 로그 요약, 정적 점검 | **Low ~ Medium** | **`Gemini 4 Hydrogen (Low / Medium)`** (`gemini-4-hydrogen-low`, `gemini-4-hydrogen-medium`) | 수만 줄의 로그에서 에러 트레이스백만 발췌하거나 심볼·호출부 위치를 빠르게 조사해 총괄에게 10줄 이내로 요약 보고함 (**`Gemini 3.8 Flash` 대체**). |
 
-### 3.2 보편적 지휘 흐름 (Claude 단독 및 모든 멀티에이전트 공통)
+> [!NOTE]
+> **`swarm` vs `invoke_subagent` 호출 규칙**: 모델 ID(`gemini-4-neon-xhigh`, `gemini-4-carbon-high`, `gemini-4-hydrogen-high` 등)를 정확히 핀하려면 **`swarm(action="add", model=...)`** 을 우선 사용합니다. `invoke_subagent` 슬롯을 쓸 때는 `"inherit"` 또는 `"pro"`만 사용하며, **`"flash"`(`Gemini 3.8 Flash`) 및 `Argon` 모델군은 사용하지 않습니다.**
+
+### 3.2 보편적 지휘 흐름 (`Orchestrator Carbon/Neon × Neon · Carbon · Hydrogen`)
 
 ```mermaid
 sequenceDiagram
     participant User as 사용자
-    participant Lead as 1. 총괄 (Opus / Neon)
-    participant Aux as 5. 탐색 보조 (Haiku / Flash)
-    participant Worker as 2. 구현 워커 (Sonnet / Pro @ Worktree)
-    participant CodeQA as 3. 코드 감사관 (Sonnet-High / Pro)
-    participant VisualQA as 4. 시각 UX 심사관 (Sonnet-Vision / Pro)
+    participant Lead as 1. 총괄 (Orchestrator Carbon / Neon)
+    participant Aux as 6. 탐색 보조 (Hydrogen Low/Medium)
+    participant Worker as 4~5. 구현 워커 (Carbon High / Hydrogen High @ Worktree)
+    participant CodeQA as 2. 수석 감사관 (Neon XHigh)
+    participant VisualQA as 3. 시각 UX 심사관 (Neon High Vision)
 
     User->>Lead: 요구사항 또는 점검 지시
     Lead->>Aux: 관련 파일·기존 테스트·줄번호 빠르게 탐색 지시
     Aux-->>Lead: 핵심 파일·줄번호·기존 계약 요약 보고 (총괄 컨텍스트 절약)
-    Lead->>Lead: 7대 GUI 법칙 & 상용 CAE 기준으로 Concrete Spec 작성
+    Lead->>Lead: 8대 GUI 법칙 & 다중 파트 어셈블리 기준으로 Concrete Spec 작성
     Lead->>Worker: Concrete Spec 하달 (독립 git worktree에서 실행)
     Worker-->>Lead: 구현 완료 커밋 SHA 및 테스트 요약 보고
-    par 독립 코드 감사 & 독립 시각 UX 감사 (작성자와 완전히 분리된 새 서브에이전트)
-        Lead->>CodeQA: 대상 커밋 SHA & git diff 감사 지시
-        Lead->>VisualQA: 전 화면·전 하위 탭 캡처 PNG 시각 감수 지시
+    par 독립 코드 감사 & 독립 시각 UX 감사 (작성자와 완전히 분리된 새 워커)
+        Lead->>CodeQA: 대상 커밋 SHA & git diff · 장난감 모델 여부 감사 지시
+        Lead->>VisualQA: 다중 파트 어셈블리 전 화면·전 하위 탭 PNG 시각 감수 지시
     end
     CodeQA-->>Lead: 계약·아키텍처 검수 판정 (PASS / CRITIQUE)
     VisualQA-->>Lead: 상용 CAE 시각·동선 판정 (PASS / CRITIQUE)
     opt 비판(Critique)이 1건이라도 존재할 때
-        Lead->>Worker: 후속 수정 Spec 하달 (동일 워커 세션 재개)
+        Lead->>Worker: 후속 수정 Spec 하달 (동일 워커 재개)
         Worker-->>Lead: 수정 커밋 SHA 제출
         Lead->>VisualQA: 재캡처 화면 제출 및 원 비판자의 명시적 APPROVED 회수
     end
     Lead->>Lead: PR 생성 ➔ CI 통과 ➔ main 병합 ➔ 클린 클론 검증 ➔ 패키징(setup.exe)
-    Lead->>User: 전/후 화면 비교 및 실증 근거 보고
+    Lead->>User: 전/후 화면 비교 및 다중 어셈블리 실증 근거 보고
 ```
 
 ### 3.3 구현 워커를 통제하는 'Concrete Spec' 작성 표준
-총괄 에이전트가 구현 워커(Claude Sonnet 서브에이전트 등)에게 일을 시킬 때는 **절대 디자인 재량이나 범위 판단을 워커에게 맡기지 않습니다.** 반드시 아래 5가지를 확정한 명세서를 내려줍니다:
+총괄 에이전트가 구현 워커(`Gemini 4 Carbon` / `Gemini 4 Hydrogen` 워커 등)에게 일을 시킬 때는 **절대 디자인 재량이나 범위 판단을 워커에게 맡기지 않습니다.** 반드시 아래 5가지를 확정한 명세서를 내려줍니다:
 1. **대상 Worktree 경로, 브랜치명, 기준(Base) SHA** (`git status` 및 기존 미커밋 작업 백업 선행 필수).
 2. **파일별·줄번호별 정밀 수정 지시**:
    - 어느 파일의 어느 클래스/메서드에서 어떤 위젯/라벨을 추가·수정·숨김(`hide()`) 처리할지 **정확한 한국어/영어 문자열**로 명시합니다.
@@ -166,31 +176,29 @@ sequenceDiagram
 
 ### 3.5 [참고 예시] 환경별 오케스트레이션 실제 적용 사례
 
-위 3.1~3.4의 보편적 원리를 각 실행 환경에 맞춰 구현하는 구체적인 예시입니다.
+위 3.1~3.4의 원리를 현재 Antigravity 활성 모델과 선택적 보조 CLI에 적용하는 표준 사례입니다.
 
-#### 예시 A: Claude 단독 체제 (Claude Code / Subagents 활용 시 — 권장 목표 구성)
-- **총괄 (`Team Lead`)**: 메인 세션(Claude Opus 또는 Sonnet + Extended Thinking)이 아키텍처와 `Concrete Spec`만 작성하고, 직접 무거운 파일 수정이나 전체 테스트 실행을 돌리지 않습니다.
-- **탐색 보조 (`Task / Explore subagent` — Haiku)**: 파일 위치 탐색, 기존 테스트 단언 확인, CI 실패 로그 발췌를 수행해 메인 세션의 컨텍스트 창을 깨끗하게 유지합니다.
-- **병렬 구현 (`Task / Worker subagent` — Sonnet)**:
-  - `git worktree add ../wt-wb-feature -b feat/wb-feature origin/main`으로 격리된 워크트리를 만든 뒤, 각 워크트리 전담 Sonnet 서브에이전트에게 `Concrete Spec`을 전달하여 구현·단위 테스트·로컬 커밋을 수행하게 합니다.
-- **독립 교차 검수 (`Task / QA subagent` — Sonnet High Thinking + Vision)**:
-  - 구현 서브에이전트와 **완전히 분리된 새 서브에이전트** 2개를 호출합니다. 하나는 `git diff`와 `DESIGN.md`를 대조하는 코드 감사관으로, 다른 하나는 캡처된 PNG 파일들을 `Read`/`View` 도구로 직접 열어 7대 GUI 법칙을 검사하는 시각 UX 심사관으로 운영합니다.
+#### 예시 A: Antigravity Gemini 4 순정 3원 체제 (기본 표준 — `caelab-team-native`)
+- **총괄 (`Team Lead`)**: **`Orchestrator (Carbon)`** (`gemini-pro-orchestrator`) 또는 **`Orchestrator (Neon)`** (`gemini-pro-orchestrator-neon`). `Concrete Spec`·UI 문구 확정, 공통 계약 소유, 통합·PR 관리 전담.
+- **독립 감사 & 시각 UX (`chief-reviewer` / `cae-user-expert`)**: **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`, 코드/계약 감사) 및 **`Gemini 4 Neon (High)`** (`gemini-4-neon-high`, `1440×900` 전 화면·전 탭 시각 심사).
+- **병렬 구현 워커 (`Impl Worker`)**: **`Gemini 4 Carbon (High / Medium)`** (`gemini-4-carbon-high`/`medium`)이 격리 `git worktree` / `swarm share`에서 GUI·서비스·워크플로 구현, **`Gemini 4 Hydrogen (XHigh / High)`** (`gemini-4-hydrogen-xhigh`/`high`)이 재료 수식·솔버 덱·메셔 구현 및 수치 검산 수행.
+- **경량 탐색·로그 보조 (`Research / Aux`)**: **`Gemini 4 Hydrogen (Low / Medium)`** (`gemini-4-hydrogen-low`/`medium`)이 파일 검색과 CI 로그 발췌를 수행 (`Gemini 3.8 Flash` 대체).
 
-#### 예시 B: Orchestrator Neon과 로컬 Codex CLI 하이브리드 체제
+#### 예시 B: Gemini 4 중심 × 선택적 로컬 Codex CLI 하이브리드 체제 (`caelab-team-hybrid-codex`)
 
-- **총괄**은 Orchestrator Neon(`inherit`)으로 사용자 진입점과 완료 조건을 확정하고 통합을 책임집니다.
-- **구현**은 Gemini 4 Hydrogen 또는 Neon과 로컬 Codex CLI(`gpt-6.2-sol/high`)를 사용합니다. 파일 소유권을 나누고 필요한 경우 격리된 worktree에서 작업합니다. CLI 수정 요청은 실제 대화 ID로 재개합니다.
-- **독립 검수**는 Gemini 4 Hydrogen 또는 Neon의 고추론 구성으로 실제 호출 경로와 화면을 확인합니다.
+- **총괄**은 `Orchestrator (Carbon / Neon)`으로 사용자 진입점·UI 문구·완료 조건을 확정하고 통합을 책임집니다.
+- **GUI 레이아웃·사용자 문구·UX 동선**은 반드시 Gemini(`Carbon` + `Neon`)가 직접 작성·검수하며 **Codex CLI에 위임하지 않습니다.**
+- **순수 백엔드·수치·대용량 테스트 배치**에 한해 사용자가 별도 요청한 경우 로컬 Codex CLI(`gpt-6.2-sol/high` 또는 `gpt-6.2-astra/xhigh`)를 보조 워커로 투입하며, JSONL 대화 ID로 재개(`resume`)합니다.
 
-| 역할 (Role) | 권장 모델 / 실행 수단 | 쿼터 주기 | 핵심 책임 및 운용 규격 |
+| 역할 (Role) | 주력 Gemini 4 핀 모델 (`swarm`) | 선택적 CLI 보조 (명시 요청 시 비-GUI 한정) | 핵심 책임 및 운용 규격 |
 |---|---|---|---|
-| **총괄 아키텍트** (`Team Lead`) | **Orchestrator Neon (`inherit`)**<br>(`gemini-pro-orchestrator-neon`) | **5시간 롤링 리셋** | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서 Neon이 아키텍처와 게이트 판정을 맡고, `exit_plan_mode` 후 실행·워커 관제를 조율. |
-| **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`** (`gemini-4-hydrogen-xhigh`) / **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`) 또는 **`Codex CLI` (`gpt-6.2-astra`, `xhigh`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 고추론 감사·검증 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
-| **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) / **`Gemini 4 Neon (High)`** (`gemini-4-neon-high`) 또는 **`Codex CLI` (`gpt-6.2-sol`, `high`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 및 `gemini-4-neon-high`/`xhigh` 직접 핀). |
-| **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 4 Hydrogen (Low/Medium)`** 또는 **`Gemini 3.8 Flash`** (`gemini-3.8-flash-high`/`low`) | **5시간 롤링 리셋** | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검. |
+| **총괄 아키텍트** (`Team Lead`) | **`Orchestrator (Carbon)`** / **`Orchestrator (Neon)`** | — (직접 책임) | 2-Phase 코디네이터: Plan Mode에서 아키텍처·UI 문구·`Concrete Spec` 확정 및 게이트 판정, 실행 턴에서 워커 관제·통합 (**Argon 제외**). |
+| **수석 감사 · UX 설계** (`chief-reviewer` · `Sub-Lead`) | **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`) / **`Gemini 4 Hydrogen (XHigh)`** (`gemini-4-hydrogen-xhigh`) | `gpt-6.2-astra` (`xhigh`) 보조 가능 | 작성자와 분리된 적대적 코드·계약 감사, 장난감 모델 승인 차단, 재료 구성방정식·수치 검증. |
+| **GUI·서비스 구현 / 시각 UX QA** (`Impl Worker` / `cae-user-expert`) | 구현: **`Gemini 4 Carbon (High / Medium)`**<br>수치·솔버: **`Gemini 4 Hydrogen (High)`**<br>시각 QA: **`Gemini 4 Neon (High, Vision)`** | GUI/문구 위임 **금지**<br>(비-GUI 배치만 `gpt-6.2-sol/high`) | 격리된 `git worktree` / `swarm share`에서 구현·테스트. 시각 심사관은 `1440×900` 전 탭 PNG를 직접 판독해 파서 용어·중복 위젯·뷰포트 비율 검수. |
+| **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 4 Hydrogen (Low / Medium)`** (`gemini-4-hydrogen-low`/`medium`) | — | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검 (**`Gemini 3.8 Flash` 대체**). |
 
 #### 문서 과잉·토론 루프 방지 철칙 (Anti-Paperwork Drift Rule)
-- **코드 없는 문서 PR 누적 금지**: 로컬 Codex CLI나 하위 워커에게 구현을 배정할 때, 실제 제품 코드(`caelab/`, `apps/`, `src/`) 변경 없이 수만 줄의 마크다운 명세서, 자체 토론 로그(`*.jsonl`), 검토 영수증(`review-*.md`), 외부 업스트림 원본 소스 덤프를 Git 저장소에 커밋하고 끝내는 행위를 엄격히 금지합니다.
+- **코드 없는 문서 PR 누적 금지**: 하위 구현 워커(Gemini 4 또는 선택적 Codex CLI)에게 작업을 배정할 때, 실제 제품 코드(`caelab/`, `apps/`, `src/`) 변경 없이 수만 줄의 마크다운 명세서, 자체 토론 로그(`*.jsonl`), 검토 영수증(`review-*.md`), 외부 업스트림 원본 소스 덤프를 Git 저장소에 커밋하고 끝내는 행위를 엄격히 금지합니다.
 - 회의 안건·비판·재검토 로그는 `AGENTS.md` 규칙대로 Git 추적 밖(`scratch/` 등)에 유지하고, PR은 반드시 **동작하는 제품 코드 + 단위/회귀 테스트 + 핵심 동기화 문서(`CURRENT_STATE.md`, `README.md`)**로만 제출합니다.
 - `check_handoff.py` 등 정적 검증기가 `CURRENT_STATE.md`/`README.md` 같은 살아있는 문서를 영구 해시로 잠가 후속 코드 PR의 `check_doc_sync.py`를 막지 않도록 유지합니다.
 
@@ -271,24 +279,24 @@ sequenceDiagram
 
 ---
 
-## 5. Claude 전환 시 즉시 사용하는 인계 프롬프트 (Copy & Paste)
+## 5. 새 세션 인계 시 즉시 사용하는 표준 프롬프트 (Copy & Paste)
 
-추후 **Claude를 메인 에이전트로 전환**하시거나 새 세션을 여실 때, 아래 문구만 복사해서 첫 메시지로 주시면 Claude가 즉시 이 문서를 로드하여 동일한 방식으로 작업을 수행합니다:
+새 세션을 여실 때 아래 문구만 복사해서 첫 메시지로 주시면 총괄 에이전트가 즉시 이 문서를 로드하여 **Gemini 4 (`Neon · Carbon · Hydrogen`) 3원 체제**로 동일한 방식으로 작업을 수행합니다:
 
 ```text
 너는 지금부터 CAE Lab 프로젝트(`caelab-workbench` 및 `caelab-prep`)의 개발 총괄(Lead Architect)이다.
 작업을 시작하기 전에 반드시 대상 저장소 루트의 `README.md`, `DESIGN.md`, `ARCHITECTURE.md`, `CURRENT_STATE.md`, `AGENTS.md`와 함께
 `docs/GEMINI_LEAD_METHODOLOGY.md` (Gemini 개발 총괄 작업 방식 표준서)를 처음부터 끝까지 정독해라.
 
-작업할 때는 `docs/GEMINI_LEAD_METHODOLOGY.md`의 3장(모델 등급과 추론 강도를 조절하는 팀 오케스트레이션 원리)에 따라:
-- 너(메인 세션)는 아키텍처와 파일·줄번호·문자열까지 확정한 Concrete Spec 작성 및 최종 결정에 집중하고,
-- 단순 파일 탐색/로그 요약은 경량 모델(Haiku 등) 서브에이전트에게,
-- 격리된 git worktree 구현은 구현 전담(Sonnet 등) 서브에이전트에게,
-- 코드 감사(chief-reviewer)와 실제 캡처 PNG 시각 UX 감사(cae-user-expert)는 작성자와 분리된 고추론·Vision 서브에이전트에게 배정하여 운영해라.
+작업할 때는 `docs/GEMINI_LEAD_METHODOLOGY.md`의 3장(Gemini 4 Neon · Carbon · Hydrogen 3원 팀 오케스트레이션 원리)에 따라:
+- 너(메인 세션 — Orchestrator Carbon 또는 Neon)는 아키텍처와 파일·줄번호·한국어 UI 문자열까지 확정한 Concrete Spec 작성 및 최종 결정에 집중하고,
+- 단순 파일 탐색/로그 요약은 경량 모델(Gemini 4 Hydrogen Low/Medium)에게,
+- 격리된 git worktree 구현은 GUI/서비스는 Gemini 4 Carbon (High/Medium), 수식·솔버·메셔는 Gemini 4 Hydrogen (High/XHigh)에게,
+- 코드 감사(chief-reviewer)는 Gemini 4 Neon (XHigh), 실제 캡처 PNG 시각 UX 감사(cae-user-expert)는 Gemini 4 Neon (High, Vision)에게 배정하여 운영해라 (`Argon`과 `Gemini 3.8 Flash` 제외, GUI·문구 Codex 위임 금지).
 
 과거 에이전트들처럼:
-1) 사용자가 든 예시 단어 1개만 임기응변으로 고치거나,
-2) 증명/면책 문구("공학 검증 미실시", "원 좌표 계산 안 함", "값은 여기서 고치지 않습니다" 등)를 화면에 넣거나,
-3) 날것의 내부 식별자(`DISP`, `D1`, `None`, `UUID`, `단위 선언됨` 등)를 노출하거나,
-4) 실제 1440x900 오프스크린/실화면 렌더링 캡처 PNG를 이미지 읽기 도구(Read/View)로 직접 열어 모든 하위 탭(로그/결과/선택 프레임 보기)과 3D 뷰포트(70% 이상 폭, VTK `$|U|$` 이스케이프, 콤보박스 잘림 없음)를 눈으로 확인하지 않고 pytest 통과 개수만으로 완료를 선언하는 행위를 절대 금지한다.
+1) 단순 외팔보·4절점 사면체·쉘 요소 몇 개짜리 장난감 픽스처(Toy Fixture)만으로 검증 완료를 선언하지 말고 반드시 다중 파트·접촉·체결·반력 평형이 포함된 복잡 어셈블리 유즈케이스로 검증하고,
+2) 면책 문구("공학 검증 미실시", "원 좌표 계산 안 함", "값은 여기서 고치지 않습니다" 등)나 백엔드 파서 용어("판독/메시 절점", "DAT 집합 원값", "일부 판독", "원 합계 성분")를 화면에 넣지 말며,
+3) 동일 데이터를 카드+표+텍스트 박스에 3중 중복 출력하거나,
+4) 실제 1440x900 오프스크린/실화면 렌더링 캡처 PNG를 이미지 읽기 도구(read_file)로 직접 열어 모든 하위 탭(로그/결과/3D 뷰어)을 눈으로 확인하지 않고 pytest 통과 개수만으로 완료를 선언하는 행위를 절대 금지한다.
 ```
