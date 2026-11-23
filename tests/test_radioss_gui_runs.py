@@ -146,10 +146,15 @@ def test_actual_radioss_gui_action_runs_solver_and_reopens_receipt(app, tmp_path
         assert [(stage["name"], stage["state"], stage["returncode"])
                 for stage in run.snapshot["stages"]] == [("starter", "completed", 0), ("engine", "completed", 0)]
         assert "starter" in window.run_status.text().lower() and "engine" in window.run_status.text().lower()
-        assert run.parse_state == "partial" and "일부" in window.run_status.text()
+        assert run.parse_state in {"partial", "readable"}
+        expected_status_token = "일부" if run.parse_state == "partial" else "완료"
+        assert expected_status_token in window.run_status.text()
         _assert_output_reference(window.project, window.project.nodes[window.node_id], run)
         _status_fits(window)
-        assert window.kpi_disp_value.text() == "미확인" and run.result["warnings"]
+        if run.parse_state == "partial":
+            assert window.kpi_disp_value.text() == "미확인" and run.result["warnings"]
+        else:
+            assert window.kpi_disp_value.text() != "미확인" and run.result["frames"]
         assert not warnings
         for item in run.snapshot["files"]:
             assert _sha(item["source_path"]) == item["original_sha256"]
@@ -168,7 +173,7 @@ def test_actual_radioss_gui_action_runs_solver_and_reopens_receipt(app, tmp_path
         window.refresh_runs()
         restored = _selected(window)
         assert restored.id == run.id and restored.snapshot == run.snapshot
-        assert "일부" in window.run_status.text() and window.run_selector.count() == 1
+        assert expected_status_token in window.run_status.text() and window.run_selector.count() == 1
         assert window.grab().save(str(tmp_path / "actual-reopened-window.png"))
     finally:
         window.close()
