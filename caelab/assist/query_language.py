@@ -1865,20 +1865,19 @@ def _last_evidence_child(sequence, parent_index):
     ), None)
 
 
-def _flat_review_children(sequence, final_index, *, target_path, all_candidate_ids):
+def _flat_review_children(sequence, final_index, *, all_candidate_ids):
     final = sequence[final_index]
-    final_at_target = final.field_path == target_path
-    prior_reset = final_at_target and final.resets_prior
-    parent_has_checks = final_at_target and bool(final.evidence[1])
+    final_is_owner = not final.field_path
+    prior_reset = final_is_owner and final.resets_prior
+    parent_has_checks = final_is_owner and bool(final.evidence[1])
     saw_checked_review = False
-    replaced_quotes = final_at_target and final.replaces_quotes
-    replaced_checks = final_at_target and final.replaces_checks
-    replaced_candidates = final_at_target and final.replaces_candidates
-    first_index = final_index - 1 if final_at_target else final_index
+    replaced_quotes = final_is_owner and final.replaces_quotes
+    replaced_checks = final_is_owner and final.replaces_checks
+    replaced_candidates = final_is_owner and final.replaces_candidates
+    first_index = final_index - 1 if final_is_owner else final_index
     for index in range(first_index, -1, -1):
         child = sequence[index]
-        if (child.replayed_child or len(child.field_path) <= len(target_path)
-                or child.field_path[:len(target_path)] != target_path):
+        if child.replayed_child or not child.field_path:
             continue
         is_selection = child.phase == "selection"
         if prior_reset and not is_selection:
@@ -1976,22 +1975,22 @@ def _advance_review_replay(sequence, snapshot, cursor, *, has_structure, prior_o
             not has_structure and not omitted_inner_assessment and not snapshot.in_history and snapshot.phase == "review"
         )
         drops_child_restriction = drops_child_id = False
-        if may_summarize and not snapshot.field_path and final_index is not None and snapshot.evidence is not None:
-            children = tuple(_flat_review_children(
-                sequence, final_index, target_path=snapshot.field_path, all_candidate_ids=all_candidate_ids,
-            ))
+        if may_summarize and final_index is not None and snapshot.evidence is not None:
+            # A summary can omit evidence under its wrapper and in other branches of its owner.
+            children = tuple(_flat_review_children(sequence, final_index, all_candidate_ids=all_candidate_ids))
             drops_child_restriction = not _flat_review_preserves_children(children, snapshot.evidence)
             drops_child_id = any(
                 child.phase == "review" and child.child_event_ids and child.child_event_ids != snapshot.owner_ids
+                and child.child_event_ids != snapshot.child_event_ids
                 and (quotes is not None or checks or candidates is not None or selected is not None)
                 for child, (quotes, checks, candidates, selected) in children
             )
-            if (children and not drops_child_restriction and not drops_child_id
+            if (not snapshot.field_path and children and not drops_child_restriction and not drops_child_id
                     and snapshot.owner_ids == prior_owner_ids
                     and snapshot.evidence == _merge_flat_review_evidence(final, children)):
                 return 1, False, True
         has_parent_summary = final is sequence[-1] and not final.field_path and final.phase == "review"
-        if may_summarize and has_parent_summary:
+        if may_summarize and has_parent_summary and not drops_child_restriction and not drops_child_id:
             child_entry = _last_evidence_child(sequence, final_index)
             if child_entry is not None:
                 child_idx, child = child_entry
@@ -2193,9 +2192,20 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     interim_response_scopes = []
     owners_with_structure = set()
     owner_identities = {}
+    decision_record_ids = set()
+    decision_report_owners = {}
     for record, phase, _, _, _, report_histories, _, event_ids, _, _, execution_search_scope in _trace_records(
         trace, root=True, deduplicate=False,
     ):
+        if _history_stage(record) in _DECISION_STAGES:
+            decision_record_ids.add(id(record))
+        for field in _DECISION_STAGES:
+            decision_report = record.get(field)
+            if isinstance(decision_report, Mapping) and (
+                _history_stage(decision_report) is None or _history_stage(decision_report) in _DECISION_STAGES
+            ):
+                decision_record_ids.add(id(decision_report))
+                decision_report_owners[id(decision_report)] = id(record)
         if (phase == "review" or _history_stage(record) == "retrieval") and any(
             owner_id == id(record) for _, owner_id, _ in event_ids
         ):
@@ -2338,6 +2348,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
     has_recorded_quotes = False
     review_quotes = set()
     review_quote_sources: set[int] = set()
+    review_decision_scopes: set[int] = set()
     review_quotes_constrained = False
     has_review_quotes = False
     review_superseded_quotes = False
@@ -2371,9 +2382,12 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                 or (selected and not cited_ids <= selected)):
             raise ValueError("Retrieval assessment contradicts trace selection or review")
         non_history_ancestors = ancestors - history_ancestors
+        decision_scopes = (non_history_ancestors | {record_id}) & decision_record_ids
         summarized_containers = (report_of | non_history_ancestors) & history_review_containers
-        encloses_quotes = record_id in review_quotes_ancestors or bool(
-            report_of & review_quotes_ancestors & history_review_containers
+        encloses_quotes = (
+            record_id in review_quotes_ancestors
+            or bool(report_of & review_quotes_ancestors & history_review_containers)
+            or bool(non_history_ancestors & review_decision_scopes)
         )
         encloses_checks = record_id in review_checks_ancestors or bool(
             report_of & review_checks_ancestors & history_review_containers
@@ -2400,8 +2414,21 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             not altered_replay and bool(review_candidate_sources)
             and review_candidate_sources <= interim_candidates_by_response.get(record_id, frozenset())
         )
-        constrains_candidates = encloses_candidates or bool(summarized_containers & review_candidate_ancestors) or (
-            not replaces_interim_candidates and bool(non_history_ancestors & review_candidate_ancestors)
+        # Candidate IDs that exactly describe a superseded check can be replaced
+        # with that check. Independent candidate limits still bind the response.
+        replaces_checked_candidates = (
+            replaces_interim_candidates and bool(live_checks) and record_ids is not None
+            and all(
+                evidence_by_record[source][4]
+                and evidence_by_record[source][0] == set().union(*(
+                    check_ids for _, _, check_ids, _ in evidence_by_record[source][4]
+                ))
+                for source in review_candidate_sources
+            )
+        )
+        constrains_candidates = not replaces_checked_candidates and (
+            encloses_candidates or bool(summarized_containers & review_candidate_ancestors)
+            or (not replaces_interim_candidates and bool(non_history_ancestors & review_candidate_ancestors))
         )
         encloses_review = encloses_quotes or encloses_checks or encloses_candidates
         effective_phase = (
@@ -2585,6 +2612,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
             review_superseded_quotes = False
             review_quotes = set()
             review_quote_sources.clear()
+            review_decision_scopes.clear()
             review_quotes_constrained = False
             review_quotes_ancestors = frozenset()
             review_checks = []
@@ -2641,6 +2669,7 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                         else:
                             review_quotes = selection_quotes
                             review_quote_sources = quote_sources
+                            review_decision_scopes.clear()
                             review_quotes_ancestors = ancestors
                         review_quotes_constrained = True
                     elif constrains_quotes:
@@ -2651,13 +2680,22 @@ def _strict_assessment(payload, ref, root, identity, requirements, texts, proven
                     else:
                         review_quotes = record_quotes
                         review_quote_sources = {record_id}
+                        review_decision_scopes.clear()
                         review_quotes_ancestors = ancestors
                         replaces_quotes = True
                     has_review_quotes = True
+                    if live_has_quotes and decision_scopes:
+                        # Child reports bind the decision before the parent is visited.
+                        review_decision_scopes.update(decision_scopes)
+                        review_decision_scopes.update(
+                            decision_report_owners[scope] for scope in decision_scopes if scope in decision_report_owners
+                        )
+                        review_quotes_constrained = True
                 elif not (encloses_quotes or nests_reviewed_quotes):
                     has_review_quotes = False
                     review_quotes = set()
                     review_quote_sources.clear()
+                    review_decision_scopes.clear()
                     review_quotes_constrained = False
                     review_quotes_ancestors = frozenset()
                     replaces_quotes = True

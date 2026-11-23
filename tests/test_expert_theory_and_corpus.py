@@ -2602,6 +2602,12 @@ def test_d09_summary_can_narrow_completed_checks(
     "flattened-search-bound-reset-omit", "flattened-search-bound-reset-retain",
     "completion-owned-final-response", "checked-interim-result", "checked-interim-output",
     "flattened-response-with-sibling-interim",
+    "decision-own-sibling-result-response", "decision-own-sibling-output-response",
+    "decision-own-sibling-result-output", "decision-own-sibling-nested-result",
+    "decision-own-sibling-with-history", "decision-own-sibling-nested-completion",
+    "response-replay-drops-selection", "response-replay-drops-result", "response-replay-drops-output",
+    "response-replay-drops-independent-assessment", "response-replay-drops-decision",
+    "response-replay-drops-nested-result", "response-replay-drops-nested-decision",
 ])
 def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, response_format, history_field, layout):
     assess, first = assessed_retrieval
@@ -2634,6 +2640,61 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
     review_a = {"stage": "assessment", **evidence(first)}
     review_b = {"stage": "assessment", **evidence(second)}
     selection = {"stage": "candidate_selection", "candidate_ids": ids}
+    if layout.startswith("decision-own-sibling-"):
+        variant = layout.removeprefix("decision-own-sibling-")
+        restriction = {"citations": review_a["citations"]}
+        field = "output" if variant == "output-response" else "result"
+        decision = {"stage": "decision", field: restriction}
+        if variant == "nested-result":
+            decision[field] = {"output": restriction}
+        elif variant == "with-history":
+            decision[history_field] = [prepare, done]
+        wrapper[history_field] = [prepare, decision, done]
+        final_field = "output" if variant == "result-output" else "response"
+        for candidate in (first, second):
+            final = evidence(candidate)
+            if variant == "nested-completion":
+                final = {**done, history_field: [prepare, {"stage": "assessment", "citations": review_b["citations"]},
+                                                 done], "response": final}
+            decision[final_field] = final
+            if candidate is first:
+                assert_only(first, second)
+            else:
+                with pytest.raises(ValueError, match="trace selection or review"):
+                    assess(second, companion=first, **options)
+        return
+
+    if layout.startswith("response-replay-drops-"):
+        variant = layout.removeprefix("response-replay-drops-")
+        final = {**evidence(first), "candidate_ids": ids}
+        if variant.endswith("decision"):
+            quotes = review_a["citations"] + review_b["citations"]
+            final = {"citations": quotes, "checks": [{**review_a["checks"][0], "candidate_ids": ids,
+                                                     "quoted_spans": quotes}]}
+        shared = {**done, "event_id": "rc1"}
+        completion = {**shared, history_field: [prepare, done], "response": final}
+        if variant == "selection":
+            completion[history_field].insert(1, {**selection, "candidate_ids": ids[:1]})
+        elif variant in {"result", "output"}:
+            completion[variant] = {"candidate_ids": ids[:1]}
+        elif variant == "independent-assessment":
+            completion["assessment"] = {"event_id": "indep-a", "candidate_ids": ids[:1]}
+        elif variant == "decision":
+            completion["decision"] = {"citations": review_a["citations"]}
+        else:
+            field = variant.removeprefix("nested-")
+            restriction = {"candidate_ids": ids[:1]} if field == "result" else {"citations": review_a["citations"]}
+            completion["response"] = {field: restriction, "response": final}
+        wrapper[history_field] = [prepare, completion, done]
+        assert assess(first, companion=second, **options).status == "supported"
+        wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
+        wrapper["output"] = {history_field: [completion]}
+        assert_only(first, second)
+        wrapper["output"] = {history_field: [{**shared, "response": final}]}
+        with pytest.raises(ValueError, match="trace selection or review"):
+            assess(first, companion=second, **options)
+        return
+
     if layout in {"completion-owned-final-response", "checked-interim-result", "checked-interim-output",
                   "flattened-response-with-sibling-interim"}:
         interim = {**evidence(first), "candidate_ids": ids[:1]}
@@ -2655,8 +2716,9 @@ def test_d09_complete_replay_evidence_and_fresh_search(assessed_retrieval, respo
                 assess(second, companion=first, **options)
         elif layout == "flattened-response-with-sibling-interim":
             wrapper["result"] = {history_field: [search_2, select_2, review_a, done]}
-            wrapper["output"] = {history_field: [{**done, "event_id": "rc1", **final}]}
-            assert_only(first, second)
+            for summary in ({**final}, {"response": final}):
+                wrapper["output"] = {history_field: [{**done, "event_id": "rc1", **summary}]}
+                assert_only(first, second)
         return
 
     if layout == "short-selection-history":
