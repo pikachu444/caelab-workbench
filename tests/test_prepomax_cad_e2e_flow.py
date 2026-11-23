@@ -312,7 +312,7 @@ def _verify_precise_calculix_results(manager, store, run):
     raw = snapshot_path.read_bytes()
     try:
         snapshot_path.write_bytes(raw + b" ")
-        with pytest.raises(ResultError, match="immutable input snapshot changed"):
+        with pytest.raises(ResultError, match="immutable (input snapshot|source run identity has) changed"):
             read_result(store, refs[0])
     finally:
         snapshot_path.write_bytes(raw)

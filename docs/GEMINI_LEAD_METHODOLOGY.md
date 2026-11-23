@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **문서 목적 및 적용 대상**
-> 이 문서는 **Gemini (Antigravity / Gemini 4 Argon)** 개발 총괄 에이전트가 사용자의 의도를 해석하고, 상용 엔지니어링 소프트웨어를 설계·구현·시각 검증·배포하는 **전 과정의 사고방식과 팀 오케스트레이션 원리를 정형화한 표준 매뉴얼**입니다.
+> 이 문서는 **Gemini (Antigravity / Orchestrator (Neon) × Hydrogen & Neon)** 개발 총괄 에이전트가 사용자의 의도를 해석하고, 상용 엔지니어링 소프트웨어를 설계·구현·시각 검증·배포하는 **전 과정의 사고방식과 팀 오케스트레이션 원리를 정형화한 표준 매뉴얼**입니다.
 >
 > 특정 벤더나 CLI 도구에 종속되지 않도록 **모델 등급(Tier)과 추론 강도(Reasoning Effort)를 조합한 보편적 팀 운영 원리**를 본문에 정의하고, 현재 환경(Gemini + Codex CLI)에서 실행했던 구성은 **구체적 적용 예시(Reference Example)** 로 수록했습니다. 따라서 **Claude 단독 체제(Opus / Sonnet / Haiku)** 로 전환하거나 다른 에이전트 환경을 쓰더라도 이 원리를 1:1로 매핑해 100% 동일한 품질과 감각으로 동작할 수 있습니다.
 
@@ -106,10 +106,10 @@ flowchart LR
 
 | 역할 (Role) | 요구 지능 특성 | 추론 강도 (Reasoning / Thinking) | **Claude 단독 운영 시 매핑** | **Gemini 단독 운영 시 매핑** | 핵심 임무 및 토큰 절약 규칙 |
 |---|---|---|---|---|---|
-| **1. 총괄 아키텍트**<br>(`Team Lead`) | 최상위 추상화, 아키텍처·공유 계약 설계, 사용자 소통, 최종 결정 | **High ~ Max**<br>(핵심 설계 시 Extended Thinking 최대, 단순 조율 시 Low) | **Claude Opus 4.x**<br>(또는 메인 **Sonnet 4.x + High Thinking**) | **Gemini 4 Argon**<br>(`inherit`) | **직접 대량 코딩이나 긴 테스트 로그 읽기를 하지 않음.** `Concrete Spec` 작성 ➔ 서브에이전트 지시 ➔ 검수 보고 수렴 ➔ 최종 통합만 수행하여 메인 쿼터를 아낌. |
-| **2. 격리 구현 워커 A·B**<br>(`Impl Worker`) | 정확한 코드 편집, 단위 테스트 실행, 빠른 반복 수정 | **Medium ~ High**<br>(스펙이 이미 확정되어 있으므로 과도한 철학적 추론 불필요) | **Claude Sonnet 4.x** 서브에이전트<br>(독립 `git worktree` 할당) | **Gemini Pro** 서브에이전트<br>(독립 `git worktree` 할당) | 총괄이 내려준 `Concrete Spec`의 파일·줄번호·문자열 지시를 그대로 코드로 옮기고 지정된 `pytest`와 `check_doc_sync.py`를 통과시켜 커밋 SHA만 보고함. |
-| **3. 독립 코드·계약 감사관**<br>(`chief-reviewer`) | 깐깐한 규칙 대조, 엣지 케이스·회귀 결함 적발 (작성자와 분리된 컨텍스트) | **High / Extended Thinking**<br>(비판적·적대적 검토를 위해 높은 추론 예산 부여) | **Claude Sonnet 4.x (High Thinking)** 또는 **Opus** (별도 읽기 전용 서브에이전트) | **Gemini Pro / Argon** (`chief-reviewer`, 읽기 전용 맥락) | 구현 워커의 완료 주장을 배제하고, 오직 `git diff <base>..<head>`와 `DESIGN.md`·`AGENTS.md`·`Spec`만 대조하여 위반 사항을 적발함. |
-| **4. 실무 CAE 시각·UX 심사관**<br>(`cae-user-expert`) | 멀티모달(Vision) 픽셀 판독, 상용 CAE 도메인 감각 | **Medium ~ High + Vision 필수** | **Claude Sonnet 4.x (Vision)** 별도 서브에이전트 | **Gemini Pro (Vision)** (`cae-user-expert`) | 실제 실행 후 캡처된 모든 창·모든 하위 탭의 PNG 이미지를 직접 눈으로 열어 콤보박스 잘림, 폰트 깨짐(`□`), 뷰포트 비율(70%), 면책 문구 잔존 여부를 감수함. |
+| **1. 총괄 아키텍트**<br>(`Team Lead`) | 최상위 추상화, 아키텍처·공유 계약 설계, 사용자 소통, 최종 결정 | **High ~ Max**<br>(핵심 설계 시 Extended Thinking 최대, 단순 조율 시 Low) | **Claude Opus 4.x**<br>(또는 메인 **Sonnet 4.x + High Thinking**) | **Orchestrator (Neon)**<br>(`gemini-pro-orchestrator-neon`, `inherit`) | **직접 대량 코딩이나 긴 테스트 로그 읽기를 하지 않음.** `Concrete Spec` 작성 ➔ 서브에이전트 지시 ➔ 검수 보고 수렴 ➔ 최종 통합만 수행하여 메인 쿼터를 아낌. |
+| **2. 격리 구현 워커 A·B**<br>(`Impl Worker`) | 정확한 코드 편집, 단위 테스트 실행, 빠른 반복 수정 | **Medium ~ High**<br>(스펙이 이미 확정되어 있으므로 과도한 철학적 추론 불필요) | **Claude Sonnet 4.x** 서브에이전트<br>(독립 `git worktree` 할당) | **Gemini 4 Hydrogen / Neon (High)** 서브에이전트<br>(독립 `git worktree` 할당) | 총괄이 내려준 `Concrete Spec`의 파일·줄번호·문자열 지시를 그대로 코드로 옮기고 지정된 `pytest`와 `check_doc_sync.py`를 통과시켜 커밋 SHA만 보고함. |
+| **3. 독립 코드·계약 감사관**<br>(`chief-reviewer`) | 깐깐한 규칙 대조, 엣지 케이스·회귀 결함 적발 (작성자와 분리된 컨텍스트) | **High / Extended Thinking**<br>(비판적·적대적 검토를 위해 높은 추론 예산 부여) | **Claude Sonnet 4.x (High Thinking)** 또는 **Opus** (별도 읽기 전용 서브에이전트) | **Gemini 4 Hydrogen / Neon (XHigh)** (`chief-reviewer`, 읽기 전용 맥락) | 구현 워커의 완료 주장을 배제하고, 오직 `git diff <base>..<head>`와 `DESIGN.md`·`AGENTS.md`·`Spec`만 대조하여 위반 사항을 적발함. |
+| **4. 실무 CAE 시각·UX 심사관**<br>(`cae-user-expert`) | 멀티모달(Vision) 픽셀 판독, 상용 CAE 도메인 감각 | **Medium ~ High + Vision 필수** | **Claude Sonnet 4.x (Vision)** 별도 서브에이전트 | **Gemini 4 Neon / Hydrogen (High, Vision)** (`cae-user-expert`) | 실제 실행 후 캡처된 모든 창·모든 하위 탭의 PNG 이미지를 직접 눈으로 열어 콤보박스 잘림, 폰트 깨짐(`□`), 뷰포트 비율(70%), 면책 문구 잔존 여부를 감수함. |
 | **5. 탐색·로그·스크립트 보조**<br>(`Research / Aux`) | 빠른 파일 검색, 대량 로그 요약, 단순 반복 실행 | **Low / Fast**<br>(추론 최소화, 속도·비용 최우선) | **Claude Haiku 4.x** 서브에이전트 | **Gemini Flash / Flash-Lite** 서브에이전트 | 수만 줄의 CI 실패 로그에서 에러 트레이스백만 발췌하거나, 저장소 내 특정 심볼/문자열 위치를 빠르게 전수 조사해 총괄에게 10줄 이내로 요약 보고함. |
 
 ### 3.2 보편적 지휘 흐름 (Claude 단독 및 모든 멀티에이전트 공통)
@@ -117,7 +117,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant User as 사용자
-    participant Lead as 1. 총괄 (Opus / Argon)
+    participant Lead as 1. 총괄 (Opus / Neon)
     participant Aux as 5. 탐색 보조 (Haiku / Flash)
     participant Worker as 2. 구현 워커 (Sonnet / Pro @ Worktree)
     participant CodeQA as 3. 코드 감사관 (Sonnet-High / Pro)
@@ -183,16 +183,16 @@ sequenceDiagram
   - **구현 워커 (`로컬 Codex CLI` — `gpt-6.1-sol`, `reasoning_effort="high"`)**: 두 개의 독립 워크트리(`wb-gui-density`, `prep-core-ui`)에서 백그라운드 명령(`$spec | codex exec -C <wt> -s danger-full-access --json ...`)으로 코드 수정 및 테스트 수행, 비판 수정 시 `codex exec -C <wt> -s danger-full-access resume <THREAD_ID>`로 동일 세션 재개.
   - **독립 검수단 (`Gemini Pro` 서브에이전트 4개)**: `chief-reviewer`(코드 감사)와 `cae-user-expert`(시각 UX 감사)를 모두 `Model: "pro"` 서브에이전트로 띄워 검수하고, `cae-user-expert`가 지적한 `Preview` 수동 체크박스 마찰과 `output_tabs` 캡처 누락을 재수정해 명시적 `APPROVED`를 받은 뒤 `main`에 병합함.
 
-### 3.6 Antigravity 차세대 모델 체계 (`Orchestrator (Argon)` & `Gemini 4 Hydrogen`) 기반 팀 구성 표준
+### 3.6 Antigravity 차세대 모델 체계 (`Orchestrator (Neon)` × `Gemini 4 Hydrogen & Neon`) 기반 팀 구성 표준
 
-Antigravity v2 업데이트로 도입된 **2-Phase Plan-Execute 코디네이터**와 **5시간 단기 롤링 쿼터 기반 고추론 모델군**을 적용하여 주간 Argon 한도 고갈을 원천 차단하는 권장 표준 구성입니다.
+Antigravity v2 업데이트에 맞춰 **Argon(`Orchestrator (Argon)` / `Gemini 4 Argon`)은 활성 팀 구성에서 제외**하고, **5시간 단기 롤링 쿼터 기반의 `Orchestrator (Neon)`·`Gemini 4 Hydrogen`·`Gemini 4 Neon`** 조합으로 운영하는 표준 구성입니다.
 
 | 역할 (Role) | 권장 모델 / 실행 수단 | 쿼터 주기 | 핵심 책임 및 운용 규격 |
 |---|---|---|---|
-| **총괄 아키텍트** (`Team Lead`) | **`Orchestrator (Argon)`**<br>(`gemini-pro-orchestrator-g1-pro`) | **주간 쿼터** (Plan 턴에만 과금) | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서만 Argon이 동작하고, `exit_plan_mode` 후 실제 명령/파일 편집/워커 관제는 경량 실행 모델로 위임하여 **주간 Argon 쿼터 소모를 70~80% 절감**. |
-| **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`** (`gemini-4-hydrogen-xhigh`) 또는 **`Codex CLI` (`gpt-6.2-astra`, `xhigh`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 주간 락에 묶이지 않는 고추론 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
-| **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) 또는 **`Claude Sonnet 5.5` / `Codex CLI` (`gpt-6.2-sol`, `high`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 직접 핀). |
-| **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 3.8 Flash`** (`gemini-3.8-flash-high`/`low`) 또는 **`Claude Haiku`** | **5시간 롤링 리셋** | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검. |
+| **총괄 아키텍트** (`Team Lead`) | **`Orchestrator (Neon)`**<br>(`gemini-pro-orchestrator-neon`) | **5시간 롤링 리셋** | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서 Neon이 아키텍처와 게이트 판정을 맡고, `exit_plan_mode` 후 실행·워커 관제를 조율. (**Argon 제외**) |
+| **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`** (`gemini-4-hydrogen-xhigh`) / **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`) 또는 **`Codex CLI` (`gpt-6.2-astra`, `xhigh`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 고추론 감사·검증 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
+| **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) / **`Gemini 4 Neon (High)`** (`gemini-4-neon-high`) 또는 **`Codex CLI` (`gpt-6.2-sol`, `high`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 및 `gemini-4-neon-high`/`xhigh` 직접 핀). |
+| **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 4 Hydrogen (Low/Medium)`** 또는 **`Gemini 3.8 Flash`** (`gemini-3.8-flash-high`/`low`) | **5시간 롤링 리셋** | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검. |
 
 #### 문서 과잉·토론 루프 방지 철칙 (Anti-Paperwork Drift Rule)
 - **코드 없는 문서 PR 누적 금지**: 로컬 Codex CLI나 하위 워커에게 구현을 배정할 때, 실제 제품 코드(`caelab/`, `apps/`, `src/`) 변경 없이 수만 줄의 마크다운 명세서, 자체 토론 로그(`*.jsonl`), 검토 영수증(`review-*.md`), 외부 업스트림 원본 소스 덤프를 Git 저장소에 커밋하고 끝내는 행위를 엄격히 금지합니다.

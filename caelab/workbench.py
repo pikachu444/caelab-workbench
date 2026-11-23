@@ -7,6 +7,7 @@ project has no solver or LLM side effects.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,19 +19,35 @@ from .solvers import get_converter
 from .validate.checker import Issue, validate_model
 from .native.run_store import NativeRun, RunStore
 from .native.input_snapshot import fingerprint
+from .native.operations import INPUT_SNAPSHOT, sha256_file, with_input_snapshot
 
 if TYPE_CHECKING:
     from .model_execution import ModelRunResult
 
 
 def _source_metadata_changed(item: dict) -> bool:
-    current = fingerprint(item["source_path"])
+    if not isinstance(item, Mapping):
+        return True
+    path = item.get("source_path")
+    if not path:
+        return False
+    current = fingerprint(path)
     if current is None:
         return True
     # WSL remounts can assign a different device number to the same file.
     # Keep full device identity for collection races, but not saved-run freshness.
-    return any(current[key] != item["stat"].get(key) for key in
-               ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino"))
+    saved = item.get("stat")
+    if (isinstance(saved, dict) and {"st_size", "st_mtime_ns"} <= saved.keys()
+            and any(current[key] != saved[key] for key in
+                    ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino") if key in saved)):
+        return True
+    digest = item.get("original_sha256") or item.get("source_sha256") or item.get("sha256")
+    if not digest:
+        return False
+    try:
+        return sha256_file(Path(path)) != digest
+    except OSError:
+        return True
 
 
 class Workbench:
@@ -234,7 +251,11 @@ class Workbench:
             self._run_stores[root] = RunStore(root, expected=project.run_store_expected)
         else:
             self._run_stores[root].expected = project.run_store_expected
-        return self._run_stores[root]
+        store = self._run_stores[root]
+        store.live_stale = lambda record: self._native_stale_reason(
+            project, record["node_id"], record["solver_id"], record.get("input_path"),
+            record.get("units", {}), record.get("unit_source", ""), record["snapshot"])
+        return store
 
     def submit_native(self, project: NativeProject, node_id: str, timeout=3600) -> NativeRun:
         import copy
@@ -273,22 +294,36 @@ class Workbench:
         for index, stored in enumerate(runs):
             owned = self.jobs.native_snapshot(stored.id)
             run = owned if owned and owned.workdir == stored.workdir else stored
-            reference = project.input_file(run.node_id) if run.node_id in project.nodes else None
-            reason = ""
-            if run.node_id in project.nodes and run.solver_id != project.nodes[run.node_id].program_id:
-                reason = "현재 선택한 솔버와 이 실행의 솔버가 다릅니다."
-            elif reference is None or reference.path != run.input_path:
-                reason = "현재 선택 입력이 이 실행의 입력과 다릅니다."
-            elif reference.stale:
-                reason = "상위 변경으로 현재 입력 덱이 오래되었습니다."
-            elif reference.units != run.units or reference.unit_source != run.unit_source:
-                reason = "입력 단위 선언/출처가 변경되었습니다."
-            elif any(_source_metadata_changed(item) for item in
-                     run.snapshot.get("files", []) + run.snapshot.get("prerequisites", [])):
-                reason = "실행 원본 또는 INCLUDE 파일이 변경/누락되었습니다."
+            try:
+                snapshot = with_input_snapshot({"snapshot": run.snapshot}, run.workdir / INPUT_SNAPSHOT)["snapshot"]
+                reason = self._native_stale_reason(project, run.node_id, run.solver_id, run.input_path,
+                                                   run.units, run.unit_source, snapshot)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                reason = f"실행 입력 스냅샷을 읽을 수 없습니다: {exc}"
             run.stale, run.stale_reason = bool(reason), reason
             runs[index] = run
         return runs
+
+    @staticmethod
+    def _native_stale_reason(project, node_id, solver_id, input_path, units, unit_source, snapshot):
+        node = project.nodes.get(node_id)
+        reference = project.input_file(node_id) if node is not None else None
+        if node is not None and solver_id != node.program_id:
+            return "현재 선택한 솔버와 이 실행의 솔버가 다릅니다."
+        if reference is None or reference.path != input_path:
+            return "현재 선택 입력이 이 실행의 입력과 다릅니다."
+        if reference.stale:
+            return "상위 변경으로 현재 입력 덱이 오래되었습니다."
+        if reference.units != units or reference.unit_source != unit_source:
+            return "입력 단위 선언/출처가 변경되었습니다."
+        try:
+            changed = any(_source_metadata_changed(item) for group in ("files", "prerequisites")
+                          for item in snapshot.get(group, ()))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            changed = True
+        if changed:
+            return "실행 원본 또는 INCLUDE 파일이 변경/누락되었습니다."
+        return ""
 
     def _apply_run_selection(self, project, node_id, run):
         node = project.nodes[node_id]
