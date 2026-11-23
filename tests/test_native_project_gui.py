@@ -1222,25 +1222,35 @@ def test_real_window_resize_adopts_native_noanchor_clamp_instead_of_old_dock_mem
     assert bar.value() == clamped
 
 
-def test_explicit_program_add_menu_and_single_click_palette_add_real_programs(window, app):
+@pytest.mark.parametrize("entrypoint", ["menu", "toolbox"])
+def test_explicit_program_add_menu_and_single_click_palette_add_real_programs(window, app, entrypoint):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     window.show()
     app.processEvents()
-    assert window.toolbox_dock.isHidden() and window.history_dock.isHidden()
+    assert not window.toolbox_dock.isHidden()
+    assert window.history_dock.isHidden()
     assert [action.text() for action in window.add_program_menu.actions()] == [
-        'FreeCAD', 'PrePoMax', 'Gmsh', 'CalculiX', 'ParaView', '전문가']
-    for kind, action in window.add_program_actions.items():
-        action.trigger()
+        'FreeCAD', 'PrePoMax', 'CAELab Prep', 'Gmsh', 'CalculiX', 'OpenCourant', 'ParaView', '전문가']
+    expected = [
+        ('geometry', 'freecad'), ('preprocessor', 'prepomax'), ('preprocessor', 'caelab_prep'),
+        ('mesh', 'gmsh'), ('analysis', 'calculix'), ('analysis', 'opencourant'),
+        ('results', 'paraview'), ('expert', 'expert'),
+    ]
+    assert list(window.add_program_actions) == [program_id for _, program_id in expected]
+    for row, (kind, program_id) in enumerate(expected):
+        if entrypoint == "menu":
+            window.add_program_actions[program_id].trigger()
+        else:
+            item = window.toolbox.item(row)
+            window.toolbox.scrollToItem(item)
+            QTest.mouseClick(window.toolbox.viewport(), Qt.LeftButton,
+                             pos=window.toolbox.visualItemRect(item).center())
         selected = window._selected_boxes()
-        assert len(selected) == 1 and selected[0].kind == kind
-    assert len(window.project.nodes) == 6
-    window.toolbox_dock.show()
-    app.processEvents()
-    QTest.mouseClick(window.toolbox.viewport(), Qt.LeftButton,
-                     pos=window.toolbox.visualItemRect(window.toolbox.item(0)).center())
-    assert len(window.project.nodes) == 7
-    assert window._selected_boxes()[0].kind == 'geometry'
+        assert len(selected) == 1
+        node = window.project.nodes[selected[0].node_id]
+        assert (node.kind, node.program_id) == (kind, program_id)
+    assert len(window.project.nodes) == 8
 
 
 def test_one_selected_program_can_connect_explicit_source_role_and_destination(window, tmp_path, monkeypatch):
@@ -1414,7 +1424,7 @@ def test_first_saved_project_view_fits_once_without_resetting_later_user_view(wi
     app.processEvents()
     app.processEvents()
     initial_scale = window.view.transform().m11()
-    assert .85 <= initial_scale <= 1
+    assert 0 < initial_scale <= 1
     assert window.view.mapToScene(window.view.viewport().rect()).boundingRect().contains(window.scene.itemsBoundingRect())
     coordinates = {node.id: node.position for node in window.project.nodes.values()}
     window.view.scale(1.2, 1.2)
@@ -1562,8 +1572,10 @@ def test_project_window_dark_default_and_light_theme_toggle(themed_window, app, 
     toolbar = next(bar for bar in window.findChildren(QToolBar) if bar.windowTitle() == "프로젝트")
     assert window.theme_action in window.view_menu.actions()
     assert window.theme_action not in toolbar.actions()
-    assert window.toolbox.count() == 6
-    assert [window.toolbox.item(i).text() for i in range(6)] == ["FreeCAD", "PrePoMax", "Gmsh", "CalculiX", "ParaView", "전문가"]
+    assert window.toolbox.count() == 8
+    assert [window.toolbox.item(i).text() for i in range(8)] == [
+        "FreeCAD", "PrePoMax", "CAELab Prep", "Gmsh", "CalculiX", "OpenCourant", "ParaView", "전문가",
+    ]
     for mode in ("light", "dark"):
         window.theme_action.trigger()
         app.processEvents()

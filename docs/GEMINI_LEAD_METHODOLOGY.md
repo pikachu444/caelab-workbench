@@ -176,20 +176,15 @@ sequenceDiagram
 - **독립 교차 검수 (`Task / QA subagent` — Sonnet High Thinking + Vision)**:
   - 구현 서브에이전트와 **완전히 분리된 새 서브에이전트** 2개를 호출합니다. 하나는 `git diff`와 `DESIGN.md`를 대조하는 코드 감사관으로, 다른 하나는 캡처된 PNG 파일들을 `Read`/`View` 도구로 직접 열어 7대 GUI 법칙을 검사하는 시각 UX 심사관으로 운영합니다.
 
-#### 예시 B: 하이브리드 체제 (2026-11-09 v0.1.0 출하 당시 Gemini 4 Argon + 로컬 Codex CLI 적용 사례)
-- **적용 배경**: Antigravity 메인 세션(Gemini 4 Argon)의 주간 토큰 한도를 극도로 아끼기 위해 적용했던 실전 사례입니다.
-- **역할 배분**:
-  - **총괄 (`Gemini 4 Argon`)**: `scratch/spec-wb-gui-density.md`, `scratch/spec-prep-core-ui.md` 등 파일·줄번호·문자열까지 지정한 명세서만 작성.
-  - **구현 워커 (`로컬 Codex CLI` — `gpt-6.1-sol`, `reasoning_effort="high"`)**: 두 개의 독립 워크트리(`wb-gui-density`, `prep-core-ui`)에서 백그라운드 명령(`$spec | codex exec -C <wt> -s danger-full-access --json ...`)으로 코드 수정 및 테스트 수행, 비판 수정 시 `codex exec -C <wt> -s danger-full-access resume <THREAD_ID>`로 동일 세션 재개.
-  - **독립 검수단 (`Gemini Pro` 서브에이전트 4개)**: `chief-reviewer`(코드 감사)와 `cae-user-expert`(시각 UX 감사)를 모두 `Model: "pro"` 서브에이전트로 띄워 검수하고, `cae-user-expert`가 지적한 `Preview` 수동 체크박스 마찰과 `output_tabs` 캡처 누락을 재수정해 명시적 `APPROVED`를 받은 뒤 `main`에 병합함.
+#### 예시 B: Orchestrator Neon과 로컬 Codex CLI 하이브리드 체제
 
-### 3.6 Antigravity 차세대 모델 체계 (`Orchestrator (Neon)` × `Gemini 4 Hydrogen & Neon`) 기반 팀 구성 표준
-
-Antigravity v2 업데이트에 맞춰 **Argon(`Orchestrator (Argon)` / `Gemini 4 Argon`)은 활성 팀 구성에서 제외**하고, **5시간 단기 롤링 쿼터 기반의 `Orchestrator (Neon)`·`Gemini 4 Hydrogen`·`Gemini 4 Neon`** 조합으로 운영하는 표준 구성입니다.
+- **총괄**은 Orchestrator Neon(`inherit`)으로 사용자 진입점과 완료 조건을 확정하고 통합을 책임집니다.
+- **구현**은 Gemini 4 Hydrogen 또는 Neon과 로컬 Codex CLI(`gpt-6.2-sol/high`)를 사용합니다. 파일 소유권을 나누고 필요한 경우 격리된 worktree에서 작업합니다. CLI 수정 요청은 실제 대화 ID로 재개합니다.
+- **독립 검수**는 Gemini 4 Hydrogen 또는 Neon의 고추론 구성으로 실제 호출 경로와 화면을 확인합니다.
 
 | 역할 (Role) | 권장 모델 / 실행 수단 | 쿼터 주기 | 핵심 책임 및 운용 규격 |
 |---|---|---|---|
-| **총괄 아키텍트** (`Team Lead`) | **`Orchestrator (Neon)`**<br>(`gemini-pro-orchestrator-neon`) | **5시간 롤링 리셋** | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서 Neon이 아키텍처와 게이트 판정을 맡고, `exit_plan_mode` 후 실행·워커 관제를 조율. (**Argon 제외**) |
+| **총괄 아키텍트** (`Team Lead`) | **Orchestrator Neon (`inherit`)**<br>(`gemini-pro-orchestrator-neon`) | **5시간 롤링 리셋** | 2-Phase 코디네이터: **Plan Mode**(계획 수립, `Concrete Spec` 확정, `[plan review]` 게이트)에서 Neon이 아키텍처와 게이트 판정을 맡고, `exit_plan_mode` 후 실행·워커 관제를 조율. |
 | **서브 리드 / 적대적 코드 QA** (`Sub-Lead / chief-reviewer`) | **`Gemini 4 Hydrogen (XHigh)`** (`gemini-4-hydrogen-xhigh`) / **`Gemini 4 Neon (XHigh)`** (`gemini-4-neon-xhigh`) 또는 **`Codex CLI` (`gpt-6.2-astra`, `xhigh`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 고추론 감사·검증 모델. 수치·재료 구성방정식 검증, `Concrete Spec` 세부 시그니처 확정, 작성자와 분리된 적대적 코드·계약 감사 수행. |
 | **병렬 구현 워커 / 실화면 UX QA** (`Impl Worker / cae-user-expert`) | **`Gemini 4 Hydrogen (High)`** (`gemini-4-hydrogen-high`) / **`Gemini 4 Neon (High)`** (`gemini-4-neon-high`) 또는 **`Codex CLI` (`gpt-6.2-sol`, `high`)** | **5시간 롤링 리셋** (Codex는 별도 한도) | 격리된 `git worktree` (또는 `swarm workspace:"share"`)에서 구현·테스트 수행. 시각 심사관(`cae-user-expert`)은 1440×900 전 탭/도크 캡처 PNG 직접 판독. (`invoke_subagent` 슬롯 사용 시 `inherit`/`pro`, Swarm 사용 시 `gemini-4-hydrogen-high`/`xhigh` 및 `gemini-4-neon-high`/`xhigh` 직접 핀). |
 | **경량 탐색·로그 보조** (`Aux / Explorer`) | **`Gemini 4 Hydrogen (Low/Medium)`** 또는 **`Gemini 3.8 Flash`** (`gemini-3.8-flash-high`/`low`) | **5시간 롤링 리셋** | 파일 검색, CI/pytest 대용량 로그 요약, 정적 점검. |
@@ -199,11 +194,24 @@ Antigravity v2 업데이트에 맞춰 **Argon(`Orchestrator (Argon)` / `Gemini 4
 - 회의 안건·비판·재검토 로그는 `AGENTS.md` 규칙대로 Git 추적 밖(`scratch/` 등)에 유지하고, PR은 반드시 **동작하는 제품 코드 + 단위/회귀 테스트 + 핵심 동기화 문서(`CURRENT_STATE.md`, `README.md`)**로만 제출합니다.
 - `check_handoff.py` 등 정적 검증기가 `CURRENT_STATE.md`/`README.md` 같은 살아있는 문서를 영구 해시로 잠가 후속 코드 PR의 `check_doc_sync.py`를 막지 않도록 유지합니다.
 
+### 3.6 QA 최대 3회 상한(Hard Cap) 및 실제 호출자·진입점 스코프 고정 규칙
+
+- 항목마다 검토 SHA, 실제 사용자 진입점, 생산 코드 호출자와 인수 시나리오를 고정합니다. 각 회차는 해당 시나리오에서 재현한 결함, 수정 확인, 미해결 이유를 기록합니다.
+- 독립 QA는 최초 검토와 재검토를 합쳐 최대 3회입니다. 실제 호출자에서 재현할 수 없는 합성 입력의 반복 퍼징으로 회차를 늘리지 않습니다.
+- 세 번째 검토에서 실제 경로의 결함이 남으면 미완료로 기록하고 게시·병합을 보류합니다. 새 요구로 범위가 달라지면 AGENTS의 아이템 회의에서 인수 조건을 다시 확인합니다.
+
 ---
 
-## 4. 무신뢰(Zero-Trust) 3단계 검증 프로토콜
+## 4. 사용자 진입점부터 시작하는 검증 프로토콜
 
 총괄 방식의 핵심은 **"내 눈으로 실제 렌더링된 픽셀과 실제 실행된 바이너리를 확인하기 전에는 절대 완료라고 말하지 않는다"**는 것입니다.
+
+### Stage 0: 실사용자 진입점과 마스터 로드맵 체크리스트
+
+- [ ] Windows 탐색기에서 `CAELab_Install_And_Run.bat`을 더블클릭해 새 실행 환경을 준비하고 부모 창이 열리는지 확인합니다. 재실행과 손상 환경 복구도 확인합니다.
+- [ ] 부모 창 메뉴와 프로그램 도크로 작업을 시작합니다. CAELab Prep·OpenCourant 추가, 재료 연구실 열기, 외부 프로그램 저장 후 상태 갱신을 확인합니다.
+- [ ] 실제 지원 RAD 입력을 실행합니다. 솔버 결과가 D11 판독, 저장한 프레임, 프로젝트 재열기, 선택 프레임 뷰어까지 이어지는지 확인합니다. 변환 실패 때 보존되는 원본과 표시 상태를 확인합니다.
+- [ ] 기존 `CAELAB_MASTER_ROADMAP.md`에 확인한 범위와 증거를 반영합니다. 로컬 후보, main 반영, 설치·실화면 결과를 구분합니다.
 
 ### Stage 1: 코드·계약·문서 동기화 검증 (`chief-reviewer`)
 - **Windows 인코딩 및 오프스크린 실행 환경변수 표준**:

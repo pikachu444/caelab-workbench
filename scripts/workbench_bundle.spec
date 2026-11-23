@@ -13,8 +13,8 @@ datas = [
     (str(source / "apps/workbench_qt/icons"), "apps/workbench_qt/icons"),
     (str(source / "caelab/solvers/installer/manifest.json"), "caelab/solvers/installer"),
 ]
-# The MDO algorithms record these distributions' versions in saved artifacts.
-for distribution in ("numpy", "scipy", "scikit-learn", "pymoo", "SALib"):
+# Materials and MDO record these distributions' versions.
+for distribution in ("numpy", "scipy", "scikit-learn", "pymoo", "SALib", "pyvisco"):
     datas += copy_metadata(distribution)
 
 analysis = Analysis(
@@ -27,7 +27,11 @@ analysis = Analysis(
         "apps.workbench_qt.native_analysis",
         "apps.workbench_qt.bundle_diagnostics",
         "apps.workbench_qt.expert_window",
+        "apps.workbench_qt.material_study",
         "apps.workbench_qt.mdo_studio.__main__",
+        "pyvisco",
+        "pyvisco.prony",
+        "pyvisco.shift",
         "caelab.native.windows_gate",
         "caelab.process_entry",
         # Explicit importlib targets in mdo/surrogate.py and mdo/sensitivity.py.
@@ -39,6 +43,8 @@ analysis = Analysis(
         "SALib.analyze.sobol",
         "SALib.analyze.morris",
     ],
+    # The adapter checks the original pyvisco source bytes against pinned digests.
+    module_collection_mode={"pyvisco": "pyz+py"},
     hooksconfig={"matplotlib": {"backends": ["QtAgg"]}},
     runtime_hooks=[str(source / "scripts/pyi_runtime_hook.py")],
     # The application uses PySide6. Optional dependency hooks must not collect

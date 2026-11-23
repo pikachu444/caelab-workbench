@@ -6,6 +6,7 @@ import ast
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import replace as replace_spec
+from functools import lru_cache
 import json
 import math
 import os
@@ -137,15 +138,20 @@ _OBSERVABLE_KO = {
 }
 
 
-def load_korean_font(app: QApplication | None = None, point_size: int = 10) -> QFont:
-    """Load Malgun Gothic font when available and configure Matplotlib Korean font rendering."""
-    family = "Malgun Gothic"
+@lru_cache(maxsize=1)
+def _korean_font_family() -> str:
     if _MALGUN_FONT_PATH.is_file():
         font_id = QFontDatabase.addApplicationFont(str(_MALGUN_FONT_PATH))
         if font_id >= 0:
             loaded = QFontDatabase.applicationFontFamilies(font_id)
             if loaded:
-                family = loaded[0]
+                return loaded[0]
+    return "Malgun Gothic"
+
+
+def load_korean_font(app: QApplication | None = None, point_size: int = 10) -> QFont:
+    """Load Malgun Gothic font when available and configure Matplotlib Korean font rendering."""
+    family = _korean_font_family() if QApplication.instance() is not None else "Malgun Gothic"
     font = QFont(family, point_size)
     if app is not None:
         app.setFont(font)
@@ -584,6 +590,7 @@ class MaterialStudyWindow(QMainWindow):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        load_korean_font(QApplication.instance(), 10)
         self._closed = False
         self._close_after = False
         self._generation = 0
@@ -2294,28 +2301,32 @@ class MaterialStudyWindow(QMainWindow):
         )
 
     def on_show_provenance(self) -> None:
-        """Progressive-disclosure dialog showing library/source provenance without cluttering main labels."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("상세 출처 · 라이브러리 검증 정보")
-        dlg.resize(620, 420)
+        dlg.setWindowTitle("재료 연구 출처")
+        dlg.setMinimumWidth(440)
         layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        form.setVerticalSpacing(12)
+        layout.addLayout(form)
         snap = self.service.snapshot()
+        descriptor = self.service._descriptor()
         adapter = self.service._adapter_or_none()
-        cap = adapter.capabilities(self.service._descriptor(), None) if adapter else None
-        info = {
-            "연구 경로": snap.path,
-            "내용 식별": snap.content_revision,
-            "문서 식별": snap.document_revision,
-            "모델": self.service._descriptor().model_id,
-            "어댑터": f"{cap.adapter.id} v{cap.adapter.version}" if cap else "미등록",
-            "솔버 카드 내보내기 지원": bool(cap and cap.supports_export),
-            "열린 문서 적용 지원": bool(cap and cap.supports_apply),
+        cap = adapter.capabilities(descriptor, None) if adapter else None
+        models = {"B-VIS-TRS-1": "B-VIS-TRS-1 (점탄성 2항 Prony + WLF)"}
+        rows = {
+            "연구 폴더명": Path(snap.path).name,
+            "재료 모델": models.get(descriptor.model_id, descriptor.model_id),
+            "계산 엔진": f"{cap.adapter.id} v{cap.adapter.version}" if cap else "미등록",
+            "솔버 카드 내보내기": "지원" if cap and cap.supports_export else "미지원",
+            "열린 문서 적용": "지원" if cap and cap.supports_apply else "미지원",
         }
-        view = QPlainTextEdit()
-        view.setReadOnly(True)
-        view.setPlainText(json.dumps(info, ensure_ascii=False, indent=2))
-        layout.addWidget(view)
+        for label, value in rows.items():
+            text = QLabel(value)
+            text.setTextFormat(Qt.PlainText)
+            text.setWordWrap(True)
+            form.addRow(label, text)
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.button(QDialogButtonBox.StandardButton.Close).setText("닫기")
         btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
         dlg.exec()

@@ -25,7 +25,7 @@ SOURCE = Path(__file__).resolve().parents[1]
 APP_NAME = "CAELabWorkbench"
 DISTRIBUTIONS = (
     "PyInstaller", "pyinstaller-hooks-contrib", "numpy", "filelock", "PySide6",
-    "shiboken6", "vtk", "scipy", "matplotlib", "pypdf", "scikit-learn", "pymoo", "SALib",
+    "shiboken6", "vtk", "scipy", "matplotlib", "pypdf", "scikit-learn", "pymoo", "SALib", "pyvisco",
 )
 
 

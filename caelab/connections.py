@@ -86,7 +86,7 @@ PROGRAMS: tuple[ProgramSpec, ...] = (
     ),
     ProgramSpec(
         "opencourant", "OpenCourant", "solver", "CAELAB_OPENCOURANT",
-        ("starter_linux64_gf",),
+        ("starter_win64.exe", "starter_linux64_gf"),
         "명시적 동해석 솔버 (OpenRadioss의 후계). Radioss 블록 형식과 LS-DYNA 키워드 입력을 읽는다.",
     ),
     ProgramSpec(
@@ -162,6 +162,52 @@ def _registered_path(value: str, registry: dict) -> Path:
     if path.parts[:len(prefix)] != prefix:
         raise ValueError(f"설치 root 접두부와 맞지 않는 레지스트리 상대경로입니다: {value}")
     return Path(registry["_directory"]).joinpath(*path.parts[len(prefix):])
+
+
+def configured_program_paths(path: Path) -> dict[str, str]:
+    registry, error = _registry(path) if path.exists() else ({}, "")
+    if error:
+        raise ValueError(error)
+    configured = {}
+    for spec in PROGRAMS:
+        entry = registry.get("programs", {}).get(spec.id, {})
+        value = registry.get("env", {}).get(spec.env_var, entry.get("path") if isinstance(entry, dict) else None)
+        if isinstance(value, str):
+            configured[spec.id] = value
+    return configured
+
+
+def save_program_paths(path: Path, changes: dict[str, str]) -> None:
+    """Update the edited paths while retaining installer and runtime settings."""
+    from .native.run_store import atomic_json
+
+    registry, error = _registry(path) if path.exists() else ({}, "")
+    if error:
+        raise ValueError(error)
+    registry.pop("_directory", None)
+    registry.setdefault("root", ".")
+    env = registry.setdefault("env", {})
+    programs = registry.setdefault("programs", {})
+    registry.setdefault("runtime_env", {})
+    for spec in PROGRAMS:
+        if spec.id not in changes:
+            continue
+        value = changes[spec.id].strip()
+        previous = programs.get(spec.id, {})
+        entry = dict(previous) if isinstance(previous, dict) else {}
+        if value:
+            executable = Path(value).expanduser()
+            if not executable.is_absolute():
+                executable = path.parent / executable
+            env[spec.env_var] = entry["path"] = str(executable.absolute())
+        else:
+            env.pop(spec.env_var, None)
+            entry.pop("path", None)
+        if entry:
+            programs[spec.id] = entry
+        else:
+            programs.pop(spec.id, None)
+    atomic_json(path, registry)
 
 
 _RUNTIME_PATH_LISTS = {"PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "QT_PLUGIN_PATH"}

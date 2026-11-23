@@ -4,9 +4,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import hashlib
 import importlib.metadata
+import marshal
 import math
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import uuid
@@ -68,6 +70,27 @@ _PRODUCER = ProducerIdentity(id="caelab.prony_trs", version="1.0.0")
 _STRESS_UNITS = ("MPa", "Pa", "kPa", "GPa")
 
 
+def _module_bytes_or_bytecode_sha256(module, file_path: Path | None) -> tuple[str, str]:
+    if file_path is not None and file_path.is_file():
+        try:
+            return hashlib.sha256(file_path.read_bytes()).hexdigest(), str(file_path)
+        except FileNotFoundError:
+            pass
+    name = module.__name__
+    get_code = getattr(getattr(module, "__loader__", None), "get_code", None)
+    try:
+        code = get_code(name) if get_code is not None else None
+    except (ImportError, OSError):
+        code = None
+    return (hashlib.sha256(marshal.dumps(code)).hexdigest() if code is not None else "",
+            f"frozen://{name}")
+
+
+def _module_path(module) -> Path | None:
+    path = getattr(module, "__file__", None)
+    return Path(path).resolve() if path is not None else None
+
+
 def verify_pyvisco_sources() -> dict[str, Any]:
     """Import pyvisco==2.1.3 and verify loaded prony.py and shift.py byte SHA256 digests."""
     try:
@@ -83,10 +106,8 @@ def verify_pyvisco_sources() -> dict[str, Any]:
             "loaded_source_checks": [],
         }
 
-    prony_path = Path(prony.__file__).resolve()
-    shift_path = Path(shift.__file__).resolve()
-    prony_sha = hashlib.sha256(prony_path.read_bytes()).hexdigest()
-    shift_sha = hashlib.sha256(shift_path.read_bytes()).hexdigest()
+    prony_sha, prony_path = _module_bytes_or_bytecode_sha256(prony, _module_path(prony))
+    shift_sha, shift_path = _module_bytes_or_bytecode_sha256(shift, _module_path(shift))
 
     try:
         pkg_version = importlib.metadata.version("pyvisco")
@@ -143,10 +164,11 @@ _MODULE_LOAD_PYVISCO_STATUS = verify_pyvisco_sources()
 
 
 def _adapter_implementation_sha256() -> str:
-    self_bytes = Path(__file__).read_bytes()
+    module = sys.modules[__name__]
+    digest, _ = _module_bytes_or_bytecode_sha256(module, _module_path(module))
     return canonical_sha256(
         {
-            "adapter_file_sha256": hashlib.sha256(self_bytes).hexdigest(),
+            "adapter_file_sha256": digest,
             "pinned_prony_sha256": PYVISCO_PRONY_SHA256,
             "pinned_shift_sha256": PYVISCO_SHIFT_SHA256,
         },

@@ -405,7 +405,7 @@ class NativeAnalysisWindow(QMainWindow):
         dat_layout.addWidget(self.dat_frame_label)
         self.dat_table = self._result_table(["집합 (NSET)", "종류", "절점 수", "원 합계 성분 (1, 2, 3)", "단위"])
         self.dat_table.setMinimumHeight(54)
-        self.dat_table.setMaximumHeight(62)
+        self.dat_table.setMaximumHeight(168)
         dat_layout.addWidget(self.dat_table)
         tables_layout.addWidget(self.dat_container, 0)
         self.result_text = QPlainTextEdit()
@@ -846,10 +846,21 @@ class NativeAnalysisWindow(QMainWindow):
             self.frame_selector.blockSignals(True)
             self.frame_selector.clear()
             frames = result.get("frames", [])
+            is_radioss = result.get("summary", {}).get("solver_id") == "radioss"
             for idx, frame in enumerate(frames):
                 raw_idx = frame.get("index")
                 num = (raw_idx + 1) if isinstance(raw_idx, int) and not isinstance(raw_idx, bool) else idx + 1
-                label = f"프레임 {num} · 단계 {frame.get('step', '?')} / 증분 {frame.get('increment', '?')} / 값 {frame.get('value', '?')}{' [최종]' if idx == len(frames) - 1 else ''}"
+                label = f"프레임 {num}"
+                last = idx == len(frames) - 1
+                if is_radioss:
+                    if (time := frame.get("time")) is not None:
+                        time_unit = run.units.get("time", "단위 미확인")
+                        label += f" · 시간 {time:.6g} {time_unit}"
+                    last = frame.get("is_final", last and result.get("status") == "readable")
+                else:
+                    label += f" · 단계 {frame.get('step', '?')} / 증분 {frame.get('increment', '?')} / 값 {frame.get('value', '?')}"
+                if last:
+                    label += " [최종]"
                 self.frame_selector.addItem(label, raw_idx)
             default = result.get("summary", {}).get("frame_index")
             index = self.frame_selector.findData(previous if previous is not None else default)
@@ -875,7 +886,6 @@ class NativeAnalysisWindow(QMainWindow):
                       if frame.get("index") == self.frame_selector.currentData()), None)
         lines = [f"선언 단위: {_unit_text(run.units)}"]
         if result.get("native_files"):
-            lines.append(f"원본 결과 폴더: {run.workdir}")
             lines.append("원본 결과: " + ", ".join(result["native_files"]))
         if frame:
             summary = frame.get("summary", {})

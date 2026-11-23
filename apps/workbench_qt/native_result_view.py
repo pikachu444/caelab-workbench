@@ -222,6 +222,7 @@ class NativeResultView(QWidget):
         self.component.blockSignals(False)
         self.component.setEnabled(False)
         self.scale_combo.blockSignals(True)
+        self.scale_combo.setItemText(0, '미변형 (0x)')
         self.scale_combo.setCurrentIndex(0)
         self.scale_combo.blockSignals(False)
         self.scale_combo.setEnabled(False)
@@ -305,13 +306,18 @@ class NativeResultView(QWidget):
                        'missing': '결과 없음', 'reading': '판독 중'}.get(data.parse_state, '판독 미확인')
         metadata = ' / '.join(f'{label} {frame[key]}' for key, label in (('step', '단계'), ('increment', '증분'))
                               if frame.get(key) is not None)
-        self.source.setText(f"프레임 {frame['index']}" + (f' ({metadata})' if metadata else '')
+        if (time := frame.get("time")) is not None:
+            metadata = f"시간 {time:.6g} {data.units.get('time', '단위 미확인')}"
+        self.source.setText(f"프레임 {frame['index'] + 1}" + (f' ({metadata})' if metadata else '')
                             + f' · {parse_label}{old} · {units_text}')
         self.source.setToolTip(data.stale_reason if data.stale else '')
         displacement = grid.GetPointData().GetArray('DISP')
         indices = _component_indices(displacement, _DISPLACEMENT)
         self.scale_combo.setEnabled(displacement is not None and displacement.GetNumberOfComponents() == 3
                                     and indices is not None and deduce_length_unit(None, data)[1] is not None)
+        if frame.get('geometry_state') in {'deformed', 'stored'}:
+            fixed_label = '변형 형상' if frame['geometry_state'] == 'deformed' else '저장 형상'
+            self.scale_combo.setItemText(0, fixed_label)
         self._show_component()
         self.viewport.reset_camera()
 
