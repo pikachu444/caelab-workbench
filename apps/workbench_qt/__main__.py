@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 from caelab.workbench import Workbench
 
+from .desktop_entry import configure_install_registry
 from .project_window import ProjectWindow
 
 
@@ -21,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="CAELAB 네이티브 프로젝트 열기")
     parser.add_argument("project", nargs="?", help="저장한 프로젝트 JSON 파일")
     args = parser.parse_args(argv)
+    configure_install_registry()
     app = QApplication(sys.argv[:1])
     app.setStyle("Fusion")
     window = ProjectWindow(Workbench(), project_path=args.project)

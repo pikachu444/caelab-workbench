@@ -430,15 +430,10 @@ def _validate_identity(grid, expected):
                 raise ResultError("SOURCE_MISMATCH", f"topology or part for element {element}")
 
 
-def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_value=None, active_erosion_status=None,
-             check_cancelled=None) -> FieldGrid:
-    """Validate OC-ANIM-1 and bind optional source geometry by native ID."""
+def read_animation_geometry(path, *, require_time=False, check_cancelled=None) -> FieldGrid:
+    """Read the converter geometry even when optional output fields are absent."""
     check = check_cancelled or no_checkpoint
     grid = _read(path, _legacy, check)
-    if erosion_active_value is None:
-        erosion_active_value = OC_EROSION_ACTIVE_VALUE if active_erosion_status is None else active_erosion_status
-    if type(erosion_active_value) is not int or erosion_active_value not in {0, 1}:
-        raise ResultError("INVALID_DATASET", "erosion_active_value must be 0 or 1")
     # anim_to_vtk emits a repeated fourth connectivity index for triangles.
     if len(grid.cells) == len(grid.cell_types):
         cells = []
@@ -451,7 +446,19 @@ def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_val
             cells.append(cell)
         grid.cells = tuple(cells)
     _geometry(grid, check)
-    _time(grid, required=True)
+    _time(grid, required=require_time)
+    return grid
+
+
+def read_vtk(path, *, exact_required_set=None, expected=None, erosion_active_value=None, active_erosion_status=None,
+             check_cancelled=None) -> FieldGrid:
+    """Validate OC-ANIM-1 and bind optional source geometry by native ID."""
+    check = check_cancelled or no_checkpoint
+    grid = read_animation_geometry(path, require_time=True, check_cancelled=check)
+    if erosion_active_value is None:
+        erosion_active_value = OC_EROSION_ACTIVE_VALUE if active_erosion_status is None else active_erosion_status
+    if type(erosion_active_value) is not int or erosion_active_value not in {0, 1}:
+        raise ResultError("INVALID_DATASET", "erosion_active_value must be 0 or 1")
     n, m = len(grid.points), len(grid.cells)
     grid.node_ids = _ids(grid.point_data, "NODE_ID", n)
     grid.element_ids = _ids(grid.cell_data, "ELEMENT_ID", m)

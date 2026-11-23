@@ -18,6 +18,7 @@ import traceback
 import uuid
 from concurrent.futures import Future
 from contextlib import suppress
+from functools import partial
 from typing import Callable, Sequence, Any, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -572,7 +573,14 @@ class JobManager:
                 stage_messages = [message for stage in snapshot.get("stages", [])
                                   for message in stage.get("diagnostics", {}).get("messages", [])]
                 try:
-                    result = adapter.collect_results(run.workdir, check_cancelled=check)
+                    from .native.adapter import OpenRadiossAdapter
+                    collect_options = {}
+                    if isinstance(adapter, OpenRadiossAdapter):
+                        collect_options = {
+                            "converter_installation": status.path,
+                            "run_converter": partial(self.run_animation_converter, env=request.env, control=control),
+                        }
+                    result = adapter.collect_results(run.workdir, check_cancelled=check, **collect_options)
                     check()
                     if stage_messages:
                         result["warnings"] = list(dict.fromkeys([*result.get("warnings", []), *stage_messages]))
@@ -585,6 +593,8 @@ class JobManager:
                 except TimeoutError:
                     raise
                 except Exception as exc:
+                    if control["process"] is not None:
+                        raise
                     update(parse_state="failed", result={"status": "failed", "frames": [], "exchange_files": [],
                                                           "warnings": [*stage_messages, str(exc)], "summary": {}},
                            error=f"결과 판독 실패: {type(exc).__name__}: {exc}")
@@ -865,7 +875,7 @@ class JobManager:
             return True
 
     def _run_conversion_step(self, control, step, env, executor, check, update):
-        from .native.operations import artifact_path, read_object
+        from .native.operations import artifact_path
         from .result_readers import ResultError
 
         folder = control["folder"]
@@ -883,6 +893,45 @@ class JobManager:
                    for path in (pending, stdout) if path not in logs):
                 raise ResultError("INVALID_DATASET", "converter exceeded the output size limit")
 
+        self._run_owned_converter(control, step["argv"], cwd, stdout, stderr, env,
+                                  executor=executor, check=check, check_sizes=check_sizes, update=update)
+
+    @staticmethod
+    def run_animation_converter(executable, animation, stdout, *, check_cancelled, env=None, control=None):
+        """Convert one solver output with the same owned process runner as D10."""
+        from .native.converters import GUNZIP_LIMIT, _LOG_LIMIT
+        from .result_readers import ResultError
+
+        if control is None:
+            control = {"process": None, "group": None, "cancel": threading.Event()}
+        stderr = stdout.with_suffix(".log")
+        deadline = time.monotonic() + 120
+
+        def check():
+            check_cancelled()
+            if time.monotonic() >= deadline:
+                raise ResultError("TIMEOUT", "animation converter exceeded 120 seconds")
+
+        def check_sizes():
+            if stdout.stat().st_size > GUNZIP_LIMIT or stderr.stat().st_size > _LOG_LIMIT:
+                raise ResultError("INVALID_DATASET", "animation converter exceeded the output size limit")
+
+        try:
+            JobManager._run_owned_converter(
+                control, [str(executable), str(animation)], stdout.parent, stdout, stderr,
+                external_environment(env), executor=subprocess.Popen, check=check, check_sizes=check_sizes,
+                update=lambda **_: None,
+            )
+        finally:
+            if control["process"] is not None:
+                _finish_owned(control, cancel=True, term_grace=5, wait_timeout=5, confirm_tree=True)
+                control["process"] = None
+
+    @staticmethod
+    def _run_owned_converter(control, argv, cwd, stdout, stderr, env, *, executor, check, check_sizes, update):
+        from .native.operations import read_object
+        from .result_readers import ResultError
+
         create_suspended = 0x00000004
         config = ({"creationflags": subprocess.CREATE_NO_WINDOW | create_suspended}
                   if os.name == "nt" else {"start_new_session": True})
@@ -891,11 +940,10 @@ class JobManager:
             with stdout.open("ab") as log, stderr.open("ab") as err:
                 check()
                 kwargs = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=err, shell=False, **config)
-                argv = step["argv"]
                 if os.name == "nt":
                     nonce = uuid.uuid4().hex
-                    gate = artifact_path(folder, f".converter-{nonce}.lock")
-                    acknowledgement = artifact_path(folder, f".converter-{nonce}.json")
+                    gate = stdout.parent / f".converter-{nonce}.lock"
+                    acknowledgement = stdout.parent / f".converter-{nonce}.json"
                     argv = [*windows_gate_command(gate, argv, stdout, acknowledgement), str(stderr)]
                     kwargs["stdout"] = subprocess.DEVNULL
                 process = executor(argv, **kwargs)
@@ -910,6 +958,8 @@ class JobManager:
                     check()
                     check_sizes()
                     control["cancel"].wait(.025)
+        except TimeoutError:
+            raise
         except OSError as exc:
             raise ResultError("STARTUP_FAILED", str(exc)) from exc
         check()

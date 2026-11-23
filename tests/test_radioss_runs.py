@@ -484,8 +484,11 @@ def test_actual_radioss_workbench_two_stage_inputs_outputs_and_history(tmp_path,
         assert (run.workdir / f"{prefix}_0000_0001.rst").is_file()
         assert "NORMAL TERMINATION" in (run.workdir / f"{prefix}_0000.out").read_text(errors="replace")
         assert "NORMAL TERMINATION" in (run.workdir / f"{prefix}_0001.out").read_text(errors="replace")
-        assert run.parse_state == "partial"  # Full native animation decoding is outside W3.
-        assert run.result["warnings"]
+        assert run.parse_state in {"partial", "readable"}
+        if run.parse_state == "partial":
+            assert run.result["warnings"]
+        else:
+            assert run.result["frames"]
         raw_outputs = [path for path in run.workdir.iterdir()
                        if path.name.startswith(prefix) and path.suffix not in {".rad", ".inc"}]
         assert any(path.name.endswith("A001") for path in raw_outputs)
@@ -503,6 +506,6 @@ def test_actual_radioss_workbench_two_stage_inputs_outputs_and_history(tmp_path,
         reopened = wb.open_native_project(saved)
         restored = wb.selected_native_run(reopened, node.id)
         assert restored.id == run.id and restored.snapshot == run.snapshot
-        assert restored.state == "completed" and restored.parse_state == "partial"
+        assert restored.state == "completed" and restored.parse_state == run.parse_state
     finally:
         wb.close()

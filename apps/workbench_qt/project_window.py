@@ -16,6 +16,7 @@ from pathlib import Path
 import math
 import errno
 import heapq
+import os
 import re
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
@@ -51,9 +52,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from caelab.connections import configured_program_paths, save_program_paths
 from caelab.workbench import Workbench
 
 from .cad_connection_editor import CadConnectionEditor
+from .desktop_entry import default_install_registry_path
 from .icons import icon
 from .theme import (
     build_stylesheet, current_theme_mode, get_palette, register_theme_listener,
@@ -65,12 +68,15 @@ _KIND_ICONS = {"geometry": "geometry", "preprocessor": "mesh", "mesh": "mesh", "
 
 SYSTEM_KINDS = [
     ("geometry", "FreeCAD", "CAD 형상 설계·STEP 내보내기"),
-    ("preprocessor", "PrePoMax", "솔버별 전처리"),
+    ("preprocessor", "PrePoMax", "CalculiX 전후처리"),
+    ("preprocessor", "CAELab Prep", "RAD 입력 · .caeprep 전처리"),
     ("mesh", "Gmsh", "메시 작성"),
-    ("analysis", "CalculiX", "해석"),
-    ("results", "ParaView", "결과 보기"),
-    ("expert", "전문가", "논의"),
+    ("analysis", "CalculiX", "구조 해석 (.inp)"),
+    ("analysis", "OpenCourant", "명시적 동해석 (.rad)"),
+    ("results", "ParaView", "결과 후처리"),
+    ("expert", "전문가", "근거 기반 공학 논의"),
 ]
+_SYSTEM_PROGRAM_IDS = {"CAELab Prep": "caelab_prep", "OpenCourant": "opencourant"}
 _KIND_CATEGORIES = {
     "geometry": "형상 · CAD", "preprocessor": "전처리 · 해석 모델", "mesh": "메시", "analysis": "해석 · 계산",
     "results": "후처리 · 결과", "expert": "전문가 · 논의",
@@ -596,6 +602,12 @@ class Connector(QGraphicsPathItem):
 
 _PROGRAM_IDS = {"geometry": "freecad", "preprocessor": "prepomax", "mesh": "gmsh", "analysis": "calculix",
                 "results": "paraview", "expert": "expert"}
+
+
+def _system_program_id(kind: str, title: str) -> str:
+    return _SYSTEM_PROGRAM_IDS.get(title, _PROGRAM_IDS[kind])
+
+
 _FILE_FILTERS = {
     "geometry": "FreeCAD (*.FCStd *.fcstd);;모든 파일 (*)",
     "preprocessor": "CAD 형상 / 해석 입력 (*.step *.stp *.brep *.inp *.med);;모든 파일 (*)",
@@ -770,11 +782,94 @@ def _run_text(run) -> str:
 
 
 
+class ExternalProgramsDialog(QDialog):
+    def __init__(self, registry_path: Path, statuses, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("외부 프로그램 경로 설정")
+        self.resize(840, 700)
+        self.registry_path = registry_path
+        self.path_edits: dict[str, QLineEdit] = {}
+        self._configured = configured_program_paths(registry_path)
+        layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        contents = QWidget()
+        contents.setObjectName("programSettingsContents")
+        palette = get_palette()
+        scroll.setStyleSheet(f"""
+            QScrollArea, QWidget#programSettingsContents {{ background: {palette['panel_bg']}; }}
+            QScrollBar:vertical {{ background: {palette['window_bg']}; width: 12px; margin: 0; }}
+            QScrollBar::handle:vertical {{ background: {palette['border']}; min-height: 28px; border-radius: 4px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        """)
+        scroll.setWidget(contents)
+        form = QFormLayout(contents)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(8)
+        for status in statuses:
+            spec = status.spec
+            label = "OpenCourant / OpenRadioss" if spec.id == "opencourant" else spec.name
+            row = QVBoxLayout()
+            row.setSpacing(2)
+            controls = QHBoxLayout()
+            controls.setSpacing(8)
+            edit = QLineEdit(self._configured.get(spec.id, ""))
+            edit.setPlaceholderText(status.path or "실행 파일 선택")
+            edit.setAccessibleName(f"{label} 실행 파일")
+            self.path_edits[spec.id] = edit
+            controls.addWidget(edit, 1)
+            browse = QPushButton("찾아보기…")
+            browse.setAccessibleName(f"{label} 찾아보기")
+            browse.clicked.connect(lambda checked=False, edit=edit: self._browse(edit))
+            controls.addWidget(browse)
+            row.addLayout(controls)
+            state = "연결됨" if status.available else "연결 필요"
+            if status.source == "environment":
+                state += " · 시스템 환경변수 우선"
+                if status.path and edit.text() != status.path:
+                    state += f" · {status.path}"
+            detail = QLabel(state)
+            detail.setTextFormat(Qt.PlainText)
+            detail.setWordWrap(True)
+            detail.setToolTip(status.reason)
+            row.addWidget(detail)
+            form.addRow(label, row)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("저장")
+        buttons.button(QDialogButtonBox.Cancel).setText("취소")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse(self, edit: QLineEdit) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "실행 파일 선택", edit.text() or edit.placeholderText(),
+            "실행 파일 (*.exe *.com);;모든 파일 (*)")
+        if path:
+            edit.setText(str(Path(path)))
+
+    def accept(self) -> None:
+        changes = {program_id: edit.text() for program_id, edit in self.path_edits.items()
+                   if edit.text() != self._configured.get(program_id, "")}
+        try:
+            save_program_paths(self.registry_path, changes)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "경로를 저장하지 못했습니다", str(error))
+            return
+        super().accept()
+
+
 class ProjectWindow(QMainWindow):
     def __init__(self, workbench: Workbench | None = None,
                  project_path: str | Path | None = None) -> None:
         super().__init__()
         self.workbench = workbench or Workbench()
+        if self.workbench.registry_path is None and not os.environ.get("CAELAB_INSTALL_REGISTRY"):
+            default_registry = default_install_registry_path()
+            if default_registry.is_file():
+                self.workbench.registry_path = default_registry
         self.project = self.workbench.new_native_project()
         self._project_revision = None
         self.boxes: dict[str, SystemBox] = {}
@@ -818,10 +913,12 @@ class ProjectWindow(QMainWindow):
         toolbar.addAction(self.file_actions["save"])
         self.add_program_menu = QMenu('프로그램 추가', self)
         self.add_program_actions = {}
-        for kind, title, subtitle in SYSTEM_KINDS:
+        for kind, title, _ in SYSTEM_KINDS:
+            program_id = _system_program_id(kind, title)
             action = self.add_program_menu.addAction(icon(_KIND_ICONS[kind]), title)
-            action.triggered.connect(lambda checked=False, kind=kind: self.add_box(kind))
-            self.add_program_actions[kind] = action
+            action.setData((kind, program_id))
+            action.triggered.connect(lambda checked=False, action=action: self.add_box(*action.data()))
+            self.add_program_actions[program_id] = action
         self.add_program_button = QToolButton()
         self.add_program_button.setText('프로그램 추가')
         self.add_program_button.setIcon(icon('geometry'))
@@ -854,7 +951,12 @@ class ProjectWindow(QMainWindow):
         self.optimization_action.triggered.connect(self.open_optimization_panel)
         self.model_viewer_action = tools_menu.addAction("보조 모델 / C3D10 결과 뷰어")
         self.model_viewer_action.triggered.connect(self.open_model_viewer)
+        self.material_study_action = tools_menu.addAction("재료 연구실 (Material Study)...")
+        self.material_study_action.triggered.connect(self.open_material_study)
+        self.program_settings_action = tools_menu.addAction("외부 프로그램 경로 설정...")
+        self.program_settings_action.triggered.connect(self.open_program_settings)
         self._model_viewers = []
+        self._material_study_windows = []
         self.toolbox = QListWidget()
         self.theme_action = view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         view_menu.addSeparator()
@@ -866,15 +968,14 @@ class ProjectWindow(QMainWindow):
             item = QListWidgetItem(icon(_KIND_ICONS[kind]), title)
             item.setData(Qt.UserRole + 1, _KIND_CATEGORIES.get(kind, ""))
             item.setData(Qt.UserRole + 2, sub)
+            item.setData(Qt.UserRole, (kind, _system_program_id(kind, title)))
             self.toolbox.addItem(item)
-        self.toolbox.itemClicked.connect(
-            lambda item: self.add_box(SYSTEM_KINDS[self.toolbox.row(item)][0]))
+        self.toolbox.itemClicked.connect(lambda item: self.add_box(*item.data(Qt.UserRole)))
         tools = self.toolbox_dock = QDockWidget("프로그램", self)
-        tools.setMinimumWidth(190)
+        tools.setMinimumWidth(236)
         tools.setWidget(self.toolbox)
         self.addDockWidget(Qt.LeftDockWidgetArea, tools)
         view_menu.addAction(tools.toggleViewAction())
-        tools.hide()
 
         self.scene = QGraphicsScene(self)
         self.view = SchematicView(self.scene)
@@ -1149,10 +1250,10 @@ class ProjectWindow(QMainWindow):
         self.setStyleSheet(build_stylesheet(resolved))
         self.theme_action.setText(theme_toggle_label(resolved))
         self.add_program_button.setIcon(icon("geometry", resolved))
-        for kind, act in self.add_program_actions.items():
-            act.setIcon(icon(_KIND_ICONS[kind], resolved))
-        for idx, (kind, _title, _sub) in enumerate(SYSTEM_KINDS):
-            self.toolbox.item(idx).setIcon(icon(_KIND_ICONS[kind], resolved))
+        for idx, (kind, title, _sub) in enumerate(SYSTEM_KINDS):
+            system_icon = icon(_KIND_ICONS[kind], resolved)
+            self.add_program_actions[_system_program_id(kind, title)].setIcon(system_icon)
+            self.toolbox.item(idx).setIcon(system_icon)
         self.fit_button.setIcon(_fit_icon(str(p["text_primary"])))
         self.empty_hint.setDefaultTextColor(QColor(str(p["text_muted"])))
         self.view.setBackgroundBrush(QBrush(QColor(str(p["canvas_bg"]))))
@@ -1336,6 +1437,35 @@ class ProjectWindow(QMainWindow):
         viewer.destroyed.connect(lambda: self._model_viewers.remove(viewer))
         viewer.show()
 
+    def open_material_study(self) -> None:
+        try:
+            from .material_study import MaterialStudyWindow
+
+            window = MaterialStudyWindow(parent=self)
+        except Exception as error:
+            self._error("재료 연구실을 열지 못했습니다", error)
+            return
+        window.setWindowFlag(Qt.Window)
+        window.setAttribute(Qt.WA_DeleteOnClose)
+        self._material_study_windows.append(window)
+        window.destroyed.connect(lambda: self._material_study_windows.remove(window))
+        window.show()
+
+    def open_program_settings(self) -> None:
+        registry_path = Path(self.workbench.registry_path or os.environ.get("CAELAB_INSTALL_REGISTRY")
+                             or default_install_registry_path()).expanduser().resolve()
+        try:
+            dialog = ExternalProgramsDialog(registry_path, self.workbench.programs(), self)
+        except (OSError, ValueError) as error:
+            self._error("외부 프로그램 경로를 읽지 못했습니다", error)
+            return
+        if dialog.exec() == QDialog.Accepted:
+            self.workbench.registry_path = registry_path
+            os.environ["CAELAB_INSTALL_REGISTRY"] = str(registry_path)
+            self._reflect_programs()
+            self._selection_changed()
+            self._message("외부 프로그램 경로를 저장했습니다.")
+
     def open_optimization_panel(self) -> None:
         selected = self._selected_boxes()
         node_id = selected[0].node_id if len(selected) == 1 else None
@@ -1400,8 +1530,8 @@ class ProjectWindow(QMainWindow):
         if rect.isEmpty():
             return
         scale = min(1.0, viewport.width() / rect.width(), viewport.height() / rect.height())
-        if scale < 1.0:
-            self.view.scale(max(.85, scale), max(.85, scale))
+        if 0.0 < scale < 1.0:
+            self.view.scale(scale, scale)
         for bar in (self.view.horizontalScrollBar(), self.view.verticalScrollBar()):
             bar.setValue(bar.minimum())
 
@@ -1412,8 +1542,10 @@ class ProjectWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self._initial_view(project))
 
     def _add_node_box(self, node) -> SystemBox:
-        title, sub = next(((title, sub) for kind, title, sub in SYSTEM_KINDS if kind == node.kind),
-                          (node.kind, node.program_id))
+        candidates = [(title, sub) for kind, title, sub in SYSTEM_KINDS if kind == node.kind]
+        title, sub = next(((title, sub) for title, sub in candidates
+                           if _system_program_id(node.kind, title) == node.program_id),
+                          candidates[0] if candidates else (node.kind, node.program_id))
         box = SystemBox(node.kind, title, sub)
         box.node_id = node.id
         box.setPos(*node.position)

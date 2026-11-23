@@ -1,16 +1,20 @@
-"""Small, dependency-free OpenRadioss result collector.
-
-The native ``A###`` animation format is not reimplemented here.  For automated
-connection tests we accept a deliberately small ASCII fixture (``NODE`` and
-``TETRA`` records); an opaque native animation is preserved and represented by
-an empty VTU with an explicit warning instead of invented field values.
-"""
+"""Collect OpenRadioss listings and publish frame VTUs from decoded animations."""
 from __future__ import annotations
 
+from collections import Counter
+from itertools import accumulate, count
 import math
+import os
 import re
+import shutil
+import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+import numpy as np
+
+from ..result_readers import ResultError, vtk_fields
+from .results import _array, _write_xml
 
 
 _NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][-+]?\d+)?"
@@ -235,61 +239,205 @@ def detect_radioss_failure(text: str, *, return_code: int | None = None) -> str 
     return None
 
 
-def _read_ascii_animation(path: Path) -> tuple[dict[int, tuple[float, float, float]], list[tuple[int, ...]]]:
+def _read_ascii_animation(path: Path, checkpoint) -> tuple[dict[int, tuple[float, float, float]], dict[int, tuple[int, ...]]]:
     nodes: dict[int, tuple[float, float, float]] = {}
-    cells: list[tuple[int, ...]] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        fields = re.split(r"[\s,]+", line.strip())
-        if not fields:
-            continue
-        try:
-            if fields[0].upper() == "NODE" and len(fields) == 5:
-                nodes[int(fields[1])] = tuple(float(value) for value in fields[2:5])
-            elif fields[0].upper() in {"TETRA", "TET4"} and len(fields) in {5, 6}:
-                ids = fields[-4:]
-                cells.append(tuple(int(value) for value in ids))
-        except ValueError:
-            continue
+    cells: dict[int, tuple[int, ...]] = {}
+    next_id = 1
+    with path.open("rb") as stream:
+        if not re.search(rb"(?im)^\s*(?:NODE|TETRA|TET4)[\s,]", stream.read(4096)):
+            return {}, {}
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            checkpoint()
+            fields = re.split(r"[\s,]+", line.strip())
+            try:
+                if fields[0].upper() == "NODE" and len(fields) == 5:
+                    nodes[int(fields[1])] = tuple(float(value) for value in fields[2:5])
+                elif fields[0].upper() in {"TETRA", "TET4"} and len(fields) in {5, 6}:
+                    cell_id = int(fields[1]) if len(fields) == 6 else next_id
+                    cells[cell_id] = tuple(int(value) for value in fields[-4:])
+                    next_id = max(next_id, cell_id + 1)
+            except ValueError:
+                continue
     if any(not all(math.isfinite(v) for v in xyz) for xyz in nodes.values()):
-        return {}, []
-    if any(node_id not in nodes for cell in cells for node_id in cell):
-        return {}, []
+        return {}, {}
+    if any(node_id not in nodes for cell in cells.values() for node_id in cell):
+        return {}, {}
     return nodes, cells
 
 
-def _write_vtu(path: Path, nodes: dict[int, tuple[float, float, float]], cells: list[tuple[int, ...]]) -> None:
+def _find_anim_to_vtk(installation=None) -> Path | None:
+    from ..connections import _registered_path, _registry
+
+    names = ("anim_to_vtk", "anim_to_vtk_win64.exe", "anim_to_vtk.exe", "anim_to_vtk_linux64_gf", "anim_to_vtk_linux64")
+    candidates = [installation, os.environ.get("CAELAB_OPENCOURANT")]
+    registry, _ = _registry()
+    entry = registry.get("programs", {}).get("opencourant")
+    registered = registry.get("env", {}).get("CAELAB_OPENCOURANT") or (entry.get("path") if isinstance(entry, dict) else None)
+    if isinstance(registered, str):
+        try:
+            candidates.append(_registered_path(registered, registry))
+        except ValueError:
+            pass
+    for value in filter(None, candidates):
+        path = Path(value).expanduser()
+        roots = (path, path / "exec", path / "bin") if path.is_dir() else (path.parent, path.parent.parent / "exec")
+        for folder in roots:
+            for name in names:
+                if found := shutil.which(str(folder / name)):
+                    return Path(found).resolve()
+    return next((Path(found).resolve() for name in names if (found := shutil.which(name))), None)
+
+
+def _frame_ids(arrays, names, size, original_name):
+    source = next((arrays[name] for name in names if name in arrays), None)
+    if source is None:
+        return list(range(1, size + 1)), None
+    if source.shape != (size, 1) or source.dtype.kind not in "iu":
+        raise ResultError("INVALID_DATASET", f"invalid ID array {names[0]}")
+    native = list(map(int, source.ravel()))
+    frequencies = Counter(native)
+    # Auxiliary entities may have no source ID or share a producer ID.
+    # Retain unique IDs and use unused positive IDs for the remaining rows.
+    assigned = (i for i in count(1) if i not in frequencies)
+    ids = [i if i > 0 and frequencies[i] == 1 else next(assigned) for i in native]
+    if ids != native:
+        return ids, dict(zip(ids, native))
+    original = arrays.get(original_name)
+    if original is not None and original.shape == (size, 1) and original.dtype.kind in "iu":
+        return ids, dict(zip(ids, map(int, original.ravel())))
+    return ids, None
+
+
+def _write_vtu(path: Path, nodes, cells, *, frame_index=0, time_value=None, displacements=None,
+               cell_types=None, source_node_ids=None, source_element_ids=None, checkpoint=lambda: None) -> None:
+    from functools import partial
+
+    array = partial(_array, checkpoint=checkpoint)
     root = ET.Element("VTKFile", type="UnstructuredGrid", version="0.1", byte_order="LittleEndian")
     grid = ET.SubElement(root, "UnstructuredGrid")
+    field_data = ET.SubElement(grid, "FieldData")
+    array(field_data, "FrameIndex", [frame_index], integer=True).set("NumberOfTuples", "1")
+    if time_value is not None:
+        array(field_data, "Native_value", [time_value]).set("NumberOfTuples", "1")
+        array(field_data, "Native_analysis_type", [1], integer=True).set("NumberOfTuples", "1")
     piece = ET.SubElement(grid, "Piece", NumberOfPoints=str(len(nodes)), NumberOfCells=str(len(cells)))
-    points = ET.SubElement(piece, "Points")
-    point_data = ET.SubElement(points, "DataArray", type="Float64", NumberOfComponents="3", format="ascii")
     ordered = sorted(nodes)
-    point_data.text = " ".join(str(value) for node_id in ordered for value in nodes[node_id])
+    point_data = ET.SubElement(piece, "PointData")
+    array(point_data, "NativeNodeId", ordered, integer=True)
+    if source_node_ids is not None:
+        array(point_data, "RadiossNodeId", (source_node_ids[node] for node in ordered), integer=True)
+    if displacements is not None:
+        array(point_data, "DISP", (value for node in ordered for value in displacements[node]),
+              3, component_names=("D1", "D2", "D3"))
+    cell_data = ET.SubElement(piece, "CellData")
+    array(cell_data, "NativeElementId", cells, integer=True)
+    if source_element_ids is not None:
+        array(cell_data, "RadiossElementId", (source_element_ids[cell] for cell in cells), integer=True)
+    array(ET.SubElement(piece, "Points"), "Coordinates", (value for node in ordered for value in nodes[node]), 3)
     index = {node_id: offset for offset, node_id in enumerate(ordered)}
     cell_node = ET.SubElement(piece, "Cells")
-    connectivity = ET.SubElement(cell_node, "DataArray", type="Int64", Name="connectivity", format="ascii")
-    connectivity.text = " ".join(str(index[node]) for cell in cells for node in cell)
-    offsets = ET.SubElement(cell_node, "DataArray", type="Int64", Name="offsets", format="ascii")
-    offsets.text = " ".join(str(4 * (offset + 1)) for offset in range(len(cells)))
-    types = ET.SubElement(cell_node, "DataArray", type="UInt8", Name="types", format="ascii")
-    types.text = " ".join("10" for _ in cells)  # VTK_TETRA
+    array(cell_node, "connectivity", (index[node] for cell in cells.values() for node in cell), integer=True)
+    array(cell_node, "offsets", accumulate(map(len, cells.values())), integer=True)
+    array(cell_node, "types", (10 for _ in cells) if cell_types is None else cell_types, integer=True)
     ET.indent(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+    _write_xml(root, path)
 
 
-def collect_radioss_results(workdir: Path, *, check_cancelled=None) -> dict:
+def _read_exchange_frame(path: Path, checkpoint):
+    legacy = path.suffix.lower() == ".vtk"
+    grid = (vtk_fields.read_animation_geometry(path, check_cancelled=checkpoint) if legacy
+            else vtk_fields.read_vtu(path, node_id_policy="one_based", check_cancelled=checkpoint))
+    node_ids, source_node_ids = _frame_ids(
+        grid.point_data, ("NativeNodeId", "NODE_ID", "node_id"), len(grid.points), "RadiossNodeId")
+    element_ids, source_element_ids = _frame_ids(
+        grid.cell_data, ("NativeElementId", "ELEMENT_ID"), len(grid.cells), "RadiossElementId")
+    displacement = grid.point_data.get("Displacement" if legacy else "DISP")
+    points = grid.points
+    geometry_state = "deformed" if legacy else "stored"
+    if displacement is not None:
+        if displacement.shape != points.shape or not np.isfinite(displacement).all():
+            raise ResultError("INVALID_DATASET", "invalid displacement vectors")
+        if legacy:
+            points = grid.reference_points
+            if not np.isfinite(points).all():
+                raise ResultError("INVALID_DATASET", "non-finite reference geometry")
+        geometry_state = "reference"
+    return (dict(zip(node_ids, points)),
+            {element_id: tuple(node_ids[index] for index in cell) for element_id, cell in zip(element_ids, grid.cells)},
+            {"time_value": grid.time, "displacements": None if displacement is None else dict(zip(node_ids, displacement)),
+             "cell_types": grid.cell_types, "source_node_ids": source_node_ids, "source_element_ids": source_element_ids,
+             "geometry_state": geometry_state})
+
+
+def _frame_fields(displacements, node_count):
+    summary = {"max_displacement": None, "displacement_node_count": 0, "mesh_node_count": node_count}
+    if displacements is None:
+        return [], summary
+    values = list(displacements.values())
+    norms = [math.hypot(*value) for value in values]
+    finite = [value for value in norms if math.isfinite(value)]
+    summary.update(max_displacement=max(finite, default=None), displacement_node_count=len(finite))
+    components = [{"name": name, "minimum": float(min(column)), "maximum": float(max(column))}
+                  for name, column in zip(("D1", "D2", "D3"), zip(*values))]
+    return [{"name": "DISP", "components": [{"name": item["name"], "exist": 0} for item in components],
+             "coverage": {"record_count": len(values), "mesh_node_count": node_count},
+             "summary": {"components": components}}], summary
+
+
+def _decode_animation(animation, sidecars, converter, run_converter, checkpoint):
+    error = None
+    for path in sidecars:
+        try:
+            return _read_exchange_frame(path, checkpoint), None
+        except ResultError as exc:
+            error = exc.code
+    if converter is not None:
+        try:
+            with tempfile.TemporaryDirectory(prefix=".rad-convert-", dir=animation.parent) as folder:
+                output = Path(folder) / "animation.vtk"
+                run_converter(converter, animation, output, check_cancelled=checkpoint)
+                return _read_exchange_frame(output, checkpoint), None
+        except ResultError as exc:
+            error = exc.code
+    return None, error
+
+
+def _frame_name(path):
+    return path.stem if path.suffix.lower() in {".vtk", ".vtu"} else path.name
+
+
+def _frame_order(path):
+    name = _frame_name(path)
+    return name.casefold().rstrip("0123456789"), int(re.search(r"\d+$", name)[0])
+
+
+def _frame_key(path):
+    name = _frame_name(path).casefold()
+    indexed = re.fullmatch(r"frame-(\d+)", name)
+    return f"frame-{int(indexed[1]):06d}" if indexed else name
+
+
+def collect_radioss_results(workdir: Path, *, check_cancelled=None, converter_installation=None, run_converter=None) -> dict:
     workdir = Path(workdir).resolve()
     checkpoint = check_cancelled or (lambda: None)
     checkpoint()
     listings = sorted(workdir.glob("*_0001.out")) or sorted(workdir.glob("*.out"))
-    animations = sorted(path for path in workdir.iterdir() if path.is_file() and re.fullmatch(r".*A\d{3,}", path.name, re.I))
+    animations = sorted((path for path in workdir.iterdir()
+                         if path.is_file() and re.fullmatch(r".*A\d{3,}", path.name, re.I)), key=_frame_order)
+    rendered = sorted(path for folder in (workdir, workdir / "results") for path in folder.glob("*")
+                      if path.suffix.lower() in {".vtk", ".vtu"} and path.is_file())
+    sidecars = {}
+    for path in rendered:
+        sidecars.setdefault(_frame_key(path), []).append(path)
+    inputs = (animations or sorted((paths[0] for name, paths in sidecars.items()
+                                   if re.fullmatch(r".*a\d{3,}|frame-\d+", name)), key=_frame_order))
     listing_text = "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in listings)
     failure = detect_radioss_failure(listing_text)
     energies = parse_radioss_output(listings[-1]) if listings else {}
     internal = energies.get("internal_energy")
     hourglass = energies.get("hourglass_energy")
-    decoded_frames = 0
     if internal is not None and hourglass is not None:
         # Product KPI required by spec.  This is HG/internal, not the distinct
         # HG/total diagnostic used by some Radioss guidance.
@@ -298,33 +446,62 @@ def collect_radioss_results(workdir: Path, *, check_cancelled=None) -> dict:
     warnings: list[str] = []
     frames: list[dict] = []
     exchange_files: list[str] = []
+    geometry_only = False
 
     if failure:
         warnings.append(f"OpenRadioss failure detected: {failure}")
-    for frame_index, animation in enumerate(animations):
+    converter = _find_anim_to_vtk(converter_installation) if animations else None
+    if converter is not None and run_converter is None:
+        from ..jobs import JobManager
+
+        run_converter = JobManager.run_animation_converter
+    used_indices = {int(path.stem[6:]) for path in inputs if not animations and path.stem.lower().startswith("frame-")}
+    available_indices = (index for index in count() if index not in used_indices)
+    for animation in inputs:
         checkpoint()
-        nodes, cells = _read_ascii_animation(animation)
-        if not nodes:
-            warnings.append(f"{animation.name}: native animation payload was not decoded; use a compatible external postprocessor.")
-            continue
-        else:
-            decoded_frames += 1
+        frame_index = (int(animation.stem[6:]) if not animations and animation.stem.lower().startswith("frame-")
+                       else next(available_indices))
         relative = f"results/frame-{frame_index:06d}.vtu"
-        _write_vtu(workdir / relative, nodes, cells)
-        frames.append({"index": frame_index, "time": float(frame_index), "name": animation.name,
-                       "vtu": relative, "fields": {}})
+        geometry_state = "reference"
+        nodes, cells = _read_ascii_animation(animation, checkpoint) if animations else ({}, {})
+        if not nodes or not cells:
+            matching = sidecars.get(_frame_key(animation), [])
+            decoded, error = _decode_animation(animation, matching, converter, run_converter, checkpoint)
+            if decoded is None and animations and workdir / relative in rendered:
+                decoded, error = _decode_animation(animation, [workdir / relative], None, None, checkpoint)
+            if decoded is None:
+                reason = f" ({error})" if error else ""
+                warnings.append(f"{animation.name}: native animation payload was not decoded{reason}; use a compatible external postprocessor.")
+                continue
+            nodes, cells, options = decoded
+            geometry_state = options.pop("geometry_state")
+            if options["displacements"] is None:
+                warnings.append(f"{animation.name}: animation geometry is available; no displacement vectors were output.")
+                geometry_only = True
+        else:
+            options = {}
+        if not animations or workdir / relative in rendered:
+            # A supplied VTU may carry additional fields kept only in the original.
+            relative = f"results/decoded/frame-{frame_index:06d}.vtu"
+        _write_vtu(workdir / relative, nodes, cells, frame_index=frame_index, checkpoint=checkpoint, **options)
+        fields, frame_summary = _frame_fields(options.get("displacements"), len(nodes))
+        time = options.get("time_value")
+        frames.append({"index": frame_index, "time": time, "value": time, "name": animation.name,
+                       "is_final": animation == inputs[-1], "geometry_state": geometry_state,
+                       "vtu_file": relative, "vtu": relative, "fields": fields, "summary": frame_summary})
         exchange_files.append(relative)
 
-    if not animations:
+    if not inputs:
         warnings.append("OpenRadioss animation output A### was not found.")
     if not listings:
         warnings.append("OpenRadioss Engine listing was not found; energy KPIs are unavailable.")
     if internal == 0.0 and hourglass is not None:
         warnings.append("Hourglass ratio is undefined because internal energy is zero.")
-    status = "failed" if failure or (not animations and not listings) else "readable"
-    if status == "readable" and (not animations or not listings or not energies or decoded_frames != len(animations)):
+    status = "failed" if failure or (not inputs and not listings) else "readable"
+    if status == "readable" and (not inputs or not listings or not energies or geometry_only or len(frames) != len(inputs)):
         status = "partial"
+    primary = inputs[0].relative_to(workdir).as_posix() if inputs else listings[-1].name if listings else None
     return {"status": status, "frames": frames, "exchange_files": exchange_files,
-            "native_files": [path.name for path in listings + animations],
-            "primary_native_output": animations[0].name if animations else listings[-1].name if listings else None,
+            "native_files": [path.name for path in listings + inputs],
+            "primary_native_output": primary,
             "summary": summary, "warnings": warnings}

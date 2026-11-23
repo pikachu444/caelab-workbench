@@ -144,9 +144,11 @@ class OpenRadiossAdapter:
         from ..connections import radioss_run_request
         return radioss_run_request(status, workdir, input_path)
 
-    def collect_results(self, workdir: Path, *, check_cancelled: Callable[[], None] | None = None) -> dict:
+    def collect_results(self, workdir: Path, *, check_cancelled: Callable[[], None] | None = None,
+                        converter_installation=None, run_converter=None) -> dict:
         from .radioss import collect_radioss_results
-        return collect_radioss_results(workdir, check_cancelled=check_cancelled)
+        return collect_radioss_results(workdir, check_cancelled=check_cancelled,
+                                      converter_installation=converter_installation, run_converter=run_converter)
 
     def expected_output_names(self) -> tuple[str, ...]:
         return ("A001", "model.h3d", "model.out")
