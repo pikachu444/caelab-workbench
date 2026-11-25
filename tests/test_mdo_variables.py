@@ -114,3 +114,11 @@ def test_extreme_finite_linear_domain_roundtrip():
     s=VariableSpace(variables=(ContinuousVariable(id="x",name="x",unit="",lower=-1e308,upper=1e308,initial=0),))
     assert s.encode({"x":0}).vector[0]==.5
     assert s.decode([.5]).values["x"]==0
+
+
+def test_megagram_mass_unit_support():
+    from caelab.mdo import variables as mdo_variables
+
+    assert "Mg" not in mdo_variables._UNITS
+    assert parse_unit("Mg") == (1000.0, (0, 1, 0))
+    assert evaluate_expression("m", {"m": 0.001}, {"m": "Mg"}, "kg") == pytest.approx(1.0)

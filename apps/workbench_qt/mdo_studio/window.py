@@ -854,14 +854,17 @@ class MDOStudioWindow(QMainWindow):
     def _restore_layout(self):
         self._cancel_default_splitter()
         settings=_layout_settings(); state=settings.value('layout'); splitter=settings.value('splitter')
-        if isinstance(state,QByteArray) and state.size()<100000: self.restoreState(state)
+        layout_restored=bool(isinstance(state,QByteArray) and 0<state.size()<100000 and self.restoreState(state))
         restored=bool(isinstance(splitter,QByteArray) and 0<splitter.size()<10000 and self.center_splitter.restoreState(splitter))
         study_restored=self._restore_study_view()
+        if not (layout_restored or getattr(self,'_study_layout_restored',False)):
+            self.resizeDocks([self.tree_dock,self.setup_dock],[230,295],Qt.Orientation.Horizontal)
         if not (restored or study_restored): self._request_default_splitter()
 
     def _restore_study_view(self):
         self._cancel_default_splitter()
         splitter_restored=False
+        self._study_layout_restored=False
         state=getattr(self.service,'view_state',{})
         try:
             for key,restore,limit in [('layout',self.restoreState,100000),('splitter',self.center_splitter.restoreState,10000)]:
@@ -869,6 +872,7 @@ class MDOStudioWindow(QMainWindow):
                 except (ValueError,TypeError): continue
                 if value and len(value)<limit:
                     success=restore(QByteArray(value))
+                    if key=='layout': self._study_layout_restored=bool(success)
                     if key=='splitter': splitter_restored=bool(success)
             self._selected_ids=set(state.get('selected_ids',[])); self._restore_selection(); self.viz_tabs.setCurrentIndex(int(state.get('tab',0)))
             convergence=state.get('convergence',{}); self.convergence_view.reference.setText(convergence.get('reference',''))
@@ -957,7 +961,9 @@ class MDOStudioWindow(QMainWindow):
 
     def _default_layout(self):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
-        self.tree_dock.show(); self.setup_dock.show(); self._request_default_splitter()
+        self.tree_dock.show(); self.setup_dock.show()
+        self.resizeDocks([self.tree_dock,self.setup_dock],[230,295],Qt.Orientation.Horizontal)
+        self._request_default_splitter()
 
     def _on_toggle_theme(self): toggle_theme_mode(); self.apply_theme()
     def apply_theme(self):

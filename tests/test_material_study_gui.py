@@ -275,8 +275,9 @@ def test_gui_layout_korean_font_design_laws_and_no_forbidden_strings(tmp_path: P
                 label = table.item(row, 0).text()
                 assert metrics.horizontalAdvance(label) + 6 <= table.columnWidth(0), label
 
-        # 150-row CSV previews at most 100 rows in the preview table
+        # 150-row CSV previews at most 100 rows in the preview table with Korean independent column label
         assert win.exp_preview_table.rowCount() == 100
+        assert win.exp_preview_table.horizontalHeaderItem(1).text() == "주파수 (Hz)"
 
         # Zero forbidden disclaimers or raw hashes/UUIDs/internal IDs in default visible texts
         visible_texts = _collect_all_visible_texts(win)

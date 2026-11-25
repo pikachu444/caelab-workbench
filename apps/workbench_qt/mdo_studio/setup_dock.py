@@ -44,7 +44,8 @@ class SetupDockWidget(QWidget):
         container = QWidget()
         container.setObjectName("setupDockContainer")
         layout = QVBoxLayout(container)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
 
         # 1. Selected Point Header
         self.lbl_title = QLabel("Selected Design Point: None")
@@ -55,8 +56,9 @@ class SetupDockWidget(QWidget):
         layout.addWidget(self.lbl_title)
 
         # 2. Status & Feasibility Badge
-        badge_box = QGroupBox("Status & Feasibility")
+        badge_box = QGroupBox("Status && Feasibility")
         b_layout = QFormLayout(badge_box)
+        b_layout.setVerticalSpacing(3)
         b_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.lbl_status = QLabel("—")
         self.lbl_feasibility = QLabel("—")
@@ -70,12 +72,14 @@ class SetupDockWidget(QWidget):
         # 3. Parameters
         self.param_box = QGroupBox("Physical Parameters")
         self.param_layout = QFormLayout(self.param_box)
+        self.param_layout.setVerticalSpacing(3)
         self.param_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         layout.addWidget(self.param_box)
 
         # 4. Responses
         self.resp_box = QGroupBox("Observed Responses")
         self.resp_layout = QFormLayout(self.resp_box)
+        self.resp_layout.setVerticalSpacing(3)
         self.resp_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         layout.addWidget(self.resp_box)
 
@@ -84,6 +88,7 @@ class SetupDockWidget(QWidget):
         # 5. Engineering Action Buttons
         act_box = QGroupBox("Engineering Actions")
         act_layout = QVBoxLayout(act_box)
+        act_layout.setSpacing(4)
 
         self.btn_apply_current = QPushButton("Set as Current\nDesign Point")
         self.btn_apply_current.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -103,9 +108,9 @@ class SetupDockWidget(QWidget):
         self.lbl_guide = QTextEdit()
         self.lbl_guide.setReadOnly(True)
         self.lbl_guide.setPlainText("Select a point to inspect its values and available actions.")
-        self.lbl_guide.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
+        self.lbl_guide.setWordWrapMode(QTextOption.WrapMode.WordWrap)
         self.lbl_guide.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.lbl_guide.setMaximumHeight(100)
+        self.lbl_guide.setMaximumHeight(84)
         self.lbl_guide.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         act_layout.addWidget(self.lbl_guide)
 

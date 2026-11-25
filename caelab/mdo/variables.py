@@ -38,6 +38,8 @@ _UNITS = {
     "kPa": (1e3, (-1,1,-2)), "MPa": (1e6, (-1,1,-2)), "GPa": (1e9, (-1,1,-2)),
     "J": (1., (2,1,-2)), "W": (1., (2,1,-3)), "Hz": (1., (0,0,-1)), "rad": (1., (0,0,0)),
 }
+# Fixed multiplicative SI aliases kept outside _UNITS per C6 contract (caelab/materials/units.py).
+_UNIT_ALIASES = {"Mg": (1000., (0,1,0))}
 
 
 def _constant(n):
@@ -58,8 +60,8 @@ def parse_unit(unit):
         return 1., _ZERO
 
     def visit(n):
-        if isinstance(n, ast.Name) and n.id in _UNITS:
-            s, d = _UNITS[n.id]
+        if isinstance(n, ast.Name) and (n.id in _UNITS or n.id in _UNIT_ALIASES):
+            s, d = _UNITS[n.id] if n.id in _UNITS else _UNIT_ALIASES[n.id]
             return s, tuple(Fraction(x) for x in d)
         if isinstance(n, ast.Constant) and type(n.value) is int and n.value == 1:
             return 1., _ZERO

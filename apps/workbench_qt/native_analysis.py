@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import sys
 from datetime import datetime
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFrame, QHeaderView, QHBoxLayout, QLabel,
-                              QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
+                              QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
                               QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QToolBar,
                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 from PySide6.QtCore import QRect, Qt, QTimer
@@ -22,7 +23,14 @@ from .expert_chat import source_name
 _STATE_LABELS = {"needs_input": "입력 필요", "ready": "입력 준비",
                  "changed": "원본 변경됨", "missing": "파일 누락", "stale": "오래됨",
                  "opened": "프로그램 열림", "failed": "실패"}
-_UNIT_LABELS = {"length": "길이", "force": "힘", "time": "시간", "temperature": "온도", "stress": "응력"}
+_UNIT_LABELS = {"mass": "질량", "length": "길이", "force": "힘", "time": "시간", "temperature": "온도", "stress": "응력"}
+_UNIT_SOURCE_LABELS = {
+    "user": "사용자 선언",
+    "declared": "사용자 선언",
+    "explicit deck": "입력 덱 명시",
+    "explicit input": "입력 명시",
+    "unknown": "미확인",
+}
 _RUN_LABELS = {"queued": "대기", "preparing": "입력 보존 중", "running": "계산 중",
                "completed": "프로세스 정상 종료", "failed": "실패", "cancelled": "취소됨",
                "interrupted": "중단됨"}
@@ -30,7 +38,14 @@ _PARSE_LABELS = {"pending": "대기", "unparsed": "미판독", "reading": "판�
                  "readable": "판독 완료", "partial": "일부 판독",
                  "unsupported": "미지원 출력 형식", "missing": "출력 없음", "failed": "판독 실패"}
 _ACTIVE_STATES = {"queued", "preparing", "running"}
-_FIELD_LABELS = {'DISP': '변위 (DISP)', 'STRESS': '응력 (STRESS)'}
+_FIELD_LABELS = {
+    'DISP': '변위 (U)',
+    'STRESS': '응력 (S)',
+    'FORC': '절점 하중 (F)',
+    'TOSTRAIN': '총 변형률 (E)',
+    'PE': '등가 소성변형률 (PEEQ)',
+    'TEMP': '온도 (T)',
+}
 _COMPONENT_LABELS = {
     'DISP': {'D1': 'Ux (D1)', 'D2': 'Uy (D2)', 'D3': 'Uz (D3)'},
     'STRESS': {'SXX': 'Sxx', 'SYY': 'Syy', 'SZZ': 'Szz', 'SXY': 'Sxy', 'SYZ': 'Syz', 'SZX': 'Szx'},
@@ -73,6 +88,28 @@ def _signature(path: Path):
 
 def _unit_text(units: dict) -> str:
     return ", ".join(f"{_UNIT_LABELS.get(key, key)}: {value}" for key, value in units.items()) or "미확인"
+
+
+def _effective_stress_unit(units: dict) -> str | None:
+    from .viewport import deduce_stress_unit
+
+    if not isinstance(units, dict):
+        return None
+    stress = deduce_stress_unit(units)
+    if stress:
+        return stress
+    mass = str(units.get("mass", "")).strip()
+    length = str(units.get("length", "")).strip().lower()
+    time = str(units.get("time", "")).strip().lower()
+    if mass in {"Mg", "t", "ton", "tonne"} and length == "mm" and time == "s":
+        return "MPa"
+    if mass.lower() == "g" and length == "mm" and time == "ms":
+        return "MPa"
+    if mass.lower() == "kg" and length == "mm" and time == "ms":
+        return "GPa"
+    if mass.lower() == "kg" and length == "m" and time == "s":
+        return "Pa"
+    return str(units["stress"]).strip() if units.get("stress") else None
 
 
 def _time_text(value: str) -> str:
@@ -221,7 +258,10 @@ class NativeAnalysisWindow(QMainWindow):
         self._runs = {}
         self._owned_run_ids = set()
         self._displayed_run_id = None
+        self._displayed_run_state = None
         self._displayed_result = None
+        self._had_runs = False
+        self._empty_initialized = False
         self._expert_windows = {}
         self._expert_window = None
         node = self.project.nodes[node_id]
@@ -231,7 +271,7 @@ class NativeAnalysisWindow(QMainWindow):
         program_name = {"calculix": "CalculiX", "codeaster": "Code_Aster", "radioss": "OpenRadioss",
                         "openradioss": "OpenRadioss", "opencourant": "OpenCourant", "lsdyna": "LS-DYNA"}.get(node.program_id, node.program_id.capitalize())
         self.setWindowTitle(f"{self.project.name} — {program_name} 해석")
-        self.resize(1050, 760)
+        self.resize(1360, 860)
         self.view_menu = self.menuBar().addMenu("보기(&V)")
         self.theme_action = self.view_menu.addAction(theme_toggle_label(), toggle_theme_mode)
         self.tools_menu = self.menuBar().addMenu("도구(&T)")
@@ -268,31 +308,64 @@ class NativeAnalysisWindow(QMainWindow):
         self.expert_toolbar_action.triggered.connect(self.request_expert_debate)
         container = QWidget()
         layout = QVBoxLayout(container)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
         header_card = QFrame()
         header_card.setObjectName("sectionCard")
         header = QVBoxLayout(header_card)
-        header.setContentsMargins(8, 6, 8, 6)
-        header.setSpacing(4)
+        header.setContentsMargins(8, 3, 8, 3)
+        header.setSpacing(2)
         status_line = QHBoxLayout()
         self.status = QLabel()
         self.status.setWordWrap(True)
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         status_line.addWidget(self.status, 1)
         self.unit_badge = QLabel()
         status_line.addWidget(self.unit_badge)
         header.addLayout(status_line)
         self.input_heading = QLabel()
         self.input_heading.setWordWrap(True)
+        self.input_heading.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.input_heading.setTextInteractionFlags(Qt.TextSelectableByMouse)
         header.addWidget(self.input_heading)
         self.active_status = QLabel()
         self.active_status.setWordWrap(True)
+        self.active_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         header.addWidget(self.active_status)
         layout.addWidget(header_card)
+
+        run_header_card = QFrame()
+        run_header_card.setObjectName("sectionCard")
+        run_header = QVBoxLayout(run_header_card)
+        run_header.setContentsMargins(8, 3, 8, 3)
+        run_header.setSpacing(2)
+        selection = QHBoxLayout()
+        selection.addWidget(QLabel("조회할 실행"))
+        self.run_selector = QComboBox()
+        self.run_selector.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.run_selector.setMinimumContentsLength(20)
+        self.run_selector.setMinimumWidth(160)
+        self.run_selector.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.run_selector.currentIndexChanged.connect(self.select_run)
+        selection.addWidget(self.run_selector, 1)
+        run_header.addLayout(selection)
+        self.run_status = _RunStatusLabel("아직 실행 기록이 없습니다.")
+        self.run_status.setWordWrap(True)
+        self.run_status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+        run_header.addWidget(self.run_status)
+        self.run_source = QLabel()
+        self.run_source.setWordWrap(True)
+        self.run_source.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.run_source.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        run_header.addWidget(self.run_source)
+        layout.addWidget(run_header_card)
+
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
         self.source = DeckCodeEditor()
         self.source.setPlaceholderText("선택한 네이티브 입력 파일의 원문을 표시합니다.")
         input_tabs = QTabWidget()
+        self.input_tabs = input_tabs
         deck_split = QSplitter(Qt.Horizontal)
         outline_panel = QWidget()
         outline_layout = QVBoxLayout(outline_panel)
@@ -313,29 +386,10 @@ class NativeAnalysisWindow(QMainWindow):
         outline_layout.addWidget(self.deck_outline)
         deck_split.addWidget(outline_panel)
         deck_split.addWidget(self.source)
-        deck_split.setSizes([240, 760])
+        deck_split.setSizes([300, 1020])
         input_tabs.addTab(deck_split, "입력 원문")
         input_tabs.addTab(self.details, "파일 정보")
-        run_panel = QWidget()
-        run_layout = QVBoxLayout(run_panel)
-        run_layout.setContentsMargins(0, 0, 0, 0)
-        selection = QHBoxLayout()
-        selection.addWidget(QLabel("조회할 실행"))
-        self.run_selector = QComboBox()
-        self.run_selector.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.run_selector.setMinimumContentsLength(20)
-        self.run_selector.currentIndexChanged.connect(self.select_run)
-        selection.addWidget(self.run_selector, 1)
-        run_layout.addLayout(selection)
-        self.run_status = _RunStatusLabel("아직 실행 기록이 없습니다.")
-        self.run_status.setWordWrap(True)
-        from PySide6.QtWidgets import QSizePolicy
-        self.run_status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        run_layout.addWidget(self.run_status)
-        self.run_source = QLabel()
-        self.run_source.setWordWrap(True)
-        self.run_source.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        run_layout.addWidget(self.run_source)
+
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setObjectName("monoView")
@@ -343,7 +397,8 @@ class NativeAnalysisWindow(QMainWindow):
         self.log.setPlaceholderText("선택한 실행의 원본 로그를 표시합니다.")
         log_panel = QWidget()
         log_layout = QVBoxLayout(log_panel)
-        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setContentsMargins(6, 6, 6, 6)
+        log_layout.setSpacing(5)
         log_header = QHBoxLayout()
         self.log_summary_badge = QLabel()
         log_header.addWidget(self.log_summary_badge, 1)
@@ -353,82 +408,174 @@ class NativeAnalysisWindow(QMainWindow):
         self.btn_log_expert.clicked.connect(self.request_expert_debate)
         log_header.addWidget(self.btn_log_expert)
         log_layout.addLayout(log_header)
-        log_layout.addWidget(self.log)
+        log_layout.addWidget(self.log, 1)
+
+        from .native_result_view import NativeResultView
+        self.native_view = NativeResultView(self.workbench.read_native_frame)
+        self.native_view.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.native_view.setMinimumWidth(300)
+
         result_panel = QWidget()
         result_layout = QVBoxLayout(result_panel)
-        result_layout.setContentsMargins(0, 0, 0, 0)
-        self.frame_selector = QComboBox()
-        self.frame_selector.currentIndexChanged.connect(self.show_result)
-        frame_line = QHBoxLayout()
-        frame_line.addWidget(QLabel("프레임"))
-        frame_line.addWidget(self.frame_selector, 1)
+        result_layout.setContentsMargins(4, 4, 4, 4)
+        result_layout.setSpacing(0)
+        result_main_split = QSplitter(Qt.Horizontal)
+        result_main_split.addWidget(self.native_view)
+
+        summary_panel = QWidget()
+        summary_panel.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        summary_panel.setMinimumWidth(340)
+        summary_layout = QVBoxLayout(summary_panel)
+        summary_layout.setContentsMargins(4, 0, 0, 0)
+        summary_layout.setSpacing(3)
+
+        summary_top_bar = QHBoxLayout()
+        summary_top_bar.setSpacing(6)
         self.result_unit_badge = QLabel()
-        frame_line.addWidget(self.result_unit_badge)
+        summary_top_bar.addWidget(self.result_unit_badge)
         self.result_verify_badge = QLabel()
         self.result_verify_badge.hide()
-        frame_line.addWidget(self.result_verify_badge)
-        self.btn_result_expert = QPushButton("AI 전문가 결과 검토 요청 (Ctrl+E)")
+        summary_top_bar.addWidget(self.result_verify_badge)
+        summary_top_bar.addStretch(1)
+        self.btn_result_expert = QPushButton("AI 전문가 결과 검토 (Ctrl+E)")
         self.btn_result_expert.setObjectName("expert_result_btn")
         self.btn_result_expert.setToolTip("선택한 결과와 요약을 바탕으로 AI 전문가 패널 토론을 시작합니다 (Ctrl+E)")
         self.btn_result_expert.clicked.connect(self.request_expert_debate)
         self.btn_expert_debate = self.btn_result_expert
-        frame_line.addWidget(self.btn_result_expert)
-        result_layout.addLayout(frame_line)
+        summary_top_bar.addWidget(self.btn_result_expert)
+        summary_layout.addLayout(summary_top_bar)
+
+        self.frame_selector = QComboBox()
+        self.frame_selector.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.frame_selector.setMinimumContentsLength(18)
+        self.frame_selector.setMinimumWidth(140)
+        self.frame_selector.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.frame_selector.currentIndexChanged.connect(self.show_result)
+        frame_line = QHBoxLayout()
+        frame_line.setSpacing(6)
+        frame_line.addWidget(QLabel("프레임"))
+        frame_line.addWidget(self.frame_selector, 1)
+        summary_layout.addLayout(frame_line)
+
         kpis = QHBoxLayout()
-        for title, attr in (("최대 변위", "kpi_disp_value"),
-                            ("변위 / 메시 절점", "kpi_nodes_value"), ("집합 출력 상태 (DAT)", "kpi_dat_value")):
+        kpis.setSpacing(6)
+        for title, attr in (
+            ("최대 변위 |U|max", "kpi_disp_value"),
+            ("최대 응력 · 절점 규모", "kpi_nodes_value"),
+            ("합력 평형 · 에너지 검산", "kpi_dat_value"),
+        ):
             card = QFrame()
             card.setObjectName("kpiCard")
+            card.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            card.setMinimumWidth(88)
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(10, 5, 10, 5)
+            card_layout.setContentsMargins(10, 4, 10, 4)
             card_layout.setSpacing(2)
-            card_layout.addWidget(QLabel(title))
+            title_lbl = QLabel(title)
+            title_lbl.setObjectName("mutedLabel")
+            title_lbl.setWordWrap(True)
+            title_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            card_layout.addWidget(title_lbl)
             value = QLabel("미확인")
+            value.setObjectName("cardTitle")
+            value.setWordWrap(True)
+            value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             setattr(self, attr, value)
             card_layout.addWidget(value)
             kpis.addWidget(card, 1)
-        result_layout.addLayout(kpis)
-        tables = QWidget()
-        tables_layout = QVBoxLayout(tables)
-        tables_layout.setContentsMargins(0, 0, 0, 0)
-        tables_layout.setSpacing(4)
-        self.field_table = self._result_table(["필드", "성분", "최솟값", "최댓값", "판독/메시 절점"])
-        self.field_table.setMinimumHeight(115)
-        tables_layout.addWidget(self.field_table, 1)
+        summary_layout.addLayout(kpis)
+
+        field_header = QLabel("물리량 성분별 분포 범위")
+        field_header.setObjectName("cardTitle")
+        summary_layout.addWidget(field_header)
+        self.field_table = self._result_table(["물리량", "성분", "최솟값", "최댓값", "단위"])
+        self.field_table.setMinimumHeight(64)
+        self.field_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        summary_layout.addWidget(self.field_table, 2)
+
         self.dat_container = QWidget()
         dat_layout = QVBoxLayout(self.dat_container)
         dat_layout.setContentsMargins(0, 0, 0, 0)
         dat_layout.setSpacing(2)
-        dat_layout.addWidget(QLabel("DAT 마지막 판독 프레임의 집합 원값 (별도 파일)"))
+        dat_header = QLabel("경계 · 하중 집합 합력 및 변위 요약 (.dat)")
+        dat_header.setObjectName("cardTitle")
+        dat_layout.addWidget(dat_header)
         self.dat_frame_label = QLabel()
+        self.dat_frame_label.setObjectName("mutedLabel")
         self.dat_frame_label.setWordWrap(True)
+        self.dat_frame_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         dat_layout.addWidget(self.dat_frame_label)
-        self.dat_table = self._result_table(["집합 (NSET)", "종류", "절점 수", "원 합계 성분 (1, 2, 3)", "단위"])
-        self.dat_table.setMinimumHeight(54)
-        self.dat_table.setMaximumHeight(168)
+        self.dat_table = self._result_table(["절점 집합", "항목", "절점 수", "X, Y, Z 성분", "단위"])
+        self.dat_table.setMinimumHeight(62)
+        self.dat_table.setMaximumHeight(220)
+        self.dat_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.dat_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.dat_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.dat_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.dat_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         dat_layout.addWidget(self.dat_table)
-        tables_layout.addWidget(self.dat_container, 0)
+        summary_layout.addWidget(self.dat_container, 1)
+
+        self.energy_container = QWidget()
+        energy_layout = QVBoxLayout(self.energy_container)
+        energy_layout.setContentsMargins(0, 0, 0, 0)
+        energy_layout.setSpacing(2)
+        energy_header = QLabel("동해석 에너지 수지 · 사이클 검산")
+        energy_header.setObjectName("cardTitle")
+        energy_layout.addWidget(energy_header)
+        self.energy_table = self._result_table(["검산 항목", "측정값", "판정 / 비고"])
+        self.energy_table.setMinimumHeight(60)
+        self.energy_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.energy_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.energy_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        energy_layout.addWidget(self.energy_table)
+        self.energy_container.hide()
+        summary_layout.addWidget(self.energy_container, 2)
+
+        self.warnings_label = QLabel()
+        self.warnings_label.setWordWrap(True)
+        self.warnings_label.hide()
+        summary_layout.addWidget(self.warnings_label)
+
+        raw_bar = QHBoxLayout()
+        raw_bar.setContentsMargins(0, 0, 0, 0)
+        raw_bar.addStretch(1)
+        self.btn_toggle_raw_summary = QPushButton("텍스트 요약 보기")
+        self.btn_toggle_raw_summary.setCheckable(True)
+        self.btn_toggle_raw_summary.setChecked(False)
+        self.btn_toggle_raw_summary.toggled.connect(self._on_toggle_raw_summary)
+        raw_bar.addWidget(self.btn_toggle_raw_summary)
+        summary_layout.addLayout(raw_bar)
+
         self.result_text = QPlainTextEdit()
         self.result_text.setReadOnly(True)
-        self.result_text.setMinimumHeight(96)
-        result_split = QSplitter(Qt.Vertical)
-        result_split.addWidget(tables)
-        result_split.addWidget(self.result_text)
-        result_split.setSizes([355, 110])
-        result_layout.addWidget(result_split)
+        self.result_text.setMinimumHeight(80)
+        self.result_text.setMaximumHeight(150)
+        self.result_text.hide()
+        summary_layout.addWidget(self.result_text)
+
+        summary_scroll = QScrollArea()
+        summary_scroll.setWidgetResizable(True)
+        summary_scroll.setFrameShape(QFrame.NoFrame)
+        summary_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        summary_scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        summary_scroll.setMinimumWidth(340)
+        summary_scroll.setMinimumHeight(180)
+        summary_scroll.viewport().setStyleSheet("background: transparent;")
+        summary_scroll.setWidget(summary_panel)
+
+        result_main_split.addWidget(summary_scroll)
+        result_main_split.setSizes([820, 520])
+        result_main_split.setStretchFactor(0, 3)
+        result_main_split.setStretchFactor(1, 2)
+        result_layout.addWidget(result_main_split, 1)
+
         output_tabs = QTabWidget()
         self.output_tabs = output_tabs
+        output_tabs.addTab(input_tabs, "입력 덱")
         output_tabs.addTab(log_panel, "로그")
         output_tabs.addTab(result_panel, "결과")
-        from .native_result_view import NativeResultView
-        self.native_view = NativeResultView(self.workbench.read_native_frame)
-        output_tabs.addTab(self.native_view, "선택 프레임 보기")
-        run_layout.addWidget(output_tabs)
-        split = QSplitter(Qt.Vertical)
-        split.addWidget(input_tabs)
-        split.addWidget(run_panel)
-        split.setSizes([155, 555])
-        layout.addWidget(split)
+        layout.addWidget(output_tabs, 1)
         self.setCentralWidget(container)
         self._theme_mode = current_theme_mode()
         self.apply_theme()
@@ -503,6 +650,7 @@ class NativeAnalysisWindow(QMainWindow):
         self.theme_action.setText(theme_toggle_label(resolved))
         self.active_status.setStyleSheet(status_badge_style("running", resolved))
         self.result_verify_badge.setStyleSheet(status_badge_style("neutral", resolved))
+        self.warnings_label.setStyleSheet(status_badge_style("warning", resolved))
         self.source.highlighter.theme_mode = resolved
         self.source.highlighter.rehighlight()
         self.source.gutter.update()
@@ -511,6 +659,10 @@ class NativeAnalysisWindow(QMainWindow):
         self._update_unit_badges()
         self._update_log_summary()
 
+    def _on_toggle_raw_summary(self, checked: bool) -> None:
+        self.result_text.setVisible(checked)
+        self.btn_toggle_raw_summary.setText("텍스트 요약 숨기기" if checked else "텍스트 요약 보기")
+
     def _update_unit_badges(self):
         mode = getattr(self, '_theme_mode', None)
         reference = self.workbench.input_file(self.project, self.node_id)
@@ -518,11 +670,16 @@ class NativeAnalysisWindow(QMainWindow):
                                      (self.result_unit_badge, getattr(self._runs.get(self._displayed_run_id), 'units', {}),
                                       self._displayed_run_id in self._runs)):
             tone = 'ready' if units else 'warning' if exists else 'neutral'
-            from .viewport import deduce_stress_unit
-            text = ' · '.join(str(units[key]) for key in ('length', 'force') if units.get(key))
-            stress_unit = deduce_stress_unit(units)
-            if stress_unit:
-                text += f' ({stress_unit})'
+            if units.get('mass'):
+                keys = ('mass', 'length', 'time', 'force')
+            elif units.get('length') or units.get('force'):
+                keys = ('length', 'force')
+            else:
+                keys = ('time', 'temperature', 'stress')
+            text = ' · '.join(str(units[key]) for key in keys if units.get(key))
+            stress_unit = _effective_stress_unit(units)
+            if stress_unit and not (keys == ('time', 'temperature', 'stress') and text == stress_unit):
+                text = f'{text} ({stress_unit})' if text else stress_unit
             badge.setText(f'단위: {text}' if text else '단위 미확인' if exists else '자료 없음')
             badge.setStyleSheet(status_badge_style(tone, mode))
 
@@ -535,7 +692,8 @@ class NativeAnalysisWindow(QMainWindow):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.horizontalHeader().setFixedHeight(26)
         table.verticalHeader().setDefaultSectionSize(24)
-        table.setMinimumHeight(80)
+        table.verticalHeader().setVisible(False)
+        table.setMinimumHeight(60)
         return table
 
     @staticmethod
@@ -547,11 +705,16 @@ class NativeAnalysisWindow(QMainWindow):
 
     def _clear_result(self):
         self.native_view.set_selection(None, None)
+        self.frame_selector.setToolTip("")
         self.result_text.clear()
         self.field_table.setRowCount(0)
         self.dat_table.setRowCount(0)
         self.dat_container.hide()
         self.dat_frame_label.clear()
+        self.energy_table.setRowCount(0)
+        self.energy_container.hide()
+        self.warnings_label.clear()
+        self.warnings_label.hide()
         for value in (self.kpi_disp_value, self.kpi_nodes_value, self.kpi_dat_value):
             value.setText('미확인')
         self.result_unit_badge.setText('자료 없음')
@@ -574,7 +737,8 @@ class NativeAnalysisWindow(QMainWindow):
             return 'step'
         if kw in {'MATERIAL', 'ELASTIC', 'PLASTIC', 'DENSITY', 'EXPANSION', 'CONDUCTIVITY', 'SPECIFIC HEAT'} or kw.startswith(('MAT', 'EOS', 'FAIL')):
             return 'material'
-        if kw in {'BOUNDARY', 'CLOAD', 'DLOAD', 'DSLOAD', 'TEMPERATURE', 'CFLUX', 'DFLUX', 'FILM', 'RADIATE'} or kw.startswith(('BCS', 'CLOAD', 'GRAV', 'INIVEL', 'IMPDISP', 'IMPVEL', 'MONVOL')):
+        if kw in {'BOUNDARY', 'CLOAD', 'DLOAD', 'DSLOAD', 'TEMPERATURE', 'CFLUX', 'DFLUX', 'FILM', 'RADIATE',
+                  'PRE-TENSION SECTION'} or kw.startswith(('BCS', 'CLOAD', 'GRAV', 'INIVEL', 'IMPDISP', 'IMPVEL', 'MONVOL')):
             return 'bc_load'
         if any(word in kw for word in ('CONTACT', 'FRICTION', 'SURFACE', 'TIE')) or kw.startswith(('INTER', 'SURF', 'TIE')):
             return 'contact'
@@ -596,7 +760,7 @@ class NativeAnalysisWindow(QMainWindow):
 
             if text.startswith('*'):
                 keyword = text.split(',', 1)[0].strip().upper().lstrip('*')
-                name = re.search(r'\b(?:NAME|ELSET|NSET|MATERIAL)\s*=\s*([^,]+)', text, re.I)
+                name = re.search(r'\b(?:NAME|ELSET|NSET|MATERIAL|INPUT|SURFACE|INTERACTION)\s*=\s*([^,]+)', text, re.I)
                 title = f'*{keyword}' + (f' ({name[1].strip()})' if name else '')
                 cat = self._deck_category(keyword)
                 parent = step if step is not None and keyword != 'STEP' else self.deck_outline
@@ -666,7 +830,8 @@ class NativeAnalysisWindow(QMainWindow):
             self.input_heading.setText("계산할 입력: 파일 없음")
         else:
             units = ", ".join(f"{_UNIT_LABELS.get(name, name)}: {unit}" for name, unit in reference.units.items())
-            unit_source = {"user": "사용자 선언", "unknown": "미확인"}.get(reference.unit_source, reference.unit_source)
+            raw_source = str(reference.unit_source or "").strip()
+            unit_source = _UNIT_SOURCE_LABELS.get(raw_source.lower(), raw_source)
             p_ref = Path(reference.path)
             shown_input_path = (
                 p_ref.name
@@ -720,6 +885,7 @@ class NativeAnalysisWindow(QMainWindow):
             self._project_signature = _signature(project.path)
             self._runs.clear()
             self._displayed_run_id = None
+            self._displayed_run_state = None
             self.native_view.set_selection(None, None)
             self.refresh_input()
             self.refresh_runs(preferred_selection=previous_selection)
@@ -758,7 +924,9 @@ class NativeAnalysisWindow(QMainWindow):
             self.run_source.clear()
             self.frame_selector.clear()
             self._displayed_run_id = None
+            self._displayed_run_state = None
             self._displayed_result = None
+            self._had_runs = False
             self._clear_result()
             self._update_log_summary()
             self._update_actions()
@@ -781,11 +949,16 @@ class NativeAnalysisWindow(QMainWindow):
         self._render_input_status()
         self._update_actions()
         if selected is None:
+            if (self._displayed_run_id is None and self._displayed_run_state is None and not self._empty_initialized) or self._had_runs:
+                self.output_tabs.setCurrentIndex(0)
+                self._empty_initialized = True
+                self._had_runs = False
             self.run_status.setText("아직 선택한 실행이 없습니다.")
             self.run_source.clear()
             self.log.clear()
             self.frame_selector.clear()
             self._displayed_run_id = None
+            self._displayed_run_state = None
             self._displayed_result = None
             self._clear_result()
             self._update_log_summary()
@@ -804,7 +977,23 @@ class NativeAnalysisWindow(QMainWindow):
 
     def _show_run(self, run, *, preferred_selection=None) -> None:
         changed = run.id != self._displayed_run_id
+        now_busy = _busy(run)
+        was_busy = self._displayed_run_state in _ACTIVE_STATES or self._displayed_run_state == "reading"
         self._displayed_run_id = run.id
+        self._displayed_run_state = "reading" if now_busy and run.parse_state == "reading" else run.state
+        self._had_runs = True
+        if changed or (was_busy and not now_busy):
+            result_payload = run.result or {}
+            if now_busy:
+                self.output_tabs.setCurrentIndex(1)
+            elif (
+                run.state in {"failed", "cancelled"}
+                and not result_payload.get("frames")
+                and not (result_payload.get("dat") or {}).get("sets")
+            ):
+                self.output_tabs.setCurrentIndex(1)
+            else:
+                self.output_tabs.setCurrentIndex(2)
         state = _RUN_LABELS.get(run.state, run.state)
         parsed = _PARSE_LABELS.get(run.parse_state, run.parse_state)
         stale_reason = _display_reason(run.stale_reason, "현재 입력과 보존 입력을 확인하세요.")
@@ -875,24 +1064,46 @@ class NativeAnalysisWindow(QMainWindow):
         if run is None:
             self._clear_result()
             return
+        self.frame_selector.setToolTip(self.frame_selector.currentText())
         self.native_view.set_selection(run, self.frame_selector.currentData())
         self.field_table.setRowCount(0)
         self.dat_table.setRowCount(0)
+        self.energy_table.setRowCount(0)
         self._update_unit_badges()
         self.kpi_disp_value.setText('미확인')
-        self.kpi_nodes_value.setText('? / ?')
         result = run.result or {}
+        run_summary = result.get("summary", {})
+        stress_unit = _effective_stress_unit(run.units)
         frame = next((frame for frame in result.get("frames", [])
                       if frame.get("index") == self.frame_selector.currentData()), None)
         lines = [f"선언 단위: {_unit_text(run.units)}"]
         if result.get("native_files"):
             lines.append("원본 결과: " + ", ".join(result["native_files"]))
+        raw_cyc = run_summary.get("total_cycles") if run_summary.get("total_cycles") is not None else run_summary.get("cycle")
+        valid_cyc = int(raw_cyc) if isinstance(raw_cyc, (int, float)) and not isinstance(raw_cyc, bool) and math.isfinite(raw_cyc) else None
         if frame:
             summary = frame.get("summary", {})
             value = summary.get("max_displacement")
             self.kpi_disp_value.setText('미확인' if value is None else f"{value:.4g} {run.units.get('length', '(단위 미확인)')}")
-            disp_nodes, mesh_nodes = summary.get('displacement_node_count'), summary.get('mesh_node_count')
-            self.kpi_nodes_value.setText(f"{disp_nodes:,} / {mesh_nodes:,}" if disp_nodes is not None and mesh_nodes is not None else '? / ?')
+            mesh_nodes = summary.get('mesh_node_count')
+            peak_stress: float | None = None
+            for item in frame.get("fields", []):
+                if item.get('name') == 'STRESS':
+                    for comp in item.get('summary', {}).get('components', []):
+                        for bound in (comp.get('minimum'), comp.get('maximum')):
+                            if isinstance(bound, (int, float)) and not isinstance(bound, bool) and math.isfinite(bound):
+                                mag = abs(float(bound))
+                                peak_stress = mag if peak_stress is None or mag > peak_stress else peak_stress
+            if peak_stress is not None and mesh_nodes is not None:
+                self.kpi_nodes_value.setText(
+                    f"최대 {peak_stress:.4g} {stress_unit or ''} · {mesh_nodes:,} 절점".replace("  ", " ")
+                )
+            elif mesh_nodes is not None:
+                self.kpi_nodes_value.setText(f"{mesh_nodes:,} 절점")
+            elif valid_cyc is not None:
+                self.kpi_nodes_value.setText(f"사이클 {valid_cyc:,}")
+            else:
+                self.kpi_nodes_value.setText('미확인')
             label = "판독된 절점 중 최대 변위" if summary.get("displacement_node_count", 0) < summary.get("mesh_node_count", 0) else "최대 변위"
             lines.append("최대 변위: 미확인" if value is None else
                          f"{label}: {value:.8g} {run.units.get('length', '(단위 미확인)')}")
@@ -903,13 +1114,24 @@ class NativeAnalysisWindow(QMainWindow):
                 components = ", ".join(component_labels.get(component['name'], component['name']) for component in item.get("components", [])
                                        if component.get("exist", 0) in (0, 2))
                 coverage = item.get("coverage", {})
-                coverage_text = f"{coverage.get('record_count', '?')} / {coverage.get('mesh_node_count', '?')}"
+                if field_name == 'DISP':
+                    field_unit = run.units.get('length') or '—'
+                elif field_name == 'STRESS':
+                    field_unit = stress_unit or '—'
+                elif field_name == 'FORC':
+                    field_unit = run.units.get('force') or '—'
+                elif field_name in {'TOSTRAIN', 'PE'}:
+                    field_unit = '-'
+                elif field_name == 'TEMP':
+                    field_unit = run.units.get('temperature') or '—'
+                else:
+                    field_unit = '—'
                 component_rows = item.get('summary', {}).get('components', [])
                 for component in component_rows or [{}]:
                     low, high = component.get('minimum'), component.get('maximum')
                     component_name = component.get('name', components)
                     self._append_row(self.field_table, [field_label, component_labels.get(component_name, component_name),
-                                     '?' if low is None else f'{low:.4g}', '?' if high is None else f'{high:.4g}', coverage_text])
+                                     '?' if low is None else f'{low:.4g}', '?' if high is None else f'{high:.4g}', field_unit])
                 lines.append(f"{field_label} ({components}) — 판독 절점 {coverage.get('record_count', '?')} / 메시 절점 {coverage.get('mesh_node_count', '?')}")
                 for component in item.get("summary", {}).get("components", []):
                     low, high = component.get("minimum"), component.get("maximum")
@@ -919,12 +1141,18 @@ class NativeAnalysisWindow(QMainWindow):
                 lines.append(f"교환 파일: {Path(frame['vtu_file']).name}")
         else:
             lines.append("판독한 결과 프레임이 없습니다. 원본 출력과 로그를 확인하세요.")
-            run_sum = result.get("summary", {})
-            if "total_cycles" in run_sum or "cycle" in run_sum:
-                self.kpi_nodes_value.setText(f"사이클 {int(run_sum.get('total_cycles', run_sum.get('cycle', 0))):,}")
+            if valid_cyc is not None:
+                self.kpi_nodes_value.setText(f"사이클 {valid_cyc:,}")
+            else:
+                self.kpi_nodes_value.setText('미확인')
 
-        run_summary = result.get("summary", {})
-        if run_summary.get("solver_id") == "radioss" or "internal_energy" in run_summary:
+        has_energy = bool(
+            run_summary.get("solver_id") == "radioss"
+            or "internal_energy" in run_summary
+            or "total_cycles" in run_summary
+        )
+        self.energy_container.setVisible(has_energy)
+        if has_energy:
             lines += ["", "OpenRadioss 에너지·사이클 요약:"]
             tot_c = run_summary.get("total_cycles")
             prt_c = run_summary.get("printed_cycle", run_summary.get("cycle"))
@@ -934,60 +1162,135 @@ class NativeAnalysisWindow(QMainWindow):
             if tot_c is not None:
                 if prt_c is not None and prt_c != tot_c:
                     lines.append(f"  총 사이클 수: {int(tot_c)} (마지막 출력 사이클: {int(prt_c)})")
+                    self._append_row(self.energy_table, ["총 사이클 수", f"{int(tot_c):,}", f"출력 사이클 {int(prt_c):,}"])
                 else:
                     lines.append(f"  총 사이클 수: {int(tot_c)}")
+                    self._append_row(self.energy_table, ["총 사이클 수", f"{int(tot_c):,}", "정상"])
             elif prt_c is not None:
                 lines.append(f"  마지막 출력 사이클: {int(prt_c)}")
+                self._append_row(self.energy_table, ["마지막 출력 사이클", f"{int(prt_c):,}", "종료 푸터 미확인"])
 
             if prt_t is not None:
                 if tot_c is not None and prt_c is not None and tot_c == prt_c:
                     lines.append(f"  최종 시간: {prt_t:.6g} {time_unit}")
+                    self._append_row(self.energy_table, ["최종 시간", f"{prt_t:.6g} {time_unit}", "해석 종료 시점"])
                 else:
                     lines.append(f"  마지막 출력 시간: {prt_t:.6g} {time_unit}")
-            elif "time" in run_summary:
+                    self._append_row(self.energy_table, ["마지막 출력 시간", f"{prt_t:.6g} {time_unit}", "중간 출력 시점"])
+            elif "time" in run_summary and run_summary["time"] is not None:
                 lines.append(f"  마지막 출력 시간: {run_summary['time']:.6g} {time_unit}")
+                self._append_row(self.energy_table, ["마지막 출력 시간", f"{run_summary['time']:.6g} {time_unit}", "중간 출력 시점"])
 
-            if "internal_energy" in run_summary:
+            if "internal_energy" in run_summary and run_summary["internal_energy"] is not None:
                 lines.append(f"  내부 에너지 (I-ENERGY): {run_summary['internal_energy']:.6g}")
-            if "kinetic_energy" in run_summary:
+                self._append_row(self.energy_table, ["내부 에너지 (IE)", f"{run_summary['internal_energy']:.6g}", "변형 에너지"])
+            if "kinetic_energy" in run_summary and run_summary["kinetic_energy"] is not None:
                 lines.append(f"  운동 에너지 (K-ENERGY): {run_summary['kinetic_energy']:.6g}")
-            if "energy_error" in run_summary:
-                lines.append(f"  에너지 오차율: {run_summary['energy_error']:.2f}%")
-            if "mass_error" in run_summary:
-                lines.append(f"  질량 오차율: {run_summary['mass_error']:.6g}")
+                self._append_row(self.energy_table, ["운동 에너지 (KE)", f"{run_summary['kinetic_energy']:.6g}", "관성 에너지"])
+            if "external_work" in run_summary and run_summary["external_work"] is not None:
+                self._append_row(self.energy_table, ["외부 일 (Ext. Work)", f"{run_summary['external_work']:.6g}", "외력 투입 일"])
             if "hourglass_ratio" in run_summary and run_summary["hourglass_ratio"] is not None:
-                lines.append(f"  아워글래스 비: {run_summary['hourglass_ratio']:.4f}")
+                hg = run_summary["hourglass_ratio"]
+                lines.append(f"  아워글래스 비: {hg:.4f}")
+                self._append_row(
+                    self.energy_table,
+                    ["아워글래스 비 (HG / IE)", f"{hg * 100:.2f}% ({hg:.4f})", "양호 (< 5%)" if hg < 0.05 else "주의 (≥ 5%)"],
+                )
+            if "energy_error" in run_summary and run_summary["energy_error"] is not None:
+                err = run_summary["energy_error"]
+                lines.append(f"  에너지 오차율: {err:.2f}%")
+                self._append_row(
+                    self.energy_table,
+                    ["에너지 오차율", f"{err:+.2f}%", "양호 (±5% 이내)" if abs(err) <= 5.0 else "주의 (오차 확대)"],
+                )
+            if "mass_error" in run_summary and run_summary["mass_error"] is not None:
+                m_err = run_summary["mass_error"]
+                lines.append(f"  질량 오차율: {m_err:.6g}")
+                self._append_row(
+                    self.energy_table,
+                    ["질량 오차율", f"{m_err:.6g}", "양호" if abs(m_err) <= 0.02 else "질량 스케일링 확인"],
+                )
 
-        dat = result.get("dat", {})
+        dat = result.get("dat") or {}
         dat_status = dat.get('status')
-        if not dat_status and run_summary.get("energy_error") is not None:
-            self.kpi_dat_value.setText(f"오차 {run_summary['energy_error']:.1f}%")
-        else:
-            self.kpi_dat_value.setText(_PARSE_LABELS.get(dat_status, dat_status or '출력 없음'))
-        self.dat_container.setVisible(bool(dat.get('sets')))
+        dat_sets = dat.get('sets') or {}
+        force_unit = run.units.get('force', '(단위 미확인)')
+        length_unit = run.units.get('length', '(단위 미확인)')
+        force_vectors: list[tuple[float, ...]] = []
+        for name, values in dat_sets.items():
+            if 'total_force' in values and values['total_force'] is not None:
+                vec = tuple(float(x) for x in values['total_force'])
+                force_vectors.append(vec)
+                count_val = len(values['nodal_forces']) if 'nodal_forces' in values else '—'
+                self._append_row(
+                    self.dat_table,
+                    [name, '합력 (Fx, Fy, Fz)', count_val, ', '.join(f'{x:.4g}' for x in vec), force_unit],
+                )
+            elif 'nodal_forces' in values and values['nodal_forces']:
+                vec = tuple(float(sum(col)) for col in zip(*values['nodal_forces'].values()))
+                force_vectors.append(vec)
+                self._append_row(
+                    self.dat_table,
+                    [name, '합력 (Fx, Fy, Fz)', len(values['nodal_forces']), ', '.join(f'{x:.4g}' for x in vec), force_unit],
+                )
+
+            if 'total_displacement' in values and values['total_displacement'] is not None:
+                uvec = tuple(float(x) for x in values['total_displacement'])
+                count_val = len(values['displacements']) if 'displacements' in values else '—'
+                self._append_row(
+                    self.dat_table,
+                    [name, '변위 합계 (Ux, Uy, Uz)', count_val, ', '.join(f'{x:.4g}' for x in uvec), length_unit],
+                )
+            elif 'displacements' in values and values['displacements']:
+                max_u = max(math.hypot(*(float(c) for c in row)) for row in values['displacements'].values())
+                self._append_row(
+                    self.dat_table,
+                    [name, '최대 변위 |U|max', len(values['displacements']), f'{max_u:.4g}', length_unit],
+                )
+
+        same_dim = len(force_vectors) >= 2 and len({len(v) for v in force_vectors}) == 1 and len(force_vectors[0]) > 0
+        net: tuple[float, ...] = ()
+        if same_dim:
+            net = tuple(sum(col) for col in zip(*force_vectors))
+            self._append_row(
+                self.dat_table,
+                ['전체 합계 (∑F)', '평형 검산', '—', ', '.join(f'{x:.4g}' for x in net), force_unit],
+            )
+
+        self.dat_container.setVisible(bool(dat_sets))
         metadata = dat.get('frame') or {}
         frame_text = ' / '.join(f'{label} {metadata[key]}' for key, label in
                                 (('step', '단계'), ('increment', '증분'), ('value', '값'))
                                 if metadata.get(key) is not None)
-        self.dat_frame_label.setText('DAT 최종 프레임' + (f' · {frame_text}' if frame_text else ''))
-        for name, values in dat.get('sets', {}).items():
-            for key, label, unit_key, records in (
-                    ('total_force', '절점력 합계 원값', 'force', 'nodal_forces'),
-                    ('total_displacement', '변위 합계 원값', 'length', 'displacements')):
-                if key in values:
-                    self._append_row(self.dat_table, [name, label, len(values[records]) if records in values else '—',
-                                     ', '.join(f'{x:.4g}' for x in values[key]), run.units.get(unit_key, '(단위 미확인)')])
-            for records, label, unit_key in (('displacements', '변위', 'length'), ('nodal_forces', '절점력 원값', 'force')):
-                if records in values:
-                    self._append_row(self.dat_table, [name, label, len(values[records]), '집합별 원 절점값', run.units.get(unit_key, '(단위 미확인)')])
+        self.dat_frame_label.setText('최종 프레임' + (f' · {frame_text}' if frame_text else ''))
+        dat_text_header = 'DAT 최종 프레임' + (f' · {frame_text}' if frame_text else '')
+
+        if len(force_vectors) >= 2 and same_dim:
+            ref_mag = max((math.hypot(*v) for v in force_vectors), default=0.0)
+            net_mag = math.hypot(*net)
+            if math.isfinite(ref_mag) and math.isfinite(net_mag) and ref_mag > 0 and net_mag <= 0.02 * ref_mag:
+                self.kpi_dat_value.setText('평형 확인 (∑F ≈ 0)')
+            else:
+                self.kpi_dat_value.setText(f'{len(force_vectors)}개 집합 합력')
+        elif len(force_vectors) >= 2:
+            self.kpi_dat_value.setText(f'{len(force_vectors)}개 집합 합력')
+        elif dat_sets:
+            self.kpi_dat_value.setText(f'{len(dat_sets)}개 집합 확인')
+        elif run_summary.get("energy_error") is not None:
+            hg = run_summary.get("hourglass_ratio")
+            hg_txt = f" · HG {hg * 100:.1f}%" if isinstance(hg, (int, float)) and not isinstance(hg, bool) and math.isfinite(hg) else ""
+            self.kpi_dat_value.setText(f"오차 {run_summary['energy_error']:.1f}%{hg_txt}")
+        else:
+            self.kpi_dat_value.setText(_PARSE_LABELS.get(dat_status, dat_status or '출력 없음'))
+
         if dat and dat.get("status") != "missing":
             lines += ["", f"DAT 집합 결과: {_PARSE_LABELS.get(dat.get('status'), dat.get('status'))}"]
             if frame_text:
-                lines.append(self.dat_frame_label.text())
+                lines.append(dat_text_header)
             value = dat.get("max_displacement")
             if value is not None:
                 lines.append(f"DAT 판독 절점 중 최대 변위: {value:.8g} {run.units.get('length', '(단위 미확인)')}")
-            for name, values in dat.get("sets", {}).items():
+            for name, values in dat_sets.items():
                 lines.append(f"집합 {name}")
                 for key, label in (("displacements", "변위"), ("nodal_forces", "절점력 원값")):
                     if key in values:
@@ -997,8 +1300,22 @@ class NativeAnalysisWindow(QMainWindow):
                     if key in values:
                         numbers = ", ".join(f"{item:.8g}" for item in values[key])
                         lines.append(f"  {label}: ({numbers}) {run.units.get(unit_key, '(단위 미확인)')}")
+            if same_dim:
+                net_numbers = ", ".join(f"{item:.8g}" for item in net)
+                lines.append(f"전체 합계 (∑F): ({net_numbers}) {force_unit}")
             lines.extend(_display_reason(message, "DAT 원본 출력과 판독 상태를 확인하세요.") for message in dat.get("warnings", []))
         lines.extend(_display_reason(message, "원본 출력과 판독 상태를 확인하세요.") for message in result.get("warnings", []))
+
+        all_warnings = [
+            w for w in (
+                *(_display_reason(m, "DAT 원본 출력과 판독 상태를 확인하세요.") for m in dat.get("warnings", [])),
+                *(_display_reason(m, "원본 출력과 판독 상태를 확인하세요.") for m in result.get("warnings", [])),
+            )
+            if w
+        ]
+        self.warnings_label.setText("\n".join(all_warnings))
+        self.warnings_label.setVisible(bool(all_warnings))
+
         text = "\n".join(lines)
         if self.result_text.toPlainText() != text:
             self.result_text.setPlainText(text)

@@ -171,6 +171,39 @@ def _ko_split(raw: str | None) -> str:
     return _SPLIT_KO.get(str(raw), str(raw or "미확인"))
 
 
+_INDEPENDENT_KO = {
+    "frequency": "주파수",
+    "frequency_hz": "주파수",
+    "freq": "주파수",
+    "freq_hz": "주파수",
+    "angular_frequency": "각주파수",
+    "angular_frequency_rad_s": "각주파수",
+    "omega": "각주파수",
+    "omega_rad_s": "각주파수",
+    "time": "시간",
+    "time_s": "시간",
+    "time_ms": "시간",
+    "strain": "변형률",
+    "temperature": "온도",
+    "temperature_k": "온도",
+    "temperature_c": "온도",
+    "temp": "온도",
+    "temp_k": "온도",
+    "temp_c": "온도",
+}
+
+
+def _ko_independent_label(col_name: str, ind_unit: str = "") -> str:
+    key = str(col_name or "").strip().lower()
+    if key in _INDEPENDENT_KO:
+        return _INDEPENDENT_KO[key]
+    if ind_unit:
+        suffix = f"_{ind_unit.strip().lower()}"
+        if key.endswith(suffix) and key[: -len(suffix)] in _INDEPENDENT_KO:
+            return _INDEPENDENT_KO[key[: -len(suffix)]]
+    return col_name
+
+
 def _ko_observable(obs_id: str) -> str:
     return _OBSERVABLE_KO.get(obs_id, obs_id)
 
@@ -1440,7 +1473,7 @@ class MaterialStudyWindow(QMainWindow):
             return
         max_n = min(100, x_arr.size)
         ind_unit = exp_data[ch0.observable_id]["independent_unit"]
-        cols = ["원본 행", _unit_label(ch0.independent_column, ind_unit)]
+        cols = ["원본 행", _unit_label(_ko_independent_label(ch0.independent_column, ind_unit), ind_unit)]
         cols.extend(_unit_label(_ko_observable(ch.observable_id), ch.observable.unit) for ch in channels)
         cols.extend(["분할", "조건(온도)"])
 
