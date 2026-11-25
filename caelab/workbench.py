@@ -351,7 +351,7 @@ class Workbench:
         elif run.stale:
             node.state, node.reason = "stale", run.stale_reason
         elif run.state == "completed":
-            node.state, node.reason = "ready", "솔버가 종료되었습니다. 판독 상태와 공학적 타당성은 별도로 확인하세요."
+            node.state, node.reason = "ready", "솔버 실행이 정상 종료되었습니다."
 
     def select_native_run(self, project: NativeProject, node_id: str, run_id: str) -> None:
         store = self._run_store(project)

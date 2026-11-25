@@ -36,8 +36,17 @@ def scalar_literal_occurrences(line: str, literal: str) -> tuple[tuple[int,int],
 class BindingSpec:
     variable_id: str
     token_name: str
-    format_spec: str = ".17g"
+    format_spec: str = ".12g"
     unit_scale: float = 1.0
+
+
+def _format_inp_scalar(val: float) -> str:
+    """Format finite float preserving round-trip precision within CalculiX's 20-char token limit."""
+    for spec in (".17g", ".15g", ".14g", ".13g", ".12g", ".10g"):
+        rendered = format(val, spec)
+        if len(rendered) <= 19:
+            return rendered
+    return format(val, ".8g")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -95,7 +104,7 @@ class TemplateDeck:
                 else:
                     continue
                 if isinstance(val, (int, float)):
-                    token_to_value[token] = format(float(val), ".17g")
+                    token_to_value[token] = _format_inp_scalar(float(val))
                 else:
                     token_to_value[token] = str(val)
 

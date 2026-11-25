@@ -425,6 +425,53 @@ QHeaderView::section {{
     padding: 5px 8px;
     font-weight: 600;
 }}
+QHeaderView {{
+    background: {p['header_bg']};
+}}
+QTableCornerButton::section {{
+    background: {p['header_bg']};
+    border: none;
+    border-right: 1px solid {p['border']};
+    border-bottom: 1px solid {p['border']};
+}}
+QScrollBar:vertical {{
+    background: {p['surface_bg']};
+    width: 11px;
+    margin: 0px;
+    border-left: 1px solid {p['border_subtle']};
+}}
+QScrollBar:horizontal {{
+    background: {p['surface_bg']};
+    height: 11px;
+    margin: 0px;
+    border-top: 1px solid {p['border_subtle']};
+}}
+QScrollBar::handle:vertical {{
+    background: {p['border_strong']};
+    min-height: 24px;
+    border-radius: 4px;
+    margin: 2px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {p['border_strong']};
+    min-width: 24px;
+    border-radius: 4px;
+    margin: 2px;
+}}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+    background: {p['accent_hover']};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+    height: 0px;
+    background: none;
+    border: none;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: {p['surface_bg']};
+}}
 QTabWidget::pane {{
     border: 1px solid {p['border']};
     background: {p['panel_bg']};

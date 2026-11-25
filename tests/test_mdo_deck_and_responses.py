@@ -165,3 +165,11 @@ def test_mdo_studio_rejects_unmeasured_point_apply(tmp_path: Path, monkeypatch):
     assert inp_file.read_text(encoding="utf-8") == deck_content
 
     win.close()
+
+
+def test_template_deck_small_density_within_calculix_20_char_limit():
+    deck = TemplateDeck.from_text("*DENSITY\n<RHO>, 293.15\n")
+    rendered = deck.render({"RHO": 3.1714285714285712e-09})
+    token_str = rendered.splitlines()[1].split(",")[0].strip()
+    assert len(token_str) <= 20
+    assert float(token_str) == pytest.approx(3.1714285714285712e-09, rel=1e-11)

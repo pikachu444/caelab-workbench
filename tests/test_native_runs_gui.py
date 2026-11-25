@@ -212,8 +212,8 @@ def test_dat_only_sets_are_visible_without_inventing_frd_or_reaction(analysis, t
     assert "집합 SUPPORT" in text and "절점력 합계 원값: (1, 2, 3) N" in text
     assert "반력" not in text
     assert window.frame_selector.count() == 0
-    assert window.dat_frame_label.text() == 'DAT 최종 프레임 · 값 1.0'
-    assert window.dat_frame_label.text() in text
+    assert window.dat_frame_label.text() == '최종 프레임 · 값 1.0'
+    assert 'DAT 최종 프레임 · 값 1.0' in text
     assert 'None' not in text
     assert window.result_unit_badge.text() == '단위: mm · N (MPa)'
 
@@ -492,6 +492,11 @@ def test_deck_outline_filters_and_jumps_without_polling_rebuild(analysis, monkey
 def test_result_tables_hide_run_store_and_clear_all_values_on_empty_or_error(analysis, app, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QTabWidget
     window, state = analysis
+    assert isinstance(window.output_tabs, QTabWidget)
+    assert [window.output_tabs.tabText(i) for i in range(window.output_tabs.count())] == ['입력 덱', '로그', '결과']
+    assert window.output_tabs.currentIndex() == 0
+    assert window.result_text.isHidden()
+
     data = result(2.5)
     data['frames'][0]['fields'][0]['summary'] = {'components': [{'name': 'D1', 'minimum': -1.25, 'maximum': 2.5}]}
     data['dat'] = {'status': 'readable', 'frame': {'step': 2, 'increment': 3, 'value': 4},
@@ -502,22 +507,48 @@ def test_result_tables_hide_run_store_and_clear_all_values_on_empty_or_error(ana
     run.units['force'] = 'N'
     state.runs, state.selected = [run], run
     window.refresh_runs()
-    assert window.field_table.rowCount() == 1 and window.dat_table.rowCount() == 2
-    assert window.field_table.item(0, 0).text() == '변위 (DISP)'
+    assert window.output_tabs.currentIndex() == 2
+    assert window.field_table.rowCount() == 1 and window.dat_table.rowCount() == 1
+    assert window.field_table.item(0, 0).text() == '변위 (U)'
     assert window.field_table.item(0, 1).text() == 'Ux (D1)'
     assert window.kpi_disp_value.text() == '2.5 mm'
     assert window.field_table.item(0, 2).text() == '-1.25'
-    assert window.dat_table.item(0, 1).text() == '절점력 합계 원값'
+    assert window.field_table.item(0, 4).text() == 'mm'
+    assert window.dat_table.item(0, 1).text() == '합력 (Fx, Fy, Fz)'
+    assert '집합별 원 절점값' not in [
+        window.dat_table.item(r, c).text()
+        for r in range(window.dat_table.rowCount())
+        for c in range(window.dat_table.columnCount())
+    ]
+    assert window.kpi_dat_value.text() == '1개 집합 확인'
     assert '단계 2 / 증분 3 / 값 4' in window.dat_frame_label.text()
     assert '\n' not in window.dat_frame_label.text()
+
+    # Multi-set force equilibrium check appends net sum row and sets equilibrium KPI
+    data['dat']['sets']['LOAD'] = {'total_force': [-1., -2., -3.]}
+    window.show_result()
+    assert window.dat_table.rowCount() == 3
+    assert window.dat_table.item(2, 0).text() == '전체 합계 (∑F)'
+    assert window.dat_table.item(2, 1).text() == '평형 검산'
+    assert window.kpi_dat_value.text() == '평형 확인 (∑F ≈ 0)'
+
     text = window.result_text.toPlainText() + window.run_source.text() + window.run_source.toolTip() + window.log.toolTip()
     assert all(token not in text for token in (str(run.workdir), '.runs', run.id, '반력'))
     assert window.frame_selector.itemText(0).endswith('[최종]')
-    assert isinstance(window.output_tabs, QTabWidget)
-    assert [window.output_tabs.tabText(i) for i in range(window.output_tabs.count())] == ['로그', '결과', '선택 프레임 보기']
-    window.output_tabs.setCurrentIndex(1)
+    window.output_tabs.setCurrentIndex(2)
     assert window.output_tabs.currentWidget().isAncestorOf(window.field_table)
+    assert window.output_tabs.currentWidget().isAncestorOf(window.native_view)
     window.show()
+    app.processEvents()
+    assert window.result_text.isHidden()
+    window.btn_toggle_raw_summary.click()
+    app.processEvents()
+    assert not window.result_text.isHidden()
+    assert window.btn_toggle_raw_summary.text() == '텍스트 요약 숨기기'
+    window.btn_toggle_raw_summary.click()
+    app.processEvents()
+    assert window.result_text.isHidden()
+    assert window.btn_toggle_raw_summary.text() == '텍스트 요약 보기'
     for width, height in ((1050, 760), (800, 650)):
         window.resize(width, height)
         app.processEvents()
@@ -531,8 +562,10 @@ def test_result_tables_hide_run_store_and_clear_all_values_on_empty_or_error(ana
             state.selected = None
         window.refresh_runs()
         assert window.field_table.rowCount() == window.dat_table.rowCount() == 0
-        assert window.dat_container.isHidden() and window.result_text.toPlainText() == ''
-        assert window.kpi_disp_value.text() == '미확인' and window.result_unit_badge.text() == '자료 없음'
+        assert window.dat_container.isHidden() and window.energy_container.isHidden()
+        assert window.warnings_label.isHidden() and window.result_text.toPlainText() == ''
+        assert window.kpi_disp_value.text() == '미확인' and window.kpi_nodes_value.text() == '미확인'
+        assert window.kpi_dat_value.text() == '미확인' and window.result_unit_badge.text() == '자료 없음'
 
 
 def test_native_theme_toggle_and_log_summary_preserve_original_log(analysis, tmp_path):
@@ -584,15 +617,16 @@ def test_engineering_field_labels_preserve_rows_values_and_unknown_names(analysi
 
     window, state = analysis
     parsed = result(2.5)
+    parsed['frames'][0]['summary']['mesh_node_count'] = 4
     names_by_field = {
         'DISP': ['D1', 'D2', 'D3', 'D4'],
         'STRESS': ['SXX', 'SYY', 'SZZ', 'SXY', 'SYZ', 'SZX', 'OTHER'],
         'CUSTOM': ['D1', 'SXX'],
     }
     labels_by_field = [
-        ('변위 (DISP)', ['Ux (D1)', 'Uy (D2)', 'Uz (D3)', 'D4']),
-        ('응력 (STRESS)', ['Sxx', 'Syy', 'Szz', 'Sxy', 'Syz', 'Szx', 'OTHER']),
-        ('CUSTOM', ['D1', 'SXX']),
+        ('변위 (U)', 'mm', ['Ux (D1)', 'Uy (D2)', 'Uz (D3)', 'D4']),
+        ('응력 (S)', 'MPa', ['Sxx', 'Syy', 'Szz', 'Sxy', 'Syz', 'Szx', 'OTHER']),
+        ('CUSTOM', '—', ['D1', 'SXX']),
     ]
     parsed['frames'][0]['fields'] = [
         {'name': name, 'components': [{'name': component} for component in names],
@@ -603,13 +637,15 @@ def test_engineering_field_labels_preserve_rows_values_and_unknown_names(analysi
     parsed['dat'] = {'status': 'readable', 'frame': {'step': 0, 'increment': None, 'value': 0}, 'sets': {}}
     original = copy.deepcopy(parsed)
     run = make_run(tmp_path, 'engineering-labels', 'completed', 'readable', parsed)
+    run.units['force'] = 'N'
     state.runs, state.selected = [run], run
     window.refresh_runs()
-    expected = [(field, label) for field, labels in labels_by_field for label in labels]
+    expected = [(field, unit, label) for field, unit, labels in labels_by_field for label in labels]
     assert window.field_table.rowCount() == len(expected)
-    for row, (field, label) in enumerate(expected):
-        assert [window.field_table.item(row, column).text() for column in range(5)] == [field, label, '0', '2.5', '4 / 4']
+    for row, (field, unit, label) in enumerate(expected):
+        assert [window.field_table.item(row, column).text() for column in range(5)] == [field, label, '0', '2.5', unit]
         assert f'  {label}: 0 ~ 2.5' in window.result_text.toPlainText()
+    assert window.kpi_nodes_value.text() == '최대 2.5 MPa · 4 절점'
     assert 'DAT 최종 프레임 · 단계 0 / 값 0' in window.result_text.toPlainText()
     assert 'None' not in window.result_text.toPlainText()
     assert parsed == original
@@ -620,10 +656,187 @@ def test_engineering_field_labels_preserve_rows_values_and_unknown_names(analysi
     parsed['dat']['frame'] = {'step': None, 'increment': None, 'value': None}
     window.show_result()
     assert window.field_table.rowCount() == len(labels_by_field)
-    for row, (field, labels) in enumerate(labels_by_field):
+    for row, (field, unit, labels) in enumerate(labels_by_field):
         assert window.field_table.item(row, 0).text() == field
         assert window.field_table.item(row, 1).text() == ', '.join(labels)
+        assert window.field_table.item(row, 4).text() == unit
         assert f"{field} ({', '.join(labels)})" in window.result_text.toPlainText()
+    assert window.kpi_nodes_value.text() == '4 절점'
     assert 'None' not in window.result_text.toPlainText()
     assert 'DAT 최종 프레임' not in window.result_text.toPlainText()
     assert window.kpi_disp_value.text() == '2.5 mm'
+
+
+def test_smart_auto_tab_switching_and_radioss_energy_table(analysis, app, tmp_path):
+    window, state = analysis
+    ref = window.workbench.input_file(window.project, window.node_id)
+    ref.units = {'mass': 'Mg', 'length': 'mm', 'time': 's'}
+    ref.unit_source = 'explicit deck'
+    window.refresh_input()
+    assert '질량: Mg' in window.input_heading.text()
+    assert '(입력 덱 명시)' in window.input_heading.text()
+    assert '단위 출처: 입력 덱 명시' in window.details.toPlainText()
+    assert window.unit_badge.text() == '단위: Mg · mm · s (MPa)'
+
+    assert window.output_tabs.currentIndex() == 0
+    window.output_tabs.setCurrentIndex(1)
+    window.refresh_runs()
+    assert window.output_tabs.currentIndex() == 1
+
+    active = make_run(tmp_path, 'active-rad', 'running', 'pending', {})
+    state.runs, state.selected = [active], active
+    window.refresh_runs()
+    assert window.output_tabs.currentIndex() == 1
+    window.output_tabs.setCurrentIndex(0)
+    window.refresh_runs()
+    assert window.output_tabs.currentIndex() == 0
+
+    active.state = 'completed'
+    active.parse_state = 'readable'
+    active.units = {'mass': 'Mg', 'length': 'mm', 'time': 's'}
+    active.result = {
+        'status': 'readable',
+        'summary': {
+            'solver_id': 'radioss',
+            'frame_index': 5,
+            'total_cycles': 1250,
+            'printed_cycle': 1250,
+            'printed_time': 0.0025001,
+            'internal_energy': 142.5,
+            'kinetic_energy': 85.2,
+            'external_work': 0.0,
+            'hourglass_ratio': 0.018,
+            'energy_error': -1.4,
+            'mass_error': 0.0,
+        },
+        'frames': [
+            {
+                'index': 5,
+                'time': 0.0025001,
+                'is_final': True,
+                'summary': {'max_displacement': 12.4, 'mesh_node_count': 4059},
+                'fields': [],
+            }
+        ],
+        'warnings': ['일부 보조 배열 제외'],
+    }
+    window.show()
+    window.resize(1360, 860)
+    window.refresh_runs()
+    app.processEvents()
+    assert window.output_tabs.currentIndex() == 2
+    assert window.result_unit_badge.text() == '단위: Mg · mm · s (MPa)'
+    assert window.frame_selector.currentText() == '프레임 6 · 시간 0.0025001 s [최종]'
+    assert window.frame_selector.toolTip() == window.frame_selector.currentText()
+    needed_w = window.frame_selector.fontMetrics().horizontalAdvance(window.frame_selector.currentText()) + 36
+    assert window.frame_selector.width() >= needed_w
+    assert not window.energy_container.isHidden()
+    assert window.energy_table.rowCount() >= 6
+    assert window.kpi_nodes_value.text() == '4,059 절점'
+    assert window.kpi_dat_value.text() == '오차 -1.4% · HG 1.8%'
+    assert not window.warnings_label.isHidden()
+    assert '일부 보조 배열 제외' in window.warnings_label.text()
+
+    window.output_tabs.setCurrentIndex(0)
+    window.refresh_runs()
+    assert window.output_tabs.currentIndex() == 0
+
+    failed = make_run(tmp_path, 'failed-empty', 'failed', 'failed', {})
+    state.runs, state.selected = [active, failed], failed
+    window.refresh_runs()
+    assert window.output_tabs.currentIndex() == 1
+
+
+def test_multipart_stress_dat_800x650_minimum_size_hint_and_1440x900_split_and_edge_guards(analysis, app, tmp_path):
+    window, state = analysis
+    assert not window.field_table.verticalHeader().isVisible()
+    assert not window.dat_table.verticalHeader().isVisible()
+    assert not window.energy_table.verticalHeader().isVisible()
+
+    # None-safe total_cycles and non-finite force guard
+    none_cyc = make_run(
+        tmp_path,
+        'none-cycles',
+        'completed',
+        'partial',
+        {
+            'summary': {'total_cycles': None, 'cycle': None},
+            'frames': [],
+            'dat': {
+                'status': 'readable',
+                'sets': {
+                    'S1': {'total_force': [float('nan'), 0.0, 0.0]},
+                    'S2': {'total_force': [0.0, 0.0, 0.0]},
+                },
+            },
+        },
+    )
+    state.runs, state.selected = [none_cyc], none_cyc
+    window.refresh_runs()
+    assert window.kpi_nodes_value.text() == '미확인'
+    assert window.kpi_dat_value.text() == '2개 집합 합력'
+
+    # Realistic multi-part assembly STRESS + multi-set DAT equilibrium fit
+    assembly_res = {
+        'summary': {'frame_index': 1},
+        'warnings': [],
+        'frames': [
+            {
+                'index': 0,
+                'step': 1,
+                'increment': 4,
+                'value': 1.0,
+                'summary': {'max_displacement': 0.084, 'mesh_node_count': 4880},
+                'fields': [],
+            },
+            {
+                'index': 1,
+                'step': 2,
+                'increment': 8,
+                'value': 1.0,
+                'summary': {'max_displacement': 0.421, 'mesh_node_count': 4880},
+                'fields': [
+                    {
+                        'name': 'DISP',
+                        'components': [{'name': 'D1'}, {'name': 'D2'}, {'name': 'D3'}],
+                        'summary': {'components': [{'name': 'D1', 'minimum': -0.1, 'maximum': 0.421}]},
+                    },
+                    {
+                        'name': 'STRESS',
+                        'components': [{'name': 'SXX'}, {'name': 'SYY'}, {'name': 'SZZ'}],
+                        'summary': {'components': [{'name': 'SXX', 'minimum': -92.1, 'maximum': 185.2}]},
+                    },
+                ],
+            },
+        ],
+        'dat': {
+            'status': 'readable',
+            'frame': {'step': 2, 'increment': 8, 'value': 1.0},
+            'sets': {
+                'BASE_MOUNT': {'nodal_forces': {1: [1, 2, 3]}, 'total_force': [-1200.0, 2800.0, -900.0]},
+                'PIN_LOAD': {'nodal_forces': {2: [1, 2, 3]}, 'total_force': [1200.0, -2800.0, 900.0]},
+            },
+            'warnings': [],
+        },
+    }
+    assembly_run = make_run(tmp_path, 'assembly-fit', 'completed', 'readable', assembly_res)
+    assembly_run.units = {'length': 'mm', 'force': 'N'}
+    state.runs, state.selected = [assembly_run], assembly_run
+    window.show()
+    window.refresh_runs()
+    app.processEvents()
+
+    assert window.kpi_nodes_value.text() == '최대 185.2 MPa · 4,880 절점'
+    assert window.kpi_dat_value.text() == '평형 확인 (∑F ≈ 0)'
+    msh = window.minimumSizeHint()
+    assert msh.width() <= 800 and msh.height() <= 650, (msh.width(), msh.height())
+
+    window.resize(800, 650)
+    app.processEvents()
+    assert (window.width(), window.height()) == (800, 650)
+    assert window.dat_table.rowViewportPosition(0) + window.dat_table.rowHeight(0) <= window.dat_table.viewport().height()
+
+    for width, height in ((1360, 860), (1440, 900)):
+        window.resize(width, height)
+        app.processEvents()
+        assert window.native_view.width() >= 760, window.native_view.width()
