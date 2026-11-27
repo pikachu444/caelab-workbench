@@ -10,6 +10,7 @@ execution window; recorded runs can be inspected from this project.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from html import escape
 from os.path import normcase
 from pathlib import Path
@@ -59,9 +60,28 @@ from .cad_connection_editor import CadConnectionEditor
 from .desktop_entry import default_install_registry_path
 from .icons import icon
 from .theme import (
-    build_stylesheet, current_theme_mode, get_palette, register_theme_listener,
-    status_badge_style, theme_toggle_label, toggle_theme_mode,
+    build_stylesheet, current_theme_mode, current_ui_language, get_palette,
+    register_theme_listener, status_badge_style, theme_toggle_label, toggle_theme_mode,
 )
+
+
+@contextmanager
+def _child_ui_environment(*, theme_mode: str, language: str):
+    """Pass current theme and UI language to child GUI processes without polluting parent os.environ."""
+    updates = {
+        "CAELAB_THEME_MODE": theme_mode,
+        "CAELAB_UI_LANGUAGE": language,
+    }
+    previous = {key: os.environ.get(key) for key in updates}
+    os.environ.update(updates)
+    try:
+        yield
+    finally:
+        for key, old_val in previous.items():
+            if old_val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_val
 
 _KIND_ICONS = {"geometry": "geometry", "preprocessor": "mesh", "mesh": "mesh", "analysis": "solver",
                "results": "result", "expert": "expert"}
@@ -1473,8 +1493,12 @@ class ProjectWindow(QMainWindow):
             if not self.save_project():
                 return
         try:
-            record = self.workbench.launch_mdo_studio(
-                project=self.project if node_id is not None else None, node_id=node_id)
+            with _child_ui_environment(
+                theme_mode=current_theme_mode(),
+                language=current_ui_language("ko"),
+            ):
+                record = self.workbench.launch_mdo_studio(
+                    project=self.project if node_id is not None else None, node_id=node_id)
             if record.state == "failed":
                 raise ValueError(record.error)
         except Exception as error:
@@ -2487,8 +2511,17 @@ class ProjectWindow(QMainWindow):
             elif box.kind == "results" and self.workbench.resolve_evidence_run(self.project, box.node_id):
                 launch = self.workbench.open_native_results(self.project, box.node_id)
             else:
-                launch = (self.workbench.open_program(self.project, box.node_id, use_input=True) if use_input
-                          else self.workbench.open_program(self.project, box.node_id))
+                node = self.project.nodes.get(box.node_id)
+                if node is not None and node.program_id == "caelab_prep":
+                    with _child_ui_environment(
+                        theme_mode=current_theme_mode(),
+                        language=current_ui_language("ko"),
+                    ):
+                        launch = (self.workbench.open_program(self.project, box.node_id, use_input=True) if use_input
+                                  else self.workbench.open_program(self.project, box.node_id))
+                else:
+                    launch = (self.workbench.open_program(self.project, box.node_id, use_input=True) if use_input
+                              else self.workbench.open_program(self.project, box.node_id))
         except Exception as error:
             self._mark_dirty()
             self._reflect_programs()

@@ -1,5 +1,11 @@
 # 현재 상태
 
+## Wave 1 MDO Studio 한국어 공학 모드 · 실시간 언어/테마 전환 · 다크 툴바 아이콘 보정 — 2026-11-26 로컬 후보
+
+- 공용 UI 테마·언어 설정(`apps/workbench_qt/theme.py`)에 `resolved_ui_language`, `current_ui_language`, `set_ui_language` 및 `CAELAB_THEME_MODE` 환경변수 연동을 추가했습니다. 명시 인자(`"ko"`/`"en"`) → `CAELAB_UI_LANGUAGE` → 저장된 `QSettings("ui/language")` → 기본값 순으로 결정되며, 기존 테스트의 직접 `MDOStudioWindow()` 호출은 `"en"` 기본값을 유지하고 `ProjectWindow`에서 실행하는 자식 프로세스(`MDO Studio`, `CAELab Prep`)에는 `CAELAB_THEME_MODE`와 `CAELAB_UI_LANGUAGE="ko"`를 스코프 전달합니다(`apps/workbench_qt/project_window.py`).
+- `MDOStudioWindow` 및 하위 위젯(`apps/workbench_qt/mdo_studio/window.py`, `setup_dock.py`, `study_tree.py`, `design_points_model.py`, `views/plot_base.py`, `views/pareto_view.py`)에 표준 CAE 한국어 공학 모드(`CAELab MDO 최적설계 스튜디오`, 메뉴·툴바, `연구 탐색`/`상세 설정` 도크, `설계점 상세`·`실행 상태 · 적합성`·`설계 변수`·`해석 응답`·`공학 작업`, 설계점 표 한국어 헤더·상태/적합성/구분 표시 및 `SortRole` 보존, `표본 Pareto 투영` 한국어 범례·노트, `Malgun Gothic` Qt/Matplotlib 글꼴 등록으로 `□` 누락 글리프 방지)와 `보기` 메뉴 실시간 한/영 전환(`act_language`)을 구현했습니다. 또한 1440×900 해상도에서 트리 항목이 잘리지 않도록 기본 좌우 도크 폭을 `[265, 295]`로 확장했습니다.
+- `PlotWidget.mpl_toolbar`(`apps/workbench_qt/mdo_studio/views/plot_base.py`)에 다크(`#e2e8f0` 아이콘 / `#1e293b` 배경) · 라이트(`#0f172a` 아이콘 / `#f1f5f9` 배경) 테마 연동 아이콘 틴팅(`_tinted_icon`)과 QSS를 적용해 다크 모드에서 플롯 내비게이션 아이콘이 어둡게 묻히던 현상을 해소했습니다. 신규 오프스크린 GUI 회귀 스위트(`tests/test_mdo_korean_and_theme_gui.py`)로 기본 영어 호환성, 한국어 글리프 무결성, 다크/라이트 및 한/영 실시간 전환, `ProjectWindow` 환경변수 전달을 검증합니다.
+
 ## Phase P0.5 네이티브 해석 작업창 3탭 재구성 및 다중 파트 어셈블리 검산 UX — 2026-11-24 로컬 후보
 
 - `NativeAnalysisWindow`(`apps/workbench_qt/native_analysis.py`)의 기존 상하 50:50 분할을 제거하고, 상단 입력·실행 요약 헤더 아래 전체 높이를 활용하는 3탭 작업 공간(`입력 덱` · `로그` · `결과`, 기본 크기 `1360×860`, 최소 `800×650` `minimumSizeHint` 대응)으로 개편했습니다. 실행 선택 변경이나 진행 중→종료 전환 시에만 탭을 자동 전환하며, 동일 실행 폴링 중에는 사용자의 탭 선택을 덮어쓰지 않습니다. `caelab/workbench.py`의 솔버 완료 상태 문구를 객관적 단문(`솔버 실행이 정상 종료되었습니다.`)으로 정리했습니다.

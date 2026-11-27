@@ -15,7 +15,10 @@ from caelab.mdo.study_manager import StudyManager
 from caelab.mdo.surrogate import SurrogateConfig
 from caelab.mdo.optimize import OptimizationConfig
 from caelab.mdo.calculix_evaluator import extract_calculix_responses
-from apps.workbench_qt.theme import build_stylesheet,toggle_theme_mode,theme_toggle_label,current_theme_mode
+from apps.workbench_qt.theme import (
+    build_stylesheet,toggle_theme_mode,theme_toggle_label,current_theme_mode,
+    resolved_ui_language,set_ui_language,
+)
 from .bridge import MDOExecutionBridge
 from .design_points_model import DesignPointsTableModel,DesignPointsProxyModel
 from .study_tree import StudyTreeWidget
@@ -24,11 +27,34 @@ from .study_config import StudyConfigEditor,StudyConfigDialog,ParameterizeDialog
 from caelab.mdo.doe import DOEConfig
 from caelab.mdo.variables import CategoricalVariable
 import hashlib
-from .views.pareto_view import ParetoFrontWidget,PARETO_LEGEND_TEXT,pareto_result_note
+from .views.plot_base import load_korean_font
+from .views.pareto_view import ParetoFrontWidget,PARETO_LEGEND_TEXT,PARETO_LEGEND_TEXT_KO,pareto_result_note
 from .views.parallel_view import ParallelCoordinatesWidget
 from .views.response_surface_view import ResponseSurfaceWidget
 from .views.sensitivity_view import SensitivityTornadoWidget,TornadoItem
 from .views.convergence_view import ConvergenceWidget
+
+_STATUS_FILTERS = (
+    ("All", "전체 상태"),
+    ("PENDING", "대기"),
+    ("RUNNING", "실행 중"),
+    ("QUEUED", "대기열"),
+    ("COMPLETED", "완료"),
+    ("PREDICTED", "예측됨"),
+    ("FAILED", "실패"),
+    ("CANCELLED", "취소됨"),
+    ("STALE", "갱신 필요"),
+)
+_FEASIBILITY_FILTERS = (
+    ("All", "전체 적합성"),
+    ("FEASIBLE", "적합"),
+    ("MARGINAL", "경계 적합"),
+    ("INFEASIBLE", "부적합"),
+    ("NOT_ASSESSED", "미평가"),
+)
+_VIEW_TAB_TITLES_EN = ("Pareto", "Parallel", "Surface", "Sensitivity", "Convergence")
+_VIEW_TAB_TITLES_KO = ("Pareto 프런트", "평행 좌표", "반응표면", "민감도", "수렴 이력")
+_METHOD_TITLES_KO = {"DOE": "실험계획", "Surrogate": "대리모델", "Optimization": "최적화"}
 
 
 def _layout_settings():
@@ -59,16 +85,18 @@ def startup_service(workbench,study=None,*,study_path=None,project=None,node_id=
 
 
 class MDOStudioWindow(QMainWindow):
-    def __init__(self,study=None,parent=None,*,service=None,study_path=None,project=None,node_id=None,read_only=False):
+    def __init__(self,study=None,parent=None,*,service=None,study_path=None,project=None,node_id=None,read_only=False,language:str|None=None):
         super().__init__(parent)
         self.workbench=service.workbench if service else Workbench()
         self.service=service or startup_service(self.workbench,study,study_path=study_path,project=project,node_id=node_id,read_only=read_only)
         if read_only and not self.service.read_only: raise ValueError('Open the saved service read-only before attaching it to Studio.')
-        self.setWindowTitle('CAELab MDO Studio'); self.resize(1380,880)
+        self.language=resolved_ui_language(language,default_when_unset='en')
+        self.setWindowTitle('CAELab MDO 최적설계 스튜디오' if self.language=='ko' else 'CAELab MDO Studio'); self.resize(1380,880)
         self._display_revision=self.service.revision
-        self.setFont(QFont('Segoe UI',9)); self.is_dark=current_theme_mode()=='dark'
+        self.setFont(load_korean_font(None,9) if self.language=='ko' else QFont('Segoe UI',9))
+        self.is_dark=current_theme_mode()=='dark'
         self._generation=0; self._busy=None; self._selected_ids=set(); self._pending_records={}; self._closing=False
-        self._is_specification=False; self._editor=None; self._hidden_selection=False; self._sensitivity_job=0; self._initial_reveal_pending=True
+        self._is_specification=False; self._editor=None; self._context_kind=None; self._hidden_selection=False; self._sensitivity_job=0; self._initial_reveal_pending=True
         self._sensitivity_running=False; self._sensitivity_pending=None; self._sensitivity_pending_key=None
         self._sensitivity_inflight_key=None; self._sensitivity_completed_key=None
         self.bridge=MDOExecutionBridge(self)
@@ -107,57 +135,61 @@ class MDOStudioWindow(QMainWindow):
 
     def _build_ui(self):
         self.toolbar=QToolBar('Study commands',self); self.toolbar.setObjectName('mdo.commands'); self.toolbar.setMovable(False); self.addToolBar(self.toolbar)
-        file=self.menuBar().addMenu('&File'); setup=self.menuBar().addMenu('&Study'); run=self.menuBar().addMenu('&Run'); view=self.menuBar().addMenu('&View')
-        self.act_new=self._action(file,'New Study',self._on_new_study,'Ctrl+N')
-        self.act_open=self._action(file,'Open Study…',lambda:self._on_open_study(),'Ctrl+O',True)
-        self.act_input=self._action(file,'Open Native Input…',lambda:self._on_load_deck())
-        self.act_save=self._action(file,'Save',lambda:self._on_save_study(),'Ctrl+S')
-        self.act_save_as=self._action(file,'Save As…',lambda:self._on_save_study(save_as=True),'Ctrl+Shift+S')
-        self.act_export=self._action(file,'Export Filtered Table…',self._export_csv)
-        self.act_parameterize=self._action(setup,'Create Scalar Token…',self._parameterize)
-        self.act_configure=self._action(setup,'Configure Study',self._on_configure,toolbar=True)
-        self.act_generate=self._action(setup,'Generate DOE…',lambda:self._on_generate_doe(),toolbar=True)
-        self.act_train=self._action(setup,'Train / Validate Surrogate…',self._train)
-        self.act_optimize=self._action(setup,'Constrained Surrogate Search…',self._optimize)
-        self.act_run=self._action(run,'Run Selected / Pending',self._run_selected,'F5',True)
-        self.act_all=self._action(run,'Run All Pending',self._run_all_points)
-        self.act_confirm=self._action(run,'Fresh Native Confirmation',self._confirm_selected)
-        self.act_clone=self._action(run,'Clone Selected as Candidate',self._clone_selected)
-        self.act_stop=self._action(run,'Stop Scheduling',self._stop_scheduling,toolbar=True)
-        self.act_cancel=self._action(run,'Cancel Active Campaign',self._stop_evaluations)
-        self.act_run_settings=self._action(run,'Run Settings…',self._run_settings)
-        self.act_current=self._action(run,'Set as Current Design Point',lambda:self._on_apply_as_current(self._first_selected()))
-        self.act_undo=self._action(run,'Undo Current Design Apply',self._undo)
-        self.act_rerun=self._action(run,'Run Current Design',self._rerun_current)
-        self.act_result=self._action(run,'Open Selected Actual Result in ParaView',lambda:self._open_result(self._first_selected()))
-        self.act_current_result=self._action(run,'Open Current Rerun in ParaView',lambda:self._open_result(current=True))
-        self.act_attempts=self._action(run,'Inspect Selected Attempts / Log',lambda:self._inspect_attempts(self._first_selected()))
+        self.menu_file=self.menuBar().addMenu('&File'); self.menu_study=self.menuBar().addMenu('&Study'); self.menu_run=self.menuBar().addMenu('&Run'); self.menu_view=self.menuBar().addMenu('&View')
+        self.act_new=self._action(self.menu_file,'New Study',self._on_new_study,'Ctrl+N')
+        self.act_open=self._action(self.menu_file,'Open Study…',lambda:self._on_open_study(),'Ctrl+O',True)
+        self.act_input=self._action(self.menu_file,'Open Native Input…',lambda:self._on_load_deck())
+        self.act_save=self._action(self.menu_file,'Save',lambda:self._on_save_study(),'Ctrl+S')
+        self.act_save_as=self._action(self.menu_file,'Save As…',lambda:self._on_save_study(save_as=True),'Ctrl+Shift+S')
+        self.act_export=self._action(self.menu_file,'Export Filtered Table…',self._export_csv)
+        self.act_parameterize=self._action(self.menu_study,'Create Scalar Token…',self._parameterize)
+        self.act_configure=self._action(self.menu_study,'Configure Study',self._on_configure,toolbar=True)
+        self.act_generate=self._action(self.menu_study,'Generate DOE…',lambda:self._on_generate_doe(),toolbar=True)
+        self.act_train=self._action(self.menu_study,'Train / Validate Surrogate…',self._train)
+        self.act_optimize=self._action(self.menu_study,'Constrained Surrogate Search…',self._optimize)
+        self.act_run=self._action(self.menu_run,'Run Selected / Pending',self._run_selected,'F5',True)
+        self.act_all=self._action(self.menu_run,'Run All Pending',self._run_all_points)
+        self.act_confirm=self._action(self.menu_run,'Fresh Native Confirmation',self._confirm_selected)
+        self.act_clone=self._action(self.menu_run,'Clone Selected as Candidate',self._clone_selected)
+        self.act_stop=self._action(self.menu_run,'Stop Scheduling',self._stop_scheduling,toolbar=True)
+        self.act_cancel=self._action(self.menu_run,'Cancel Active Campaign',self._stop_evaluations)
+        self.act_run_settings=self._action(self.menu_run,'Run Settings…',self._run_settings)
+        self.act_current=self._action(self.menu_run,'Set as Current Design Point',lambda:self._on_apply_as_current(self._first_selected()))
+        self.act_undo=self._action(self.menu_run,'Undo Current Design Apply',self._undo)
+        self.act_rerun=self._action(self.menu_run,'Run Current Design',self._rerun_current)
+        self.act_result=self._action(self.menu_run,'Open Selected Actual Result in ParaView',lambda:self._open_result(self._first_selected()))
+        self.act_current_result=self._action(self.menu_run,'Open Current Rerun in ParaView',lambda:self._open_result(current=True))
+        self.act_attempts=self._action(self.menu_run,'Inspect Selected Attempts / Log',lambda:self._inspect_attempts(self._first_selected()))
         self.status_bar=QStatusBar(); self.setStatusBar(self.status_bar)
         self.progress_bar=QProgressBar(); self.progress_bar.setMaximumWidth(160); self.progress_bar.hide(); self.status_bar.addPermanentWidget(self.progress_bar)
-        self.tree_dock=QDockWidget('Study',self); self.tree_dock.setObjectName('mdo.study'); self.study_tree=StudyTreeWidget(); self.tree_dock.setWidget(self.study_tree)
-        self.tree_dock.setMinimumWidth(160); self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock)
+        self.tree_dock=QDockWidget('Study',self); self.tree_dock.setObjectName('mdo.study'); self.study_tree=StudyTreeWidget(language=self.language); self.tree_dock.setWidget(self.study_tree)
+        self.tree_dock.setMinimumWidth(180); self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock)
         self.setup_dock=QDockWidget('Setup',self); self.setup_dock.setObjectName('mdo.setup'); self.setup_dock.setMinimumWidth(250)
-        self.setup_widget=SetupDockWidget(self.is_dark); self.setup_dock.setWidget(self.setup_widget); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
+        self.setup_widget=SetupDockWidget(self.is_dark,language=self.language); self.setup_dock.setWidget(self.setup_widget); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
         self.setup_widget.apply_as_current.connect(self._on_apply_as_current); self.setup_widget.re_evaluate.connect(lambda point:self._confirm_selected([point]))
         self.setup_widget.inspect_attempts.connect(self._inspect_attempts); self.setup_widget.open_result.connect(self._open_result)
         self.study_tree.node_selected.connect(self._tree_selected)
-        for dock in (self.tree_dock,self.setup_dock): view.addAction(dock.toggleViewAction())
-        self._action(view,'Restore Default Layout',self._default_layout); self._action(view,'Save Layout',self._save_layout)
-        compact=self._action(view,'Compact Rows',lambda checked:self.tdp_table.verticalHeader().setDefaultSectionSize(24 if checked else 30)); compact.setCheckable(True)
-        self.act_theme=self._action(view,theme_toggle_label(),self._on_toggle_theme)
+        for dock in (self.tree_dock,self.setup_dock): self.menu_view.addAction(dock.toggleViewAction())
+        self.act_default_layout=self._action(self.menu_view,'Restore Default Layout',self._default_layout)
+        self.act_save_layout=self._action(self.menu_view,'Save Layout',self._save_layout)
+        self.act_compact_rows=self._action(self.menu_view,'Compact Rows',lambda checked:self.tdp_table.verticalHeader().setDefaultSectionSize(24 if checked else 30)); self.act_compact_rows.setCheckable(True)
+        self.act_theme=self._action(self.menu_view,theme_toggle_label(language=self.language),self._on_toggle_theme)
+        self.act_language=self._action(self.menu_view,self._language_toggle_label(),self._on_toggle_language)
         self.center_splitter=QSplitter(Qt.Orientation.Vertical); self.center_splitter.setObjectName('mdo.central')
         container=QWidget(); layout=QVBoxLayout(container); layout.setContentsMargins(4,2,4,2)
         self.study_label=QLabel(); self.study_label.setWordWrap(True); layout.addWidget(self.study_label)
-        revision_row=QHBoxLayout(); revision_row.addWidget(QLabel('Study revision'))
+        revision_row=QHBoxLayout(); self.revision_label=QLabel('Study revision'); revision_row.addWidget(self.revision_label)
         self.revision_selector=QComboBox(); self.revision_selector.setAccessibleName('Study revision'); revision_row.addWidget(self.revision_selector,1); layout.addLayout(revision_row)
         self.revision_selector.currentIndexChanged.connect(self._revision_changed)
-        filters=QHBoxLayout(); self.search=QLineEdit(); self.search.setPlaceholderText('Filter point name / ID'); self.search.setAccessibleName('Filter design points')
-        self.status_filter=QComboBox(); self.status_filter.addItems(['All','PENDING','RUNNING','QUEUED','COMPLETED','PREDICTED','FAILED','CANCELLED','STALE'])
-        self.feasibility_filter=QComboBox(); self.feasibility_filter.addItems(['All','FEASIBLE','MARGINAL','INFEASIBLE','NOT_ASSESSED'])
+        filters=QHBoxLayout()
+        self.filter_label=QLabel('설계점 필터'); self.filter_label.setVisible(False); filters.addWidget(self.filter_label)
+        self.search=QLineEdit(); self.search.setPlaceholderText('Filter point name / ID'); self.search.setAccessibleName('Filter design points')
+        self.status_filter=QComboBox(); self.feasibility_filter=QComboBox()
+        self._populate_filter_combos()
         filters.addWidget(self.search,1); filters.addWidget(self.status_filter); filters.addWidget(self.feasibility_filter)
-        clear=QPushButton('Clear filters'); clear.clicked.connect(self._clear_filters); filters.addWidget(clear); layout.addLayout(filters)
+        self.clear_filters_btn=QPushButton('Clear filters'); self.clear_filters_btn.clicked.connect(self._clear_filters); filters.addWidget(self.clear_filters_btn); layout.addLayout(filters)
         self.tdp_lbl=QLabel('Design points'); layout.addWidget(self.tdp_lbl)
-        self.tdp_model=DesignPointsTableModel(is_dark=self.is_dark); self.tdp_proxy=DesignPointsProxyModel(self); self.tdp_proxy.setSourceModel(self.tdp_model)
+        self.tdp_model=DesignPointsTableModel(is_dark=self.is_dark,language=self.language); self.tdp_proxy=DesignPointsProxyModel(self); self.tdp_proxy.setSourceModel(self.tdp_model)
         self.tdp_table=QTableView(); self.tdp_table.setAccessibleName('Table of design points'); self.tdp_table.setModel(self.tdp_proxy)
         self.tdp_table.viewport().installEventFilter(self)
         self.tdp_table.verticalScrollBar().rangeChanged.connect(lambda *args:self._resize_reveal_timer.start(0) if self._resize_reveal_pending else None)
@@ -166,12 +198,14 @@ class MDOStudioWindow(QMainWindow):
         self.tdp_table.verticalHeader().setDefaultSectionSize(30); self.tdp_table.horizontalHeader().setDefaultSectionSize(115)
         self.tdp_table.setColumnWidth(1,190); self.tdp_table.setAlternatingRowColors(True)
         self.tdp_table.selectionModel().selectionChanged.connect(self._on_row_selected); layout.addWidget(self.tdp_table,1)
-        self.search.textChanged.connect(self._filters_changed); self.status_filter.currentTextChanged.connect(self._filters_changed); self.feasibility_filter.currentTextChanged.connect(self._filters_changed)
+        self.search.textChanged.connect(self._filters_changed); self.status_filter.currentIndexChanged.connect(self._filters_changed); self.feasibility_filter.currentIndexChanged.connect(self._filters_changed)
         self.center_splitter.addWidget(container)
-        self.viz_tabs=QTabWidget(); self.pareto_view=ParetoFrontWidget(is_dark=self.is_dark); self.parallel_view=ParallelCoordinatesWidget(is_dark=self.is_dark)
+        self.viz_tabs=QTabWidget(); self.pareto_view=ParetoFrontWidget(is_dark=self.is_dark,language=self.language); self.parallel_view=ParallelCoordinatesWidget(is_dark=self.is_dark)
         self.surface_view=ResponseSurfaceWidget(is_dark=self.is_dark); self.tornado_view=SensitivityTornadoWidget(is_dark=self.is_dark); self.convergence_view=ConvergenceWidget(is_dark=self.is_dark)
         self.views=[self.pareto_view,self.parallel_view,self.surface_view,self.tornado_view,self.convergence_view]
-        for widget,title in zip(self.views,('Pareto','Parallel','Surface','Sensitivity','Convergence')): self.viz_tabs.addTab(widget,title)
+        for view_widget in self.views[1:]: view_widget.set_language(self.language)
+        titles=_VIEW_TAB_TITLES_KO if self.language=='ko' else _VIEW_TAB_TITLES_EN
+        for widget,title in zip(self.views,titles): self.viz_tabs.addTab(widget,title)
         self.viz_tabs.currentChanged.connect(lambda *args:self._viz_timer.start())
         for widget in (self.pareto_view,self.parallel_view,self.convergence_view): widget.point_selected.connect(self.select_point)
         self.parallel_view.filter_changed.connect(self._brush_filter)
@@ -184,6 +218,117 @@ class MDOStudioWindow(QMainWindow):
         self.center_splitter.splitterMoved.connect(lambda *_:self._cancel_default_splitter())
         self.center_splitter.handle(1).installEventFilter(self)
         self._study_actions=[self.act_new,self.act_open,self.act_input,self.act_generate,self.act_parameterize,self.act_save,self.act_save_as,self.act_train,self.act_optimize]
+        self._apply_language_chrome()
+
+    def _language_toggle_label(self) -> str:
+        return '영어로 전환 (English)' if self.language=='ko' else '한국어로 전환 (Korean)'
+
+    def _populate_filter_combos(self) -> None:
+        ko = self.language == 'ko'
+        cur_status = self.status_filter.currentData() or self.status_filter.currentText() or 'All'
+        cur_feas = self.feasibility_filter.currentData() or self.feasibility_filter.currentText() or 'All'
+        self.status_filter.blockSignals(True); self.status_filter.clear()
+        for code, ko_lbl in _STATUS_FILTERS:
+            self.status_filter.addItem(ko_lbl if ko else code, code)
+        self.status_filter.setCurrentIndex(max(0, self.status_filter.findData(cur_status)))
+        self.status_filter.blockSignals(False)
+        self.feasibility_filter.blockSignals(True); self.feasibility_filter.clear()
+        for code, ko_lbl in _FEASIBILITY_FILTERS:
+            self.feasibility_filter.addItem(ko_lbl if ko else code, code)
+        self.feasibility_filter.setCurrentIndex(max(0, self.feasibility_filter.findData(cur_feas)))
+        self.feasibility_filter.blockSignals(False)
+
+    def _apply_language_chrome(self) -> None:
+        ko = self.language == 'ko'
+        self.setWindowTitle('CAELab MDO 최적설계 스튜디오' if ko else 'CAELab MDO Studio')
+        self.toolbar.setWindowTitle('연구 명령' if ko else 'Study commands')
+        self.menu_file.setTitle('&파일' if ko else '&File')
+        self.menu_study.setTitle('&연구' if ko else '&Study')
+        self.menu_run.setTitle('&실행' if ko else '&Run')
+        self.menu_view.setTitle('&보기' if ko else '&View')
+        action_texts = (
+            (self.act_new, '새 연구', 'New Study'),
+            (self.act_open, '연구 열기…', 'Open Study…'),
+            (self.act_input, '네이티브 입력 열기…', 'Open Native Input…'),
+            (self.act_save, '저장', 'Save'),
+            (self.act_save_as, '다른 이름으로 저장…', 'Save As…'),
+            (self.act_export, '필터된 표 내보내기…', 'Export Filtered Table…'),
+            (self.act_parameterize, '스칼라 토큰 생성…', 'Create Scalar Token…'),
+            (self.act_configure, '연구 구성', 'Configure Study'),
+            (self.act_generate, '실험계획(DOE) 생성…', 'Generate DOE…'),
+            (self.act_train, '대리모델 학습 · 검증…', 'Train / Validate Surrogate…'),
+            (self.act_optimize, '제약 기반 대리모델 탐색…', 'Constrained Surrogate Search…'),
+            (self.act_run, '선택 · 대기점 실행', 'Run Selected / Pending'),
+            (self.act_all, '대기점 일괄 실행', 'Run All Pending'),
+            (self.act_confirm, '네이티브 재검증', 'Fresh Native Confirmation'),
+            (self.act_clone, '후보로 복제', 'Clone Selected as Candidate'),
+            (self.act_stop, '스케줄링 중지', 'Stop Scheduling'),
+            (self.act_cancel, '실행 중 캠페인 취소', 'Cancel Active Campaign'),
+            (self.act_run_settings, '실행 설정…', 'Run Settings…'),
+            (self.act_current, '현재 설계점으로 적용', 'Set as Current Design Point'),
+            (self.act_undo, '현재 설계 적용 되돌리기', 'Undo Current Design Apply'),
+            (self.act_rerun, '현재 설계 재해석', 'Run Current Design'),
+            (self.act_result, 'ParaView에서 선택 결과 열기', 'Open Selected Actual Result in ParaView'),
+            (self.act_current_result, 'ParaView에서 현재 재해석 열기', 'Open Current Rerun in ParaView'),
+            (self.act_attempts, '실행 이력 · 로그 보기', 'Inspect Selected Attempts / Log'),
+            (self.act_default_layout, '기본 레이아웃 복원', 'Restore Default Layout'),
+            (self.act_save_layout, '레이아웃 저장', 'Save Layout'),
+            (self.act_compact_rows, '행 높이 좁게', 'Compact Rows'),
+        )
+        for action, ko_text, en_text in action_texts:
+            action.setText(ko_text if ko else en_text)
+        self.act_theme.setText(theme_toggle_label(language=self.language))
+        self.act_language.setText(self._language_toggle_label())
+        self.tree_dock.setWindowTitle('연구 탐색' if ko else 'Study')
+        self.setup_dock.setWindowTitle('상세 설정' if ko else 'Setup')
+        self.tree_dock.toggleViewAction().setText(self.tree_dock.windowTitle())
+        self.setup_dock.toggleViewAction().setText(self.setup_dock.windowTitle())
+        self.revision_label.setText('연구 리비전' if ko else 'Study revision')
+        self.revision_selector.setAccessibleName('연구 리비전' if ko else 'Study revision')
+        self.filter_label.setText('설계점 필터' if ko else 'Design point filter')
+        self.filter_label.setVisible(ko)
+        self.search.setPlaceholderText('설계점 이름 / ID 필터' if ko else 'Filter point name / ID')
+        self.search.setAccessibleName('설계점 필터' if ko else 'Filter design points')
+        self.clear_filters_btn.setText('필터 초기화' if ko else 'Clear filters')
+        self.tdp_table.setAccessibleName('설계점 목록 표' if ko else 'Table of design points')
+        self._populate_filter_combos()
+        titles = _VIEW_TAB_TITLES_KO if ko else _VIEW_TAB_TITLES_EN
+        for idx, title in enumerate(titles):
+            self.viz_tabs.setTabText(idx, title)
+
+    def _on_toggle_language(self):
+        next_lang = 'en' if self.language == 'ko' else 'ko'
+        set_ui_language(next_lang)
+        self.set_language(next_lang)
+
+    def set_language(self, language: str):
+        self.language = 'ko' if str(language).strip().lower() == 'ko' else 'en'
+        self.setFont(load_korean_font(None, 9) if self.language == 'ko' else QFont('Segoe UI', 9))
+        self._apply_language_chrome()
+        self.setup_widget.set_language(self.language)
+        self.tdp_model.set_language(self.language)
+        self.study_tree.set_language(self.language)
+        for view_widget in self.views:
+            view_widget.set_language(self.language)
+        if self.setup_widget.context_tabs.count() > 1:
+            current_tab = self.setup_widget.context_tabs.currentIndex()
+            was_visible = not self.setup_dock.isHidden()
+            if self._context_kind == 'input':
+                self._input_context()
+            elif self._context_kind in ('DOE', 'Surrogate', 'Optimization'):
+                self._method_context(self._context_kind)
+            elif self._context_kind == 'setup':
+                self.setup_widget.context_tabs.setTabText(1, '연구 구성' if self.language == 'ko' else 'Setup')
+            elif self._context_kind == 'frozen_revision':
+                self.setup_widget.context_tabs.setTabText(
+                    1,
+                    f'리비전 {self._display_revision}' if self.language == 'ko' else f'Revision {self._display_revision}',
+                )
+            self.setup_widget.context_tabs.setCurrentIndex(min(current_tab, self.setup_widget.context_tabs.count() - 1))
+            if not was_visible:
+                self.setup_dock.hide()
+        self._populate_study()
+        self.apply_theme()
 
     def _background(self,name,call):
         if self._busy or self._sensitivity_write_busy():
@@ -268,22 +413,29 @@ class MDOStudioWindow(QMainWindow):
         if self._editor: self._editor.buttons.button(QDialogButtonBox.StandardButton.Apply).setEnabled(not active and not busy and writable)
 
     def _populate_study(self):
+        ko = self.language == 'ko'
         selected=set(self._selected_ids)
         definition=self._revision_definition()
         units={v.id:getattr(v,'unit','—') for v in definition['space'].variables}; units.update(definition['response_units'])
         responses=list(definition['response_units']) or ['response']
         revisions=self.service.revision_ids() if hasattr(self.service,'revision_ids') else sorted({self.service.revision,*[getattr(r,'revision',self.service.revision) for r in self.study.records]},key=int)
         self.revision_selector.blockSignals(True); self.revision_selector.clear()
-        for revision in revisions: self.revision_selector.addItem(f'Revision {revision}'+(' (current)' if revision==self.service.revision else ' — historical'),revision)
+        for revision in revisions:
+            if ko:
+                rev_lbl=f'리비전 {revision}'+(' (현재)' if revision==self.service.revision else ' — 이전 기록')
+            else:
+                rev_lbl=f'Revision {revision}'+(' (current)' if revision==self.service.revision else ' — historical')
+            self.revision_selector.addItem(rev_lbl,revision)
         self.revision_selector.setCurrentIndex(max(0,self.revision_selector.findData(self._display_revision))); self.revision_selector.blockSignals(False)
         self.tdp_table.selectionModel().blockSignals(True)
         self.tdp_model.set_study_data(self.study.records,[v.id for v in definition['space'].variables],responses,units=units,current_point_id=self.service.current_point_id)
         self.tdp_proxy.set_filters(revision=self._display_revision)
         self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
-        self.study_label.setText(self.study.name+(' — read only' if self.service.read_only else ''))
+        ro_suffix = (' — 읽기 전용' if ko else ' — read only') if self.service.read_only else ''
+        self.study_label.setText(self.study.name+ro_suffix)
         displayed=StudyManager(self.study.name,space=definition['space'],objectives=definition['objectives'],constraints=definition['constraints'])
         displayed.records=[r for r in self.tdp_model.records if getattr(r,'revision',self.service.revision)==self._display_revision]
-        self.study_tree.populate(displayed,surrogate=self.service.surrogate if self._display_revision==self.service.revision else None,current_point_id=self.service.current_point_id)
+        self.study_tree.populate(displayed,surrogate=self.service.surrogate if self._display_revision==self.service.revision else None,current_point_id=self.service.current_point_id,language=self.language)
         self._show_selection(); self._update_visualizations(); self._sync_actions()
 
     def _revision_definition(self):
@@ -301,6 +453,17 @@ class MDOStudioWindow(QMainWindow):
 
     def _first_selected(self): return next(iter(sorted(self._selected_ids)),None)
 
+    def _format_tdp_label(self) -> str:
+        if self.language == 'ko':
+            return (
+                f'표시 설계점: {self.tdp_proxy.rowCount()} / {self.tdp_model.rowCount()}개 · {len(self._selected_ids)}개 선택됨'
+                + (' (필터로 선택 항목 숨겨짐)' if self._hidden_selection else '')
+            )
+        return (
+            f'{self.tdp_proxy.rowCount()} / {self.tdp_model.rowCount()} points · {len(self._selected_ids)} selected'
+            + (' (selection hidden by filter)' if self._hidden_selection else '')
+        )
+
     def _restore_selection(self):
         selection=self.tdp_table.selectionModel(); selection.clearSelection()
         visible=0
@@ -310,7 +473,7 @@ class MDOStudioWindow(QMainWindow):
                 proxy=self.tdp_proxy.mapFromSource(self.tdp_model.index(row,0))
                 if proxy.isValid(): selection.select(proxy,QItemSelectionModel.SelectionFlag.Select|QItemSelectionModel.SelectionFlag.Rows); visible+=1
         self._hidden_selection=visible<len(self._selected_ids)
-        self.tdp_lbl.setText(f'{self.tdp_proxy.rowCount()} / {self.tdp_model.rowCount()} points · {len(self._selected_ids)} selected'+(' (selection hidden by filter)' if self._hidden_selection else ''))
+        self.tdp_lbl.setText(self._format_tdp_label())
 
     def _on_row_selected(self,*args):
         self._selected_ids={index.data(DesignPointsTableModel.PointIdRole) for index in self.tdp_table.selectionModel().selectedRows()}
@@ -326,13 +489,21 @@ class MDOStudioWindow(QMainWindow):
         self.setup_widget.display_record(rec,units)
         for view in (self.pareto_view,self.parallel_view): view.set_selected(self._selected_ids)
         if rec:
-            self.setup_widget.lbl_guide.setPlainText((rec.error_message+'\n' if rec.error_message else '')+f'{getattr(rec,"mode","ACTUAL")} · revision {getattr(rec,"revision","1")}\nSelection does not apply or run this design.')
+            if self.language=='ko':
+                mode_raw=getattr(rec,'mode','ACTUAL')
+                mode_ko='대리모델 예측' if mode_raw=='SURROGATE' else '실제 해석'
+                self.setup_widget.lbl_guide.setPlainText(
+                    (rec.error_message+'\n' if rec.error_message else '')
+                    + f'{mode_ko} · 리비전 {getattr(rec,"revision","1")}\n설계점 선택만으로는 현재 설계에 적용되거나 해석이 실행되지 않습니다.'
+                )
+            else:
+                self.setup_widget.lbl_guide.setPlainText((rec.error_message+'\n' if rec.error_message else '')+f'{getattr(rec,"mode","ACTUAL")} · revision {getattr(rec,"revision","1")}\nSelection does not apply or run this design.')
         self._restore_selection_label()
 
     def _restore_selection_label(self):
         visible=sum(self.tdp_proxy.mapFromSource(self.tdp_model.index(self.tdp_model.row_for_id(p),0)).isValid() for p in self._selected_ids if self.tdp_model.row_for_id(p) is not None)
         self._hidden_selection=visible<len(self._selected_ids)
-        self.tdp_lbl.setText(f'{self.tdp_proxy.rowCount()} / {self.tdp_model.rowCount()} points · {len(self._selected_ids)} selected'+(' (selection hidden by filter)' if self._hidden_selection else ''))
+        self.tdp_lbl.setText(self._format_tdp_label())
 
     def select_point(self,point_id):
         if self.tdp_model.row_for_id(point_id) is None: return
@@ -386,7 +557,9 @@ class MDOStudioWindow(QMainWindow):
 
     def _filters_changed(self,*args):
         selected=set(self._selected_ids); self.tdp_table.selectionModel().blockSignals(True)
-        self.tdp_proxy.set_filters(text=self.search.text(),status=self.status_filter.currentText(),feasibility=self.feasibility_filter.currentText())
+        status_code=self.status_filter.currentData() or self.status_filter.currentText()
+        feas_code=self.feasibility_filter.currentData() or self.feasibility_filter.currentText()
+        self.tdp_proxy.set_filters(text=self.search.text(),status=status_code,feasibility=feas_code)
         self._selected_ids=selected; self._restore_selection(); self.tdp_table.selectionModel().blockSignals(False)
         self._viz_timer.start()
 
@@ -400,14 +573,25 @@ class MDOStudioWindow(QMainWindow):
         if hasattr(self,'parallel_view'): self.parallel_view.brushes.clear()
 
     def _update_visualizations(self):
+        ko = self.language == 'ko'
         records=self._filtered_records(); units=self.tdp_model.units; definition=self._revision_definition()
         base=[r for r in self.tdp_model.records if getattr(r,'revision',self.service.revision)==self._display_revision]
-        descriptions=[f'revision {self._display_revision}',f'{len(records)} / {len(base)} points']
-        if self.search.text(): descriptions.append('name: '+self.search.text())
-        if self.status_filter.currentText()!='All': descriptions.append(self.status_filter.currentText())
-        if self.feasibility_filter.currentText()!='All': descriptions.append(self.feasibility_filter.currentText())
-        if self.tdp_proxy.point_ids is not None: descriptions.append('parallel axis brush')
-        self.plot_filter_label.setText('Visible population: '+', '.join(descriptions))
+        status_code=self.status_filter.currentData() or self.status_filter.currentText()
+        feas_code=self.feasibility_filter.currentData() or self.feasibility_filter.currentText()
+        if ko:
+            descriptions=[f'리비전 {self._display_revision}',f'{len(records)} / {len(base)}개 설계점']
+            if self.search.text(): descriptions.append('이름: '+self.search.text())
+            if status_code!='All': descriptions.append(self.status_filter.currentText())
+            if feas_code!='All': descriptions.append(self.feasibility_filter.currentText())
+            if self.tdp_proxy.point_ids is not None: descriptions.append('평행 좌표 브러시')
+            self.plot_filter_label.setText('표시 설계점: '+', '.join(descriptions))
+        else:
+            descriptions=[f'revision {self._display_revision}',f'{len(records)} / {len(base)} points']
+            if self.search.text(): descriptions.append('name: '+self.search.text())
+            if status_code!='All': descriptions.append(status_code)
+            if feas_code!='All': descriptions.append(feas_code)
+            if self.tdp_proxy.point_ids is not None: descriptions.append('parallel axis brush')
+            self.plot_filter_label.setText('Visible population: '+', '.join(descriptions))
         index=self.viz_tabs.currentIndex()
         if index==0: self.pareto_view.set_study(records,definition['objectives'],units)
         elif index==1: self.parallel_view.set_study(records,definition['space'].variables,self.tdp_model.response_keys,units,all_records=base)
@@ -550,41 +734,63 @@ class MDOStudioWindow(QMainWindow):
         elif category=='optimization': self._method_context('Optimization')
         elif category=='sensitivity': self.viz_tabs.setCurrentIndex(3)
         elif category=='evaluations':
-            self.status_filter.setCurrentText(key or 'All'); self.setup_widget.context_tabs.setCurrentIndex(0)
+            idx=self.status_filter.findData(key or 'All')
+            self.status_filter.setCurrentIndex(max(0,idx))
+            self.setup_widget.context_tabs.setCurrentIndex(0)
         elif category=='selection': self.setup_widget.context_tabs.setCurrentIndex(0)
         elif category=='view' and key in ('Pareto','Parallel','Surface','Sensitivity','Convergence'): self.viz_tabs.setCurrentIndex(('Pareto','Parallel','Surface','Sensitivity','Convergence').index(key))
 
     def _input_context(self):
-        widget=QWidget(); layout=QVBoxLayout(widget); label=QLabel(str(self.current_deck_path or 'Open a native CalculiX input.')); label.setWordWrap(True); layout.addWidget(label)
-        for text,action in [('Open Native Input…',self.act_input),('Create Scalar Token…',self.act_parameterize)]:
+        ko = self.language == 'ko'
+        self._context_kind = 'input'
+        default_msg = '네이티브 CalculiX 입력(.inp) 파일을 여세요.' if ko else 'Open a native CalculiX input.'
+        widget=QWidget(); layout=QVBoxLayout(widget); label=QLabel(str(self.current_deck_path or default_msg)); label.setWordWrap(True); layout.addWidget(label)
+        for text,action in [(self.act_input.text(),self.act_input),(self.act_parameterize.text(),self.act_parameterize)]:
             button=QPushButton(text); button.clicked.connect(action.trigger); button.setEnabled(action.isEnabled())
             action.changed.connect(lambda button=button,action=action:button.setEnabled(action.isEnabled())); layout.addWidget(button)
-        inspect=QPushButton('Inspect Variables / Responses' if self.service.read_only else 'Configure Variables / Responses'); inspect.clicked.connect(self._on_configure); layout.addWidget(inspect)
-        layout.addStretch(); self.setup_widget.set_editor(widget,'Input'); self.setup_dock.show()
+        if ko:
+            inspect_lbl = '설계 변수 · 응답 보기' if self.service.read_only else '설계 변수 · 응답 구성'
+        else:
+            inspect_lbl = 'Inspect Variables / Responses' if self.service.read_only else 'Configure Variables / Responses'
+        inspect=QPushButton(inspect_lbl); inspect.clicked.connect(self._on_configure); layout.addWidget(inspect)
+        layout.addStretch(); self.setup_widget.set_editor(widget,'입력 덱' if ko else 'Input'); self.setup_dock.show()
 
     def _method_context(self,kind):
+        ko = self.language == 'ko'
+        self._context_kind = kind
         widget=QWidget(); layout=QVBoxLayout(widget)
         if kind=='Surrogate' and self.service.surrogate:
-            artifact=self.service.surrogate; text=f'Saved {artifact.config.method.upper()} model · study revision {artifact.dataset.training_revision}\nQualified: {artifact.qualified}\n'+ '\n'.join(f'{m.response_id}: RMSE {m.rmse:.6g} {m.unit}; holdout n={m.n}' for m in artifact.metrics)
+            artifact=self.service.surrogate
+            if ko:
+                qual_txt = '통과' if artifact.qualified else '미충족'
+                text=f'저장된 {artifact.config.method.upper()} 대리모델 · 리비전 {artifact.dataset.training_revision}\n검증 적격: {qual_txt}\n'+'\n'.join(f'{m.response_id}: RMSE {m.rmse:.6g} {m.unit}; 검증 표본 n={m.n}' for m in artifact.metrics)
+            else:
+                text=f'Saved {artifact.config.method.upper()} model · study revision {artifact.dataset.training_revision}\nQualified: {artifact.qualified}\n'+'\n'.join(f'{m.response_id}: RMSE {m.rmse:.6g} {m.unit}; holdout n={m.n}' for m in artifact.metrics)
             label=QLabel(text); label.setToolTip(artifact.id); label.setWordWrap(True); layout.addWidget(label)
-            inspect=QPushButton('Inspect validation split / metrics'); inspect.clicked.connect(self._inspect_training); layout.addWidget(inspect)
+            inspect=QPushButton('검증 분할 · 지표 보기' if ko else 'Inspect validation split / metrics'); inspect.clicked.connect(self._inspect_training); layout.addWidget(inspect)
         actions={'DOE':self.act_generate,'Surrogate':self.act_train,'Optimization':self.act_optimize}
         action=actions[kind]; button=QPushButton(action.text()); button.clicked.connect(action.trigger); button.setEnabled(action.isEnabled())
-        action.changed.connect(lambda:button.setEnabled(action.isEnabled())); layout.addWidget(button); layout.addStretch(); self.setup_widget.set_editor(widget,kind); self.setup_dock.show()
+        action.changed.connect(lambda:button.setEnabled(action.isEnabled())); layout.addWidget(button); layout.addStretch()
+        tab_title = _METHOD_TITLES_KO.get(kind, kind) if ko else kind
+        self.setup_widget.set_editor(widget,tab_title); self.setup_dock.show()
 
     def _on_configure(self,*args,tab=0):
+        ko = self.language == 'ko'
         if not self.template_deck: self._input_context(); return
         if self._display_revision!=self.service.revision:
+            self._context_kind = 'frozen_revision'
             definition=self._revision_definition(); frozen=StudyManager(self.study.name,space=definition['space'],objectives=definition['objectives'],constraints=definition['constraints'])
             editor=StudyConfigEditor([v.id for v in definition['space'].variables],frozen,definition['response_units'],definition['response_selectors'])
             editor.variables.setEditTriggers(QTableView.EditTrigger.NoEditTriggers); editor.responses.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
-            editor.buttons.hide(); editor.tabs.setCurrentIndex(tab); editor.setEnabled(False); self.setup_widget.set_editor(editor,f'Revision {self._display_revision}'); self.setup_dock.show(); return
+            editor.buttons.hide(); editor.tabs.setCurrentIndex(tab); editor.setEnabled(False)
+            self.setup_widget.set_editor(editor,f'리비전 {self._display_revision}' if ko else f'Revision {self._display_revision}'); self.setup_dock.show(); return
+        self._context_kind = 'setup'
         if self._editor is None:
             self._editor=StudyConfigEditor(self.template_deck.token_names,self.study,self.response_units,getattr(self.service,'response_selectors',{}))
             self._editor_revision=self.service.revision
             self._editor.applied.connect(lambda config:self._configure_study(*config))
             self._editor.reverting.connect(self._rebase_config_editor)
-        self.setup_widget.set_editor(self._editor,'Setup')
+        self.setup_widget.set_editor(self._editor,'연구 구성' if ko else 'Setup')
         self._editor.tabs.setCurrentIndex(tab); self.setup_widget.context_tabs.setCurrentIndex(1); self.setup_dock.show(); self._sync_actions()
 
     def _rebase_config_editor(self):
@@ -627,7 +833,7 @@ class MDOStudioWindow(QMainWindow):
         if hasattr(old,'close') and old.close() is False:
             self.status_bar.showMessage('Wait for the current study operation to finish, then retry. Your study and draft are retained.'); return
         self._cancel_default_splitter()
-        self.service=self.workbench.create_mdo_study(); self._display_revision=self.service.revision; self._generation+=1; self._selected_ids.clear(); self._editor=None; self._clear_filters(); self._populate_study()
+        self.service=self.workbench.create_mdo_study(); self._display_revision=self.service.revision; self._generation+=1; self._selected_ids.clear(); self._editor=None; self._context_kind=None; self._clear_filters(); self._populate_study()
 
     def _on_load_deck(self,path=None):
         if self._active_batch_id or self._busy or self._sensitivity_write_busy():
@@ -747,7 +953,11 @@ class MDOStudioWindow(QMainWindow):
 
     def _on_batch_finished(self,batch_id,state,completed,failed):
         self._flush_deltas(); self._delta_timer.stop(); self._populate_study()
-        self.status_bar.showMessage(f'배치 완료 ({state}): {completed} completed, {failed} failed. Actual attempts remain available.'); self._sync_actions()
+        if self.language == 'ko':
+            self.status_bar.showMessage(f'일괄 해석 완료 ({state}): {completed}개 완료, {failed}개 실패. 실제 실행 이력을 확인할 수 있습니다.')
+        else:
+            self.status_bar.showMessage(f'배치 완료 ({state}): {completed} completed, {failed} failed. Actual attempts remain available.')
+        self._sync_actions()
 
     def _point_is_verified(self,record,*,require_feasible=True): return self.service.is_verified(record.point_id,require_feasible=require_feasible)
 
@@ -858,7 +1068,7 @@ class MDOStudioWindow(QMainWindow):
         restored=bool(isinstance(splitter,QByteArray) and 0<splitter.size()<10000 and self.center_splitter.restoreState(splitter))
         study_restored=self._restore_study_view()
         if not (layout_restored or getattr(self,'_study_layout_restored',False)):
-            self.resizeDocks([self.tree_dock,self.setup_dock],[230,295],Qt.Orientation.Horizontal)
+            self.resizeDocks([self.tree_dock,self.setup_dock],[265,295],Qt.Orientation.Horizontal)
         if not (restored or study_restored): self._request_default_splitter()
 
     def _restore_study_view(self):
@@ -901,6 +1111,7 @@ class MDOStudioWindow(QMainWindow):
         return height
 
     def _default_plot_height(self):
+        ko = self.language == 'ko'
         page=self.viz_tabs.currentWidget()
         outer=self.center_splitter.widget(1).height()-page.height()
         width=page.width(); heights=[]
@@ -910,7 +1121,7 @@ class MDOStudioWindow(QMainWindow):
             controls=max(view.controls.minimumSize().height(),view.controls.heightForWidth(inner))
             note=self._label_height(view.note,inner)
             if view is self.pareto_view:
-                note=max(note,self._label_height(view.note,inner,pareto_result_note(0,0)))
+                note=max(note,self._label_height(view.note,inner,pareto_result_note(0,0,language=self.language)))
             chrome=margins.top()+margins.bottom()+controls+note
             heights.append(chrome+view.mpl_toolbar.sizeHint().height()+3*spacing+136)
             native=getattr(view,'native',None)
@@ -918,12 +1129,14 @@ class MDOStudioWindow(QMainWindow):
             native_layout=native.layout(); native_spacing=max(0,native_layout.spacing())
             row=native_layout.itemAt(0).layout()
             fixed=[max(row.minimumSize().height(),row.heightForWidth(inner)),native.annotation_message.height()]
-            legend=native.legend.text() or (PARETO_LEGEND_TEXT if view is self.pareto_view else '')
+            default_legend = PARETO_LEGEND_TEXT_KO if ko else PARETO_LEGEND_TEXT
+            legend=native.legend.text() or (default_legend if view is self.pareto_view else '')
             if legend: fixed.append(self._label_height(native.legend,inner,legend))
             if view is self.pareto_view:
                 instruction_width=max(1,inner-row.itemAt(0).widget().sizeHint().width()-max(0,row.spacing()))
                 instruction=native.instructions.text()
-                if 'Click point: select' not in instruction: instruction+='   Click point: select'
+                click_hint='   점 클릭: 선택' if ko else '   Click point: select'
+                if click_hint.strip() not in instruction: instruction+=click_hint
                 fixed[0]=max(fixed[0],self._label_height(native.instructions,instruction_width,instruction))
                 labels=[combo.currentText() for combo in view.axes]
                 if view.axis_groups[2].isHidden():
@@ -962,12 +1175,18 @@ class MDOStudioWindow(QMainWindow):
     def _default_layout(self):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,self.tree_dock); self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.setup_dock)
         self.tree_dock.show(); self.setup_dock.show()
-        self.resizeDocks([self.tree_dock,self.setup_dock],[230,295],Qt.Orientation.Horizontal)
+        self.resizeDocks([self.tree_dock,self.setup_dock],[265,295],Qt.Orientation.Horizontal)
         self._request_default_splitter()
 
     def _on_toggle_theme(self): toggle_theme_mode(); self.apply_theme()
     def apply_theme(self):
-        self.is_dark=current_theme_mode()=='dark'; self.setStyleSheet(build_stylesheet(current_theme_mode())); self.act_theme.setText(theme_toggle_label())
+        self.is_dark=current_theme_mode()=='dark'
+        qss=build_stylesheet(current_theme_mode())
+        if self.language=='ko':
+            load_korean_font(None,9)
+            qss+='\nQWidget { font-family: "Malgun Gothic", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }\n'
+        self.setStyleSheet(qss)
+        self.act_theme.setText(theme_toggle_label(language=self.language))
         self.setup_widget.set_theme(self.is_dark); self.tdp_model.set_theme(self.is_dark)
         for view in self.views: view.set_theme(self.is_dark)
 

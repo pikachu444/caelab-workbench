@@ -1,21 +1,91 @@
 """Small shared Qt plot surface and optional native VTK scene."""
 from __future__ import annotations
+from functools import lru_cache
 import os
 from itertools import product,permutations
+from pathlib import Path
 import numpy as np
-from PySide6.QtCore import Signal,Qt,QEvent,QTimer
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QSizePolicy
+import matplotlib
+from PySide6.QtCore import Signal,Qt,QEvent,QTimer,QSize
+from PySide6.QtGui import QColor,QFont,QFontDatabase,QIcon,QPainter,QPixmap
+from PySide6.QtWidgets import QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QSizePolicy
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
+
+_MALGUN_FONT_PATH = Path("C:/Windows/Fonts/malgun.ttf")
+_QT_KOREAN_FAMILY: str | None = None
+
+
+@lru_cache(maxsize=1)
+def _register_malgun_matplotlib() -> bool:
+    if _MALGUN_FONT_PATH.is_file():
+        try:
+            from matplotlib import font_manager
+            target = os.path.normcase(str(_MALGUN_FONT_PATH))
+            if not any(os.path.normcase(str(entry.fname)) == target for entry in font_manager.fontManager.ttflist):
+                font_manager.fontManager.addfont(str(_MALGUN_FONT_PATH))
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _korean_font_family() -> str:
+    global _QT_KOREAN_FAMILY
+    _register_malgun_matplotlib()
+    if _QT_KOREAN_FAMILY is not None:
+        return _QT_KOREAN_FAMILY
+    if QApplication.instance() is not None and _MALGUN_FONT_PATH.is_file():
+        font_id = QFontDatabase.addApplicationFont(str(_MALGUN_FONT_PATH))
+        if font_id >= 0:
+            loaded = QFontDatabase.applicationFontFamilies(font_id)
+            if loaded:
+                _QT_KOREAN_FAMILY = loaded[0]
+                return _QT_KOREAN_FAMILY
+        if "Malgun Gothic" in QFontDatabase.families():
+            _QT_KOREAN_FAMILY = "Malgun Gothic"
+            return _QT_KOREAN_FAMILY
+    return "Malgun Gothic"
+
+
+def load_korean_font(app: QApplication | None = None, point_size: int = 9) -> QFont:
+    """Load Malgun Gothic when available and configure Matplotlib Korean font rendering."""
+    family = _korean_font_family()
+    font = QFont(family, point_size)
+    if app is not None:
+        app.setFont(font)
+    matplotlib.rcParams["font.family"] = [family, "Malgun Gothic", "NanumGothic", "Noto Sans CJK KR", "DejaVu Sans"]
+    matplotlib.rcParams["mathtext.fontset"] = "stixsans"
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    return font
+
+
+def _tinted_icon(icon: QIcon, size: QSize, color: str) -> QIcon:
+    eff_size = size if size.isValid() and not size.isEmpty() else QSize(24, 24)
+    pixmap = icon.pixmap(eff_size)
+    if pixmap.isNull():
+        return icon
+    tinted = QPixmap(pixmap.size())
+    tinted.setDevicePixelRatio(pixmap.devicePixelRatio())
+    tinted.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(tinted)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), QColor(color))
+    painter.end()
+    return QIcon(tinted)
 
 
 class PlotWidget(QWidget):
     point_selected = Signal(str)
     filter_changed = Signal(object)
 
-    def __init__(self, parent=None, is_dark=True):
+    def __init__(self, parent=None, is_dark=True, *, language: str = "en"):
         super().__init__(parent)
         self.is_dark = is_dark
+        self.language = "ko" if str(language).strip().lower() == "ko" else "en"
+        if self.language == "ko":
+            load_korean_font(None, 9)
         self.fig = Figure(figsize=(6, 4), dpi=100)
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -24,7 +94,13 @@ class PlotWidget(QWidget):
         self.layout.setContentsMargins(4, 4, 4, 4)
         self.controls = QVBoxLayout()
         self.layout.addLayout(self.controls)
-        self.mpl_toolbar=NavigationToolbar2QT(self.canvas,self)
+        self.mpl_toolbar = NavigationToolbar2QT(self.canvas, self)
+        self.mpl_toolbar.setObjectName("mplToolbar")
+        self._mpl_icons = [
+            (action, QIcon(action.icon()))
+            for action in self.mpl_toolbar.actions()
+            if not action.icon().isNull()
+        ]
         self.layout.addWidget(self.mpl_toolbar)
         self.layout.addWidget(self.canvas, 1)
         self.note = QLabel()
@@ -42,20 +118,55 @@ class PlotWidget(QWidget):
 
     def _apply_theme(self):
         bg, fg, grid = ("#13171e", "#e2e8f0", "#334155") if self.is_dark else ("#f8fafc", "#0f172a", "#cbd5e1")
+        toolbar_bg, toolbar_fg, border_col, hover_bg = (
+            ("#1e293b", "#e2e8f0", "#313d4f", "#334155")
+            if self.is_dark
+            else ("#f1f5f9", "#0f172a", "#cbd5e1", "#cbd5e1")
+        )
         self.fig.patch.set_facecolor(bg)
         self.ax.set_facecolor(bg)
         self.ax.tick_params(colors=fg, labelsize=9)
-        for axis in (self.ax.xaxis, self.ax.yaxis): axis.label.set_color(fg)
+        for axis in (self.ax.xaxis, self.ax.yaxis):
+            axis.label.set_color(fg)
         self.ax.title.set_color(fg)
-        for spine in self.ax.spines.values(): spine.set_color(grid)
+        for spine in self.ax.spines.values():
+            spine.set_color(grid)
         self.ax.grid(True, alpha=.3, color=grid)
         legend = self.ax.get_legend()
         if legend:
             legend.get_frame().set_facecolor(bg)
-            for text in legend.get_texts(): text.set_color(fg)
+            for text in legend.get_texts():
+                text.set_color(fg)
+        if self.language == "ko":
+            family = _korean_font_family()
+            for artist in (self.ax.title, self.ax.xaxis.label, self.ax.yaxis.label, *self.ax.texts):
+                artist.set_fontfamily(family)
+            for tick_lbl in (*self.ax.get_xticklabels(), *self.ax.get_yticklabels()):
+                tick_lbl.set_fontfamily(family)
+            if legend:
+                for text in legend.get_texts():
+                    text.set_fontfamily(family)
+        self.mpl_toolbar.setStyleSheet(
+            f"QToolBar#mplToolbar {{ background: {toolbar_bg}; border-radius: 5px; padding: 2px; border: 1px solid {border_col}; }}"
+            f" QToolBar#mplToolbar QLabel {{ background: {toolbar_bg}; color: {toolbar_fg}; }}"
+            f" QToolBar#mplToolbar QToolButton {{ color: {toolbar_fg}; background: transparent; border-radius: 3px; padding: 2px; }}"
+            f" QToolBar#mplToolbar QToolButton:hover {{ background: {hover_bg}; }}"
+        )
+        icon_size = self.mpl_toolbar.iconSize()
+        for action, base_icon in self._mpl_icons:
+            action.setIcon(_tinted_icon(base_icon, icon_size, toolbar_fg))
 
     def set_theme(self, is_dark):
         self.is_dark = is_dark
+        self._apply_theme()
+        self.canvas.draw_idle()
+
+    def set_language(self, language: str):
+        self.language = "ko" if str(language).strip().lower() == "ko" else "en"
+        if self.language == "ko":
+            load_korean_font(None, 9)
+        if hasattr(self, "native"):
+            self.native.set_language(self.language)
         self._apply_theme()
         self.canvas.draw_idle()
 
@@ -64,7 +175,10 @@ class PlotWidget(QWidget):
         self.ax.clear()
         self._picks.clear()
         self._apply_theme()
-        self.ax.text(.5, .5, text, ha='center', va='center', color='#94a3b8', transform=self.ax.transAxes)
+        kwargs = dict(ha='center', va='center', color='#94a3b8', transform=self.ax.transAxes)
+        if self.language == "ko":
+            kwargs["fontfamily"] = _korean_font_family()
+        self.ax.text(.5, .5, text, **kwargs)
         self.canvas.draw_idle()
 
     def set_selected(self, point_ids):
@@ -83,11 +197,13 @@ class PlotWidget(QWidget):
 class Native3D(QWidget):
     point_selected = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, language: str = "en"):
         super().__init__(parent)
+        self.language = "ko" if str(language).strip().lower() == "ko" else "en"
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.available = False
+        self._reset_button: QPushButton | None = None
         self._camera_initialized = False
         self._initial_fit_pending=False
         self._initial_fit_timer=QTimer(self); self._initial_fit_timer.setSingleShot(True); self._initial_fit_timer.timeout.connect(self._finish_initial_fit)
@@ -142,11 +258,12 @@ class Native3D(QWidget):
                 interactor.AddObserver('StartInteractionEvent',self._camera_interacted)
                 interactor.AddObserver('ConfigureEvent',self._configure_scene)
                 self.widget.Initialize()
-                reset=QPushButton('Fit 3D view')
-                reset.setToolTip('Restore the oblique z-up view and fit the data and physical axes.')
+                reset=QPushButton('3D 화면 맞춤' if self.language=='ko' else 'Fit 3D view')
+                reset.setToolTip('등각 Z-위 시점으로 복원하고 데이터와 물리 축을 화면에 맞춥니다.' if self.language=='ko' else 'Restore the oblique z-up view and fit the data and physical axes.')
                 reset.clicked.connect(self.reset_camera)
+                self._reset_button = reset
                 controls=QHBoxLayout(); controls.addWidget(reset)
-                self.instructions=QLabel('Drag: rotate   Middle / Shift-drag: pan   Wheel: zoom')
+                self.instructions=QLabel(self._instruction_text())
                 self.instructions.setWordWrap(True); controls.addWidget(self.instructions,1)
                 layout.addLayout(controls); layout.addWidget(self.legend); layout.addWidget(self.axis_key)
                 layout.addWidget(self.widget)
@@ -154,11 +271,35 @@ class Native3D(QWidget):
                 self.available = True
             except ImportError:
                 pass
-        self.message = QLabel('2D slice fallback — native VTK 3D is unavailable in this session.')
+        self.message = QLabel(self._fallback_text())
         self.message.setTextFormat(Qt.TextFormat.PlainText)
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
         self.message.setVisible(not self.available)
+
+    def _fallback_text(self) -> str:
+        if self.language == 'ko':
+            return '2D 단면 대체 표시 — 현재 세션에서 네이티브 VTK 3D를 사용할 수 없습니다.'
+        return '2D slice fallback — native VTK 3D is unavailable in this session.'
+
+    def _instruction_text(self) -> str:
+        if self.language == 'ko':
+            return '드래그: 회전   가운데 / Shift+드래그: 이동   휠: 확대/축소' + ('   점 클릭: 선택' if self.actors else '')
+        return 'Drag: rotate   Middle / Shift-drag: pan   Wheel: zoom' + ('   Click point: select' if self.actors else '')
+
+    def set_language(self, language: str) -> None:
+        self.language = 'ko' if str(language).strip().lower() == 'ko' else 'en'
+        if self._reset_button is not None:
+            self._reset_button.setText('3D 화면 맞춤' if self.language == 'ko' else 'Fit 3D view')
+            self._reset_button.setToolTip(
+                '등각 Z-위 시점으로 복원하고 데이터와 물리 축을 화면에 맞춥니다.'
+                if self.language == 'ko'
+                else 'Restore the oblique z-up view and fit the data and physical axes.'
+            )
+        if hasattr(self, 'instructions'):
+            self.instructions.setText(self._instruction_text())
+        if not self.available:
+            self.message.setText(self._fallback_text())
 
     def set_legend(self,layers):
         self.legend.setText('   '.join(f'<span style="color:{color}">●</span> {name}' for name,color in layers))
@@ -318,7 +459,7 @@ class Native3D(QWidget):
         else: self._update_annotation_layout()
         if self._initial_fit_pending and self.isVisible():
             self._fit_timer_axes=self.axes; self._initial_fit_timer.start(0)
-        self.instructions.setText('Drag: rotate   Middle / Shift-drag: pan   Wheel: zoom'+('   Click point: select' if self.actors else ''))
+        self.instructions.setText(self._instruction_text())
 
     def eventFilter(self,watched,event):
         if watched is self.annotation_message and event.type() in (QEvent.Type.FontChange,QEvent.Type.StyleChange):
