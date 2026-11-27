@@ -240,11 +240,69 @@ def _settings() -> QSettings:
 
 
 def current_theme_mode() -> str:
+    env_mode = os.environ.get("CAELAB_THEME_MODE", "").strip().lower()
+    if env_mode in ("dark", "light"):
+        return env_mode
     try:
-        raw = str(_settings().value("theme/mode", "dark") or "dark").strip().lower()
+        settings = _settings()
+        if settings.contains("theme/mode"):
+            raw = str(settings.value("theme/mode", "dark") or "dark").strip().lower()
+            if raw in ("dark", "light"):
+                return raw
     except Exception:
-        return "dark"
-    return raw if raw in ("dark", "light") else "dark"
+        pass
+    return "dark"
+
+
+def resolved_ui_language(
+    explicit: str | None = None,
+    *,
+    default_when_unset: str = "en",
+) -> str:
+    """Resolve UI language ('ko' or 'en') with deterministic precedence.
+
+    Precedence:
+      1. explicit argument ('ko' / 'en')
+      2. CAELAB_UI_LANGUAGE environment variable
+      3. stored _settings().value('ui/language') when present
+      4. default_when_unset ('en' for direct MDOStudioWindow calls, 'ko' for Workbench launcher)
+    """
+    if explicit is not None:
+        norm_explicit = str(explicit).strip().lower()
+        if norm_explicit in ("ko", "en"):
+            return norm_explicit
+    env_lang = os.environ.get("CAELAB_UI_LANGUAGE", "").strip().lower()
+    if env_lang in ("ko", "en"):
+        return env_lang
+    try:
+        settings = _settings()
+        if settings.contains("ui/language"):
+            stored = str(settings.value("ui/language", "") or "").strip().lower()
+            if stored in ("ko", "en"):
+                return stored
+    except Exception:
+        pass
+    fallback = str(default_when_unset).strip().lower()
+    return fallback if fallback in ("ko", "en") else "en"
+
+
+def current_ui_language(default: str = "ko") -> str:
+    """Return active UI language, defaulting to Korean ('ko') for Workbench windows."""
+    return resolved_ui_language(None, default_when_unset=default)
+
+
+def set_ui_language(lang: str) -> str:
+    """Persist UI language ('ko' or 'en') in shared UI settings and sync active process env if set."""
+    resolved = "ko" if str(lang).strip().lower() == "ko" else "en"
+    if "CAELAB_UI_LANGUAGE" in os.environ:
+        os.environ["CAELAB_UI_LANGUAGE"] = resolved
+    try:
+        settings = _settings()
+        settings.setValue("ui/language", resolved)
+        settings.sync()
+    except Exception:
+        pass
+    return resolved
 
 
 def get_palette(mode: str | None = None) -> dict[str, object]:
@@ -254,6 +312,8 @@ def get_palette(mode: str | None = None) -> dict[str, object]:
 
 def set_theme_mode(mode: str) -> str:
     resolved = "light" if str(mode).strip().lower() == "light" else "dark"
+    if "CAELAB_THEME_MODE" in os.environ:
+        os.environ["CAELAB_THEME_MODE"] = resolved
     try:
         settings = _settings()
         settings.setValue("theme/mode", resolved)
@@ -269,8 +329,10 @@ def toggle_theme_mode() -> str:
     return set_theme_mode(next_mode)
 
 
-def theme_toggle_label(mode: str | None = None) -> str:
+def theme_toggle_label(mode: str | None = None, *, language: str = "ko") -> str:
     resolved = mode if mode in ("dark", "light") else current_theme_mode()
+    if str(language).strip().lower() == "en":
+        return "Light Mode" if resolved == "dark" else "Dark Mode"
     return "라이트 모드" if resolved == "dark" else "다크 모드"
 
 
