@@ -1,5 +1,12 @@
 # 현재 상태
 
+## M3-F0 메시 솔버 호환 확인 — 2026-11-27
+
+- CalculiX 2.21은 공유 절점으로 연결한 Hex8–Pyr5–Tet4 덱에서 `C3D5`를 거부했습니다. OpenCourant Windows 20261011과 OpenRadioss Ubuntu WSL도 같은 연결성의 `/PYRA5`를 거부했습니다. 세 실행 모두 혼합 메시의 물리 결과를 생성하기 전에 중단되었습니다.
+- 독립 기준에서는 CalculiX의 Hex8·Wedge6·Tet4·Tet10·Quad4/Tri3 shell 상수 변형률과 강체 운동, C3D8I 굽힘 수렴·tie, C3D8 마찰 없는 접촉 평형을 실제 계산했습니다. OpenCourant/OpenRadioss는 `/BRICK`, `/TETRA4`, `/SHELL`, `/SH3N`과 TYPE20 두꺼운 셸 `/PENTA6`의 강체 병진 및 에너지 출력이 확인되었습니다. 일반 솔리드 속성의 `/PENTA6`와 `/SH4N`은 Starter가 거부했습니다.
+- CalculiX에서 면 절점을 공유하는 Hex8–Wedge6–Tet4 덱을 별도로 계산했습니다. 축 인장과 자유 포아송 수축에서 11개 적분점의 축응력 1 MPa와 축변형률 0.001을 확인했고, 같은 메시의 강체 회전·병진에서는 최대 응력이 `9.22e-16 MPa`였습니다.
+- [F0 솔버 매트릭스와 재현 명령](docs/mesher-solver-f0-matrix.md)에 빌드 해시, 시험 덱 코드, 정량 결과를 연결했습니다. 이 판정은 생성 메시의 솔버 전달 호환성을 다루며, Workbench 원본 네이티브 덱의 실행 정책은 DESIGN §1을 따릅니다.
+
 ## Wave 1 MDO Studio 한국어 공학 모드 · 실시간 언어/테마 전환 · 다크 툴바 아이콘 보정 — 2026-11-26 로컬 후보
 
 - 공용 UI 테마·언어 설정(`apps/workbench_qt/theme.py`)에 `resolved_ui_language`, `current_ui_language`, `set_ui_language` 및 `CAELAB_THEME_MODE` 환경변수 연동을 추가했습니다. 명시 인자(`"ko"`/`"en"`) → `CAELAB_UI_LANGUAGE` → 저장된 `QSettings("ui/language")` → 기본값 순으로 결정되며, 기존 테스트의 직접 `MDOStudioWindow()` 호출은 `"en"` 기본값을 유지하고 `ProjectWindow`에서 실행하는 자식 프로세스(`MDO Studio`, `CAELab Prep`)에는 `CAELAB_THEME_MODE`와 `CAELAB_UI_LANGUAGE="ko"`를 스코프 전달합니다(`apps/workbench_qt/project_window.py`).
