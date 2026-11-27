@@ -20,7 +20,27 @@ TET10 = TET + [
     tuple((a + b) / 2 for a, b in zip(TET[first], TET[second]))
     for first, second in TET_EDGES
 ]
+QUAD_EDGES = [(0, 1), (1, 2), (2, 3), (3, 0)]
+HEX_EDGES = QUAD_EDGES + [(a + 4, b + 4) for a, b in QUAD_EDGES] + [(i, i + 4) for i in range(4)]
+TRI_EDGES = [(0, 1), (1, 2), (2, 0)]
+WEDGE_EDGES = TRI_EDGES + [(a + 3, b + 3) for a, b in TRI_EDGES] + [(i, i + 3) for i in range(3)]
+
+
+def midpoint(a, b):
+    return tuple((x + y) / 2 for x, y in zip(a, b))
+
+
+def with_midsides(points, edges):
+    return points + [midpoint(points[a], points[b]) for a, b in edges]
+
+
+HEX20 = with_midsides(HEX, HEX_EDGES)
 CCX_CELLS = {
+    "C3D20": (HEX20, 27, 1.0),
+    "C3D20R": (HEX20, 8, 1.0),
+    "C3D15": (with_midsides(WEDGE, WEDGE_EDGES), 9, 0.5),
+    "S8": (with_midsides(HEX[:4], QUAD_EDGES), 27, 1.0),
+    "S6": (with_midsides(TET[:3], TRI_EDGES), 9, 0.5),
     "C3D6": (WEDGE, 2, 0.5),
     "C3D8": (HEX, 8, 1.0),
     "C3D8I": (HEX, 8, 1.0),
@@ -84,7 +104,13 @@ def ccx_mesh_lines(points, elements):
     lines.extend(f"{node},{x},{y},{z}" for node, (x, y, z) in enumerate(points, 1))
     for kind, ids in elements:
         lines.append(f"*ELEMENT,TYPE={kind},ELSET=BODY")
-        lines.extend(",".join(map(str, element)) for element in ids)
+        for element in ids:
+            # CalculiX accepts at most 16 entries on one input line.
+            if len(element) > 16:
+                lines.append(",".join(map(str, element[:16])) + ",")
+                lines.append(",".join(map(str, element[16:])))
+            else:
+                lines.append(",".join(map(str, element)))
     lines.extend(["*MATERIAL,NAME=ELASTIC", "*ELASTIC", "1000.,0.25"])
     if elements[0][0].startswith("S"):
         lines.extend(["*SHELL SECTION,ELSET=BODY,MATERIAL=ELASTIC", "1."])
@@ -234,6 +260,9 @@ def test_calculix_conformal_hex_wedge_tet_patch(tmp_path, ccx, motion):
 
 
 RAD_CELLS = {
+    "TETRA10": (TET10, 1e-6 / 6),
+    # Radioss numbers vertical edges 13..16 and the top edges 17..20.
+    "BRIC20": (HEX20[:12] + HEX20[16:20] + HEX20[12:16], 1e-6),
     "BRICK": (HEX, 1e-6),
     "TETRA4": (TET, 1e-6 / 6),
     "SHELL": (HEX[:4], 1e-7),
@@ -299,12 +328,14 @@ def rad_property(kind):
         return ["/PROP/SHELL/1", "shell", "".join(map(i10, (24, 4, 2, 2))) + 20 * " " + r20(1),
                 r20(0) * 4 + r20(0.015),
                 i10(1) + 10 * " " + r20(0.1) + r20(5 / 6) + 10 * " " + i10(2) + i10(0)]
-    return ["/PROP/SOLID/1", "solid", "".join(map(i10, (1, 4, 0, 0, 0, 0, 1000, 1))) + r20(0),
+    formulation = 16 if kind == "bric20" else 1
+    return ["/PROP/SOLID/1", "solid", "".join(map(i10, (formulation, 4, 0, 0, 0, 0, 1000, 1))) + r20(0),
             "".join(map(r20, (1.1, 0.05, 0.1, 0, 0))), r20(0) * 5]
 
 
 def write_rad_translation(folder, points, elements, prop_kind):
-    nodes = "".join(map(i10, range(1, len(points) + 1)))
+    node_lines = ["".join(map(i10, range(i, min(i + 10, len(points) + 1))))
+                  for i in range(1, len(points) + 1, 10)]
     starter = [
         "#RADIOSS STARTER", "/BEGIN", "model", "      2024",
         "                  Mg                  mm                   s",
@@ -315,8 +346,15 @@ def write_rad_translation(folder, points, elements, prop_kind):
         *(i10(node) + "".join(map(r20, point)) for node, point in enumerate(points, 1)),
     ]
     for keyword, connectivity in elements:
-        starter.extend([f"/{keyword}/1", "".join(map(i10, connectivity))])
-    starter.extend(["/GRNOD/NODE/1", "all nodes", nodes, "/INIVEL/TRA/1", "translation",
+        starter.append(f"/{keyword}/1")
+        if keyword == "TETRA10":
+            rows = [connectivity[:1], connectivity[1:]]
+        elif keyword == "BRIC20":
+            rows = [connectivity[:9], connectivity[9:17], connectivity[17:]]
+        else:
+            rows = [connectivity]
+        starter.extend("".join(map(i10, row)) for row in rows)
+    starter.extend(["/GRNOD/NODE/1", "all nodes", *node_lines, "/INIVEL/TRA/1", "translation",
                     r20(1) + r20(0) + r20(0) + i10(1) + i10(0), "/END", ""])
     (folder / "model_0000.rad").write_text("\n".join(starter))
     engine = ["/RUN/model/1", "0.000100", "/PRINT/-1", "/ANIM/DT", "0.0 0.000025",
@@ -324,12 +362,12 @@ def write_rad_translation(folder, points, elements, prop_kind):
     (folder / "model_0001.rad").write_text("\n".join(engine))
 
 
-@pytest.mark.parametrize("kind", ["BRICK", "TETRA4", "SHELL", "SH3N", "PENTA6"])
+@pytest.mark.parametrize("kind", ["BRICK", "TETRA4", "SHELL", "SH3N", "PENTA6", "TETRA10", "BRIC20"])
 def test_radioss_rigid_translation_energy(tmp_path, radioss, kind):
     from caelab.native.radioss import collect_radioss_results, parse_radioss_output
 
     points, mass = RAD_CELLS[kind]
-    property_kind = {"PENTA6": "thick_shell", "SHELL": "shell", "SH3N": "shell"}.get(kind, "solid")
+    property_kind = {"BRIC20": "bric20", "PENTA6": "thick_shell", "SHELL": "shell", "SH3N": "shell"}.get(kind, "solid")
     write_rad_translation(
         tmp_path, points, [(kind, (1, *range(1, len(points) + 1)))], property_kind
     )
@@ -489,3 +527,427 @@ def test_calculix_hex8_compression_contact_equilibrium(tmp_path, ccx):
     assert [value[2] for _, value in top] == pytest.approx(
         [-(2 / 1200 + 1 / 1e5)] * 4, rel=0.02
     )
+
+def test_calculix_quadratic_conformal_hex_wedge_tet(tmp_path, ccx):
+    # Elevate common edges exactly once. Load only the exterior with t = sigma . n.
+    points = list(WEDGE_PATCH_POINTS)
+    edges = {}
+    elements = []
+    faces = {}
+    shapes = [
+        (
+            "C3D20",
+            HEX_EDGES,
+            [
+                (0, 3, 2, 1),
+                (4, 5, 6, 7),
+                (0, 1, 5, 4),
+                (1, 2, 6, 5),
+                (2, 3, 7, 6),
+                (3, 0, 4, 7),
+            ],
+        ),
+        (
+            "C3D15",
+            WEDGE_EDGES,
+            [(0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)],
+        ),
+        ("C3D10", TET_EDGES, [(0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)]),
+    ]
+    for (_, [row]), (kind, local_edges, local_faces) in zip(
+        WEDGE_PATCH_ELEMENTS, shapes
+    ):
+        element, *corners = row
+        mids = []
+        for a, b in local_edges:
+            key = tuple(sorted((corners[a], corners[b])))
+            if key not in edges:
+                points.append(midpoint(points[key[0] - 1], points[key[1] - 1]))
+                edges[key] = len(points)
+            mids.append(edges[key])
+        elements.append((kind, [(element, *corners, *mids)]))
+        for face in local_faces:
+            nodes = tuple(corners[i] for i in face)
+            faces.setdefault(tuple(sorted(nodes)), []).append(nodes)
+
+    assert sorted(len(face) for face, copies in faces.items() if len(copies) == 2) == [
+        3,
+        4,
+    ]
+    force = dict.fromkeys(range(1, len(points) + 1), 0.0)
+    for copies in faces.values():
+        if len(copies) == 2:
+            continue
+        (face,) = copies
+        sides = list(zip(face, face[1:] + face[:1]))
+        area_z = (
+            sum(
+                points[a - 1][0] * points[b - 1][1]
+                - points[a - 1][1] * points[b - 1][0]
+                for a, b in sides
+            )
+            / 2
+        )
+        for a, b in sides:
+            if len(face) == 4:
+                force[a] -= area_z / 12
+            force[edges[tuple(sorted((a, b)))]] += area_z / 3
+    lines = ccx_mesh_lines(points, elements)
+    lines.extend(["*STEP", "*STATIC", "*BOUNDARY", "1,1,3", "2,2,3", "4,3,3", "*CLOAD"])
+    lines.extend(f"{node},3,{fz:.15g}" for node, fz in force.items() if fz)
+    lines.extend(
+        ["*EL PRINT,ELSET=BODY", "S", "*NODE PRINT,NSET=ALLN", "U,RF", "*END STEP", ""]
+    )
+    (tmp_path / "model.inp").write_text("\n".join(lines))
+    status, log = ccx(tmp_path)
+    assert status == 0 and "Job finished" in log and "*ERROR" not in log, log
+    dat = (tmp_path / "model.dat").read_text()
+    stress = dat_rows(dat, "stresses", 2, 6)
+    assert [key for key, _ in stress] == [
+        (eid, ip)
+        for eid, count in [(1, 27), (2, 9), (3, 4)]
+        for ip in range(1, count + 1)
+    ]
+    for _, values in stress:
+        assert values == pytest.approx((0, 0, 1, 0, 0, 0), abs=1e-7)
+    displacements = dat_rows(dat, "displacements", 1, 3)
+    forces = dat_rows(dat, "forces", 1, 3)
+    for rows in [displacements, forces]:
+        assert [n for (n,), _ in rows] == list(range(1, len(points) + 1))
+    for (node,), u in displacements:
+        x, y, z = points[node - 1]
+        assert u == pytest.approx((-0.00025 * x, -0.00025 * y, 0.001 * z), abs=1e-9)
+    for (node,), rf in forces:
+        assert rf == pytest.approx((0, 0, force[node]), abs=1e-7)
+
+
+def rad_node_group(group, name, nodes):
+    rows = ["".join(map(i10, nodes[i : i + 10])) for i in range(0, len(nodes), 10)]
+    return [f"/GRNOD/NODE/{group}", name, *rows]
+
+
+def rad_fixed(group, axes):
+    return [
+        f"/BCS/{group}",
+        "displacement restraint",
+        f"   {axes} 000" + i10(0) + i10(group),
+    ]
+
+
+def rad_velocity(group, axis, scale):
+    return [
+        f"/IMPVEL/{group}",
+        "prescribed speed",
+        i10(1) + f"{axis:>10s}" + i10(0) * 2 + i10(group),
+        r20(1) + r20(scale),
+    ]
+
+
+def replace_rad_motion(folder, cards):
+    path = folder / "model_0000.rad"
+    geometry, _ = path.read_text().split("/GRNOD/NODE/1\n", maxsplit=1)
+    path.write_text(geometry + "\n".join([*cards, "/END", ""]))
+
+
+@pytest.mark.parametrize("kind", ["BRIC20", "TETRA10"])
+def test_radioss_quadratic_constrained_compression(tmp_path, radioss, kind):
+    from caelab.native.radioss import parse_radioss_output
+
+    points, mass = RAD_CELLS[kind]
+    write_rad_translation(
+        tmp_path,
+        points,
+        [(kind, (1, *range(1, len(points) + 1)))],
+        "bric20" if kind == "BRIC20" else "solid",
+    )
+    cards = [
+        "/FUNCT/1",
+        "constant velocity",
+        r20(0) + r20(1),
+        r20(1) + r20(1),
+        *rad_node_group(1, "all nodes", list(range(1, len(points) + 1))),
+        *rad_fixed(1, "011"),
+    ]
+    for group, x in enumerate([0, 0.5, 1], 2):
+        ids = [node for node, point in enumerate(points, 1) if point[0] == x]
+        cards.extend(rad_node_group(group, "x plane", ids))
+        cards.extend(rad_velocity(group, "X", -x) if x else rad_fixed(group, "100"))
+    replace_rad_motion(tmp_path, cards)
+    execute, _ = radioss
+    for step in ["0000", "0001"]:
+        status, log = execute(tmp_path, step)
+        assert status == 0 and "ERROR TERMINATION" not in log, log
+    assert "NORMAL TERMINATION" in log
+    values = parse_radioss_output(tmp_path / "model_0001.out")
+    t = values["printed_time"]
+    assert t > 5e-5
+    # epsilon_x = -t; constrained modulus 1200 MPa. Printed cycle energies
+    # are staggered relative to the Engine's printed time.
+    expected = 0.5 * 1200 * t**2 * (mass / 1.0e-6)
+    assert values["internal_energy"] == pytest.approx(expected, rel=0.06)
+    assert values["mass_error"] == 0
+
+
+@pytest.mark.parametrize(
+    "kind,tied,axial",
+    [
+        ("C3D4", False, False),
+        ("C3D10", False, False),
+        ("C3D20", False, False),
+        ("C3D8", True, False),
+        ("C3D20", True, False),
+        ("C3D8", True, True),
+        ("C3D20", True, True),
+    ],
+)
+def test_calculix_bending_and_nonmatching_tied_zones(tmp_path, ccx, kind, tied, axial):
+    from mesher_bending_case import Beam
+    from math import sqrt
+
+    beam = Beam(kind, tied=tied, axial=axial)
+    lines = ccx_mesh_lines(beam.points, list(beam.elements.items()))
+    # nu=0 isolates bending, suppressing lateral contraction and clamp end effects.
+    lines[lines.index("1000.,0.25")] = "1000.,0."
+    if tied:
+        lines += ["*SURFACE,NAME=CORE"]
+        lines += [f"{eid},S4" for eid, _ in beam.master]
+        lines += ["*NSET,NSET=SKIN_NODES"]
+        lines += [
+            ",".join(map(str, beam.slave[i : i + 16]))
+            for i in range(0, len(beam.slave), 16)
+        ]
+        lines += [
+            "*SURFACE,NAME=SKIN,TYPE=NODE",
+            "SKIN_NODES",
+            "*TIE,NAME=CORE_SKIN,POSITION TOLERANCE=1.E-7",
+            "SKIN,CORE",
+        ]
+    lines += ["*STEP", "*STATIC", "*BOUNDARY"]
+    lines += [f"{n},1,3" for n, (x, _, _) in enumerate(beam.points, 1) if x == 0]
+    lines += ["*CLOAD"] + [
+        f"{n},1,{f:.15g}" for n, f in beam.loads.items() if abs(f) > 1.0e-14
+    ]
+    lines += [
+        "*EL PRINT,ELSET=BODY",
+        "S",
+        "*NODE PRINT,NSET=ALLN",
+        "U,RF",
+        "*END STEP",
+        "",
+    ]
+    (tmp_path / "model.inp").write_text("\n".join(lines))
+    code, log = ccx(tmp_path)
+    assert code == 0 and "Job finished" in log and "*ERROR" not in log, log
+    if tied:
+        assert "WarnNodeMissMasterIntersect" not in log
+        assert re.search(r"tie constraints:\s+1\b", log)
+    dat = (tmp_path / "model.dat").read_text()
+    u = {n: v for (n,), v in dat_rows(dat, "displacements", 1, 3)}
+    assert len(u) == len(beam.points)
+    tip = [v[0 if axial else 2] for n, v in u.items() if beam.points[n - 1][0] == 12]
+    tip_mean = sum(tip) / len(tip)
+    jump = beam.interface_jump(u)
+    # DAT prints 7 significant digits; interpolating several rounded values
+    # can accumulate more than one last printed digit.
+    assert jump < 2.0e-8
+    stress = {}
+    for (eid, _), sigma in dat_rows(dat, "stresses", 2, 6):
+        stress.setdefault(eid, []).append(sigma[0])
+    assert len(stress) == len(beam.element_z)
+    rms = sqrt(
+        sum(
+            (sum(v) / len(v) - (1 if axial else -beam.element_z[eid])) ** 2
+            for eid, v in stress.items()
+        )
+        / len(stress)
+    )
+    if not tied and kind in ("C3D10", "C3D20"):
+        # Compare the entire through-thickness stress distribution within each
+        # straight cell, independently of the solver's quadrature point labels.
+        for eid, *conn in beam.elements[kind]:
+            if kind == "C3D20":
+                z0, z1 = (beam.points[conn[i] - 1][2] for i in (0, 4))
+                locations = [
+                    (z0 + z1) / 2 + (z1 - z0) * r / 2
+                    for r in (-sqrt(3 / 5), 0, sqrt(3 / 5))
+                    for _ in range(9)
+                ]
+            else:
+                z = [beam.points[n - 1][2] for n in conn[:4]]
+                b = (5 - sqrt(5)) / 20
+                locations = [b * sum(z) + (1 - 4 * b) * corner for corner in z]
+            assert sorted(stress[eid]) == pytest.approx(
+                sorted(-z for z in locations), abs=1e-6
+            )
+    reactions = [
+        (beam.points[n - 1], v)
+        for (n,), v in dat_rows(dat, "forces", 1, 3)
+        if beam.points[n - 1][0] == 0
+    ]
+    assert sum(v[0] for _, v in reactions) == pytest.approx(
+        -1.0 if axial else 0, abs=2e-6
+    )
+    moment = sum(p[2] * v[0] for p, v in reactions)
+    assert moment == pytest.approx(0.0 if axial else 1 / 12, abs=2e-6)
+    print(
+        f"{kind} tied={tied} axial={axial}: tip={tip_mean:.9g} stress_rms={rms:.6g} jump={jump:.3g}"
+    )
+    if axial and tied and kind == "C3D8":
+        # Nonmatching linear triangle/quad traces transfer axial load with
+        # local interface stress error. Report it against the applied 1 MPa.
+        assert tip == pytest.approx([0.012] * len(tip), rel=5.0e-4)
+        assert rms < 0.005
+    elif axial or kind in ("C3D10", "C3D20"):
+        assert tip == pytest.approx([0.012 if axial else 0.072] * len(tip), abs=1.0e-7)
+        assert rms < (5.0e-5 if tied else 1.0e-6)
+    else:
+        # First order stiffness error at fixed longitudinal and thickness resolution.
+        assert 0 < tip_mean < 0.9 * 0.072
+
+
+def test_radioss_type2_nonmatching_compression(tmp_path, radioss):
+    from mesher_bending_case import Beam
+    from caelab.native.radioss import collect_radioss_results, parse_radioss_output
+
+    beam = Beam("C3D8", tied=True)
+    starter = [
+        "#RADIOSS STARTER",
+        "/BEGIN",
+        "model",
+        i10(2024),
+        "                  Mg                  mm                   s",
+        "                  Mg                  mm                   s",
+    ]
+    for part, title in [(1, "hex core"), (2, "tet skin")]:
+        starter += [f"/PART/{part}", title, i10(1) + i10(1) + i10(0)]
+    starter += [
+        *rad_property("solid"),
+        "/MAT/LAW1/1",
+        "elastic",
+        r20(1.0e-6),
+        r20(1000) + r20(0),
+        "/NODE",
+    ]
+    starter += [i10(n) + "".join(map(r20, p)) for n, p in enumerate(beam.points, 1)]
+    for kind, card in [("C3D8", "/BRICK/1"), ("C3D4", "/TETRA4/2")]:
+        starter.append(card)
+        starter += ["".join(map(i10, row)) for row in beam.elements[kind]]
+    root = [n for n, (x, _, _) in enumerate(beam.points, 1) if x == 0]
+    tip = [n for n, (x, _, _) in enumerate(beam.points, 1) if x == 12]
+    starter += [
+        *rad_node_group(1, "base", root),
+        *rad_fixed(1, "111"),
+        *rad_node_group(2, "tip", tip),
+        *rad_velocity(2, "X", -1),
+        "/FUNCT/1",
+        "triangular speed history",
+        r20(0) + r20(0),
+        r20(0.006) + r20(2),
+        r20(0.012) + r20(0),
+        r20(1) + r20(0),
+        *rad_node_group(3, "tet interface nodes", beam.slave),
+        "/SURF/SEG/1",
+        "core interface",
+    ]
+    starter += [
+        i10(i) + "".join(map(i10, face)) for i, (_, face) in enumerate(beam.master, 1)
+    ]
+    starter += [
+        "/INTER/TYPE2/1",
+        "core to skin",
+        i10(3) + i10(1) + i10(0) + i10(1),
+        "/END",
+        "",
+    ]
+    (tmp_path / "model_0000.rad").write_text("\n".join(starter))
+    engine = [
+        "/RUN/model/1",
+        "0.0125",
+        "/PRINT/10",
+        "/ANIM/DT",
+        "0. 0.003",
+        "/ANIM/VECT/DISP",
+        "/END",
+        "",
+    ]
+    (tmp_path / "model_0001.rad").write_text("\n".join(engine))
+    execute, converter_home = radioss
+    for step in ["0000", "0001"]:
+        status, log = execute(tmp_path, step)
+        assert status == 0 and "ERROR TERMINATION" not in log, log
+    assert "NORMAL TERMINATION" in log
+    listing = (tmp_path / "model_0000.out").read_text(errors="replace")
+    assert "CHECK TIED INTERFACE" not in listing
+    values = parse_radioss_output(tmp_path / "model_0001.out")
+    assert values["printed_time"] >= 0.012
+    # Strain -0.001, E=1000 MPa, 12 mm^3. At rest the exact energy is 0.006 N mm.
+    assert values["internal_energy"] == pytest.approx(0.006, rel=0.01)
+    assert values["kinetic_energy"] < 0.006 * 1.0e-3
+    assert values["mass_error"] == 0
+    if not converter_home and os.name == "nt":
+        converter_home = os.environ.get("CAELAB_OPENCOURANT")
+    if converter_home:
+        from xml.etree import ElementTree as ET
+
+        results = collect_radioss_results(
+            tmp_path, converter_installation=Path(converter_home)
+        )
+        assert results["status"] == "readable", results["warnings"]
+        frame = results["frames"][-1]
+        assert frame["time"] >= 0.0119
+        tree = ET.parse(tmp_path / frame["vtu_file"])
+        arrays = {a.get("Name"): a for a in tree.findall(".//PointData/DataArray")}
+        # Converted animation indices are local. Resolve original identities by
+        # reference coordinates AND zone so coincident tie nodes stay distinct.
+        xyz = list(map(float, tree.find(".//Points/DataArray").text.split()))
+        cells = {
+            a.get("Name"): list(map(int, a.text.split()))
+            for a in tree.findall(".//Cells/DataArray")
+        }
+        vector = list(map(float, arrays["DISP"].text.split()))
+        domains = {}
+        start = 0
+        for end, vtk_type in zip(cells["offsets"], cells["types"]):
+            assert vtk_type in (10, 12)
+            for local in cells["connectivity"][start:end]:
+                assert domains.setdefault(local, vtk_type) == vtk_type
+            start = end
+        disp = {}
+        for local, vtk_type in domains.items():
+            point = tuple(round(value, 4) for value in xyz[3 * local : 3 * local + 3])
+            n = beam.node_ids[vtk_type == 10, point]
+            assert n not in disp
+            disp[n] = vector[3 * local : 3 * local + 3]
+        assert len(disp) == len(beam.points)
+        jump = beam.interface_jump(disp)
+        error = max(
+            abs(disp[n][0] + 0.001 * p[0]) for n, p in enumerate(beam.points, 1)
+        )
+        assert jump < 5.0e-6
+        assert error < 0.012 * 0.01
+        print(
+            f"TYPE2 t={frame['time']} IE={values['internal_energy']} KE={values['kinetic_energy']} "
+            f"max_axial_error={error:.5g} max_jump={jump:.5g}"
+        )
+
+
+@pytest.mark.parametrize(
+    "kind,a,b,error", [("TETRA10", 5, 10, 489), ("BRIC20", 9, 19, 484)]
+)
+def test_radioss_rejects_swapped_quadratic_midsides(
+    tmp_path, radioss, kind, a, b, error
+):
+    points, _ = RAD_CELLS[kind]
+    nodes = list(range(1, len(points) + 1))
+    nodes[a - 1], nodes[b - 1] = nodes[b - 1], nodes[a - 1]
+    write_rad_translation(
+        tmp_path,
+        points,
+        [(kind, (1, *nodes))],
+        "bric20" if kind == "BRIC20" else "solid",
+    )
+    execute, _ = radioss
+    code, log = execute(tmp_path, "0000")
+    assert code != 0 and "ERROR TERMINATION" in log
+    assert re.search(rf"ERROR ID\s*:\s*{error}\b", log)
+    assert not list(tmp_path.glob("model_0000*.rst"))
