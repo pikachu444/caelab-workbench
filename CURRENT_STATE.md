@@ -1,5 +1,11 @@
 # 현재 상태
 
+## M3-F0 2차 요소 및 접합부 — 2026-11-27
+
+CalculiX 2.21에서 C3D20/C3D20R, C3D15, C3D10, S8, S6와 2차 hex–wedge–tet 연결부를 검증했다. 길이 12 mm의 보에 끝 모멘트를 가했을 때 같은 분할의 C3D4 끝 처짐은 0.0246172 mm였고 C3D10과 C3D20은 해석값 0.072 mm를 재현했다. 독립 절점을 가진 hex–tet 접합부는 선형·2차에서 하중을 전달했다. 선형 접합 보의 굽힘 오차와 2차 결과는 [실제 덱·응력·반력·변위 비교](docs/mesher-solver-f0-matrix.md#calculix-bending-and-tie)에 기록했다.
+
+OpenCourant 20261011과 GNU OpenRadioss는 올바른 /BRIC20 및 /TETRA10으로 압축을 계산했고, 중간 절점을 서로 바꾼 입력은 Starter 단계에서 거부했다. 선형 /INTER/TYPE2 접합부의 내부에너지는 두 빌드에서 0.006003 N·mm였다(해석값 0.006). OpenCourant의 VTU 변환은 중간 절점 변위를 유지하지만 요소 연결에는 꼭짓점만 기록한다. [빌드별 지원 범위와 원문 진단](docs/mesher-solver-f0-matrix.md#round-2-on-windows-and-ubuntu-wsl)
+
 ## M3-F0 메시 솔버 호환 확인 — 2026-11-27
 
 - CalculiX 2.21은 공유 절점으로 연결한 Hex8–Pyr5–Tet4 덱에서 `C3D5`를 거부했습니다. OpenCourant Windows 20261011과 OpenRadioss Ubuntu WSL도 같은 연결성의 `/PYRA5`를 거부했습니다. 세 실행 모두 혼합 메시의 물리 결과를 생성하기 전에 중단되었습니다.
